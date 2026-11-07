@@ -157,7 +157,7 @@ packages may do the same. A tool whose hot path does that counts
 differently on hosts whose valgrind CPUs differ in those features, and the
 bench does not notice. Such a tool must say so in its own `README.md`. The
 proof across hosts is a run of `template-bench` and `odin-harness` on the
-server host, muninn, once it exists (plan Task 4.2).
+server host, muninn, once it exists.
 
 ### What fails, and what does not
 
