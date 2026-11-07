@@ -125,6 +125,19 @@ let
       }
     ]).config;
   withSeam = (hm [ { ravnix.shell.autoAttach = "echo THE-SEAM-TEXT"; } ]).config;
+  # Other modules add to the interactive part, at the default order, after
+  # it (lib.mkAfter) and just below the aliases. The aliases come after all
+  # of them: a function defined after them would have them expanded in its body.
+  withOthers =
+    (hm [
+      {
+        programs.bash.initExtra = lib.mkMerge [
+          "other_default() { :; }"
+          (lib.mkAfter "other_after() { :; }")
+          (lib.mkOrder 1999 "other_1999() { :; }")
+        ];
+      }
+    ]).config;
 
   # The Fedora aliases, less the ones of tools the spec drops (httpie, and
   # the herdr alias `t` that the seam gives to Task 5.2).
@@ -193,6 +206,7 @@ let
     "rbw"
     "chafa"
     "file"
+    "neovim"
   ];
 
   checks = lib.flatten [
@@ -212,6 +226,10 @@ let
       base.programs.git.signing.allowedSigners != "${me.user.email} ${me.user.signingKey}\n"
     ) "allowed_signers is not 'email key'")
     (lib.optional (base.programs.git.settings.core.editor != "nvim") "git core.editor is not nvim")
+    # EDITOR names nvim, so the module installs it (nvim.nix, imported by default.nix).
+    (lib.optional (
+      !base.programs.neovim.enable
+    ) "nvim is the editor, and programs.neovim is not enabled")
     (lib.optional (base.programs.git.settings.core.pager != "delta") "git core.pager is not delta")
     (lib.optional (base.programs.git.settings.pull.ff != "only") "git pull.ff is not only")
     (lib.optional (
@@ -375,6 +393,7 @@ pkgs.runCommand "common-files"
     bashrc = fileOf base ".bashrc";
     expectedAliases = aliasLines;
     bashrcSeam = fileOf withSeam ".bashrc";
+    bashrcOthers = fileOf withOthers ".bashrc";
     bashrcSecrets = fileOf withSecrets ".bashrc";
     inputrc = base.home.file.".inputrc".source or base.xdg.configFile."readline/inputrc".source;
   }
@@ -410,6 +429,20 @@ pkgs.runCommand "common-files"
         [ "$fn" -lt "$firstalias" ] || { echo "a function is defined after the first alias: line $fn, alias $firstalias" >&2; status=1; }
       done
     fi
+    # The aliases are the end of the whole file, not only of this module's
+    # part: whatever other modules add to the interactive part, at the default
+    # order, after it or just below the aliases, comes before them, and
+    # nothing but alias lines follows the first one.
+    for f in "$bashrc" "$bashrcOthers"; do
+      first=$(line "$f" 'alias -- ')
+      [ -n "$first" ] || { echo "no alias in $f" >&2; status=1; continue; }
+      tail -n +"$first" "$f" | grep -vE '^(alias -- |$)' >&2 && { echo "something follows the first alias in $f" >&2; status=1; }
+    done
+    for fn in 'other_default() {' 'other_after() {' 'other_1999() {'; do
+      at=$(line "$bashrcOthers" "$fn")
+      first=$(line "$bashrcOthers" 'alias -- ')
+      [ -n "$at" ] && [ -n "$first" ] && [ "$at" -lt "$first" ] || { echo "$fn of another module is not before the aliases: $at, $first" >&2; status=1; }
+    done
     # The alias lines are the Fedora set, exactly, and all at the end.
     grep '^alias -- ' "$bashrc" > aliases.actual || true
     printf '%s\n' "$expectedAliases" > aliases.expected

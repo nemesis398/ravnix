@@ -1,12 +1,13 @@
 # What both hosts share, for home-manager: the shell, the prompt, git and the
 # command-line tools, as the Fedora laptop has them (design spec, "modules/
-# common"). Claude Code and Neovim are modules of their own beside this one.
+# common"). Neovim (./nvim.nix) is a module of its own that this one imports,
+# and Claude Code is another beside it.
 #
 # It reads ravnix.user, ravnix.secrets, ravnix.services, ravnix.dev,
-# ravnix.shell and ravnix.theme, so homeModules.options and
-# homeModules.theme must be imported beside it. nixosModules.common does all
-# three, and gives home-manager the user's values; use homeModules.common by
-# itself only outside a ravnix host.
+# ravnix.shell, ravnix.editor, ravnix.dictionary and ravnix.theme, so
+# homeModules.options and homeModules.theme must be imported beside it.
+# nixosModules.common does all three, and gives home-manager the user's
+# values; use homeModules.common by itself only outside a ravnix host.
 { config, lib, ... }:
 {
   imports = [
@@ -15,6 +16,7 @@
     ./cli.nix
     ./atuin.nix
     ./starship.nix
+    ./nvim.nix
   ];
 
   # Outside a host, home-manager is told who it is working for once, here.

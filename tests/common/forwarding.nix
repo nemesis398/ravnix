@@ -86,6 +86,32 @@ let
     { ravnix.shell.autoAttach = "echo ONCE"; }
   ];
 
+  # ravnix.editor.languages is a types.uniq option: a second definition at the
+  # same priority is an error, not a union. me.nix defines it once, a host may
+  # force another list, and in home-manager the forwarded value is a mkDefault.
+  allLanguages = (import me).ravnix.editor.languages;
+  narrowed = host [
+    {
+      ravnix.editor.languages = lib.mkForce [
+        "lua"
+        "nix"
+      ];
+    }
+  ];
+  userSets = host [
+    { home-manager.users.${user.username}.ravnix.editor.languages = [ "bash" ]; }
+  ];
+  userForces = host [
+    {
+      home-manager.users.${user.username}.ravnix.editor.languages = lib.mkForce [ "python" ];
+    }
+  ];
+  userDefaults = host [
+    {
+      home-manager.users.${user.username}.ravnix.editor.languages = lib.mkDefault [ "bash" ];
+    }
+  ];
+
   homeOf = c: c.home-manager.users.${user.username};
   hm = homeOf forwarded;
 
@@ -161,6 +187,27 @@ let
     (lib.optional (lib.any (
       m: !(m ? _file) && !(m ? key)
     ) sharedAttrs) "a forwarded module has neither a file nor a key")
+    # ravnix.editor.languages, a types.uniq option, arrives once and without
+    # a collision, whoever else defines it.
+    (lib.optional (
+      (homeOf plain).ravnix.editor.languages != allLanguages
+    ) "ravnix.editor.languages of me.nix did not reach home-manager as it is")
+    (lib.optional (
+      (homeOf narrowed).ravnix.editor.languages != [
+        "lua"
+        "nix"
+      ]
+    ) "a host's lib.mkForce of ravnix.editor.languages did not reach home-manager")
+    (lib.optional ((homeOf userSets).ravnix.editor.languages != [ "bash" ])
+      "the user's own home-manager value of ravnix.editor.languages does not win over the forwarded one"
+    )
+    (lib.optional (
+      (homeOf userForces).ravnix.editor.languages != [ "python" ]
+    ) "the user's lib.mkForce in home-manager does not win over the forwarded one")
+    # The one thing that does collide, loudly: the user's own lib.mkDefault in
+    # home-manager has the priority of the forwarded value, and uniq refuses
+    # two definitions. nixos.nix says so and says what to do instead.
+    (lib.optional ((builtins.tryEval (builtins.deepSeq (homeOf userDefaults).ravnix.editor.languages true)).success) "a lib.mkDefault of a uniq option in home-manager no longer collides with the forwarded value; update the note in nixos.nix")
     # Imported twice, the module adds nothing the second time.
     (lib.optional (
       (homeOf twice).ravnix.shell.autoAttach != "echo ONCE"

@@ -26,6 +26,18 @@
 # handed on. A ravnix.* option that a module declares anywhere else is its
 # own business and is not forwarded: a NixOS-only option stays on NixOS, and
 # a home-manager-only one is set in the home-manager configuration.
+#
+# A forwarded definition arrives in home-manager as `lib.mkDefault`, so the
+# user's own home-manager value wins over it if it is a plain definition or
+# `lib.mkForce`. One case collides, loudly: an option of type `types.uniq`
+# (ravnix.editor.languages is one) allows a single definition per priority,
+# and a user's own `lib.mkDefault` in home-manager has the priority of the
+# forwarded value, so home-manager refuses to evaluate with "defined multiple
+# times". Set such an option in me.nix instead (once; the forwarding gives it
+# to home-manager), or write `lib.mkForce [ ... ]` in the home-manager
+# configuration, or as the host's value in a NixOS module. The same goes for
+# the host: two plain definitions of it, in me.nix and in a host module, are
+# an error on NixOS already. tests/common/forwarding.nix has each case.
 { self }:
 {
   config,
@@ -44,7 +56,8 @@ let
   # computes itself). The definitions as written are handed on, not the merged
   # values: a merged value holds what only the declaring module may set (a
   # service's url). A module carries the file the value was written in, so a
-  # type error names me.nix and not this file.
+  # type error names me.nix and not this file. The priority is lib.mkDefault;
+  # see the header for the one option type that makes that collide.
   # An option's loc is its whole path, which inside a test node or a
   # container starts with where the system is; ravnix.user.name is always
   # there, and shows how much to cut off.

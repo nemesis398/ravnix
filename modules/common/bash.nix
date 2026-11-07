@@ -6,7 +6,8 @@
 #
 # The order of the interactive part is the Fedora one, and it matters:
 # the seam first (ravnix.shell.autoAttach), then the SWAYSOCK repair, the
-# tools, the functions, and last the aliases. Home-manager writes
+# tools, the functions, and last the aliases, at the order 5000 of initExtra,
+# so that they follow what other modules add too. Home-manager writes
 # programs.bash.shellAliases before everything in initExtra, so the aliases
 # of this module are not there: written that way, `ls` would be eza (and
 # `cd` zd, which is not defined yet) in the SWAYSOCK repair and in whatever
@@ -158,11 +159,17 @@ let
     # `claude`; ai-unlock only unlocks the vault.
     _ravnix_secrets=(${secretTable})
     ${builtins.readFile ./bash/secrets.bash}
+  '';
 
+  # The aliases, as a definition of their own at an order after everything a
+  # module normally asks for (lib.mkAfter is 1500, a plain definition 1000), so
+  # that they are the end of the whole bashrc and not only of this module's
+  # part: a function another module defines is read when it is defined, and an
+  # alias that was live then would be expanded in its body for good (see the
+  # header). A module that asks for an order above this knows what it does.
+  aliases' = ''
     # ─── Aliases ────────────────────────────────────────────────────────────
-    # Last, after every function: a function body is read when it is defined,
-    # and an alias that was live then would be expanded in it for good (see
-    # the header).
+    # Last, after every function of every module (see the header).
     ${aliasLines}
   '';
 in
@@ -197,6 +204,7 @@ in
     initExtra = lib.mkMerge [
       (lib.mkOrder 50 seam)
       (lib.mkOrder 1000 main)
+      (lib.mkOrder 5000 aliases')
     ];
   };
 

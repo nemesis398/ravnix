@@ -119,6 +119,11 @@ pkgs.testers.runNixOSTest {
       # with the real table, and the values reach `claude` from a stand-in rbw.
       ravnix.shell.secretEnv = lib.genAttrs secretNames (n: "Item for ${n}");
 
+      # The editor of both hosts comes with the module; the VM needs one
+      # language, not the 2.3 GiB toolchain of Odin and a JDK for the rest
+      # (tests/common/nvim.nix runs the editor with every language).
+      ravnix.editor.languages = lib.mkForce [ "nix" ];
+
       # What the seam sees: it runs first in every interactive bash, and
       # writes what `cd`, `zd` and `claude` are at that point.
       ravnix.shell.autoAttach = ''
@@ -173,9 +178,14 @@ pkgs.testers.runNixOSTest {
             t + " --version" for t in [
                 "starship", "atuin", "zoxide", "rg", "eza", "bat", "lazygit", "gh",
                 "fd", "fzf", "btop", "fastfetch", "delta", "jq", "rbw", "tldr",
-                "chafa", "git",
+                "chafa", "git", "nvim",
             ]
         ))
+
+    with subtest("the editor of both hosts starts"):
+        # EDITOR names nvim, and the module installs it. (The editor itself is
+        # checked, with every language, by tests/common/nvim.nix.)
+        as_user("nvim --headless +qa")
 
     with subtest("git has the identity of ravnix.user and signs with ssh"):
         assert as_user("git config user.email").strip() == EMAIL
@@ -298,6 +308,10 @@ pkgs.testers.runNixOSTest {
         got = as_user("cat ~/claude.env")
         for n in SECRETS:
             assert n + "=vm-secret-for:Item for " + n in got, got
+        # Under xtrace the function prints no value, and claude still gets them.
+        traced = as_user("bash -ic 'set -x; claude' 2>&1")
+        assert "vm-secret-for:" not in traced, traced
+        assert as_user("cat ~/claude.count").strip() == str(len(SECRETS))
         # Inside Claude Code the function adds nothing.
         as_user("CLAUDECODE=1 bash -ic claude 2>&1")
         assert as_user("cat ~/claude.count").strip() == "0"
