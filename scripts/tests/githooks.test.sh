@@ -31,7 +31,7 @@ new_repo() {
 	git -C "$repo" config user.name test
 	git -C "$repo" config user.email test@example.invalid
 	mkdir -p "$repo/scripts/lib" "$repo/.githooks"
-	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$repo/scripts/"
+	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$src/scripts/check-style.sh" "$repo/scripts/"
 	cp -p "$src/scripts/lib/git-snapshot.sh" "$repo/scripts/lib/"
 	cp -p "$src/.githooks/pre-commit" "$src/.githooks/commit-msg" \
 		"$src/.githooks/pre-push" "$repo/.githooks/"
@@ -112,7 +112,7 @@ a_clean_commit_goes_through() {
 	stage b.md 'clean too'
 	commit -m 'add b'
 	expect_status 0
-	expect_said "all 2 steps passed"
+	expect_said "all 3 steps passed"
 	expect_no_gate
 }
 

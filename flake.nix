@@ -60,6 +60,8 @@
                   ./scripts
                   ./.githooks
                   ./.claude/settings.json
+                  ./docs/mermaid-theme.json
+                  ./docs/style.md
                 ];
               };
               nativeBuildInputs = [

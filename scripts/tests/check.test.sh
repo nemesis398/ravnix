@@ -38,7 +38,7 @@ new_repo() {
 	git -C "$repo" config user.email test@example.invalid
 	git -C "$repo" config ravnix.denyList "$list"
 	mkdir -p "$repo/scripts/lib"
-	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$repo/scripts/"
+	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$src/scripts/check-style.sh" "$repo/scripts/"
 	cp -p "$src/scripts/lib/git-snapshot.sh" "$repo/scripts/lib/"
 	printf 'clean\n' >"$repo/a.md"
 	git -C "$repo" add -A
@@ -71,7 +71,7 @@ the_fast_gate_passes_on_a_clean_repository() {
 	new_repo
 	gate --fast
 	expect_status 0
-	expect_out "all 2 steps passed"
+	expect_out "all 3 steps passed"
 	[[ ! -s "$bin/nix.log" ]] || {
 		echo "  the fast gate ran nix: $(cat "$bin/nix.log")"
 		return 1
@@ -82,7 +82,7 @@ the_full_gate_adds_nix_flake_check() {
 	new_repo
 	gate
 	expect_status 0
-	expect_out "all 3 steps passed"
+	expect_out "all 4 steps passed"
 	[[ "$(cat "$bin/nix.log")" == *"flake check"* ]] || {
 		echo "  expected nix flake check, the fake nix got: $(cat "$bin/nix.log" 2>/dev/null)"
 		return 1
@@ -244,6 +244,76 @@ the_snapshot_is_removed_after_the_run() {
 	}
 }
 
+# The style step.
+
+a_staged_hex_color_outside_the_theme_fails_the_gate() {
+	new_repo
+	stage modules/waybar.nix 'accent = "#cba6f7";'
+	gate --fast
+	expect_status 1
+	expect_out "modules/waybar.nix:1:hex-color"
+	expect_err "style failed"
+}
+
+a_hex_color_in_the_theme_module_passes_the_gate() {
+	new_repo
+	stage modules/theme/palette.nix 'mauve = "#cba6f7";'
+	gate --fast
+	expect_status 0
+	expect_out "no style rule broken"
+}
+
+the_staged_version_of_a_styled_file_is_judged() {
+	new_repo
+	stage modules/bar.css 'a { border-radius: 4px; }'
+	printf 'a { border-radius: 0; }\n' >"$repo/modules/bar.css"
+	gate --fast
+	expect_status 1
+	expect_out "modules/bar.css:1:radius"
+}
+
+an_unstaged_style_break_in_a_tracked_file_fails_the_gate() {
+	new_repo
+	stage modules/bar.css 'a { border-radius: 0; }'
+	git -C "$repo" commit -qm bar
+	printf 'a { opacity: 0.9; }\n' >"$repo/modules/bar.css"
+	gate --fast
+	expect_status 1
+	expect_out "modules/bar.css:1:opacity"
+}
+
+the_style_step_runs_without_a_deny_list() {
+	new_repo
+	git -C "$repo" config --unset ravnix.denyList
+	stage modules/bar.css 'a { transition: all 1s; }'
+	gate --fast
+	expect_status 1
+	expect_out "modules/bar.css:1:motion"
+	expect_said "SKIPPED"
+}
+
+the_index_copy_of_the_shared_mermaid_theme_is_used() {
+	new_repo
+	stage docs/mermaid-theme.json '{"theme": "base"}'
+	stage docs/a.md '%%{init: {"theme": "base"}}%%'
+	gate --fast
+	expect_status 0
+	stage docs/a.md '%%{init: {"theme": "dark"}}%%'
+	gate --fast
+	expect_status 1
+	expect_out "docs/a.md:1:mermaid-init"
+}
+
+a_style_break_stops_the_gate_before_shellcheck() {
+	new_repo
+	stage modules/bar.css 'a { border-radius: 4px; }'
+	write_script "$repo/tool.sh" 'echo $1'
+	git -C "$repo" add tool.sh
+	gate --fast
+	expect_status 1
+	expect_no_out "==> shellcheck"
+}
+
 # The shellcheck step.
 
 a_staged_script_with_a_shellcheck_error_fails_the_gate() {
@@ -364,6 +434,13 @@ tests=(
 	a_relative_deny_list_is_read_from_the_top_of_the_checkout
 	the_first_failing_step_ends_the_gate_with_its_status
 	the_snapshot_is_removed_after_the_run
+	a_staged_hex_color_outside_the_theme_fails_the_gate
+	a_hex_color_in_the_theme_module_passes_the_gate
+	the_staged_version_of_a_styled_file_is_judged
+	an_unstaged_style_break_in_a_tracked_file_fails_the_gate
+	the_style_step_runs_without_a_deny_list
+	the_index_copy_of_the_shared_mermaid_theme_is_used
+	a_style_break_stops_the_gate_before_shellcheck
 	a_staged_script_with_a_shellcheck_error_fails_the_gate
 	a_script_without_an_extension_is_found_by_its_shebang
 	a_python_script_is_not_shellchecked

@@ -14,6 +14,11 @@
 #     value) and over each tracked file whose work-tree copy differs from it.
 #     Untracked files are not read. Without ravnix.denyList the step says it
 #     was skipped and passes, so a clone without a private flake still works.
+#   - style: scripts/check-style.sh over the same two sets: a hex color
+#     outside modules/theme/, a radius other than 0, anything translucent
+#     but the inside of the lock ring, a transition or animation, a Mermaid
+#     init block that is not the shared one (docs/style.md). It needs rg and
+#     runs without a deny list.
 #   - shellcheck: every tracked shell script, found by its extension (.sh,
 #     .bash) or by its shebang (sh, bash, dash, ksh), hooks included: the
 #     staged copy, and the work-tree copy where it differs.
@@ -50,9 +55,8 @@ case "$#:${1:-}" in
 esac
 
 # The steps, in order. A new check is a function step_NAME below and its name
-# in one of these lists; the style check, scripts/check-style.sh, joins the
-# fast ones once it exists.
-fast_steps=(boundary shellcheck)
+# in one of these lists.
+fast_steps=(boundary style shellcheck)
 slow_steps=(flake)
 steps=("${fast_steps[@]}")
 [[ "$mode" == fast ]] || steps+=("${slow_steps[@]}")
@@ -62,8 +66,7 @@ command -v git >/dev/null 2>&1 || fail "git not found."
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
 	fail "$root is not a git work tree; the gate checks what git tracks."
 deny_list="$(ravnix_deny_list)" || exit 2
-[[ -z "$deny_list" ]] || command -v rg >/dev/null 2>&1 ||
-	fail "rg not found. Install ripgrep."
+command -v rg >/dev/null 2>&1 || fail "rg not found. Install ripgrep."
 command -v shellcheck >/dev/null 2>&1 || fail "shellcheck not found. Install ShellCheck."
 if [[ "$mode" == full ]]; then
 	command -v nix >/dev/null 2>&1 ||
@@ -101,6 +104,23 @@ step_boundary() {
 		((s <= status)) || status=$s
 	fi
 	((status != 0)) || echo "no value from the deny list found"
+	return "$status"
+}
+
+step_style() {
+	local status=0 s=0 theme=()
+	# The shared Mermaid theme of the index, when the index has one, so a
+	# commit that changes it and docs/style.md together is judged as a whole.
+	[[ ! -f "$work/index/docs/mermaid-theme.json" ]] ||
+		theme=(RAVNIX_MERMAID_THEME="$work/index/docs/mermaid-theme.json")
+	echo "the index (what the next commit holds):"
+	(cd "$work/index" && env "${theme[@]}" "$root/scripts/check-style.sh" .) || status=$?
+	if ((${#unstaged[@]} > 0)); then
+		echo "unstaged changes in the work tree (${#unstaged[@]} files):"
+		scripts/check-style.sh "${unstaged[@]}" || s=$?
+		((s <= status)) || status=$s
+	fi
+	((status != 0)) || echo "no style rule broken"
 	return "$status"
 }
 
