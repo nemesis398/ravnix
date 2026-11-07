@@ -141,6 +141,32 @@
         key = "ravnix/homeModules.common";
         imports = [ ./modules/common ];
       };
+      # Claude Code from packages.claude-code, and the skill
+      # framework: the skill values, the hooks and the status line
+      # (claude/README.md). claude-skills brings claude-code along, whose
+      # activation step puts its hooks into the settings. Each carries a
+      # key, so a second import adds nothing.
+      homeModules.claude-code = {
+        key = "ravnix#homeModules.claude-code";
+        imports = [
+          ./modules/common/claude-code.nix
+          (
+            { lib, pkgs, ... }:
+            {
+              programs.claude-code.package =
+                lib.mkDefault
+                  self.packages.${pkgs.stdenv.hostPlatform.system}.claude-code;
+            }
+          )
+        ];
+      };
+      homeModules.claude-skills = {
+        key = "ravnix#homeModules.claude-skills";
+        imports = [
+          self.homeModules.claude-code
+          ./modules/common/claude-skills.nix
+        ];
+      };
       packages.${system} =
         if tools.packages ? claude-code then
           throw "tools/claude-code is a tool, and packages.claude-code is Claude Code itself; rename the tool"

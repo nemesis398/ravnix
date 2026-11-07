@@ -10,6 +10,7 @@ pkgs.runCommand "claude-hooks"
       root = ../../claude;
       fileset = lib.fileset.unions [
         ../../claude/hooks
+        ../../claude/settings
         ../../claude/statusline
       ];
     };
