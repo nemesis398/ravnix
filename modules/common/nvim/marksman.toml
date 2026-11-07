@@ -1,0 +1,8 @@
+# marksman, the Markdown language server LazyVim's markdown extra starts.
+#
+# A note's title is its file name, as in Obsidian, not its first heading. With
+# the default, marksman took every "# " line as a title, so in a vault that
+# writes its sections as "# " headings, gd on a [[wikilink]] offered every
+# section of the note instead of opening the note.
+[core]
+title_from_heading = false

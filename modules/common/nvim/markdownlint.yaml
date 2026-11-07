@@ -1,0 +1,23 @@
+# markdownlint rules for Markdown edited in Neovim.
+#
+# Read by lua/plugins/markdown.lua for every file whose project has no
+# markdownlint config of its own. A project config wins over this one.
+#
+# Everything here lets ordered and unordered lists be combined. The defaults
+# reject it, although CommonMark renders all of these correctly.
+
+# Nested bullets may be indented by any valid amount. The default wants exactly
+# 2 spaces under a bullet, but a bullet under "1." needs at least 3, so one width
+# for every level is 4, which Neovim inserts in Markdown.
+MD007: false
+
+# Tabs nest lists as well (Obsidian indents with them). The fix for this rule
+# would replace each tab by one space and take the item out of its parent list.
+MD010: false
+
+# Numbering may continue after bullets in between: 1., 2., bullets, then 3.
+# The rule wants every new list to start at 1, and its fix would renumber it.
+MD029: false
+
+# A bullet list may follow a numbered list directly, without a blank line.
+MD032: false
