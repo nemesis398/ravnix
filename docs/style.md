@@ -113,7 +113,7 @@ Other rules:
 - Radius 0 everywhere. A rounded corner is a bug.
 - Gaps are 0, inside and outside. Tiles touch. There are no title bars, because the title lives in the bar.
 - A floating window opens centered. The quick terminal is 40 percent wide and 70 percent high of the workspace. A window pinned on top of every workspace is 960 by 600.
-- The bar sits on the top edge, 32 px high, in every mode. Workspaces are numbers, with no names and no icons. The active one is an accent fill, an empty one is Overlay0, an urgent one is a Red fill. Every module has an icon in the accent and a value in Text. A module under the pointer gets the Surface0 wash and the 2 px accent underline. A focus mode drops the right-hand cluster and keeps everything else, the height included.
+- The bar sits on the top edge, 32 px high, in every mode. Workspaces are numbers, with no names and no icons. The active one is an accent fill, an empty one is Overlay0, an urgent one is a Red fill. Every module has an icon in the accent and a value in Text. A module under the pointer gets the Surface0 wash and the 2 px accent underline. A focus mode drops the right-hand cluster and the workspace numbers and keeps everything else, the height included. Every module that shows a value has a fixed width sized to its widest value. Three strips grow by item count instead and are the only parts of the bar that may move: the workspace strip, the mode pill and the tray.
 - The terminal pads its content by 14 px on every side and has no window decoration.
 - The pointer hides while you type and after 8 seconds idle. The cursor theme is Catppuccin Mocha in the accent, at 24 px.
 
@@ -129,7 +129,7 @@ Within one list or strip, at most one item carries an accent fill: one active wo
 
 ## 🔤 Type
 
-One family: **JetBrainsMono Nerd Font**, in the terminal, the bar, the launcher, notifications, the lock screen, the TUIs, diagrams, and code.
+One family: **JetBrainsMono Nerd Font**, in the terminal, the bar, the launcher, notifications, the lock screen, the TUIs, GTK and Qt applications, diagrams, and code.
 
 Text you read is small and text you glance at is large.
 
@@ -151,7 +151,7 @@ The exact values live in the theme module. This table lists the choices that are
 | --- | --- |
 | Desktop | Base. See *Identity* for what sits on it |
 | Terminal | Base, 14 px padding, block cursor with no blink, no confirmation on close, copy only on an explicit key |
-| Prompt | Directory bold accent, branch italic accent, `❯` accent, a failed command shows `✗`. Nothing else: no time, no user, no host, no language versions |
+| Prompt | Directory bold accent, branch italic accent followed by the git status symbols in the accent, `❯` bold accent, a failed command shows `✗` bold Red. Nothing else: no time, no user, no host, no language versions |
 | Launcher | Base, 1 px accent frame, selection Surface1, matched letters accent, placeholder Overlay1, fixed width of 50 characters |
 | Notifications | Base, 1 px accent frame, Peach frame when critical, a stacked pair separated by the frame color |
 | Lock screen | See *Identity* |
@@ -215,7 +215,7 @@ Diagrams share one layout language, taken from the author's keyboard-layout diag
 - **Legend** as the last row: a square swatch and a label per category, in a fixed order. Every colored diagram has one.
 - **Category order**: accent, Blue, Green, Teal, Pink, Lavender, Sky, then Surface2 for neutral or unused. Seven at most. Color names a category and the legend explains it. Peach and Red are never categories: they keep their meaning, a warning and a failure, in diagrams that show either.
 
-**Mermaid** carries the same language so diagrams can live as text in the Markdown they explain. One shared init block sets the theme. It names Mauve, the default accent, because a diagram is static and does not follow a user's setting:
+**Mermaid** carries the same language so diagrams can live as text in the Markdown they explain. One shared init block sets the theme. It names Mauve, the default accent, because a diagram is static and does not follow a user's setting. `docs/mermaid-theme.json` holds the same values, and the style check compares every init block in the docs against it:
 
 ```text
 %%{init: {"theme": "base", "themeVariables": {
@@ -247,13 +247,13 @@ When a new application, screen or document needs styling, walk this list in orde
 The style becomes code in four places.
 
 - **One theme module** holds the roles. It exposes the typed `accent` option, the role-to-hex table, the two line widths, the font, and the sizes. Every other module reads from it and never writes a hex value itself. Where an application has a `catppuccin/nix` integration, that is used and fed the same flavor and accent.
-- **A style check in the local gate**, next to the deny-list check, that fails on a hex color outside the theme module, the vendored files, this document and a Mermaid init block identical to the shared one, on any `border-radius` other than 0, on any opacity below 1 outside the inside of the lock ring, and on any `transition` or `animation` key.
+- **A style check in the local gate** (`scripts/check-style.sh`), next to the deny-list check, that fails on a hex color outside the theme module, the vendored files, this document and a Mermaid init block identical to the shared one, on any `border-radius` other than 0, on any opacity below 1 outside the inside of the lock ring, and on any `transition` or `animation` key.
 - **The repo's agent rules** (`AGENTS.md`) get a *Style* section that points here and carries the checklist above, so an agent styling a new thing meets the rules before it picks a color.
 - **Acceptance** is a side-by-side screenshot of the Fedora reference and `huginn` for each surface and each state: every lock-ring state, a critical notification, the focus-mode bar, and each bar module at its widest value. The reference is shot before Fedora is retired, at the same scale. The list in the next section holds the only allowed differences.
 
 ## ⚠️ Where the Fedora configs differ
 
-Verified against the configs on 2026-11-07. Everything not listed already matches. The login greeter, the boot text and the NixOS logo have no Fedora counterpart, and the wallpaper and the lock image change by design (see *Identity*), so screenshots cannot judge them: they are judged against this document.
+Verified against the configs on 2026-11-07. A later audit of the Fedora setup found nine more rows, which are at the end of the table. Everything not listed already matches. The login greeter, the boot text and the NixOS logo have no Fedora counterpart, and the wallpaper and the lock image change by design (see *Identity*), so screenshots cannot judge them: they are judged against this document.
 
 | Config | Today | Ravnix |
 | --- | --- | --- |
@@ -266,6 +266,14 @@ Verified against the configs on 2026-11-07. Everything not listed already matche
 | Waybar focus bar | 34 px high, spacing 6 | 32 px, spacing 2, same as the full bar |
 | starship `error_symbol` | accent | Red |
 | lazy.nvim `ui.border` | `rounded` | `single`; also check the `winborder` of Neovim's own floats |
+| swaylock `indicator-idle-visible` | unset, so an idle lock shows no ring | set: the Surface2 ring is always there |
+| swaylock `ring-caps-lock-color`, `line-caps-lock-color` | unset, swaylock's own default shows | Peach |
+| Waybar focus bar | drops the right-hand cluster and the workspaces | the same; the rule in *Shape and layout* now says so |
+| Waybar `custom/peripherals`, `custom/powerdraw`, `sway/window`, `network` | grow with their value and push their neighbours | a fixed width sized to the widest value; the window title is truncated to it |
+| GTK and Qt UI font | Adwaita Sans 11, Adwaita Mono 11 | JetBrainsMono Nerd Font 11 |
+| `sway-radial` | alpha 0.92 and an 80 ms opacity fade | opaque, no fade; the round ring stays |
+| MangoHud `background_alpha` | 0.8 | 1 |
+| starship git status, `❯` and `✗` weight | shown after the branch; bold | unchanged; the *Prompt* row now says so |
 | keyboard-layout diagram | rounded boxes | square boxes |
 
 ## 🧭 Left to the builder

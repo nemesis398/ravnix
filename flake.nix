@@ -106,6 +106,13 @@
       # The typed ravnix.* options, one module for NixOS and home-manager.
       nixosModules.options = ./modules/options;
       homeModules.options = ./modules/options;
+      # The Mocha palette, the roles, the accent option, and the style in the
+      # applications; catppuccin/nix comes along, so a user imports one.
+      nixosModules.theme = ./modules/theme/nixos.nix;
+      homeModules.theme.imports = [
+        inputs.catppuccin.homeModules.catppuccin
+        ./modules/theme
+      ];
       packages.${system} = tools.packages;
       checks.${system} =
         if clashes != [ ] then
