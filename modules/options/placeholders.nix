@@ -17,10 +17,17 @@ let
     || match "(.*[^a-z0-9-])?example[.](org|com|net)([^a-z0-9.].*|[.])?";
 
   # Every string under config.ravnix, with where it is. A service's url is
-  # derived from its host's address, which is reported already.
+  # derived from its host's address, which is reported already. The walk
+  # enters plain attribute sets and lists only: a package is a derivation,
+  # which contains itself (its `out` is the derivation again) and would never
+  # end, and a value marked with _type (an override, an option, a literal
+  # expression) is not a value the user wrote. Functions, paths and numbers
+  # hold no string.
   strings =
     where: value:
-    if builtins.isAttrs value then
+    if lib.isDerivation value || (builtins.isAttrs value && value ? _type) then
+      [ ]
+    else if builtins.isAttrs value then
       lib.concatLists (
         lib.mapAttrsToList (
           name: v:

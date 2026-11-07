@@ -3,7 +3,8 @@
 # shows in every build. The template, made of such values, warns for each;
 # a value that only looks like one (192.0.20.1, notexample.org,
 # 2001:db80::1) and every real-looking value does not. A service's derived
-# url is not reported again.
+# url is not reported again, and the walk does not enter a package an
+# option holds (a derivation contains itself, so it would never end).
 {
   self,
   pkgs,
@@ -88,6 +89,28 @@ let
       }
     ]).config.warnings;
 
+  # An option holding a package, as a wallpaper image or a tool may, next
+  # to a placeholder that must still warn.
+  withPackage =
+    (eval [
+      template
+      {
+        options.ravnix.probe = {
+          image = lib.mkOption { type = lib.types.nullOr lib.types.path; };
+          package = lib.mkOption { type = lib.types.package; };
+          # A value marked with _type is no value the user wrote.
+          literal = lib.mkOption { type = lib.types.raw; };
+          host = lib.mkOption { type = lib.types.str; };
+        };
+        config.ravnix.probe = {
+          image = pkgs.hello;
+          package = pkgs.hello;
+          literal = lib.literalExpression ''"nas.example.org"'';
+          host = "nas.example.org";
+        };
+      }
+    ]).config.warnings;
+
   failures =
     map (option: "no warning names ${option}") (lib.filter (o: !(named o)) expected)
     ++ lib.optional (named "ravnix.services.paperless.url") "the derived url of a service is reported as well"
@@ -98,7 +121,18 @@ let
     ++ map (v: "a warning for the real-looking ${v}") (lib.filter warnsFor real)
     ++ lib.optional (
       !(lib.any (lib.hasPrefix "ravnix.claude.skillValues.list[1] is ") inList)
-    ) "a placeholder in a list is not named by its index";
+    ) "a placeholder in a list is not named by its index"
+    ++ lib.optional (
+      !(lib.any (lib.hasPrefix "ravnix.probe.host is ") withPackage)
+    ) "a placeholder next to an option holding a package is not named"
+    ++ map (w: "a warning from inside a package or a _type value: ${w}") (
+      lib.filter (
+        w:
+        lib.hasPrefix "ravnix.probe.image" w
+        || lib.hasPrefix "ravnix.probe.package" w
+        || lib.hasPrefix "ravnix.probe.literal" w
+      ) withPackage
+    );
 in
 pkgs.runCommand "options-placeholders" { } (
   if failures == [ ] then
