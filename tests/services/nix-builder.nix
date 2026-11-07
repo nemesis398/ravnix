@@ -105,6 +105,12 @@ let
       }
     ) "a host key pasted as a raw line, not base64, was accepted"
     ++ lib.optional (!refused { sshKey = "etc/nix/key"; }) "a relative private key path was accepted"
+    # The machines file separates its fields by spaces, and lists systems
+    # with commas, so a value with either would shift every field after it.
+    ++ lib.optional (!refused { sshKey = "/etc/nix/builder key"; }) "a private key path with a space was accepted"
+    ++ lib.optional (!refused { systems = [ "x86_64-linux,i686-linux" ]; }) "a system with a comma was accepted"
+    ++ lib.optional (!refused { systems = [ "x86_64-linux " ]; }) "a system with a space was accepted"
+    ++ lib.optional (!refused { systems = [ ]; }) "an empty list of systems was accepted"
     ++ lib.optional (!refused { maxJobs = 0; }) "maxJobs = 0 was accepted";
 in
 pkgs.runCommand "services-nix-builder" { } (

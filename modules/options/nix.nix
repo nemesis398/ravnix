@@ -42,8 +42,9 @@ in
     };
 
     sshKey = mkOption {
-      # A string, not a path: a path would copy the key into the store.
-      type = types.strMatching "/.+";
+      # A string, not a path: a path would copy the key into the store. No
+      # whitespace, because the machines file separates its fields by it.
+      type = types.strMatching "/[^[:space:]]+";
       default = "/etc/nix/nix-builder_ed25519";
       description = ''
         The private key root logs in to the builder with: an absolute path on
@@ -76,7 +77,9 @@ in
     };
 
     systems = mkOption {
-      type = types.nonEmptyListOf types.nonEmptyStr;
+      # Nix system names, such as x86_64-linux; the machines file joins
+      # them with commas.
+      type = types.nonEmptyListOf (types.strMatching "[a-z0-9_]+-[a-z0-9_]+");
       default = [ "x86_64-linux" ];
       description = "The systems the builder builds for.";
     };
