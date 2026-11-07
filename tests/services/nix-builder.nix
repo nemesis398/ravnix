@@ -66,6 +66,7 @@ let
   sub = off.options.ravnix.nixBuilder.type.getSubOptions [ ];
   accepts = option: value: sub.${option}.type.check value;
   systemAccepted = sub.systems.type.nestedTypes.elemType.check;
+  sshOpts = h: h.config.systemd.services.nix-daemon.environment.NIX_SSHOPTS or null;
 
   machines = h: h.config.environment.etc."nix/machines".text or null;
   line =
@@ -102,6 +103,11 @@ let
     ++ lib.optional (
       lib.filter (lib.hasInfix "ravnix.nixBuilder.sshKey") inStore.failed == [ ]
     ) "a private key path in the Nix store failed no assertion naming ravnix.nixBuilder.sshKey; failed: ${toString inStore.failed}"
+    # A builder that cannot be reached, or that goes silent mid-build, ends
+    # the daemon's ssh within seconds instead of the kernel's timeouts.
+    ++ expect "NIX_SSHOPTS of the daemon with a builder" (sshOpts kvm)
+      "-oConnectTimeout=5 -oServerAliveInterval=15 -oServerAliveCountMax=4"
+    ++ expect "NIX_SSHOPTS of the daemon without a builder" (sshOpts off) null
     ++ expect "the base64 host key is accepted" (accepts "hostKey" hostKey) true
     ++ expect "a host key pasted as a raw line, not base64" (accepts "hostKey"
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey nix-builder"

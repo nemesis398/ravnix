@@ -65,5 +65,12 @@ in
     # The builder fetches from cache.nixos.org itself instead of receiving
     # every input through this host's uplink.
     nix.settings.builders-use-substitutes = true;
+
+    # Nix gives its ssh no timeouts, so an unreachable builder held a build
+    # for the kernel's SYN timeout (about two minutes), and one that went
+    # silent mid-build, a closed lid or another network, until TCP keepalive
+    # gave up (over two hours). The daemon appends these to every ssh it
+    # starts.
+    systemd.services.nix-daemon.environment.NIX_SSHOPTS = lib.mkDefault "-oConnectTimeout=5 -oServerAliveInterval=15 -oServerAliveCountMax=4";
   };
 }
