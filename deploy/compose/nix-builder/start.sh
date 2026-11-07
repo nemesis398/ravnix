@@ -12,7 +12,9 @@
 #   3. writes nix.conf, then installs nix, openssh and harmonia from the
 #      nixpkgs revision NIX_BUILDER_NIXPKGS names into the profile
 #      /nix/var/nix/profiles/ravnix, whenever that revision is not the one
-#      installed: changing it is how the builder is updated;
+#      installed: changing it is how the builder is updated. The image's Nix
+#      installs only the first time; after that the installed Nix installs
+#      its successor. A failed update keeps the old tools and says so;
 #   4. makes the SSH host key and the cache's signing key on the first start,
 #      in /state, and prints both public halves;
 #   5. starts nix-daemon, harmonia and sshd from that profile, and exits as
@@ -34,8 +36,9 @@ var=${NIX_BUILDER_VAR:-/var}
 run=${NIX_BUILDER_RUN:-/run}
 state=${NIX_BUILDER_STATE:-/state}
 kvm_device=${NIX_BUILDER_KVM_DEVICE:-/dev/kvm}
-tools=/nix/var/nix/profiles/ravnix
-bootstrap=/nix/var/nix/profiles/default/bin
+profiles=${NIX_BUILDER_PROFILES:-/nix/var/nix/profiles}
+tools=$profiles/ravnix
+bootstrap=$profiles/default/bin
 need=(nix nix-daemon sshd ssh-keygen harmonia-cache)
 
 say() { echo "start.sh: $*"; }
@@ -212,16 +215,26 @@ tools_complete() {
 
 # Installs the tools from NIX_BUILDER_NIXPKGS when the profile lacks one or
 # holds another revision. The new profile is built beside the old one and
-# replaces it only once complete, so a failed download leaves the builder
-# as it was.
+# replaces it only once complete. The installed Nix installs its successor,
+# so the store is never opened by a Nix older than the one that ran last;
+# the image's Nix, frozen with the image tag, installs only the first time.
+# A failed install keeps the old tools, and the pin they came from, and the
+# next start tries again; only a first install that fails stops the start.
 install_tools() {
-  local pin=$NIX_BUILDER_NIXPKGS stamp=$state/tools-pin next=$tools-next
-  if tools_complete && [ "$(cat -- "$stamp" 2>/dev/null)" = "$pin" ]; then
-    return
+  local pin=$NIX_BUILDER_NIXPKGS stamp=$state/tools-pin next=$tools-next have nix=$bootstrap/nix
+  have=$(cat -- "$stamp" 2>/dev/null || true)
+  if tools_complete; then
+    [ "$have" != "$pin" ] || return 0
+    nix=$tools/bin/nix
   fi
-  say "installing nix, openssh and harmonia from $pin"
+  say "installing nix, openssh and harmonia from $pin with $("$nix" --version)"
   rm -f -- "$next" "$next"-*-link
-  "$bootstrap/nix" profile add --profile "$next" "$pin#nix" "$pin#openssh" "$pin#harmonia"
+  if ! "$nix" profile add --profile "$next" "$pin#nix" "$pin#openssh" "$pin#harmonia"; then
+    rm -f -- "$next" "$next"-*-link
+    tools_complete || die "installing the tools from $pin failed, and there are no tools to fall back to"
+    say "installing the tools from $pin failed; keeping the tools of ${have:-an unknown pin} until a start succeeds"
+    return 0
+  fi
   ln -sfn -- "$(readlink -f -- "$next")" "$tools.new"
   mv -fT -- "$tools.new" "$tools"
   rm -f -- "$tools"-*-link "$next" "$next"-*-link

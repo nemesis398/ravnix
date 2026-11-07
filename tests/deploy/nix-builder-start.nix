@@ -18,6 +18,10 @@
 #   users is refused; a signing key with another name than
 #   NIX_CACHE_KEY_NAME is refused; nix.conf replaces its link without
 #   writing through it.
+# - Installing the tools, with a fake nix: the image's Nix installs only the
+#   first time, after that the pinned Nix installs its successor; the same
+#   pin installs nothing; a failed install keeps the old tools and their pin,
+#   and fails the start only when there are no old tools.
 # - The compose file's default nixpkgs pin is the one in ravnix's flake.lock,
 #   so the builder runs the Nix and tools the checks ran against.
 #
@@ -35,6 +39,7 @@ in
 pkgs.runCommand "deploy-nix-builder-start"
   {
     script = ../../deploy/compose/nix-builder/start.sh;
+    fakeNix = ./helpers/fake-nix.sh;
     nativeBuildInputs = [ pkgs.shellcheck ];
   }
   ''
@@ -42,7 +47,7 @@ pkgs.runCommand "deploy-nix-builder-start"
       echo "FAIL: docker-compose.yaml has ${toString defaults} defaults for NIX_BUILDER_NIXPKGS, not one that is ${pin}, the nixpkgs of flake.lock" >&2
       exit 1
     ''}
-    shellcheck -s bash "$script"
+    shellcheck -s bash "$script" "$fakeNix"
 
     key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey nix-builder'
     name=cache.example.org-1
@@ -137,7 +142,8 @@ pkgs.runCommand "deploy-nix-builder-start"
     # step ROOT CODE: runs CODE with start.sh's functions and its roots in ROOT.
     step() {
       (
-        export NIX_BUILDER_ETC=$1/etc NIX_BUILDER_VAR=$1/var NIX_BUILDER_STATE=$1/state NIX_BUILDER_RUN=$1/run
+        export NIX_BUILDER_ETC=$1/etc NIX_BUILDER_VAR=$1/var NIX_BUILDER_STATE=$1/state NIX_BUILDER_RUN=$1/run \
+          NIX_BUILDER_PROFILES=$1/profiles
         # shellcheck source=/dev/null
         source "$script"
         eval "$2"
@@ -209,6 +215,48 @@ pkgs.runCommand "deploy-nix-builder-start"
     step "$t" 'write_nix_conf no' >/dev/null
     grep -qx 'system-features = big-parallel benchmark' "$t/etc/nix/nix.conf" || fail "kvm features without kvm"
     grep -q 'min-free' "$t/etc/nix/nix.conf" && fail "min-free without NIX_MIN_FREE"
+
+    # Installing the tools, with a fake nix as the image's.
+    t=$(fixture)
+    mkdir -p "$t/profiles/default/bin" "$t/fake-store"
+    printf '#!%s\nFAKE_NIX_AS=bootstrap exec %s %s "$@"\n' "$bash" "$bash" "$fakeNix" >"$t/profiles/default/bin/nix"
+    chmod +x "$t/profiles/default/bin/nix"
+    export FAKE_NIX_LOG=$t/nix.log FAKE_NIX_STORE=$t/fake-store
+    install() { NIX_BUILDER_NIXPKGS=$1 step "$t" install_tools; }
+    leftover() { find "$t/profiles" -maxdepth 1 -name 'ravnix-*' | grep -q .; }
+
+    got=$(install github:a/b/1) || fail "a first install failed: $got"
+    grep -qxF "bootstrap profile add --profile $t/profiles/ravnix-next github:a/b/1#nix github:a/b/1#openssh github:a/b/1#harmonia" "$t/nix.log" ||
+      fail "the first install did not run on the image's nix: $(cat "$t/nix.log")"
+    [ "$(cat "$t/state/tools-pin")" = github:a/b/1 ] || fail "no pin stamp after the first install"
+    first=$(readlink -f "$t/profiles/ravnix")
+    [ -x "$first/bin/nix-daemon" ] || fail "the first install left no tools in $t/profiles/ravnix"
+    leftover && fail "the first install left links behind: $(ls "$t/profiles")"
+
+    : >"$t/nix.log"
+    install github:a/b/1 >/dev/null || fail "a start with the same pin failed"
+    [ -s "$t/nix.log" ] && fail "a start with the same pin installed again: $(cat "$t/nix.log")"
+
+    got=$(install github:a/b/2) || fail "an update failed: $got"
+    grep -q "^$first/bin/nix profile add --profile $t/profiles/ravnix-next github:a/b/2#nix" "$t/nix.log" ||
+      fail "the update did not run on the pinned nix: $(cat "$t/nix.log")"
+    second=$(readlink -f "$t/profiles/ravnix")
+    [ "$second" != "$first" ] || fail "the update did not switch the tools"
+    [ "$(cat "$t/state/tools-pin")" = github:a/b/2 ] || fail "the update did not stamp its pin"
+
+    got=$(FAKE_NIX_FAIL=1 install github:a/b/3) || fail "a failed update stopped the start: $got"
+    [[ $got == *"keeping the tools of github:a/b/2"* ]] || fail "a failed update said: $got"
+    [ "$(readlink -f "$t/profiles/ravnix")" = "$second" ] || fail "a failed update changed the tools"
+    [ "$(cat "$t/state/tools-pin")" = github:a/b/2 ] || fail "a failed update changed the pin stamp"
+    leftover && fail "a failed update left links behind: $(ls "$t/profiles")"
+
+    t2=$(fixture)
+    mkdir -p "$t2/profiles/default/bin"
+    cp "$t/profiles/default/bin/nix" "$t2/profiles/default/bin/nix"
+    got=$(FAKE_NIX_FAIL=1 NIX_BUILDER_NIXPKGS=github:a/b/1 step "$t2" install_tools) && fail "a failed first install passed"
+    [[ $got == *"no tools to fall back to"* ]] || fail "a failed first install said: $got"
+    unset FAKE_NIX_LOG FAKE_NIX_STORE
+
 
     [ "$failed" = 0 ]
     touch "$out"
