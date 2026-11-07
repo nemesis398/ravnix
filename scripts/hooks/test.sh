@@ -678,6 +678,23 @@ EOF"
 	"script -q -c 'git commit -n -m x' /dev/null"
 	"su -c 'git commit --no-verify -m x' user"
 	"flock /tmp/lock -c 'git commit -n -m x'"
+	'git config include.path -evil.cfg'
+	'git config --global includeIf.gitdir:~/.path -x'
+	'git config --add include.path -x'
+	'git config set include.path -x'
+	"git config alias.ci '-c core.hooksPath=/dev/null commit'"
+	"git config set alias.ci '-c core.hooksPath=/dev/null commit'"
+	"git config --add alias.ci '-c core.hooksPath=/dev/null commit'"
+	"git config alias.ci '-c core.hooksPath=/dev/null commit' && git ci -m x"
+	"git config alias.ci '--no-pager commit --no-verify'"
+	'git config core.hooksPath -x'
+	'git config --local core.hooksPath -hooks'
+	'env -C /tmp/git-tools git commit -n -m x'
+	'flock /tmp/git-lock git commit -n -m x'
+	'sudo -u git-bot git commit --no-verify -m x'
+	'timeout 60 git-ish git push --no-verify'
+	'env -C /tmp/git-config git commit -n -m x'
+	'env -C /tmp/git-commit git push --no-verify'
 )
 
 # Commands the guard must let through.
@@ -777,6 +794,13 @@ echo hi
 EOF"
 	'nix-shell --run "git log -n 3"'
 	'nix develop -c git status'
+	'man git-commit'
+	'env -C /tmp/git-tools git status'
+	'sudo -u git-bot git log -n 3'
+	'git config --get alias.ci -n'
+	'git config user.name -x'
+	"git config alias.lg 'log --oneline -n 20'"
+	"git config alias.amend 'commit --amend --no-edit'"
 )
 
 expect_refused() {

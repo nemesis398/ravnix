@@ -629,7 +629,10 @@ judge_no_verify() {
 }
 
 judge_config() {
-	local args=("$@") n=$# i a action="" pos=() name value section
+	local args=("$@") n=$# i a action="" pos=() name value section subcommand=0
+	# Like git: options, then an optional subcommand word and its options,
+	# then the name and value. Option parsing stops at the name, so a value
+	# that starts with a dash is still the value.
 	for ((i = 0; i < n; i++)); do
 		a="${args[i]}"
 		case "$a" in
@@ -646,19 +649,23 @@ judge_config() {
 		-e | --edit) action="edit" ;;
 		-f | --file | --blob | --type | --default | --comment | --value | --url) i=$((i + 1)) ;;
 		-*) ;;
-		*) pos+=("$a") ;;
+		*)
+			if [[ -z "$action" ]] && ((subcommand == 0)); then
+				subcommand=1
+				case "$a" in
+				list | get) action="get" ;;
+				set) action="set" ;;
+				unset) action="unset" ;;
+				rename-section | remove-section) action="section" ;;
+				edit) action="edit" ;;
+				esac
+				[[ -z "$action" ]] || continue
+			fi
+			pos+=("${args[@]:i}")
+			break
+			;;
 		esac
 	done
-	if [[ -z "$action" && ${#pos[@]} -gt 0 ]]; then
-		case "${pos[0]}" in
-		list | get) action="get" ;;
-		set) action="set" ;;
-		unset) action="unset" ;;
-		rename-section | remove-section) action="section" ;;
-		edit) action="edit" ;;
-		esac
-		[[ -z "$action" ]] || pos=("${pos[@]:1}")
-	fi
 	# A name alone, with no action, reads its value.
 	if [[ -z "$action" ]]; then
 		if ((${#pos[@]} >= 2)); then action="set"; else action="get"; fi
@@ -799,11 +806,12 @@ judge() {
 			judge_git "${words[@]:i+1}"
 			return 0
 			;;
-		git-?*)
-			# A dashed builtin, as in git-core/git-commit.
+		git-commit | git-push | git-merge | git-pull | git-am | git-rebase | git-config)
+			# A dashed builtin, as in git-core/git-commit. A real git may
+			# still follow (a directory or user named like one), so the scan
+			# goes on.
 			w="${w##*/}"
 			judge_git "${w#git-}" "${words[@]:i+1}"
-			return 0
 			;;
 		esac
 	done
