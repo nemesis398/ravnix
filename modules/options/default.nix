@@ -33,6 +33,7 @@ in
     ./server.nix
     ./secrets.nix
     ./matrix.nix
+    ./workbench.nix
     ./backup.nix
     ./dictionary.nix
     ./editor.nix

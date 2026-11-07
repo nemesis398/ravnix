@@ -97,6 +97,10 @@
       sshTarget = "alice@192.0.2.20";
       # The server's address in your NetBird network.
       netbirdAddress = "198.51.100.20";
+      # The git repository Claude Code's Remote Control works from on the
+      # server: every session you start from the phone gets a worktree of
+      # it. An absolute path in a string, or null to leave Remote Control off.
+      remoteControlDir = "/home/alice/src/project";
     };
 
     # The laptop.
@@ -152,11 +156,76 @@
       rbwEmail = "alice@example.org";
     };
 
+    # The server's terminal programs. Each is unset (null, or no account), and
+    # its program is then installed without an account, until you set it. Where a password is
+    # needed, the option names the Bitwarden item that holds it: rbw reads
+    # it when it is needed, and the password is in no flake.
+    #
+    # Your Nextcloud: muninn keeps a copy of the folders you name, synced
+    # every few minutes without a window.
+    nextcloud = {
+      # The base address, without /remote.php or /dav.
+      url = "https://cloud.example.org";
+      # The account's login name, and the item with an app password for it
+      # (Settings, Security, Create new app password).
+      user = "alice";
+      passwordItem = "Nextcloud - app password (server)";
+      # Paths in the account; "/" is all of it. Each lands at the same path
+      # under localRoot (null: Nextcloud in your home directory).
+      folders = [
+        "/Documents"
+        "/Notes"
+      ];
+      localRoot = null;
+    };
+
+    # Your mail accounts in aerc, each by a name of your choice: IMAP with TLS
+    # from the start, SMTP with TLS from the start (465) or STARTTLS (587,
+    # with starttls = true). With several accounts, exactly one has
+    # primary = true. Leave it empty for aerc without an account.
+    mail.main = {
+      address = "alice@example.org";
+      primary = true;
+      # The login of the servers, if it is not the address.
+      login = null;
+      imap = {
+        host = "imap.example.org";
+        port = 993;
+      };
+      smtp = {
+        host = "smtp.example.org";
+        port = 465;
+        starttls = false;
+      };
+      passwordItem = "Mail - alice@example.org";
+    };
+
+    # Your calendar and contacts, copied by vdirsyncer and read in khal. For
+    # Nextcloud both URLs are <url>/remote.php/dav/. carddavUrl is null to
+    # keep no contacts.
+    calendar = {
+      caldavUrl = "https://cloud.example.org/remote.php/dav/";
+      carddavUrl = "https://cloud.example.org/remote.php/dav/";
+      user = "alice";
+      passwordItem = "Nextcloud - app password (server)";
+      # The calendar khal puts a new event in, by its name on the server.
+      defaultCalendar = "personal";
+      # Calendars published as a file, which you only read: a name of your
+      # choice and the address of the feed.
+      feeds.class = {
+        url = "https://calendar.example.org/class.ics";
+        color = "light magenta";
+      };
+    };
+
     # Notifications that must reach you with the lid closed: one Matrix room
     # and one bot per topic. The bots' tokens come from rbw.
     matrix = {
       # Your homeserver's client API.
       homeserver = "https://matrix.example.org";
+      # Your own account there, which iamb logs in as (null: iamb has no
+      # profile). Not one of the bots below.
+      userId = "@alice:example.org";
       # roomId is null until the room exists, then its id ("!...").
       rooms = {
         sessions = {

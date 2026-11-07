@@ -14,6 +14,16 @@ in
       description = "The URL of your Matrix homeserver's client API.";
     };
 
+    userId = mkOption {
+      type = types.nullOr (types.strMatching "@[^:[:space:]]+:[^[:space:]]+");
+      default = null;
+      example = "@alice:example.org";
+      description = ''
+        Your own account on that homeserver, which iamb logs in as. It is
+        not one of the bots below. Null: iamb is installed without a profile.
+      '';
+    };
+
     rooms = mkOption {
       default = { };
       description = "One room per notification topic (sessions, updates, backups, builds, services).";

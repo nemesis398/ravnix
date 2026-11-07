@@ -43,6 +43,9 @@ let
     };
   };
   server = attrs: { ravnix.server = attrs; };
+  nextcloud = attrs: { ravnix.nextcloud = attrs; };
+  mail = attrs: { ravnix.mail.main = attrs; };
+  calendar = attrs: { ravnix.calendar = attrs; };
   retention = name: {
     ravnix.backup.retentionFile = ./fixtures/retention + "/${name}.toml";
   };
@@ -171,6 +174,52 @@ let
     "a skill value that is a function, which JSON cannot hold" = {
       ravnix.claude.skillValues.hook = x: x;
     };
+    "a Nextcloud URL that ends in /remote.php/dav, which nextcloudcmd refuses" = nextcloud {
+      url = "https://cloud.example.org/remote.php/dav";
+    };
+    "a Nextcloud URL with /dav in it, in capitals" = nextcloud {
+      url = "https://cloud.example.org/DAV";
+    };
+    "a Nextcloud URL without a scheme" = nextcloud { url = "cloud.example.org"; };
+    "a Nextcloud account with no folder to sync" = nextcloud { folders = [ ]; };
+    "a Nextcloud folder without the leading /" = nextcloud { folders = [ "Documents" ]; };
+    "a Nextcloud folder with a trailing /" = nextcloud { folders = [ "/Documents/" ]; };
+    "a Nextcloud folder with an empty component" = nextcloud { folders = [ "/Docs//Notes" ]; };
+    "a Nextcloud folder that climbs out with .." = nextcloud { folders = [ "/Documents/../.." ]; };
+    "a Nextcloud folder that is a ." = nextcloud { folders = [ "/." ]; };
+    "a Nextcloud folder with a newline" = nextcloud { folders = [ "/Docs\n/etc" ]; };
+    "a Nextcloud local root given as a Nix path" = nextcloud { localRoot = ./.; };
+    "a relative Nextcloud local root" = nextcloud { localRoot = "Nextcloud"; };
+    "an empty Nextcloud password item" = nextcloud { passwordItem = ""; };
+    "an empty Nextcloud user" = nextcloud { user = ""; };
+    "a mail account address without @" = mail { address = "alice.example.org"; };
+    "a mail server with a port" = mail { imap.host = "imap.example.org:993"; };
+    "a mail server with a scheme" = mail { smtp.host = "smtps://smtp.example.org"; };
+    "a mail port of 0" = mail { smtp.port = 0; };
+    "a mail port of 65536" = mail { imap.port = 65536; };
+    "STARTTLS given as a string" = mail { smtp.starttls = "yes"; };
+    "an empty mail password item" = mail { passwordItem = ""; };
+    "an empty mail login" = mail { login = ""; };
+    "a calendar URL without a scheme" = calendar { caldavUrl = "cloud.example.org/dav"; };
+    "a contacts URL with a space" = calendar { carddavUrl = "https://cloud.example.org/a b"; };
+    "an empty calendar password item" = calendar { passwordItem = ""; };
+    "a calendar feed with a space in its name" = calendar {
+      feeds."two words".url = "https://calendar.example.org/class.ics";
+    };
+    "a calendar feed named like a path" = calendar {
+      feeds."../x".url = "https://calendar.example.org/class.ics";
+    };
+    "a calendar feed without a URL" = calendar {
+      feeds.class.url = "ftp://calendar.example.org/x.ics";
+    };
+    "a Matrix user without its server" = {
+      ravnix.matrix.userId = "@alice";
+    };
+    "a Matrix user without the leading @" = {
+      ravnix.matrix.userId = "alice:example.org";
+    };
+    "a relative Remote Control directory" = server { remoteControlDir = "src/project"; };
+    "a Remote Control directory given as a Nix path" = server { remoteControlDir = ./.; };
   };
 
   allowed = {
@@ -231,6 +280,34 @@ let
       mode = "1920x1080@59.94Hz";
     };
     "a kanshi mode with its rate but no Hz" = output { mode = "1920x1080@60"; };
+    "no Nextcloud and no calendar" = {
+      ravnix.nextcloud = null;
+      ravnix.calendar = null;
+    };
+    "no Matrix account and no Remote Control" = {
+      ravnix.matrix.userId = null;
+      ravnix.server.remoteControlDir = null;
+    };
+    "the whole Nextcloud account as a folder" = nextcloud { folders = [ "/" ]; };
+    "a Nextcloud folder with a space and an umlaut" = nextcloud {
+      folders = [ "/Büro Dokumente/Ablage 2" ];
+    };
+    "a Nextcloud folder that starts with a dot" = nextcloud { folders = [ "/.hidden/..x" ]; };
+    "a Nextcloud under a path" = nextcloud { url = "https://example.org/nextcloud"; };
+    "a Nextcloud local root" = nextcloud { localRoot = "/srv/cloud"; };
+    "a mail login that is not the address" = mail { login = "alice"; };
+    "STARTTLS on port 587" = mail {
+      smtp.port = 587;
+      smtp.starttls = true;
+    };
+    "contacts left out" = calendar { carddavUrl = null; };
+    "a calendar without a default and without feeds" = calendar {
+      defaultCalendar = null;
+      feeds = { };
+    };
+    "a feed with a dot and a dash in its name" = calendar {
+      feeds."class-2.0".url = "http://calendar.example.org/class.ics";
+    };
     "nested JSON skill values" = {
       ravnix.claude.skillValues = {
         vault.root = "/home/alice/notes";
