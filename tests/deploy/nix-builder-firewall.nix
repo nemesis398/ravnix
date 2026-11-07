@@ -2,18 +2,20 @@
 # (helpers/fake-iptables.sh) that starts out as a NAS's filter table does:
 # UGOS's own rules in INPUT and DOCKER-USER.
 #
-# - A first run puts the two chains in place, with their jumps first in
-#   DOCKER-USER and INPUT and UGOS's rules after them in their order. A rerun
-#   changes nothing. --check reports without changing.
-# - It repairs what a NAS does to the chains: a rule put ahead of the jump, a
-#   second copy of the jump, a chain whose rules were changed, a chain that
-#   is gone. The keeper loop does so on its own, logs what it repaired, and
+# - A first run puts the two chains in place, with two jumps to each first
+#   in DOCKER-USER and INPUT, one for the bridge and one for the subnet, and
+#   UGOS's rules after them in their order. A rerun changes nothing. --check
+#   reports without changing.
+# - It repairs what a NAS does to the chains: a rule put ahead of a jump, a
+#   second copy of one, the two swapped, a chain whose rules were changed, a
+#   chain that is gone. The keeper loop does so on its own, logs what it repaired, and
 #   stops on TERM; restarted on a table that has the rule, it changes nothing.
 # - Two runs at once leave the table right after the next pass.
 # - --remove gives back the table as it was, and is harmless twice.
 # - It refuses, before any iptables call, a subnet that is no IPv4 network
 #   (host bits, a leading zero, an octet or prefix out of range, IPv6, extra
-#   words) and an interval that is no number of seconds; a missing
+#   words), a bridge that is no interface name, and an interval that is no
+#   number of seconds; a missing
 #   DOCKER-USER, a missing iptables and a failing one stop it with an error,
 #   which the service's restart policy retries.
 #
@@ -58,12 +60,14 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       echo "$d"
     }
     # fw TABLE ARGS...: firewall.sh against TABLE, with only the variables
-    # subnet (unset: a good one), interval and broken (empty: none) give, and
+    # subnet and bridge (unset: good ones), interval and broken (empty: none)
+    # give, and
     # under the command in the array limit.
     limit=()
     fw() {
       local d=$1
-      local -a vars=(PATH="$PATH" FAKE_IPT="$d" IPTABLES="$fake" NIX_BUILDER_SUBNET="''${subnet-10.0.200.0/24}")
+      local -a vars=(PATH="$PATH" FAKE_IPT="$d" IPTABLES="$fake" NIX_BUILDER_SUBNET="''${subnet-10.0.200.0/24}"
+        NIX_BUILDER_BRIDGE="''${bridge-br-nix-builder}")
       shift
       [ -z "''${interval-}" ] || vars+=(NIX_FIREWALL_INTERVAL="$interval")
       [ -z "''${broken-}" ] || vars+=(FAKE_IPT_FAIL="$broken")
@@ -76,6 +80,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     applied=$(printf '%s\n' \
       "== DOCKER-FORWARD" \
       "== DOCKER-USER" \
+      "-i br-nix-builder -j RAVNIX-NIX-BUILDER-OUT" \
       "-s 10.0.200.0/24 -j RAVNIX-NIX-BUILDER-OUT" \
       "-j UG_FORWARD" \
       "! -i docker0 ! -o docker0 -j ACCEPT" \
@@ -83,6 +88,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       "-j DOCKER-USER" \
       "-j DOCKER-FORWARD" \
       "== INPUT" \
+      "-i br-nix-builder -j RAVNIX-NIX-BUILDER-IN" \
       "-s 10.0.200.0/24 -j RAVNIX-NIX-BUILDER-IN" \
       "-j UG_INPUT" \
       "== OUTPUT" \
@@ -110,11 +116,11 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     fw "$t" --check >/dev/null 2>&1 && fail "--check passed on a table without the rule"
     [ "$(changes "$t")" = 0 ] || fail "--check changed the table: $(cat "$t/log")"
     got=$(fw "$t" --once) || fail "a first run failed: $got"
-    [[ $got == *"put the rule for 10.0.200.0/24 in place"* ]] || fail "a first run said: $got"
+    [[ $got == *"put the rule for br-nix-builder and 10.0.200.0/24 in place"* ]] || fail "a first run said: $got"
     is_applied "$t" "a first run"
     : >"$t/log"
     got=$(fw "$t" --once) || fail "a rerun failed: $got"
-    [[ $got == *"the rule for 10.0.200.0/24 is in place"* ]] || fail "a rerun said: $got"
+    [[ $got == *"the rule for br-nix-builder and 10.0.200.0/24 is in place"* ]] || fail "a rerun said: $got"
     [ "$(changes "$t")" = 0 ] || fail "a rerun changed the table: $(cat "$t/log")"
     fw "$t" --check >/dev/null || fail "--check failed on a table with the rule"
     [ "$(changes "$t")" = 0 ] || fail "--check changed the table: $(cat "$t/log")"
@@ -131,17 +137,22 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     }
     repair "the jump no longer first" 'sed -i "1{h;d};\$G" DOCKER-USER'
     repair "the jump twice" 'echo "-s 10.0.200.0/24 -j RAVNIX-NIX-BUILDER-IN" >>INPUT'
+    repair "the interface jump twice" 'echo "-i br-nix-builder -j RAVNIX-NIX-BUILDER-OUT" >>DOCKER-USER'
+    repair "the interface jump gone" 'sed -i "/-i br-nix-builder/d" INPUT'
+    repair "the subnet jump gone" 'sed -i "/-s 10.0.200.0/d" DOCKER-USER'
+    repair "the two jumps swapped" 'sed -i "1{h;d};2G" INPUT'
+    repair "the subnet jump no longer second" 'sed -i "2{h;d};\$G" DOCKER-USER'
     repair "the jump twice, both first" 'sed -i "1p" INPUT'
     repair "the jump gone" 'sed -i 1d DOCKER-USER'
     repair "a rule of the chain gone" 'sed -i "/192.168/d" RAVNIX-NIX-BUILDER-OUT'
     repair "a rule added to the chain" 'sed -i "1i -j RETURN" RAVNIX-NIX-BUILDER-IN'
     repair "a rule of the chain changed" 'sed -i "s|10.0.0.0/8|10.0.0.0/9|" RAVNIX-NIX-BUILDER-OUT'
-    repair "both chains and jumps gone" 'sed -i 1d DOCKER-USER INPUT && rm RAVNIX-NIX-BUILDER-OUT RAVNIX-NIX-BUILDER-IN'
+    repair "both chains and jumps gone" 'sed -i 1,2d DOCKER-USER INPUT && rm RAVNIX-NIX-BUILDER-OUT RAVNIX-NIX-BUILDER-IN'
 
     # The keeper repairs on its own and stops on TERM.
     t=$(table)
     # Started without fw, so that $! is the script itself.
-    env -i PATH="$PATH" FAKE_IPT="$t" IPTABLES="$fake" NIX_BUILDER_SUBNET=10.0.200.0/24 \
+    env -i PATH="$PATH" FAKE_IPT="$t" IPTABLES="$fake" NIX_BUILDER_SUBNET=10.0.200.0/24 NIX_BUILDER_BRIDGE=br-nix-builder \
       NIX_FIREWALL_INTERVAL=1 "$bash" "$script" >"$TMPDIR/keeper.log" 2>&1 &
     keeper=$!
     settled() { # table: --check passes within ten seconds
@@ -166,7 +177,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       done
       return 1
     }
-    logged "firewall.sh: put the rule for 10.0.200.0/24 back in place" ||
+    logged "firewall.sh: put the rule for br-nix-builder and 10.0.200.0/24 back in place" ||
       fail "the keeper did not log its repair: $(cat "$TMPDIR/keeper.log")"
     kill -TERM "$keeper"
     rc=0
@@ -175,9 +186,9 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     rc=0
     wait "$keeper" || rc=$?
     [ "$rc" = 0 ] || fail "the keeper exited $rc on TERM"
-    want=$(printf '%s\n' "firewall.sh: keeping the rule for 10.0.200.0/24, checked every 1s" \
-      "firewall.sh: put the rule for 10.0.200.0/24 in place" \
-      "firewall.sh: put the rule for 10.0.200.0/24 back in place")
+    want=$(printf '%s\n' "firewall.sh: keeping the rule for br-nix-builder and 10.0.200.0/24, checked every 1s" \
+      "firewall.sh: put the rule for br-nix-builder and 10.0.200.0/24 in place" \
+      "firewall.sh: put the rule for br-nix-builder and 10.0.200.0/24 back in place")
     [ "$(cat "$TMPDIR/keeper.log")" = "$want" ] ||
       fail "the keeper's log: wanted $want, got $(cat "$TMPDIR/keeper.log")"
 
@@ -186,10 +197,10 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     t=$(table)
     fw "$t" --once >/dev/null
     : >"$t/log"
-    env -i PATH="$PATH" FAKE_IPT="$t" IPTABLES="$fake" NIX_BUILDER_SUBNET=10.0.200.0/24 \
+    env -i PATH="$PATH" FAKE_IPT="$t" IPTABLES="$fake" NIX_BUILDER_SUBNET=10.0.200.0/24 NIX_BUILDER_BRIDGE=br-nix-builder \
       NIX_FIREWALL_INTERVAL=1 "$bash" "$script" >"$TMPDIR/keeper.log" 2>&1 &
     keeper=$!
-    logged "firewall.sh: the rule for 10.0.200.0/24 is in place" ||
+    logged "firewall.sh: the rule for br-nix-builder and 10.0.200.0/24 is in place" ||
       fail "the restarted keeper did not log the rule: $(cat "$TMPDIR/keeper.log")"
     # Two more passes, which change nothing either and log nothing.
     for i in $(seq 50); do
@@ -199,8 +210,8 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     kill -TERM "$keeper"
     wait "$keeper" || fail "the keeper on a table with the rule exited $?"
     [ "$(changes "$t")" = 0 ] || fail "a keeper on a table with the rule changed it: $(cat "$t/log")"
-    want=$(printf '%s\n' "firewall.sh: keeping the rule for 10.0.200.0/24, checked every 1s" \
-      "firewall.sh: the rule for 10.0.200.0/24 is in place")
+    want=$(printf '%s\n' "firewall.sh: keeping the rule for br-nix-builder and 10.0.200.0/24, checked every 1s" \
+      "firewall.sh: the rule for br-nix-builder and 10.0.200.0/24 is in place")
     [ "$(cat "$TMPDIR/keeper.log")" = "$want" ] ||
       fail "the restarted keeper's log: wanted $want, got $(cat "$TMPDIR/keeper.log")"
 
@@ -231,9 +242,9 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       t=$(table)
       got=$(fw "$t" --once 2>&1) || rc=$?
       if [ "$rc" != 1 ] || [[ $got != *"$1"* ]]; then
-        fail "subnet '$subnet', interval '$interval': wanted exit 1 and \"$1\", got exit $rc: $got"
+        fail "subnet '$subnet', interval '$interval', bridge '$bridge': wanted exit 1 and \"$1\", got exit $rc: $got"
       fi
-      [ ! -s "$t/log" ] || fail "subnet '$subnet', interval '$interval': iptables was called: $(cat "$t/log")"
+      [ ! -s "$t/log" ] || fail "subnet '$subnet', interval '$interval', bridge '$bridge': iptables was called: $(cat "$t/log")"
     }
     for subnet in "" 10.0.200.0 10.0.200/24 10.0.256.0/24 10.0.200.0/33 10.0.200.0/7 10.0.200.0/31 \
       fd00::/64 " 10.0.200.0/24" "10.0.200.0/24 -j ACCEPT" $'10.0.200.0/24\n-j ACCEPT' 10.0.200.0/24/8; do
@@ -248,6 +259,10 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       refuse "NIX_FIREWALL_INTERVAL"
     done
     interval=
+    for bridge in "" -oops "br nix" br/nix "br-nix-builder;x" br-nix-builder-0 $'br\nnix' .hidden; do
+      refuse "NIX_BUILDER_BRIDGE"
+    done
+    unset bridge
 
     for subnet in 10.0.0.0/8 192.168.254.0/24 172.20.0.0/16; do
       t=$(table)
@@ -255,6 +270,9 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       grep -qxF -- "-s $subnet -j RAVNIX-NIX-BUILDER-OUT" "$t/chains/DOCKER-USER" || fail "no jump for $subnet"
     done
     unset subnet
+    t=$(table)
+    bridge=br-nix-builder1 fw "$t" --once >/dev/null || fail "a bridge name of 15 characters was refused"
+    grep -qxF -- "-i br-nix-builder1 -j RAVNIX-NIX-BUILDER-IN" "$t/chains/INPUT" || fail "no jump for the bridge br-nix-builder1"
 
     t=$(table)
     got=$(fw "$t" --bogus 2>&1) && fail "an unknown argument passed"
@@ -271,7 +289,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     got=$(fw "$t" --check 2>&1) && fail "--check passed without DOCKER-USER"
 
     t=$(table)
-    got=$(env -i PATH="$PATH" IPTABLES="$TMPDIR/no-such-iptables" NIX_BUILDER_SUBNET=10.0.200.0/24 \
+    got=$(env -i PATH="$PATH" IPTABLES="$TMPDIR/no-such-iptables" NIX_BUILDER_SUBNET=10.0.200.0/24 NIX_BUILDER_BRIDGE=br-nix-builder \
       "$bash" "$script" --once 2>&1) && fail "a missing iptables passed"
     [[ $got == *"no-such-iptables is not installed"* ]] || fail "a missing iptables: $got"
 

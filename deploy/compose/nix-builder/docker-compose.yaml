@@ -48,7 +48,8 @@
 #   NIX_STORE_DIR               host directory that becomes /nix
 #   NIX_BUILDER_SUBNET          the project network, an IPv4 subnet no other
 #                               network on the host uses, e.g. 10.0.200.0/24;
-#                               the egress rule matches on it
+#                               the egress rule matches on it and on the
+#                               bridge, br-nix-builder
 #   NIX_BUILDER_AUTHORIZED_KEY  the clients' public key, one line
 #   NIX_CACHE_KEY_NAME          name of the cache key, e.g. cache.example.org-1
 #   NIX_BUILDER_NIXPKGS         optional: the nixpkgs that nix, openssh,
@@ -82,6 +83,7 @@
 name: nix-builder
 
 x-nix-image: &nix-image nixos/nix:2.35.4
+x-bridge: &bridge br-nix-builder
 x-nixpkgs: &nixpkgs ${NIX_BUILDER_NIXPKGS:-github:NixOS/nixpkgs/f9a75f41be3a74eab55d3a7679d34ad6cc0da977}
 
 services:
@@ -100,13 +102,14 @@ services:
       - -c
       - "[ -e /seed/.ravnix-seeded ] || { cp -a /nix/. /seed/ && touch /seed/.ravnix-seeded; }"
 
-  # Keeps the egress rule in the host's firewall: from NIX_BUILDER_SUBNET,
-  # nothing reaches 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10
-  # or this host itself, except replies to connections that came in
-  # (firewall.sh says how). It runs in the host's network namespace with
-  # NET_ADMIN, from an image of its own: the builder's store is writable by
-  # whoever holds the builder key, so nothing of it runs here. The rule stays
-  # when this container stops. To take it out:
+  # Keeps the egress rule in the host's firewall: from the project's bridge
+  # and from NIX_BUILDER_SUBNET, nothing reaches 10.0.0.0/8, 172.16.0.0/12,
+  # 192.168.0.0/16, 100.64.0.0/10 or this host itself, except replies to
+  # connections that came in (firewall.sh says how). It runs in the host's
+  # network namespace with NET_ADMIN, from an image of its own: the
+  # builder's store is writable by whoever holds the builder key, so nothing
+  # of it runs here. The rule stays when this container stops. To take it
+  # out:
   #   docker compose stop nix-firewall
   #   docker compose run --rm --no-deps nix-firewall bash /firewall.sh --remove
   nix-firewall:
@@ -125,6 +128,7 @@ services:
       - /tmp:size=1m
     environment:
       NIX_BUILDER_SUBNET: ${NIX_BUILDER_SUBNET:?set NIX_BUILDER_SUBNET in .env}
+      NIX_BUILDER_BRIDGE: *bridge
     volumes:
       - ./firewall.sh:/firewall.sh:ro
     command: ["bash", "/firewall.sh"]
@@ -224,9 +228,12 @@ services:
 
 networks:
   default:
-    # A subnet of its own, so the egress rule has a stable source. No IPv6,
-    # so nothing leaves the container but IPv4, which the rule covers.
+    # A subnet and a bridge name of its own, so the egress rule has a stable
+    # source and interface. No IPv6, so nothing leaves the container but
+    # IPv4, which the rule covers.
     enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: *bridge
     ipam:
       config:
         - subnet: ${NIX_BUILDER_SUBNET:?set NIX_BUILDER_SUBNET in .env}
