@@ -53,11 +53,14 @@ claude-code-verify "$(nix build --print-out-paths .#claude-code.download)" \
   "$(nix eval --raw .#claude-code.version)"
 ```
 
-An unreachable manifest (exit 3) fails the gate. The gate is the only check
-ravnix has, and a push that bumps Claude Code while the manifest cannot be
-reached would otherwise go out unverified; the push waits until
-`downloads.claude.ai` answers. Task 6.1's update timer tells exit 3 (try
-again at the next run) from exit 1 (do not roll this binary).
+The gate records each version and download it verified
+(`scripts/README.md`). An unreachable manifest (exit 3) passes the gate for a
+download verified before and fails it for any other: the gate is the only
+check ravnix has, and a push that bumps Claude Code while the manifest
+cannot be reached would otherwise go out unverified, so that push waits until
+`downloads.claude.ai` answers. A mismatch (exit 1) always fails. Task 6.1's
+update timer tells exit 3 (try again at the next run) from exit 1 (do not
+roll this binary).
 
 ## Tests and bench
 

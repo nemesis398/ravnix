@@ -24,6 +24,12 @@ that gate never sees. The private flake checks that one itself, with the
 same tool on its own `packages.claude-code.download` (Task 6.1's update
 timer).
 
+The gate remembers what it verified, in
+`${XDG_STATE_HOME:-$HOME/.local/state}/ravnix/claude-code-verified`. While
+`downloads.claude.ai` is unreachable it passes for a version and download
+it verified before, and fails for any other; a mismatch always fails
+(`scripts/README.md`).
+
 ## The skill values
 
 The skills, the hooks and the status line read their personal values from

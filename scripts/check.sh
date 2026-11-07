@@ -29,9 +29,13 @@
 #     flake.lock, against Anthropic's release manifest. A private flake whose
 #     claude-code input ravnix's follows checks its own version itself. The
 #     check needs the network, so it runs here and not in the
-#     build sandbox (tools/claude-code-verify/README.md). An unreachable
-#     manifest (exit 3) fails the gate: it is the only check there is, and a
-#     push that bumps Claude Code would otherwise go out unverified.
+#     build sandbox (tools/claude-code-verify/README.md). Each verified
+#     pair of version and download is recorded in
+#     ${XDG_STATE_HOME:-$HOME/.local/state}/ravnix/claude-code-verified. An
+#     unreachable manifest (exit 3) passes the gate for a pair recorded
+#     there and fails it for any other: the check is the only one there is,
+#     and a push that bumps Claude Code would otherwise go out unverified. A
+#     mismatch (exit 1) always fails, and removes the pair from the record.
 #
 # The gate stops at the first failing step and exits with that step's status,
 # and with 0 when every step passed.
@@ -175,8 +179,57 @@ step_flake() {
 	nix_ flake check --print-build-logs --keep-going
 }
 
+# The record of the pairs the claude-code step verified: one line
+# "<version> <download>" each, nothing secret. It is a cache: a record lost
+# or unwritable only makes a run with the manifest unreachable fail. A
+# record with any line of another shape counts as empty, and the next write
+# replaces it.
+verified_record() {
+	local dir="${XDG_STATE_HOME:-}"
+	# A relative XDG_STATE_HOME is to be ignored (XDG Base Directory).
+	[[ "$dir" == /* ]] || dir="${HOME:+$HOME/.local/state}"
+	[[ "$dir" == /* ]] || return 1
+	printf '%s/ravnix/claude-code-verified\n' "$dir"
+}
+
+# Prints the pairs of record $1, or nothing when it is missing, unreadable
+# or corrupt.
+verified_pairs() {
+	local shape='[^[:space:][:cntrl:]]+ /[^[:cntrl:]]*'
+	[[ -f "$1" && -r "$1" ]] || return 0
+	! LC_ALL=C grep -a -q -v -x -E -- "$shape" "$1" || return 0
+	LC_ALL=C grep -a -x -E -- "$shape" "$1" || true
+}
+
+# Whether record $1 holds pair $2.
+was_verified() {
+	local line
+	while IFS= read -r line; do
+		[[ "$line" != "$2" ]] || return 0
+	done < <(verified_pairs "$1")
+	return 1
+}
+
+# Writes record $1 with pair $2 added (when not empty) and pair $3 removed,
+# through a temporary file beside it.
+rewrite_record() {
+	local file="$1" add="$2" drop="$3" tmp line
+	mkdir -p -- "${file%/*}" 2>/dev/null || return 1
+	tmp="$(mktemp -- "$file.XXXXXX" 2>/dev/null)" || return 1
+	if {
+		while IFS= read -r line; do
+			[[ "$line" == "$add" || "$line" == "$drop" ]] || printf '%s\n' "$line"
+		done < <(verified_pairs "$file")
+		[[ -z "$add" ]] || printf '%s\n' "$add"
+	} >"$tmp" && mv -fT -- "$tmp" "$file" 2>/dev/null; then
+		return 0
+	fi
+	rm -f -- "$tmp"
+	return 1
+}
+
 step_claude-code() {
-	local verify download version status=0
+	local verify download version status=0 record pair
 	verify="$(nix_ build --no-link --print-out-paths .#claude-code-verify)"
 	download="$(nix_ build --no-link --print-out-paths .#claude-code.download)"
 	version="$(nix_ eval --raw .#claude-code.version)"
@@ -186,12 +239,48 @@ step_claude-code() {
 	fi
 	echo "Claude Code $version, downloaded as $download"
 	"$verify/bin/claude-code-verify" "$download" "$version" || status=$?
-	if ((status == 3)); then
-		printf 'check.sh: %s\n' \
-			"Anthropic's release manifest is unreachable, so Claude Code $version is not verified." \
-			"The gate fails rather than let an unverified binary out; push again once" \
-			"downloads.claude.ai answers." >&2
-	fi
+	pair="$version $download"
+	record="$(verified_record)" || record=""
+	# A pair the record could not hold as one line of its shape is never
+	# written: reading it back would make the whole record corrupt.
+	local recordable=1
+	[[ "$version" =~ ^[^[:space:][:cntrl:]]+$ && "$download" == /* && "$download" != *[[:cntrl:]]* ]] ||
+		recordable=""
+	case "$status" in
+	0)
+		[[ -n "$record" && -n "$recordable" ]] && rewrite_record "$record" "$pair" "" ||
+			printf 'check.sh: %s\n' \
+				"could not record Claude Code $version as verified${record:+ in $record};" \
+				"with the manifest unreachable, a later run fails for it." >&2
+		;;
+	1)
+		# A pair that stayed recorded would pass a later run with the manifest
+		# unreachable, so the whole record goes when the pair cannot.
+		if [[ -n "$record" ]] && was_verified "$record" "$pair"; then
+			if rewrite_record "$record" "" "$pair" || rm -f -- "$record" 2>/dev/null; then
+				printf 'check.sh: %s\n' \
+					"Claude Code $version, verified on an earlier run, is no longer recorded as verified." >&2
+			else
+				printf 'check.sh: %s\n' \
+					"Claude Code $version, verified on an earlier run, could not be removed from $record; delete that file." \
+					"Until then a run with the manifest unreachable passes for it." >&2
+			fi
+		fi
+		;;
+	3)
+		if [[ -n "$record" ]] && was_verified "$record" "$pair"; then
+			printf 'check.sh: %s\n' \
+				"Anthropic's release manifest is unreachable, but Claude Code $version, downloaded as $download, was verified on an earlier run (recorded in $record)." \
+				"The gate passes for it, as it would for no other download." >&2
+			status=0
+		else
+			printf 'check.sh: %s\n' \
+				"Anthropic's release manifest is unreachable, and Claude Code $version, downloaded as $download, was never verified here${record:+ (no record of it in $record)}." \
+				"The gate fails rather than let an unverified binary out; push again once" \
+				"downloads.claude.ai answers." >&2
+		fi
+		;;
+	esac
 	return "$status"
 }
 

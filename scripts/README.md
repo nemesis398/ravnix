@@ -6,7 +6,7 @@ of each script.
 
 | Script | Does |
 | --- | --- |
-| `check.sh` | the gate: `--fast` (boundary check, style check, shellcheck) on every commit and stop, the full gate (adds `nix flake check`, then `claude-code-verify` on the Claude Code download against Anthropic's live release manifest) before every push |
+| `check.sh` | the gate: `--fast` (boundary check, style check, shellcheck) on every commit and stop, the full gate (adds `nix flake check`, then `claude-code-verify` on the Claude Code download against Anthropic's live release manifest, remembering what it verified) before every push |
 | `check-public.sh` | the public-boundary check: no deny-list value in any file, file name or link target |
 | `check-style.sh` | the style check: no hex color outside `modules/theme/`, no radius other than 0, nothing translucent (the keyword `transparent` too) but the inside of the lock ring, no transition or animation, no Mermaid init block but the shared one (`docs/mermaid-theme.json`); prints `file:line:rule`. A child that shows its parent uses the role color or `inherit`, never `transparent` |
 | `lib/git-snapshot.sh` | lays out the index or a commit as plain files, for the checks to read what git will commit or push |
@@ -15,7 +15,32 @@ of each script.
 | `../.githooks/` | `pre-commit` (fast gate), `commit-msg` (boundary check on the message), `pre-push` (each pushed commit, message and ref name, then the full gate) |
 
 Tests: `tests/*.test.sh` and `hooks/test.sh`, run by the flake check
-`scripts-tests`.
+`scripts-tests`. `tests/lib.sh` points `XDG_STATE_HOME` into each test
+file's scratch directory, so no test's gate records into your state.
+
+## Verified downloads
+
+The full gate records each pair of Claude Code version and download store
+path that `claude-code-verify` verified, one line `<version> <download>`
+per pair, in `${XDG_STATE_HOME:-$HOME/.local/state}/ravnix/claude-code-verified`.
+The file holds nothing secret. A store path names the download's bytes: the
+download is a fixed-output derivation, so the same path is the same file.
+
+| The verifier says | The gate |
+| --- | --- |
+| verified (exit 0) | passes, and records the pair |
+| mismatch (exit 1) | fails, and removes the pair if it was recorded; the whole record when the pair cannot go alone, and when neither can, it names the file to delete |
+| manifest unreachable (exit 3) | passes for a recorded pair and fails for any other, and says which case applied |
+| anything else | fails, and leaves the record alone |
+
+A record with any line of another shape (a NUL byte, a CR, a line of one
+word, an empty line) counts as empty, and the next verified run replaces it.
+A record the gate cannot write (a directory in its place, a read-only
+state directory) does not fail a verified run; the gate says so, and a later
+run with the manifest unreachable fails for that pair. Neither does a pair
+the record could not hold as one line of its shape, such as a version with
+a space in it: the gate does not record it. Delete the file to
+make the gate check every download live again.
 
 ## Known gaps
 
@@ -34,6 +59,18 @@ Findings that are not fixed, so nobody mistakes them for covered.
   not catch a value in a new file that was never staged.
 - `check.sh` lays out the index with one `git cat-file` per file, which is
   fine for hundreds of files and slow for many thousands.
+- Two full gates at once may each rewrite the record of verified downloads,
+  and the last one wins, so a pair one of them recorded can be lost. That
+  only makes a later run with the manifest unreachable fail for it.
+- The record is per machine and per user: a pair verified on one host does
+  not let the gate pass on another while the manifest is unreachable.
+- Any program running as the user, an agent session included, can write
+  the record. The match is exact, so malformed content cannot pass, but a
+  forged line can: `<new version> <new download>` lets the gate pass for a
+  binary nobody verified, while `downloads.claude.ai` is unreachable. That is
+  all a forged line can do, since a reachable manifest is still checked
+  live, and it is no larger than the user account itself, the gate's trust
+  boundary: a program that can write the record can edit `check.sh` as well.
 - The full gate runs `nix flake check` on the work tree (the tracked files
   with their work-tree contents), not on exactly the commits being pushed.
 - `commit-msg` stops reading at git's exact cut line, because under

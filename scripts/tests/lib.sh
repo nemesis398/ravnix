@@ -18,6 +18,11 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 scratch="$(mktemp -d -p "${TMPDIR:-/tmp}" ravnix-tests.XXXXXX)"
 trap 'chmod -R u+rwX -- "$scratch" 2>/dev/null; rm -rf -- "$scratch"' EXIT
 
+# The full gate records the Claude Code downloads it verified under
+# XDG_STATE_HOME (scripts/README.md); a test's gate records into its scratch,
+# never into the user's state.
+export XDG_STATE_HOME="$scratch/state"
+
 # Set by capture for the test that is running.
 status=0
 out=""

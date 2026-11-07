@@ -19,11 +19,15 @@ repo=""
 list=""
 bin=""
 tmp=""
+state=""
+record=""
 
 # Creates a repository holding the gate's scripts and one clean file, all
 # committed, with ravnix.denyList pointing at a deny list outside it. bin is
 # a directory, first on PATH in gate, that holds a fake nix logging its
-# arguments to $bin/nix.log; tmp is the gate's TMPDIR.
+# arguments to $bin/nix.log; tmp is the gate's TMPDIR, state its
+# XDG_STATE_HOME, and record the file there that remembers the verified
+# downloads.
 new_repo() {
 	local dir
 	dir="$(mktemp -d -p "$scratch")"
@@ -31,6 +35,8 @@ new_repo() {
 	list="$dir/deny-list.txt"
 	bin="$dir/bin"
 	tmp="$dir/tmp"
+	state="$dir/state"
+	record="$state/ravnix/claude-code-verified"
 	mkdir -p "$tmp"
 	printf '%s\n' 'alice@example.org' '198.51.100.' >"$list"
 	git init -q -b main "$repo"
@@ -78,7 +84,28 @@ in_repo() {
 	cd "$repo" && "$@"
 }
 gate() {
-	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" scripts/check.sh "$@"
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" scripts/check.sh "$@"
+}
+# Writes the record of verified downloads, one line per argument.
+remember() {
+	mkdir -p "${record%/*}"
+	printf '%s\n' "$@" >"$record"
+}
+# expect_record <line>...: the record holds exactly these lines.
+expect_record() {
+	local want got
+	want="$(printf '%s\n' "$@")"
+	got="$(cat -- "$record" 2>/dev/null)" || got="(no record)"
+	[[ "$got" == "$want" ]] || {
+		printf '  expected the record to hold:\n%s\n  it holds:\n%s\n' "$want" "$got"
+		return 1
+	}
+}
+expect_no_record() {
+	[[ ! -e "$record" ]] || {
+		echo "  expected no record, there is: $(cat -- "$record" 2>&1)"
+		return 1
+	}
 }
 
 # Arguments.
@@ -447,8 +474,9 @@ an_unreachable_manifest_fails_the_full_gate_and_says_so() {
 	gate
 	expect_status 3
 	expect_err "release manifest is unreachable"
-	expect_err "Claude Code 1.2.3 is not verified"
+	expect_err "Claude Code 1.2.3, downloaded as $bin/download, was never verified here"
 	expect_err "claude-code failed (exit 3)"
+	expect_no_record
 }
 
 a_verifier_that_cannot_run_fails_the_full_gate() {
@@ -457,6 +485,181 @@ a_verifier_that_cannot_run_fails_the_full_gate() {
 	gate
 	expect_status 2
 	expect_err "claude-code failed (exit 2)"
+	expect_no_record
+}
+
+# The record of verified downloads.
+
+a_verified_download_is_recorded() {
+	new_repo
+	fake_nix 0 0
+	gate
+	expect_status 0
+	expect_record "1.2.3 $bin/download"
+	gate
+	expect_status 0
+	expect_record "1.2.3 $bin/download"
+}
+
+a_new_download_joins_the_record() {
+	new_repo
+	remember "1.2.2 /nix/store/older-claude"
+	fake_nix 0 0
+	gate
+	expect_status 0
+	expect_record "1.2.2 /nix/store/older-claude" "1.2.3 $bin/download"
+}
+
+an_unreachable_manifest_passes_for_a_download_verified_before() {
+	new_repo
+	remember "1.2.3 $bin/download"
+	fake_nix 0 3
+	gate
+	expect_status 0
+	expect_err "release manifest is unreachable"
+	expect_err "Claude Code 1.2.3, downloaded as $bin/download, was verified on an earlier run"
+	expect_out "steps passed"
+	expect_record "1.2.3 $bin/download"
+}
+
+an_unreachable_manifest_fails_for_a_download_never_verified() {
+	new_repo
+	# The same download as another version, and the version as another
+	# download: neither is this pair.
+	remember "1.2.2 $bin/download" "1.2.3 /nix/store/other-claude" "1.2.3 $bin/download-x"
+	fake_nix 0 3
+	gate
+	expect_status 3
+	expect_err "was never verified here"
+	expect_err "claude-code failed (exit 3)"
+	expect_no_out "steps passed"
+}
+
+a_mismatch_fails_and_records_nothing() {
+	new_repo
+	fake_nix 0 1
+	gate
+	expect_status 1
+	expect_no_record
+}
+
+a_mismatch_forgets_the_download_it_had_verified_before() {
+	new_repo
+	remember "1.2.2 /nix/store/older-claude" "1.2.3 $bin/download"
+	fake_nix 0 1
+	gate
+	expect_status 1
+	expect_err "no longer recorded as verified"
+	expect_record "1.2.2 /nix/store/older-claude"
+}
+
+a_mismatch_it_cannot_rewrite_the_record_for_deletes_the_record() {
+	new_repo
+	remember "1.2.2 /nix/store/older-claude" "1.2.3 $bin/download"
+	# No file beside the record can be made, as on a full disk; the directory
+	# stays writable, so the record itself can go.
+	write_script "$bin/mktemp" \
+		'case "$*" in *claude-code-verified*) exit 1 ;; esac' \
+		"exec '$(command -v mktemp)' \"\$@\""
+	fake_nix 0 1
+	gate
+	expect_status 1
+	expect_err "no longer recorded as verified"
+	expect_no_record
+}
+
+a_mismatch_it_cannot_forget_says_to_delete_the_record() {
+	new_repo
+	remember "1.2.3 $bin/download"
+	chmod 555 "${record%/*}"
+	fake_nix 0 1
+	gate
+	chmod 755 "${record%/*}"
+	expect_status 1
+	expect_err "could not be removed from $record; delete that file"
+}
+
+a_version_it_could_not_read_back_is_not_recorded() {
+	new_repo
+	write_script "$bin/nix" "printf '%s\n' \"\$*\" >>'$bin/nix.log'" \
+		'case "$*" in' \
+		"*'flake check'*) exit 0 ;;" \
+		"*'build'*'.#claude-code-verify'*) echo '$bin/verify' ;;" \
+		"*'build'*'.#claude-code.download'*) echo '$bin/download' ;;" \
+		"*'eval'*'.#claude-code.version'*) printf '1.2.3 beta' ;;" \
+		'esac'
+	gate
+	expect_status 0
+	expect_err "could not record Claude Code 1.2.3 beta as verified"
+	expect_no_record
+}
+
+a_corrupt_record_counts_as_empty() {
+	new_repo
+	mkdir -p "${record%/*}"
+	local bad
+	# The pair itself is in each one, so only the shape of the whole record
+	# can tell: a NUL byte, a line of one word, an empty line, a CR line end.
+	for bad in '1.2.4 /x\0y' '1.2.4' '' '1.2.4 /x\r'; do
+		printf "1.2.3 %s\\n$bad\\n" "$bin/download" >"$record"
+		fake_nix 0 3
+		gate
+		expect_status 3
+		expect_err "was never verified here"
+	done
+	fake_nix 0 0
+	gate
+	expect_status 0
+	expect_record "1.2.3 $bin/download"
+}
+
+a_record_without_a_final_newline_still_counts() {
+	new_repo
+	mkdir -p "${record%/*}"
+	printf '1.2.3 %s' "$bin/download" >"$record"
+	fake_nix 0 3
+	gate
+	expect_status 0
+	expect_err "was verified on an earlier run"
+}
+
+a_record_that_cannot_be_written_does_not_fail_a_verified_download() {
+	new_repo
+	mkdir -p "$record"
+	fake_nix 0 0
+	gate
+	expect_status 0
+	expect_err "could not record Claude Code 1.2.3 as verified"
+	[[ -d "$record" && -z "$(ls -A -- "$record")" ]] || {
+		echo "  the record's path, a directory, was changed"
+		return 1
+	}
+	fake_nix 0 3
+	gate
+	expect_status 3
+	expect_err "was never verified here"
+}
+
+without_xdg_state_home_the_record_lives_under_home() {
+	new_repo
+	local home="${repo%/*}/home"
+	mkdir -p "$home"
+	fake_nix 0 0
+	capture in_repo env -u XDG_STATE_HOME PATH="$bin:$PATH" TMPDIR="$tmp" HOME="$home" scripts/check.sh
+	expect_status 0
+	[[ "$(cat -- "$home/.local/state/ravnix/claude-code-verified" 2>&1)" == "1.2.3 $bin/download" ]] || {
+		echo "  expected the record under \$HOME/.local/state"
+		return 1
+	}
+	# A relative XDG_STATE_HOME is no base directory (XDG Base Directory).
+	fake_nix 0 3
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" HOME="$home" XDG_STATE_HOME=state scripts/check.sh
+	expect_status 0
+	expect_err "was verified on an earlier run"
+	[[ ! -e "$repo/state" ]] || {
+		echo "  the gate wrote a record under a relative XDG_STATE_HOME"
+		return 1
+	}
 }
 
 a_download_nix_does_not_build_fails_the_full_gate() {
@@ -548,6 +751,19 @@ tests=(
 	a_claude_code_mismatch_fails_the_full_gate
 	an_unreachable_manifest_fails_the_full_gate_and_says_so
 	a_verifier_that_cannot_run_fails_the_full_gate
+	a_verified_download_is_recorded
+	a_new_download_joins_the_record
+	an_unreachable_manifest_passes_for_a_download_verified_before
+	an_unreachable_manifest_fails_for_a_download_never_verified
+	a_mismatch_fails_and_records_nothing
+	a_mismatch_forgets_the_download_it_had_verified_before
+	a_mismatch_it_cannot_rewrite_the_record_for_deletes_the_record
+	a_mismatch_it_cannot_forget_says_to_delete_the_record
+	a_version_it_could_not_read_back_is_not_recorded
+	a_corrupt_record_counts_as_empty
+	a_record_without_a_final_newline_still_counts
+	a_record_that_cannot_be_written_does_not_fail_a_verified_download
+	without_xdg_state_home_the_record_lives_under_home
 	a_download_nix_does_not_build_fails_the_full_gate
 	a_failing_flake_check_skips_the_claude_code_check
 	the_full_gate_without_nix_fails_before_any_step
