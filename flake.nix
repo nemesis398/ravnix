@@ -229,6 +229,20 @@
         key = "ravnix/nixosModules.hardware-ideapad-pro-5-16ahp9";
         imports = [ ./modules/hardware/ideapad-pro-5-16ahp9 ];
       };
+      # The server's side: herdr's server, aerc, iamb, khal and vdirsyncer,
+      # Podman and the toolchains, a copy of Nextcloud, Claude Code's Remote
+      # Control (modules/workbench). It brings nixosModules.common along.
+      nixosModules.workbench = {
+        key = "ravnix/nixosModules.workbench";
+        imports = [ (import ./modules/workbench { inherit self; }) ];
+      };
+      # The server shape, muninn: the common module and the workbench, an ssh
+      # daemon that takes keys only, and Nix with flakes. A private flake adds
+      # how it boots (hosts/server/default.nix).
+      nixosModules.server = {
+        key = "ravnix/nixosModules.server";
+        imports = [ (import ./hosts/server { inherit self; }) ];
+      };
 
       packages.${system} =
         # A tool named claude-code is an error of lib/ravnix-packages.nix, which

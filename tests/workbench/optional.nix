@@ -1,0 +1,310 @@
+# What the workbench makes of a user who has set only some of its values. The
+# server shape is evaluated, never built, with the template's me.nix and one
+# value changed at a time:
+#
+#   - no Nextcloud, no calendar, no Remote Control directory: the unit that
+#     needs the value is not there, and the other units still are;
+#   - no mail accounts, no Matrix account: the program is installed without
+#     an account and nothing breaks;
+#   - several mail accounts: exactly one is primary, and each has its own
+#     password item;
+#   - what the units are made of: herdr and Remote Control run through the
+#     user's profile and are kept by a switch, the sync units hold the name of
+#     a vault item and never a password, and the Nextcloud password goes to
+#     the client in its environment and not on its command line.
+{
+  self,
+  inputs,
+  pkgs,
+  lib,
+  ...
+}:
+let
+  me = import ../../templates/default/me.nix;
+  user = me.ravnix.user.username;
+
+  host =
+    module:
+    inputs.nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        self.nixosModules.server
+        ../../templates/default/me.nix
+        {
+          # Just enough of a host for its configuration to evaluate.
+          boot.loader.grub.enable = false;
+          fileSystems."/" = {
+            device = "none";
+            fsType = "tmpfs";
+          };
+          system.stateVersion = "26.05";
+          warnings = lib.mkForce [ ];
+          ravnix.editor.languages = lib.mkForce [ "nix" ];
+        }
+        module
+      ];
+    };
+
+  hmOf = h: h.config.home-manager.users.${user};
+  unitsOf =
+    h: lib.attrNames (hmOf h).systemd.user.services ++ lib.attrNames (hmOf h).systemd.user.timers;
+  failed = h: map (a: a.message) (lib.filter (a: !a.assertion) h.config.assertions);
+  mail = account: {
+    address = "${account}@example.org";
+    imap.host = "imap.example.org";
+    smtp.host = "smtp.example.org";
+    passwordItem = "Mail - ${account}";
+  };
+
+  everything = host { };
+  noNextcloud = host { ravnix.nextcloud = lib.mkForce null; };
+  noCalendar = host { ravnix.calendar = lib.mkForce null; };
+  noRemoteControl = host { ravnix.server.remoteControlDir = lib.mkForce null; };
+  noMail = host { ravnix.mail = lib.mkForce { }; };
+  noMatrix = host { ravnix.matrix.userId = lib.mkForce null; };
+  nothing = host {
+    ravnix = {
+      nextcloud = lib.mkForce null;
+      calendar = lib.mkForce null;
+      server.remoteControlDir = lib.mkForce null;
+      mail = lib.mkForce { };
+      matrix.userId = lib.mkForce null;
+    };
+  };
+  twoPrimary = host {
+    ravnix.mail = lib.mkForce {
+      a = mail "a" // {
+        primary = true;
+      };
+      b = mail "b" // {
+        primary = true;
+      };
+    };
+  };
+  nonePrimary = host {
+    ravnix.mail = lib.mkForce {
+      a = mail "a";
+      b = mail "b";
+    };
+  };
+  oneOfTwo = host {
+    ravnix.mail = lib.mkForce {
+      a = mail "a";
+      b = mail "b" // {
+        primary = true;
+      };
+    };
+  };
+  alone = host { ravnix.mail = lib.mkForce { only = mail "only"; }; };
+  badName = host { ravnix.mail = lib.mkForce { "two words" = mail "x"; }; };
+  starttls = host {
+    ravnix.mail = lib.mkForce {
+      main = lib.recursiveUpdate (mail "main") {
+        smtp.port = 587;
+        smtp.starttls = true;
+      };
+    };
+  };
+
+  has = h: unit: lib.elem unit (unitsOf h);
+  aercAccounts = h: (hmOf h).home.file."${(hmOf h).xdg.configHome}/aerc/accounts.conf".text;
+  vdirsyncerConfig = h: (hmOf h).xdg.configFile."vdirsyncer/config".text;
+  service = h: name: (hmOf h).systemd.user.services.${name};
+  # A unit entry that may be given once or repeated: home-manager keeps the
+  # repeated ones as a list.
+  one = v: if lib.isList v then lib.head v else v;
+  exec = h: name: one (service h name).Service.ExecStart;
+  script = name: exec everything name;
+
+  closure = pkgs.closureInfo {
+    rootPaths = [ everything.config.ravnix.workbench.nextcloudSync.package ];
+  };
+  laptopOnly = [
+    "sway"
+    "waybar"
+    "fuzzel"
+    "dunst"
+    "kanshi"
+    "greetd"
+    "helium"
+    "obsidian"
+    "ghostty"
+  ];
+
+  failures = lib.flatten [
+    # Complete: every unit is there.
+    (map (u: lib.optional (!has everything u) "the template's host lacks the unit ${u}") [
+      "herdr-server"
+      "nextcloud-sync"
+      "vdirsyncer"
+      "claude-remote-control"
+    ])
+    (lib.optional (
+      failed everything != [ ]
+    ) "the template's server host fails: ${toString (failed everything)}")
+
+    # Each missing value takes away its own unit and no other.
+    (lib.optional (has noNextcloud "nextcloud-sync") "nextcloud-sync exists without ravnix.nextcloud")
+    (lib.optional (!has noNextcloud "vdirsyncer") "vdirsyncer is gone without ravnix.nextcloud")
+    (lib.optional (has noCalendar "vdirsyncer") "vdirsyncer exists without ravnix.calendar")
+    (lib.optional (
+      !(hmOf noCalendar).programs.khal.enable
+    ) "khal is not installed without ravnix.calendar")
+    (lib.optional (
+      (hmOf noCalendar).accounts.calendar.accounts != { }
+    ) "khal has an account without ravnix.calendar")
+    (lib.optional (has noRemoteControl "claude-remote-control") "Remote Control exists without a directory")
+    (lib.optional (
+      !has noRemoteControl "herdr-server"
+    ) "herdr is gone without a Remote Control directory")
+    (lib.optional (
+      (hmOf noMail).accounts.email.accounts != { }
+    ) "aerc has an account without ravnix.mail")
+    (lib.optional (!(hmOf noMail).programs.aerc.enable) "aerc is not installed without ravnix.mail")
+    (lib.optional (
+      (hmOf noMatrix).programs.iamb.settings != { }
+    ) "iamb has a profile without ravnix.matrix.userId")
+    (lib.optional (
+      !(hmOf noMatrix).programs.iamb.enable
+    ) "iamb is not installed without ravnix.matrix.userId")
+    (lib.optional (
+      failed nothing != [ ]
+    ) "a host with none of the optional values fails: ${toString (failed nothing)}")
+    (lib.optional (
+      lib.filter (u: u != "herdr-server") (unitsOf nothing) != [ ]
+    ) "a host with none of the optional values has units besides herdr: ${toString (unitsOf nothing)}")
+
+    # Mail accounts.
+    (lib.optional (
+      !lib.any (lib.hasInfix "exactly one needs primary") (failed twoPrimary)
+    ) "two primary accounts are accepted")
+    (lib.optional (
+      !lib.any (lib.hasInfix "exactly one needs primary") (failed nonePrimary)
+    ) "several accounts and none primary are accepted")
+    (lib.optional (
+      failed oneOfTwo != [ ]
+    ) "one primary of two is refused: ${toString (failed oneOfTwo)}")
+    (lib.optional (failed alone != [ ]) "a single account is refused: ${toString (failed alone)}")
+    (lib.optional (
+      !(hmOf alone).accounts.email.accounts.only.primary
+    ) "the only account is not primary, which home-manager demands of one")
+    (lib.optional (
+      !lib.any (lib.hasInfix "two words") (failed badName)
+    ) "an account name with a space is accepted")
+    (lib.optional (
+      !lib.all (lib.hasInfix "Mail - ") [ (aercAccounts oneOfTwo) ]
+    ) "aerc does not read the passwords of the accounts from the vault")
+    (lib.optional (
+      !(
+        lib.hasInfix "Mail - a" (aercAccounts oneOfTwo) && lib.hasInfix "Mail - b" (aercAccounts oneOfTwo)
+      )
+    ) "the accounts do not each name their own vault item")
+    (lib.optional (
+      !(
+        lib.hasInfix "outgoing = smtp+plain://" (aercAccounts starttls)
+        && lib.hasInfix ":587" (aercAccounts starttls)
+      )
+    ) "STARTTLS on 587 is not smtp://...:587 in aerc: ${aercAccounts starttls}")
+    (lib.optional (
+      !(lib.hasInfix "outgoing = smtps+plain://" (aercAccounts everything))
+    ) "TLS from the start is not smtps:// in aerc: ${aercAccounts everything}")
+    (lib.optional (
+      !(lib.hasInfix "source = imaps://" (aercAccounts everything))
+    ) "IMAP is not over TLS from the start in aerc")
+
+    # The units.
+    (lib.optional (
+      (service everything "herdr-server").Unit.X-SwitchMethod != "keep-old"
+    ) "a switch can restart herdr's server")
+    (lib.optional (
+      !lib.hasPrefix "/etc/profiles/per-user/${user}/bin/herdr " (exec everything "herdr-server")
+    ) "herdr's server does not run through the user's profile")
+    (lib.optional (
+      !lib.hasPrefix "/etc/profiles/per-user/${user}/bin/claude " (
+        exec everything "claude-remote-control"
+      )
+    ) "Remote Control does not run through the user's profile")
+    (lib.optional (
+      !(lib.elem "ANTHROPIC_API_KEY" (
+        lib.toList (service everything "claude-remote-control").Service.UnsetEnvironment
+      ))
+    ) "Remote Control keeps ANTHROPIC_API_KEY")
+    (lib.optional (
+      !(lib.hasInfix "--spawn worktree" (exec everything "claude-remote-control"))
+    ) "Remote Control does not spawn worktrees")
+    (lib.optional (
+      (service everything "claude-remote-control").Unit.ConditionPathExists != [
+        "%h/.claude/.credentials.json"
+        "${me.ravnix.server.remoteControlDir}/.git"
+      ]
+    ) "Remote Control starts without its login and its repository")
+    (lib.optional (
+      (service everything "nextcloud-sync").Unit.X-SwitchMethod != "keep-old"
+    ) "a switch can start a Nextcloud sync")
+    (lib.optional (
+      (service everything "vdirsyncer").Unit.X-SwitchMethod != "keep-old"
+    ) "a switch can start a calendar sync")
+
+    # The vdirsyncer configuration: the vault, never a password.
+    (lib.optional (
+      !lib.hasInfix "password.fetch = [\"command\"," (vdirsyncerConfig everything)
+    ) "vdirsyncer does not fetch its password by command")
+    (lib.optional (
+      !lib.hasInfix "\"${me.ravnix.calendar.passwordItem}\"" (vdirsyncerConfig everything)
+    ) "vdirsyncer does not name the vault item")
+    (lib.optional (lib.hasInfix "password =" (vdirsyncerConfig everything)) "vdirsyncer has a literal password")
+    (lib.optional (
+      !lib.hasInfix "[pair feed_class]" (vdirsyncerConfig everything)
+    ) "a feed has no pair")
+    (lib.optional (
+      !lib.hasInfix "collections = null" (vdirsyncerConfig everything)
+    ) "a feed is discovered like an account")
+    (lib.optional (lib.hasInfix "contacts" (
+      vdirsyncerConfig (host {
+        ravnix.calendar.carddavUrl = lib.mkForce null;
+      })
+    )) "contacts are synced without a CardDAV URL")
+    (lib.optional (
+      !lib.hasInfix "contacts_remote" (vdirsyncerConfig everything)
+    ) "contacts are not synced with a CardDAV URL")
+  ];
+in
+pkgs.runCommand "workbench-optional" { } (''
+  status=0
+  fail() {
+    echo "$*" >&2
+    status=1
+  }
+  # What the sync scripts do with the password: they read it from the
+  # vault into a variable and hand it over in the environment of the one
+  # command. Never an argument, never a trace of the commands.
+  nc=${script "nextcloud-sync"}
+  grep -q 'NC_PASSWORD=\$password' "$nc" || fail "the Nextcloud password does not go in NC_PASSWORD"
+  grep -q -e '--non-interactive' "$nc" || fail "nextcloudcmd is not run non-interactively"
+  ! grep -q -E -e '--password|--apppassword|-p +"?\$password|://[^ ]*\$password' "$nc" ||
+    fail "the Nextcloud password is an argument"
+  ! grep -q -e 'set -x' -e 'xtrace' -e 'set -o verbose' "$nc" || fail "the Nextcloud sync traces its commands"
+  ! grep -q -E 'export +(NC_)?PASSWORD' "$nc" || fail "the Nextcloud sync exports the password to every command"
+  grep -q 'exit 75' "$nc" || fail "the Nextcloud sync does not stop on a locked vault"
+  vs=${script "vdirsyncer"}
+  grep -q 'exit 75' "$vs" || fail "the calendar sync does not stop on a locked vault"
+  grep -q 'vdirsyncer discover' "$vs" || fail "the calendar sync does not discover"
+  ! grep -q -e 'set -x' -e 'xtrace' "$vs" || fail "the calendar sync traces its commands"
+  rc=${one (service everything "claude-remote-control").Service.ExecStartPre}
+  grep -q 'remoteDialogSeen' "$rc" || fail "Remote Control does not answer its consent prompt"
+  grep -q 'is not JSON' "$rc" || fail "Remote Control does not refuse a ~/.claude.json that is not JSON"
+  # The Nextcloud client the module installs by default is a Qt program; it
+  # brings Qt and some KDE libraries, and none of the laptop's programs.
+  for name in $(sed 's|^/nix/store/[a-z0-9]*-||' ${closure}/store-paths); do
+    case "$name" in
+      ${lib.concatStringsSep "|" (map (n: "${n}-[0-9]*") laptopOnly)})
+        fail "the Nextcloud client's closure holds $name" ;;
+    esac
+  done
+  ${lib.optionalString (failures != [ ]) ''
+    printf '%s\n' ${lib.escapeShellArgs failures} >&2
+    status=1
+  ''}
+  [ "$status" = 0 ]
+  touch "$out"
+'')
