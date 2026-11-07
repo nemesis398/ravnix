@@ -58,14 +58,8 @@ let
     (placed "box-a")
     (withKey null)
   ];
-  malformed = builtins.tryEval (
-    (host [
-      module
-      hosts
-      (placed "box-a")
-      (withKey "cache.example.org-1:not base64")
-    ]).config.nix.settings.trusted-public-keys
-  );
+  # The type itself, so a refusal is the type's and not any other failure.
+  keyAccepted = off.options.ravnix.nixCache.publicKey.type.check;
   overridden = host [
     module
     hosts
@@ -99,7 +93,9 @@ let
     ++ lib.optional (
       lib.filter (lib.hasInfix "ravnix.nixCache.publicKey") keyless.failed == [ ]
     ) "a cache without a key failed no assertion naming ravnix.nixCache.publicKey; failed: ${toString keyless.failed}"
-    ++ lib.optional malformed.success "a malformed cache key was accepted"
+    ++ expect "the example key is accepted" (keyAccepted key) true
+    ++ expect "a malformed cache key" (keyAccepted "cache.example.org-1:not base64") false
+    ++ expect "a key without its name" (keyAccepted "rL9Ff7wZpxDq4Wv3mN2hK5sT8yU1oE6aG0jC3bV7nXA=") false
     ++ expect "a host's own connect-timeout" (overridden.config.nix.settings.connect-timeout or null) 30;
 in
 pkgs.runCommand "services-nix-cache" { } (

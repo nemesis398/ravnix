@@ -6,6 +6,7 @@
 #
 #   host = import ./helpers/host.nix { inherit inputs lib self; };
 #   (host [ module ... ]).config   the host's configuration
+#   (host [ module ... ]).options  its options, to test a type directly
 #   (host [ module ... ]).failed   the messages of its failed assertions
 {
   inputs,
@@ -33,6 +34,6 @@ let
   };
 in
 {
-  inherit (evaluated) config;
+  inherit (evaluated) config options;
   failed = map (a: a.message) (lib.filter (a: !a.assertion) evaluated.config.assertions);
 }

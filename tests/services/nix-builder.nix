@@ -60,9 +60,12 @@ let
   off = host [ module ];
   hostKeyless = with' "box-a" { hostKey = null; };
   inStore = with' "box-a" { sshKey = "${builtins.storeDir}/abc-key"; };
-  refused =
-    values:
-    !(builtins.tryEval (builtins.deepSeq (with' "box-a" values).config.ravnix.nixBuilder true)).success;
+  # The types themselves, so a refusal is the type's and not any other
+  # failure. A list's own check only asks for a list; its elements are
+  # checked by the element type.
+  sub = off.options.ravnix.nixBuilder.type.getSubOptions [ ];
+  accepts = option: value: sub.${option}.type.check value;
+  systemAccepted = sub.systems.type.nestedTypes.elemType.check;
 
   machines = h: h.config.environment.etc."nix/machines".text or null;
   line =
@@ -99,19 +102,21 @@ let
     ++ lib.optional (
       lib.filter (lib.hasInfix "ravnix.nixBuilder.sshKey") inStore.failed == [ ]
     ) "a private key path in the Nix store failed no assertion naming ravnix.nixBuilder.sshKey; failed: ${toString inStore.failed}"
-    ++ lib.optional (
-      !refused {
-        hostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey nix-builder";
-      }
-    ) "a host key pasted as a raw line, not base64, was accepted"
-    ++ lib.optional (!refused { sshKey = "etc/nix/key"; }) "a relative private key path was accepted"
+    ++ expect "the base64 host key is accepted" (accepts "hostKey" hostKey) true
+    ++ expect "a host key pasted as a raw line, not base64" (accepts "hostKey"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey nix-builder"
+    ) false
+    ++ expect "the default key path is accepted" (accepts "sshKey" "/etc/nix/nix-builder_ed25519") true
+    ++ expect "a relative private key path" (accepts "sshKey" "etc/nix/key") false
     # The machines file separates its fields by spaces, and lists systems
     # with commas, so a value with either would shift every field after it.
-    ++ lib.optional (!refused { sshKey = "/etc/nix/builder key"; }) "a private key path with a space was accepted"
-    ++ lib.optional (!refused { systems = [ "x86_64-linux,i686-linux" ]; }) "a system with a comma was accepted"
-    ++ lib.optional (!refused { systems = [ "x86_64-linux " ]; }) "a system with a space was accepted"
-    ++ lib.optional (!refused { systems = [ ]; }) "an empty list of systems was accepted"
-    ++ lib.optional (!refused { maxJobs = 0; }) "maxJobs = 0 was accepted";
+    ++ expect "a private key path with a space" (accepts "sshKey" "/etc/nix/builder key") false
+    ++ expect "a system name is accepted" (systemAccepted "aarch64-linux") true
+    ++ expect "a system with a comma" (systemAccepted "x86_64-linux,i686-linux") false
+    ++ expect "a system with a space" (systemAccepted "x86_64-linux ") false
+    ++ expect "an empty list of systems" (accepts "systems" [ ]) false
+    ++ expect "a user that ssh would read as an option" (accepts "sshUser" "-oProxyCommand=x") false
+    ++ expect "maxJobs = 0" (accepts "maxJobs" 0) false;
 in
 pkgs.runCommand "services-nix-builder" { } (
   if failures == [ ] then
