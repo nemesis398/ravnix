@@ -1,0 +1,7 @@
+# Nix build output
+result
+result-*
+
+# Local agent state: the brainstorming companion and git worktrees
+.superpowers/
+.worktrees/

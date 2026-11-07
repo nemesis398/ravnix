@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Runs the fast gate, scripts/check.sh --fast, before every commit: the
+# public-boundary check over what the commit holds, and shellcheck. Git runs
+# it with the index the commit is made from, which for git commit -a or
+# git commit -- PATH is a temporary one, so that is what gets checked. Turn
+# the hooks on once per clone with:
+#
+#   git config core.hooksPath .githooks
+#
+# Changing this file so it checks less needs the maintainer's explicit
+# approval (AGENTS.md, rule 6).
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+exec scripts/check.sh --fast

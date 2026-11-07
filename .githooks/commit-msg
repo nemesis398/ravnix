@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Checks the commit message against the deny list that git config
+# ravnix.denyList names, with scripts/check-public.sh, because a message is as
+# public as a file. Git keeps nothing below the scissors line that
+# git commit --verbose adds, and that part is a diff, which may show a value
+# being removed, so it is not checked. Comment lines above it are, since a
+# commit.cleanup setting can keep them. Without ravnix.denyList it says so
+# and lets the commit through.
+#
+# Changing this file so it checks less needs the maintainer's explicit
+# approval (AGENTS.md, rule 6).
+
+set -euo pipefail
+
+if (($# != 1)) || [[ ! -f "$1" ]]; then
+	echo "commit-msg: expected the commit message file as the only argument" >&2
+	exit 2
+fi
+msg="$(realpath -- "$1")"
+top="$(git rev-parse --show-toplevel)"
+cd "$top"
+# shellcheck source=scripts/lib/git-snapshot.sh
+. scripts/lib/git-snapshot.sh
+
+deny_list="$(ravnix_deny_list)" || exit 2
+if [[ -z "$deny_list" ]]; then
+	ravnix_skip_note commit-msg
+	exit 0
+fi
+
+work="$(mktemp -d -p "${TMPDIR:-/tmp}" ravnix-commit-msg.XXXXXX)"
+trap 'rm -rf -- "$work"' EXIT
+sed -E '/^[^[:space:]]+ -{24} >8 -{24}$/,$d' -- "$msg" >"$work/message"
+
+status=0
+(cd "$work" && "$top/scripts/check-public.sh" "$deny_list" message) || status=$?
+if ((status == 1)); then
+	echo "commit-msg: the commit message holds a value from the deny list; write it without." >&2
+fi
+exit "$status"

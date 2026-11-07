@@ -77,13 +77,23 @@ it.
 ## Build and test
 
 ```sh
-scripts/check.sh --fast                      # what pre-commit runs
+scripts/check.sh --fast                      # what pre-commit and the Stop hook run
 scripts/check.sh                             # the full gate, as pre-push runs it
 nix build .#checks.x86_64-linux.NAME         # one Nix check
 ```
 
-Turn the hooks on once per clone with `git config core.hooksPath .githooks`.
-The ravnix module does it for the checkout that `ravnix.dev.checkout` names.
+Turn the hooks on once per clone with `git config core.hooksPath .githooks`,
+and point `git config ravnix.denyList` at your deny list; without it the gate
+says the boundary check was skipped. The ravnix module sets both for the
+checkout that `ravnix.dev.checkout` names. Before a push, `pre-push` also
+checks every commit and message the push sends.
+
+A test is a file, and adding one never touches `flake.nix`. Every
+`tests/AREA/NAME.nix` is the check `AREA-NAME`: a function of
+`{ self, inputs, pkgs, lib, system, ... }` that returns a derivation;
+helpers and fixtures go in a subdirectory of the area. A shell test is
+`scripts/tests/NAME.test.sh` on top of `scripts/tests/lib.sh`, and the check
+`scripts-tests` runs it in the sandbox.
 
 A host is built from a private flake, against a local checkout of this one:
 

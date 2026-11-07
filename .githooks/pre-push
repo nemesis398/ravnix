@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Runs before every push. First it checks every commit the push sends that
+# the remote does not have yet: what each commit adds or changes, and its
+# message, against the deny list that git config ravnix.denyList names, and
+# the message of each annotated tag it sends. A commit that never went
+# through pre-commit, from a rebase, a cherry-pick or plumbing, is caught
+# here, and so is a value that one commit adds and a later one removes, since
+# the remote keeps both. Then it runs the full gate, scripts/check.sh, on the
+# work tree.
+#
+# Git passes the remote's name and URL as arguments and one line per ref on
+# stdin: <local ref> <local sha> <remote ref> <remote sha>.
+#
+# Changing this file so it checks less needs the maintainer's explicit
+# approval (AGENTS.md, rule 6).
+
+set -euo pipefail
+shopt -s inherit_errexit nullglob
+
+remote="${1:-}"
+top="$(git rev-parse --show-toplevel)"
+cd "$top"
+# shellcheck source=scripts/lib/git-snapshot.sh
+. scripts/lib/git-snapshot.sh
+
+deny_list="$(ravnix_deny_list)" || exit 2
+if [[ -z "$deny_list" ]]; then
+	ravnix_skip_note pre-push
+	exec scripts/check.sh
+fi
+
+work="$(mktemp -d -p "${TMPDIR:-/tmp}" ravnix-pre-push.XXXXXX)"
+trap 'rm -rf -- "$work"' EXIT
+mkdir -p "$work/commits" "$work/messages"
+
+all_zero='^0+$'
+declare -A seen=()
+commits=()
+while read -r _ local_sha _ remote_sha; do
+	[[ -n "${local_sha:-}" && ! "$local_sha" =~ $all_zero ]] || continue
+	if [[ "$(git cat-file -t "$local_sha")" == tag ]]; then
+		git cat-file tag "$local_sha" | sed '1,/^$/d' >"$work/messages/tag-$local_sha"
+	fi
+	if [[ -n "${remote_sha:-}" && ! "$remote_sha" =~ $all_zero ]] &&
+		git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+		range=("$remote_sha..$local_sha")
+	else
+		# A new ref, or one whose old value was never fetched: everything
+		# that no remote-tracking ref of this remote has. Pushed to a URL,
+		# that is the whole history.
+		range=("$local_sha" --not "--remotes=${remote:-*}")
+	fi
+	while IFS= read -r commit; do
+		[[ -z "${seen[$commit]:-}" ]] || continue
+		seen[$commit]=1
+		commits+=("$commit")
+	done < <(git rev-list "${range[@]}")
+	wait $! || {
+		echo "pre-push: git rev-list ${range[*]} failed" >&2
+		exit 2
+	}
+done
+
+for commit in "${commits[@]}"; do
+	ravnix_snapshot_commit "$commit" "$work/commits/$commit"
+	git log -1 --format=%B "$commit" >"$work/messages/$commit"
+done
+
+# Each commit's directory is checked as a tree of its own, so LICENSE and
+# AUTHORS at its top are left out as in the work tree; a message is a file.
+targets=()
+for commit in "${commits[@]}"; do
+	targets+=("commits/$commit")
+done
+for message in "$work"/messages/*; do
+	targets+=("messages/${message##*/}")
+done
+echo "pre-push: checking ${#commits[@]} commits against the deny list"
+status=0
+if ((${#targets[@]} > 0)); then
+	(cd "$work" && "$top/scripts/check-public.sh" "$deny_list" "${targets[@]}") ||
+		status=$?
+fi
+if ((status != 0)); then
+	if ((status == 1)); then
+		echo "pre-push: a commit in this push holds a value from the deny list;" \
+			"rewrite it (git rebase -i) before you push." >&2
+	fi
+	exit "$status"
+fi
+
+exec scripts/check.sh
