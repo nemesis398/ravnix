@@ -90,6 +90,7 @@
 #     shape's business and is not set up here.
 {
   config,
+  options,
   lib,
   pkgs,
   ...
@@ -105,7 +106,7 @@ let
   # compiler with LLVM, 2.3 GiB of the 3.9, ltex-ls-plus a JDK (0.9 GiB).
   # lua/plugins/store.lua turns off in the editor what a language left out
   # would have started.
-  languages = with pkgs; {
+  installable = with pkgs; {
     bash = [
       bash-language-server
       shellcheck
@@ -137,6 +138,13 @@ let
     # TypeScript, YAML) and JSON.
     web = [ prettier ];
   };
+
+  # The names must be those of the option (modules/options/editor.nix).
+  languages =
+    assert lib.assertMsg
+      (lib.attrNames installable == lib.sort lib.lessThan options.ravnix.editor.languages.default)
+      "modules/common/nvim.nix and modules/options/editor.nix name different languages: ${lib.concatStringsSep ", " (lib.attrNames installable)} against ${lib.concatStringsSep ", " options.ravnix.editor.languages.default}";
+    installable;
 
   # Parsers and queries, by the name nvim-treesitter gives the language.
   # LazyVim's own list, plus what its extras ask for (json5, ninja, rst,
@@ -266,23 +274,8 @@ in
   imports = [
     ../theme/options.nix
     ../options/dictionary.nix
+    ../options/editor.nix
   ];
-
-  options.ravnix.editor.languages = lib.mkOption {
-    type = lib.types.listOf (lib.types.enum (lib.attrNames languages));
-    default = lib.attrNames languages;
-    example = [
-      "lua"
-      "nix"
-    ];
-    description = ''
-      The languages the editor gets language servers, formatters and linters
-      for. All of them by default. A host that needs fewer says which: the
-      Odin toolchain behind `odin` is 2.3 GiB, and `languagetool` brings a
-      JDK. The editor turns off what a language left out would have started,
-      so a file of that language opens with no error.
-    '';
-  };
 
   config = {
     programs.neovim = {

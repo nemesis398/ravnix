@@ -28,6 +28,7 @@ in
     ./matrix.nix
     ./backup.nix
     ./dictionary.nix
+    ./editor.nix
     ./claude.nix
     ./placeholders.nix
     # The accent is a value the user sets in me.nix, so the option is here too;

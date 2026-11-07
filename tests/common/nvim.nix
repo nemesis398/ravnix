@@ -205,7 +205,7 @@ lib.throwIf (warnings != [ ])
             };
             # A host that needs a few languages.
             users.erin = user {
-              ravnix.editor.languages = [
+              ravnix.editor.languages = lib.mkForce [
                 "lua"
                 "nix"
               ];

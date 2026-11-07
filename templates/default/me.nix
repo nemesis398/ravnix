@@ -158,6 +158,21 @@
     # list gets them without a rebuild.
     dictionary.file = "/home/alice/src/ravnix-private/dictionary.txt";
 
+    # The languages the editor installs language servers, formatters and
+    # linters for. All of them; drop the ones you do not edit to keep the
+    # editor small (the Odin toolchain behind "odin" is 2.3 GiB).
+    editor.languages = [
+      "bash"
+      "json"
+      "languagetool"
+      "lua"
+      "markdown"
+      "nix"
+      "odin"
+      "python"
+      "web"
+    ];
+
     # Values the public Claude Code skills read (destinations, ids, house
     # rules), rendered to JSON. A skill that needs a missing value says
     # which key to set.

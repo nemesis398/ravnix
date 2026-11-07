@@ -42,13 +42,13 @@ let
 
   all = closureOf "all" (editorOf { });
   noOdin = closureOf "no-odin" (editorOf {
-    ravnix.editor.languages = without "odin";
+    ravnix.editor.languages = lib.mkForce (without "odin");
   });
   noLanguageTool = closureOf "no-languagetool" (editorOf {
-    ravnix.editor.languages = without "languagetool";
+    ravnix.editor.languages = lib.mkForce (without "languagetool");
   });
   luaAndNix = closureOf "lua-and-nix" (editorOf {
-    ravnix.editor.languages = [
+    ravnix.editor.languages = lib.mkForce [
       "lua"
       "nix"
     ];
@@ -56,11 +56,20 @@ let
 
   unknown = builtins.tryEval (
     builtins.deepSeq
-      (evaluated { ravnix.editor.languages = [ "cobol" ]; }).config.ravnix.editor.languages
+      (evaluated { ravnix.editor.languages = lib.mkForce [ "cobol" ]; }).config.ravnix.editor.languages
       true
   );
+
+  # Each language on its own gives an editor: the module knows every name the
+  # option offers (it also refuses to evaluate if the two lists differ).
+  eachAlone = map (
+    language: (editorOf { ravnix.editor.languages = lib.mkForce [ language ]; }).drvPath
+  ) everything;
 in
 assert lib.assertMsg (!unknown.success) "a language the option does not know (cobol) was accepted";
+assert lib.assertMsg (
+  builtins.length (lib.unique eachAlone) == builtins.length everything
+) "two languages gave the same editor";
 pkgs.runCommand "common-nvim-closure"
   {
     nativeBuildInputs = [ pkgs.gnugrep ];

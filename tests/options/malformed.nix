@@ -165,6 +165,9 @@ let
         }
       ];
     };
+    "an editor language ravnix does not know" = {
+      ravnix.editor.languages = [ "cobol" ];
+    };
     "a skill value that is a function, which JSON cannot hold" = {
       ravnix.claude.skillValues.hook = x: x;
     };
@@ -205,6 +208,15 @@ let
       };
     };
     "port 65535" = port 65535;
+    "an editor of two languages" = {
+      ravnix.editor.languages = [
+        "lua"
+        "nix"
+      ];
+    };
+    "an editor with no language tools" = {
+      ravnix.editor.languages = [ ];
+    };
     "a room id of room version 12, without a server part" =
       room "!Abc_123-xyz" "@ravnix-sessions:example.org";
     "a room id with a server part" = room "!abcdef:example.org" "@ravnix-sessions:example.org";
