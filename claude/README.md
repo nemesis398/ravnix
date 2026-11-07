@@ -10,6 +10,13 @@ earlier setup and stay Bash, behind their tests, until their port to Odin
 | `homeModules.claude-code` (`modules/common/claude-code.nix`) | `claude` on PATH, from `packages.claude-code`; the auto-updater off; the settings file writable |
 | `homeModules.claude-skills` (`modules/common/claude-skills.nix`) | the skill values file, the hooks and the status line, wired in the settings |
 
+`homeModules.common` imports `homeModules.claude-skills`, which brings
+`homeModules.claude-code` along, so a host that imports `common` has Claude
+Code, its hooks and its skills, and the shell's `claude` function starts that
+build (`modules/common/bash/secrets.bash`). To turn it off, set
+`programs.claude-code.enable = false`; the function then starts the first
+`claude` on the PATH.
+
 Import `homeModules.claude-code` from the flake, not the file. The flake's
 module sets the package to `packages.claude-code`, the build with the
 download it was made from attached, which `tools/claude-code-verify` checks

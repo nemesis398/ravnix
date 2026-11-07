@@ -1,7 +1,9 @@
 # What both hosts share, for home-manager: the shell, the prompt, git and the
 # command-line tools, as the Fedora laptop has them (design spec, "modules/
-# common"). Neovim (./nvim.nix) is a module of its own that this one imports,
-# and Claude Code is another beside it.
+# common"). Neovim (./nvim.nix) is a module of its own that this one imports.
+# Claude Code is another beside it (./claude-code.nix and ./claude-skills.nix),
+# which the flake's homeModules.common adds to this one: the `claude` function
+# of the shell starts its build (./bash.nix).
 #
 # It reads ravnix.user, ravnix.secrets, ravnix.services, ravnix.dev,
 # ravnix.shell, ravnix.editor, ravnix.dictionary and ravnix.theme, so

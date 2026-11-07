@@ -128,18 +128,24 @@
           ./modules/theme
         ];
       };
-      # The shell, the prompt, git, the command-line tools and the user's
-      # account, for both hosts. nixosModules.common brings home-manager, the
-      # options and the theme along; homeModules.common needs homeModules.options
-      # and homeModules.theme beside it. Each carries a key, so a host and a
-      # private flake can both import it and get one copy, not two.
+      # The shell, the prompt, git, the command-line tools, Claude Code and the
+      # user's account, for both hosts. nixosModules.common brings home-manager,
+      # the options and the theme along; homeModules.common needs
+      # homeModules.options and homeModules.theme beside it, and brings
+      # homeModules.claude-skills (so Claude Code, its hooks and its skills)
+      # along, because the `claude` function of its shell starts that build.
+      # Each carries a key, so a host and a private flake can both import it
+      # and get one copy, not two.
       nixosModules.common = {
         key = "ravnix/nixosModules.common";
         imports = [ (import ./modules/common/nixos.nix { inherit self; }) ];
       };
       homeModules.common = {
         key = "ravnix/homeModules.common";
-        imports = [ ./modules/common ];
+        imports = [
+          ./modules/common
+          self.homeModules.claude-skills
+        ];
       };
       # Claude Code from packages.claude-code, and the skill
       # framework: the skill values, the hooks and the status line
