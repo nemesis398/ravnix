@@ -3,8 +3,9 @@
 -- Everything LazyVim needs is in the Nix store: lua/ravnix.lua, which
 -- modules/common/nvim.nix generates, names the directory that holds every
 -- plugin, and lazy.nvim takes each one from there. Nothing is cloned, built
--- or updated when the editor starts, and the editor never asks the network
--- for anything.
+-- or updated when the editor starts, and starting it needs no network. (Two
+-- features reach out once you use them: the JSON language server fetches the
+-- schema of a file it knows, and the LanguageTool checks go to LanguageTool.)
 local ravnix = require("ravnix")
 
 -- Neovim's own floats (hover, diagnostics, completion docs) get the same
@@ -48,7 +49,9 @@ require("lazy").setup({
   -- The config cannot change under a running editor.
   change_detection = { enabled = false },
   lockfile = vim.fn.stdpath("state") .. "/lazy-lock.json",
-  ui = { border = "single" },
+  -- A single line around lazy.nvim's window, and no dimmed backdrop behind it
+  -- (100 is fully transparent, which draws none).
+  ui = { border = "single", backdrop = 100 },
   performance = {
     rtp = {
       disabled_plugins = {

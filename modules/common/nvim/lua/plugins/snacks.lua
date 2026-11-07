@@ -1,7 +1,7 @@
 -- Right-side Snacks file explorer, and two snacks features switched off.
 --
--- neo-tree is replaced by the `editor.snacks_explorer` extra (enabled in
--- lazyvim.json) — NOT by any snacks option. That extra also provides the
+-- neo-tree is replaced by the `editor.snacks_explorer` extra (imported in
+-- init.lua) — NOT by any snacks option. That extra also provides the
 -- canonical <leader>e / <leader>fe keymaps, so we don't hand-roll keys here.
 --
 -- The explorer is a snacks *picker* source, so its position/width live under

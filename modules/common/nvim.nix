@@ -1,8 +1,12 @@
 # Neovim with LazyVim, reproducible: every plugin, language server and
-# formatter comes from the Nix store, and the editor never goes to the
-# network, not at startup and not afterwards. A home-manager module of its
-# own: a host's common module imports it, and tests/common/nvim.nix imports
-# it by itself.
+# formatter comes from the Nix store, and nothing is installed, updated or
+# fetched at startup or by the editor on its own. Two things go to the
+# network when they are used, and are not hidden: the JSON language server
+# downloads a schema when a file names one by URL (a $schema key, or a
+# SchemaStore match), and LanguageTool checks the text against its server
+# when you turn it on (ravnix.editor.languages, "languagetool"; the toggle
+# says so). A home-manager module of its own: a host's common module imports
+# it, and tests/common/nvim.nix imports it by itself.
 #
 # The choice: the LazyVim distribution as it is, with lazy.nvim loading its
 # plugins from a directory of the store, and nixpkgs as the lockfile. nixvim
@@ -46,11 +50,20 @@
 # another language than English is such a setting: it needs the language's
 # word list from the Vim runtime in ~/.local/share/nvim/site/spell/.
 #
-# Exceptions to docs/style.md (rule 9): none. Floats have a single line
-# (winborder, lazy.nvim's ui.border, and the which-key and noice windows that
-# name a border of their own, in lua/plugins/borders.lua), the accent is on
-# the line number of the cursor, directories and every float's frame;
-# corners are square and the colors opaque, and nothing moves.
+# Style (docs/style.md): floats have a single line (winborder, lazy.nvim's
+# ui.border, and the which-key, noice and snacks windows that name a border
+# or a blend of their own, in lua/plugins/floats.lua); pumblend and winblend
+# are 0 and no float dims what is behind it, so every float, menu and
+# notification is opaque (lua/config/options.lua, floats.lua; the `opaque`
+# probe reads the values in a running editor); the accent is on the line
+# number of the cursor, directories and every float's frame; nothing moves.
+#
+# Exceptions to docs/style.md (rule 9), where a plugin draws a corner the
+# config cannot reach:
+#   - The help window of trouble.nvim (`?` in a trouble list) is drawn with
+#     a hard-coded rounded border; trouble has no option for it.
+#   - The spinner snacks.nvim shows beside a running picker is drawn with a
+#     hard-coded rounded border; the picker's own windows follow the config.
 #
 # Known gaps, found and not fixed:
 #   - The plugin list below is kept by hand. A LazyVim update that adds a
@@ -67,6 +80,12 @@
 #   - The LanguageTool credentials read the user name from rbw with
 #     `rbw get --field username`. The test answers that with a stand-in
 #     script; it has not been run against a vault.
+#   - The editor is big: 3.9 GiB with every language. Odin is the heaviest
+#     (`ols` brings the Odin compiler with LLVM, lld and clang: 2.3 GiB),
+#     then ltex-ls-plus with its JDK (0.9 GiB). A host that does not edit
+#     those leaves them out with ravnix.editor.languages; the
+#     `common-nvim-closure` check pins that dropping a language drops its
+#     tools.
 #   - Opening a file from a file manager (a desktop entry) is the desktop
 #     shape's business and is not set up here.
 {
@@ -78,6 +97,46 @@
 let
   vp = pkgs.vimPlugins;
   theme = config.ravnix.theme;
+  cfg = config.ravnix.editor;
+
+  # The language servers, formatters and linters, by language. A host picks
+  # the languages (ravnix.editor.languages); what a language is made of
+  # decides what its entry costs in the closure: `ols` brings the Odin
+  # compiler with LLVM, 2.3 GiB of the 3.9, ltex-ls-plus a JDK (0.9 GiB).
+  # lua/plugins/store.lua turns off in the editor what a language left out
+  # would have started.
+  languages = with pkgs; {
+    bash = [
+      bash-language-server
+      shellcheck
+      shfmt
+    ];
+    json = [ vscode-langservers-extracted ];
+    languagetool = [ ltex-ls-plus ];
+    lua = [
+      lua-language-server
+      stylua
+    ];
+    markdown = [
+      marksman
+      markdownlint-cli2
+      markdown-toc
+    ];
+    nix = [
+      nil
+      nixfmt
+      statix
+    ];
+    # ols brings odinfmt.
+    odin = [ ols ];
+    python = [
+      pyright
+      ruff
+    ];
+    # prettier formats what the web is made of (CSS, HTML, JavaScript,
+    # TypeScript, YAML) and JSON.
+    web = [ prettier ];
+  };
 
   # Parsers and queries, by the name nvim-treesitter gives the language.
   # LazyVim's own list, plus what its extras ask for (json5, ninja, rst,
@@ -189,6 +248,7 @@ let
     treesitter = toString treesitter;
     colors = theme.roles;
     dictionary = config.ravnix.dictionary.file;
+    languages = lib.genAttrs cfg.languages (_: true);
   };
 
   # The config directory: the Lua of this module, and the generated file.
@@ -208,6 +268,22 @@ in
     ../options/dictionary.nix
   ];
 
+  options.ravnix.editor.languages = lib.mkOption {
+    type = lib.types.listOf (lib.types.enum (lib.attrNames languages));
+    default = lib.attrNames languages;
+    example = [
+      "lua"
+      "nix"
+    ];
+    description = ''
+      The languages the editor gets language servers, formatters and linters
+      for. All of them by default. A host that needs fewer says which: the
+      Odin toolchain behind `odin` is 2.3 GiB, and `languagetool` brings a
+      JDK. The editor turns off what a language left out would have started,
+      so a file of that language opens with no error.
+    '';
+  };
+
   config = {
     programs.neovim = {
       enable = true;
@@ -218,36 +294,14 @@ in
       withPerl = false;
       # init.lua is in the config directory below.
       sideloadInitLua = true;
-      extraPackages = with pkgs; [
+      extraPackages =
         # What LazyVim calls.
-        git
-        ripgrep
-        fd
-        # Lua
-        lua-language-server
-        stylua
-        # Shell
-        bash-language-server
-        shellcheck
-        shfmt
-        # Nix
-        nil
-        nixfmt
-        statix
-        # Odin (ols brings odinfmt)
-        ols
-        # Markdown
-        marksman
-        markdownlint-cli2
-        markdown-toc
-        ltex-ls-plus
-        # JSON and prettier's languages
-        vscode-langservers-extracted
-        prettier
-        # Python
-        pyright
-        ruff
-      ];
+        [
+          pkgs.git
+          pkgs.ripgrep
+          pkgs.fd
+        ]
+        ++ lib.concatMap (language: languages.${language}) cfg.languages;
     };
 
     xdg.configFile = {

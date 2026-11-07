@@ -10,11 +10,17 @@
 -- edit, to keep the API request count down.
 --
 -- The credentials and the dictionary, ravnix.dictionary.file, are read in
--- lua/ravnix_languagetool.lua. The "Add to dictionary" code action appends to
--- the dictionary, so every tool that reads it learns the word too.
+-- lua/ravnix_languagetool.lua, which also says where the API key goes and
+-- where it does not. The "Add to dictionary" code action appends to the
+-- dictionary, so every tool that reads it learns the word too.
 --
 -- While a check runs, Vim's own spell check is off in that buffer, so a typo is
 -- not underlined twice.
+
+-- Left out when the host has no use for it (ravnix.editor.languages).
+if not require("ravnix").languages.languagetool then
+  return {}
+end
 
 local lt = require("ravnix_languagetool")
 
@@ -25,7 +31,10 @@ end
 -- ltex asks the client to run this when you pick "Add ... to dictionary".
 -- arguments[1].words is { ["de-DE"] = { "Wort", ... } }.
 vim.lsp.commands["_ltex.addToDictionary"] = function(command, ctx)
-  local added = lt.add(command.arguments[1].words or {})
+  local added, failure = lt.add(command.arguments[1].words or {})
+  if failure then
+    return notify(failure, vim.log.levels.ERROR)
+  end
   if #added == 0 then
     return
   end
@@ -63,10 +72,13 @@ local function toggle(lang)
     notify("No API key or username: set LANGUAGETOOL_API_KEY and LANGUAGETOOL_USERNAME, or unlock rbw", vim.log.levels.ERROR)
     return
   end
+  -- The key is not in the settings below: the client answers the server's
+  -- request for them with it (ravnix_languagetool.lua).
 
   local base = vim.lsp.config.ltex_plus
   vim.b[bufnr].ltex_spell_before = vim.wo.spell
   vim.wo.spell = false
+  local config = lt.client_config(c)
   vim.lsp.start({
     name = name,
     cmd = base.cmd,
@@ -78,12 +90,13 @@ local function toggle(lang)
         language = lang,
         checkFrequency = "save",
         languageToolHttpServerUri = c.server,
-        languageToolOrg = { username = c.user, apiKey = c.key },
         dictionary = { [lang] = lt.words(lang) },
       },
     },
+    handlers = config.handlers,
+    on_init = config.on_init,
   }, { bufnr = bufnr })
-  notify("Checking as " .. lang .. " (again on every save)")
+  notify("Checking as " .. lang .. " with " .. c.server .. " (the text goes there, again on every save)")
 end
 
 return {

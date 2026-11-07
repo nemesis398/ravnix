@@ -68,6 +68,12 @@ vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "WinResized" }, {
 -- animated window resizes. One switch covers everything snacks animates.
 vim.g.snacks_animate = false
 
+-- Nothing is see-through: LazyVim blends the popup menu into the text below it
+-- (pumblend 10), and a plugin's own float can set a blend of its own;
+-- lua/plugins/floats.lua sets those that do.
+vim.opt.pumblend = 0
+vim.opt.winblend = 0
+
 -- Spell-check English. LazyVim turns spell on for markdown, text and commit
 -- messages. Another language needs its word list, which is not part of Neovim
 -- (it would be downloaded at the first use, and this editor never goes to the
