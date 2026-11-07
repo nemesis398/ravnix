@@ -162,5 +162,10 @@
     # rules), rendered to JSON. A skill that needs a missing value says
     # which key to set.
     claude.skillValues = { };
+
+    # The one accent of the desktop: focus and place, never a state. One of
+    # "mauve", "lavender", "pink", "flamingo", "rosewater", "teal", "sky" or
+    # "sapphire". NixOS and home-manager both take it from here.
+    theme.accent = "mauve";
   };
 }

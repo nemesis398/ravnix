@@ -19,11 +19,29 @@
 # Everything but the accent is read-only. The state hues are not roles: read
 # them from the palette (red, peach, yellow, green, blue, maroon), where the
 # style spec gives each a meaning of its own.
-{ config, lib, ... }:
+#
+# There is one accent per host. A user sets it once, as ravnix.theme.accent in
+# me.nix, which reaches NixOS through nixosModules.options. Inside NixOS,
+# home-manager takes the host's accent as its own default (osConfig), so the
+# two cannot diverge by a forgotten line; setting it to another value in
+# home-manager fails an assertion.
+{
+  config,
+  lib,
+  ...
+}@args:
 let
   inherit (lib) mkOption types;
   palette = import ./palette.nix;
   cfg = config.ravnix.theme;
+
+  # The accent of the NixOS host this is evaluated inside, when there is one
+  # and it has the option. osConfig is read from args and is no formal
+  # argument: only home-manager inside NixOS provides it, and the module
+  # system does not honor a default on a formal one (NixOS and evalModules
+  # would fail on it).
+  osConfig = args.osConfig or null;
+  hostAccent = if osConfig == null then null else osConfig.ravnix.theme.accent or null;
 
   accents = [
     "mauve"
@@ -52,7 +70,8 @@ in
     };
     accent = mkOption {
       type = accentType;
-      default = "mauve";
+      default = if hostAccent != null then hostAccent else "mauve";
+      defaultText = lib.literalMD "the accent of the NixOS host when home-manager runs inside one, else `\"mauve\"`";
       description = ''
         The one accent: focus and place, never a state. It marks the frame of
         a floating thing, the active workspace, a non-default mode, the icon
@@ -80,6 +99,11 @@ in
       readOnly = true;
       description = "Font sizes: terminal 9 pt, launcher 11 pt, bar 14 px, ui 11 pt.";
     };
+  };
+
+  config.assertions = lib.optional (hostAccent != null) {
+    assertion = cfg.accent == hostAccent;
+    message = "ravnix.theme.accent is \"${cfg.accent}\" in home-manager and \"${hostAccent}\" in NixOS; there is one accent per host. Set it once, as ravnix.theme.accent in me.nix, and leave it out of the home-manager configuration.";
   };
 
   config.ravnix.theme = {
