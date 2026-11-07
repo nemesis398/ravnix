@@ -78,17 +78,22 @@ let
     lib.mapAttrsToList (name: item: lib.escapeShellArg "${name}=${item}") cfg.secretEnv
   );
 
-  # The claude that the `claude` function starts: the one programs.claude-code
-  # installs, by its absolute path, so the secrets from rbw and every fallback
-  # go to the build the gate verified against the release manifest and never
-  # to another claude that comes first on the PATH (a native install in
-  # ~/.local/bin, say). Empty when Claude Code is off or has no package (then
-  # finalPackage has no value), and the function starts the first claude on
-  # the PATH. The module that turns Claude Code on is claude-code.nix, which
+  # The claude that the `claude` function starts: the one in home-manager's own
+  # profile, by its absolute path, so the secrets from rbw and every fallback
+  # go to the build programs.claude-code installs and never to another claude
+  # that comes first on the PATH (a native install in ~/.local/bin, say). Not
+  # the store path of that build: a shell reads the bashrc once and lives for
+  # days (a herdr pane), and a path into one generation would keep it on the
+  # Claude Code of the generation it started in, and fail with 127 once that
+  # generation is collected. The profile is the same path after every switch
+  # and holds the current build. Empty when Claude Code is off or has no
+  # package (home-manager installs finalPackage only then, and it has no value
+  # without a package), and the function starts the first claude on the PATH.
+  # The module that turns Claude Code on is claude-code.nix, which
   # homeModules.common imports through homeModules.claude-skills.
   claudeBin = lib.optionalString (
     config.programs.claude-code.enable && config.programs.claude-code.package != null
-  ) "${config.programs.claude-code.finalPackage}/bin/claude";
+  ) "${config.home.profileDirectory}/bin/claude";
 
   # The shell integrations of starship, zoxide, fzf and atuin, written once at
   # build time and sourced, instead of four programs started to print them in

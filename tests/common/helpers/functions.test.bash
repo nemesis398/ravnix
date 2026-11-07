@@ -1203,11 +1203,12 @@ claude_runs_the_binary_and_not_itself() {
 
 # --- claude, with the binary bash.nix names -----------------------------
 # With programs.claude-code enabled, bash.nix sets _ravnix_claude_bin to the
-# claude that home-manager installs: the build the gate verified against the
-# release manifest. A person's PATH may find another claude first (a native
-# install in ~/.local/bin, say), and neither the secrets nor any fallback may
-# go there. In these tests fake_claude is that other one, which must stay
-# unstarted, and fake_configured_claude is the one the function must start.
+# claude in home-manager's profile (a path that follows every switch; the
+# tests take it as a value). A person's PATH may find another claude first (a
+# native install in ~/.local/bin, say), and neither the secrets nor any
+# fallback may go there. In these tests fake_claude is that other one, which
+# must stay unstarted, and fake_configured_claude is the one the function must
+# start.
 
 claude_gives_the_secrets_to_the_configured_binary_and_not_to_the_one_on_path() {
 	setup
@@ -1468,6 +1469,39 @@ claude_never_traces_a_secret_to_a_configured_binary_under_xtrace_and_functrace()
 	expect_no_out 'token-two'
 }
 
+# A shell reads the bashrc once and lives for days, and the path it holds is a
+# profile's, whose claude changes at every switch. The function looks at the
+# path at every call, so it starts what is there then: the build of the first
+# call before the switch, the build of the second after it, and an error, with
+# nothing else started, when the profile has no claude at all.
+claude_starts_whatever_the_profile_holds_at_each_call() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	fake_claude_at "$scratch/gen1/claude" gen1
+	fake_claude_at "$scratch/gen2/claude" gen2
+	mkdir -p "$scratch/profile/bin"
+	ln -sfn "$scratch/gen1/claude" "$scratch/profile/bin/claude"
+	local bin_path="$scratch/profile/bin/claude"
+	run "$two_secrets; _ravnix_claude_bin=$bin_path"'
+		claude --first; echo "status $?"
+		ln -sfn "'"$scratch"'/gen2/claude" "'"$bin_path"'"
+		claude --second; echo "status $?"
+		CLAUDECODE=1 claude --third; echo "status $?"
+		rm -- "'"$bin_path"'"
+		claude --fourth; echo "status $?"'
+	called 'gen1|--first'
+	called 'gen2|--second'
+	called 'gen2|--third'
+	not_called claude
+	# The fourth call has no claude to start: not the one of the PATH, and the
+	# vault is not read for it (the first and second calls read two items each).
+	[[ "$(grep -c '^rbw|get' "$calls")" == 4 ]]
+	expect_out 'status 127'
+	[[ "$(grep -c 'status 0' <<<"$out")" == 3 ]]
+}
+
 tests=(
 	over_prints_the_lines_wider_than_eighty_with_their_numbers
 	over_takes_the_width_and_reads_stdin
@@ -1564,6 +1598,7 @@ tests=(
 	claude_with_an_empty_binary_starts_the_claude_on_the_path_on_every_fallback
 	claude_leaves_no_loader_variable_behind_with_a_configured_binary_under_allexport
 	claude_never_traces_a_secret_to_a_configured_binary_under_xtrace_and_functrace
+	claude_starts_whatever_the_profile_holds_at_each_call
 )
 
 run_tests "${tests[@]}"

@@ -55,7 +55,7 @@ let
   # The Claude Code of the host: a claude that writes the secrets it was given
   # to a file. It stands in for packages.claude-code, which the VM does not
   # need (it carries the download attribute the module asks for), and the
-  # function must start it by its store path.
+  # function must start it through the user's profile.
   fakeClaudePackage =
     pkgs.writeShellScriptBin "claude" ''
       env | grep -c 'vm-secret-for:' >"$HOME/claude.count"
@@ -318,9 +318,13 @@ pkgs.testers.runNixOSTest {
         as_user("mkdir -p ~/.local/bin && install -m755 ${fakeRbw} ~/.local/bin/rbw "
                 "&& install -m755 ${decoyClaude} ~/.local/bin/claude")
         # The decoy shadows the host's claude on the PATH, and the function
-        # is told the host's by its store path.
+        # is told the host's by the path in the user's profile, which follows
+        # every switch (not by the store path of one generation); that path
+        # leads to the Claude Code package of the host.
         assert as_user("bash -ic 'type -P claude' 2>/dev/null").strip() == "/home/" + USER + "/.local/bin/claude"
-        assert as_user("bash -ic 'echo $_ravnix_claude_bin' 2>/dev/null").strip() == "${fakeClaudePackage}/bin/claude"
+        profile_claude = "/etc/profiles/per-user/" + USER + "/bin/claude"
+        assert as_user("bash -ic 'echo $_ravnix_claude_bin' 2>/dev/null").strip() == profile_claude
+        assert as_user("readlink -f " + profile_claude).strip() == "${fakeClaudePackage}/bin/claude"
         out = as_user("bash -ic 'claude; echo SHELL-HAS=$(env | grep -c vm-secret-for:); "
                       "echo FIRST=''${FIRST_API_TOKEN-unset}; sh -c \"echo CHILD=\\''${FIRST_API_TOKEN-unset}\"' 2>&1")
         assert "SHELL-HAS=0" in out and "FIRST=unset" in out and "CHILD=unset" in out, out

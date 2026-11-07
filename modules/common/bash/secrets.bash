@@ -122,14 +122,18 @@ ai-unlock() {
 # rest as it is.
 #
 #   - Which claude it starts is _ravnix_claude_bin, when bash.nix sets it:
-#     the absolute path of programs.claude-code's package, the build the
-#     gate verified against the release manifest. Every branch below starts
-#     that path and no other, the secrets' and every fallback's: another
-#     claude earlier on the PATH (a native install in ~/.local/bin, say) gets
-#     neither the secrets nor the command. If that file is not there or not
-#     executable, that is an error like any missing command, and the vault is
-#     not read for it. Empty (Claude Code is off, or has no package), it
-#     starts the first claude on the PATH, as before.
+#     the absolute path of the claude in home-manager's profile, which holds
+#     the package programs.claude-code installs (the build the gate verified
+#     against the release manifest). A profile path and not a store path,
+#     because a shell reads it once and lives for days: the profile follows
+#     every switch, where a store path would keep the shell on the build it
+#     started with, and fail with 127 once that is collected. Every branch
+#     below starts that path and no other, the secrets' and every fallback's:
+#     another claude earlier on the PATH (a native install in ~/.local/bin,
+#     say) gets neither the secrets nor the command. If that file is not
+#     there or not executable, that is an error like any missing command, and
+#     the vault is not read for it. Empty (Claude Code is off, or has no
+#     package), it starts the first claude on the PATH, as before.
 #   - Inside Claude Code (CLAUDECODE is set) it adds nothing. Claude Code
 #     copies the user's shell functions into the shells it starts, so this
 #     function is there too, and it must not read the vault again for every
