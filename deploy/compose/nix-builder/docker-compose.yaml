@@ -31,8 +31,9 @@
 # and every ten seconds after (start.sh, NIX_BUILDER_PROBES), and stops the
 # Nix daemon and sshd when the check fails three times in a row; a window of
 # up to half a minute stays open when the rule goes. Its DNS goes to
-# NIX_BUILDER_DNS, not to a resolver on this host. The router's public
-# address is not a private one, so the rule does not cover it (README.md).
+# NIX_BUILDER_DNS and NIX_BUILDER_DNS_2, not to a resolver on this host.
+# The router's public address is not a private one, so the rule does not
+# cover it (README.md).
 # The cache answers anyone who reaches its port, without a login, so
 # NIX_BIND_ADDRESS must be an address only the clients reach.
 #
@@ -63,6 +64,9 @@
 #                               from it and from NIX_BIND_ADDRESS
 #   NIX_BUILDER_DNS             the resolver the builder asks, a public one
 #                               such as one the host's resolv.conf lists
+#   NIX_BUILDER_DNS_2           optional: a second public resolver, such as
+#                               the same service's second address; without
+#                               it the builder has only NIX_BUILDER_DNS
 #   NIX_BUILDER_AUTHORIZED_KEY  the clients' public key, one line
 #   NIX_CACHE_KEY_NAME          name of the cache key, e.g. cache.example.org-1
 #   NIX_BUILDER_NIXPKGS         optional: the nixpkgs that nix, openssh,
@@ -193,8 +197,11 @@ services:
     # container's own network, under the egress rule. Without them it would
     # forward to the host's resolvers from the host's network, past the rule,
     # and a resolver on this host would answer builds with internal names.
+    # Without NIX_BUILDER_DNS_2 the second entry repeats the first, and
+    # Compose keeps one of the two.
     dns:
       - ${NIX_BUILDER_DNS:?set NIX_BUILDER_DNS in .env}
+      - ${NIX_BUILDER_DNS_2:-${NIX_BUILDER_DNS}}
     # No cap_add, so the Nix sandbox cannot run here: it needs kernel
     # namespaces, which Docker's defaults withhold ("this system does not
     # support the kernel namespaces that are required for sandboxing").
