@@ -78,6 +78,18 @@ let
     lib.mapAttrsToList (name: item: lib.escapeShellArg "${name}=${item}") cfg.secretEnv
   );
 
+  # The claude that the `claude` function starts: the one programs.claude-code
+  # installs, by its absolute path, so the secrets from rbw and every fallback
+  # go to the build the gate verified against the release manifest and never
+  # to another claude that comes first on the PATH (a native install in
+  # ~/.local/bin, say). Empty when Claude Code is off or has no package (then
+  # finalPackage has no value), and the function starts the first claude on
+  # the PATH. The module that turns Claude Code on is claude-code.nix, which
+  # homeModules.common imports through homeModules.claude-skills.
+  claudeBin = lib.optionalString (
+    config.programs.claude-code.enable && config.programs.claude-code.package != null
+  ) "${config.programs.claude-code.finalPackage}/bin/claude";
+
   # The shell integrations of starship, zoxide, fzf and atuin, written once at
   # build time and sourced, instead of four programs started to print them in
   # every shell: it is a tenth of an interactive start. They depend on nothing
@@ -156,8 +168,10 @@ let
 
     # ─── Secrets ────────────────────────────────────────────────────────────
     # ravnix.shell.secretEnv: which variable comes from which rbw item, for
-    # `claude`; ai-unlock only unlocks the vault.
+    # `claude`; ai-unlock only unlocks the vault. And the claude it starts, by
+    # path (empty: the first on the PATH).
     _ravnix_secrets=(${secretTable})
+    _ravnix_claude_bin=${lib.escapeShellArg claudeBin}
     ${builtins.readFile ./bash/secrets.bash}
   '';
 

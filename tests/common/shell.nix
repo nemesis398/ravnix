@@ -43,9 +43,8 @@ let
     "SIXTH_TOKEN"
   ];
 
-  # Stand-ins in ~/.local/bin, which comes first on the user's PATH: an rbw
-  # whose vault is unlocked and holds a value per item, and a claude that
-  # writes the secrets it was given to a file. The values are made up.
+  # An rbw whose vault is unlocked and holds a value per item, in
+  # ~/.local/bin, which comes first on the user's PATH. The values are made up.
   fakeRbw = pkgs.writeShellScript "rbw" ''
     case "$1" in
       unlocked) exit 0 ;;
@@ -53,9 +52,22 @@ let
       *) exit 1 ;;
     esac
   '';
-  fakeClaude = pkgs.writeShellScript "claude" ''
-    env | grep -c 'vm-secret-for:' >"$HOME/claude.count"
-    env | sort | grep 'vm-secret-for:' >"$HOME/claude.env" || true
+  # The Claude Code of the host: a claude that writes the secrets it was given
+  # to a file. It stands in for packages.claude-code, which the VM does not
+  # need (it carries the download attribute the module asks for), and the
+  # function must start it by its store path.
+  fakeClaudePackage =
+    pkgs.writeShellScriptBin "claude" ''
+      env | grep -c 'vm-secret-for:' >"$HOME/claude.count"
+      env | sort | grep 'vm-secret-for:' >"$HOME/claude.env" || true
+    ''
+    // {
+      download = null;
+    };
+  # Another claude, first on the user's PATH in ~/.local/bin, as a native
+  # install would be: it must never be started.
+  decoyClaude = pkgs.writeShellScript "claude" ''
+    touch "$HOME/decoy.ran"
   '';
 
   # Times an interactive bash on a terminal, first prompt drawn: it forks bash
@@ -129,6 +141,10 @@ pkgs.testers.runNixOSTest {
       ravnix.shell.autoAttach = ''
         { type -t cd; type -t zd; type -t claude; alias cd; } >/tmp/seam-probe 2>&1
       '';
+
+      # The user's Claude Code is the stand-in above; the rest of
+      # homeModules.claude-skills is the module's own.
+      home-manager.users.${user.username}.programs.claude-code.package = fakeClaudePackage;
 
       # This host works on ravnix, so the activation turns its hooks on. The
       # checkout does not exist yet when the system starts.
@@ -300,7 +316,11 @@ pkgs.testers.runNixOSTest {
         for n in SECRETS:
             assert '"' + n + "=Item for " + n + '"' in table, table
         as_user("mkdir -p ~/.local/bin && install -m755 ${fakeRbw} ~/.local/bin/rbw "
-                "&& install -m755 ${fakeClaude} ~/.local/bin/claude")
+                "&& install -m755 ${decoyClaude} ~/.local/bin/claude")
+        # The decoy shadows the host's claude on the PATH, and the function
+        # is told the host's by its store path.
+        assert as_user("bash -ic 'type -P claude' 2>/dev/null").strip() == "/home/" + USER + "/.local/bin/claude"
+        assert as_user("bash -ic 'echo $_ravnix_claude_bin' 2>/dev/null").strip() == "${fakeClaudePackage}/bin/claude"
         out = as_user("bash -ic 'claude; echo SHELL-HAS=$(env | grep -c vm-secret-for:); "
                       "echo FIRST=''${FIRST_API_TOKEN-unset}; sh -c \"echo CHILD=\\''${FIRST_API_TOKEN-unset}\"' 2>&1")
         assert "SHELL-HAS=0" in out and "FIRST=unset" in out and "CHILD=unset" in out, out
@@ -315,7 +335,13 @@ pkgs.testers.runNixOSTest {
         # Inside Claude Code the function adds nothing.
         as_user("CLAUDECODE=1 bash -ic claude 2>&1")
         assert as_user("cat ~/claude.count").strip() == "0"
-        as_user("rm -f ~/.local/bin/rbw ~/.local/bin/claude ~/claude.count ~/claude.env")
+        # With the vault locked it still starts the host's claude, without them.
+        as_user("rm -f ~/claude.count; mv ~/.local/bin/rbw ~/.local/bin/rbw.off")
+        as_user("bash -ic claude 2>&1")
+        assert as_user("cat ~/claude.count").strip() == "0"
+        # The claude of the PATH was started by none of them.
+        as_user("test ! -e ~/decoy.ran")
+        as_user("rm -f ~/.local/bin/rbw ~/.local/bin/rbw.off ~/.local/bin/claude ~/claude.count ~/claude.env")
 
     with subtest("a stale SWAYSOCK is repaired to the newest sway socket, whatever the aliases"):
         # The aliases of the shell must come after the repair: with `ls`

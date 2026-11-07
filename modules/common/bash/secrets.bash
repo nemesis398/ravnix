@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# _ravnix_secrets is assigned by bash.nix, before this file.
+# _ravnix_secrets and _ravnix_claude_bin are assigned by bash.nix, before this
+# file.
 # shellcheck disable=SC2154
 # ai-unlock and claude, ported from the Fedora .bashrc and changed in two
 # respects.
@@ -120,6 +121,15 @@ ai-unlock() {
 # function covers what a person types in an interactive bash and leaves the
 # rest as it is.
 #
+#   - Which claude it starts is _ravnix_claude_bin, when bash.nix sets it:
+#     the absolute path of programs.claude-code's package, the build the
+#     gate verified against the release manifest. Every branch below starts
+#     that path and no other, the secrets' and every fallback's: another
+#     claude earlier on the PATH (a native install in ~/.local/bin, say) gets
+#     neither the secrets nor the command. If that file is not there or not
+#     executable, that is an error like any missing command, and the vault is
+#     not read for it. Empty (Claude Code is off, or has no package), it
+#     starts the first claude on the PATH, as before.
 #   - Inside Claude Code (CLAUDECODE is set) it adds nothing. Claude Code
 #     copies the user's shell functions into the shells it starts, so this
 #     function is there too, and it must not read the vault again for every
@@ -154,24 +164,36 @@ claude() {
     # xtrace: it would print the secrets (see above). Not functrace: with
     # `set -T` a DEBUG trap of the caller is inherited by the subshell below
     # and runs before each of its commands, with the values in reach.
-    local - bin
+    local - bin launch
     set +a +x +T
+    # bin is the file to start with the secrets, empty when there is none;
+    # launch is the command for every start without them. With a configured
+    # binary launch is that path itself, so a missing one fails as a command
+    # that is not there, and no other claude takes its place.
+    if [[ -n ${_ravnix_claude_bin-} ]]; then
+        bin=$_ravnix_claude_bin
+        [[ -f $bin && -x $bin ]] || bin=
+        launch=("$_ravnix_claude_bin")
+    else
+        bin=$(type -P claude) || bin=
+        launch=(command claude)
+    fi
     if [[ -n ${CLAUDECODE-} ]] || ((${#_ravnix_secrets[@]} == 0)); then
-        command claude "$@"
+        "${launch[@]}" "$@"
         return
     fi
     # Without a claude to start, there is nothing to read the vault for.
-    bin=$(type -P claude) || {
-        command claude "$@"
+    if [[ -z $bin ]]; then
+        "${launch[@]}" "$@"
         return
-    }
+    fi
     if ! command -v rbw >/dev/null 2>&1 || ! rbw unlocked >/dev/null 2>&1; then
         local entry names=()
         for entry in "${_ravnix_secrets[@]}"; do
             names+=("${entry%%=*}")
         done
         printf 'claude: the vault is locked, so it starts without %s. Run ai-unlock first to give it those.\n' "${names[*]}" >&2
-        command claude "$@"
+        "${launch[@]}" "$@"
         return
     fi
     (

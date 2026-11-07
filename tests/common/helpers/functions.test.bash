@@ -74,11 +74,11 @@ never_called() {
 }
 
 setup() {
-	rm -r -- "${scratch:?}/home" "${scratch:?}/cache" "${scratch:?}/work" "${scratch:?}/rbw" 2>/dev/null || true
+	rm -r -- "${scratch:?}/home" "${scratch:?}/cache" "${scratch:?}/work" "${scratch:?}/rbw" "${scratch:?}/configured" 2>/dev/null || true
 	rm -f -- "${bin:?}"/*
 	mkdir -p "$scratch/home" "$scratch/cache" "$scratch/work"
 	: >"$calls"
-	rm -f -- "${scratch:?}"/claude.*
+	rm -f -- "${scratch:?}"/claude.* "${scratch:?}"/configured.*
 	unset TERM_PROGRAM CLAUDECODE
 	cd "$scratch/work"
 }
@@ -604,33 +604,55 @@ fake_rbw() {
 		'esac'
 }
 
-# A stand-in claude: it writes its environment (NUL-separated), its arguments
-# (NUL-separated) and its standard input to $scratch/claude.{env,args,stdin},
-# and exits with the code in $scratch/claude.rc (0 by default).
-fake_claude() {
-	write_script "$bin/claude" \
-		'IFS="|"; printf "claude|%s\n" "$*" >>"'"$calls"'"' \
-		'env -0 >"'"$scratch"'/claude.env"' \
-		'printf "%s\0" "$@" >"'"$scratch"'/claude.args"' \
-		'cat >"'"$scratch"'/claude.stdin"' \
-		'exit "$(cat "'"$scratch"'/claude.rc" 2>/dev/null || echo 0)"'
+# A stand-in claude at PATH_OF_IT: it writes its environment (NUL-separated),
+# its arguments (NUL-separated) and its standard input to
+# $scratch/LABEL.{env,args,stdin}, logs "LABEL|ARGUMENTS" in $calls, and exits
+# with the code in $scratch/LABEL.rc (0 by default).
+fake_claude_at() {
+	local path="$1" label="$2"
+	write_script "$path" \
+		'IFS="|"; printf "'"$label"'|%s\n" "$*" >>"'"$calls"'"' \
+		'env -0 >"'"$scratch"'/'"$label"'.env"' \
+		'printf "%s\0" "$@" >"'"$scratch"'/'"$label"'.args"' \
+		'cat >"'"$scratch"'/'"$label"'.stdin"' \
+		'exit "$(cat "'"$scratch"'/'"$label"'.rc" 2>/dev/null || echo 0)"'
 }
 
-# A directory with env and cat only, for the tests that must run without rbw
-# or without claude on PATH while the stand-ins still find their tools.
+# The claude a person's PATH finds: first on the stand-ins' PATH.
+fake_claude() {
+	fake_claude_at "$bin/claude" claude
+}
+
+# The claude that bash.nix names in _ravnix_claude_bin: another stand-in, in a
+# directory that is on no PATH, so that only the function can start it. DIR
+# defaults to $scratch/configured. It sets $configured to the path of the
+# stand-in, and $set_bin to the shell text that assigns it the way bash.nix
+# does. Its label is "configured" (see fake_claude_at); a test that reads its
+# environment sets `claude_label=configured`.
+fake_configured_claude() {
+	configured="${1:-$scratch/configured}/claude"
+	fake_claude_at "$configured" configured
+	printf -v set_bin '_ravnix_claude_bin=%q' "$configured"
+}
+
+# A directory with env, cat and grep only, for the tests that must run without
+# rbw or without claude on PATH while the stand-ins still find their tools.
 bare_path() {
 	mkdir -p "$scratch/nobin"
 	ln -sf "$(command -v env)" "$scratch/nobin/env"
 	ln -sf "$(command -v cat)" "$scratch/nobin/cat"
+	ln -sf "$(command -v grep)" "$scratch/nobin/grep"
 }
 
-# Whether the stand-in claude had NAME=VALUE in its environment, exactly.
+# Whether the stand-in claude had NAME=VALUE in its environment, exactly. It
+# is the claude of the PATH, or the configured one when the test has set
+# claude_label=configured.
 claude_env_has() {
 	local rec
 	while IFS= read -r -d '' rec; do
 		[[ $rec == "$1=$2" ]] && return 0
-	done <"$scratch/claude.env"
-	echo "  claude had no $1 with that value in its environment"
+	done <"$scratch/${claude_label:-claude}.env"
+	echo "  ${claude_label:-claude} had no $1 with that value in its environment"
 	return 1
 }
 # Whether the stand-in claude had no variable NAME at all.
@@ -638,10 +660,10 @@ claude_env_lacks() {
 	local rec
 	while IFS= read -r -d '' rec; do
 		if [[ $rec == "$1="* ]]; then
-			echo "  claude had $1 in its environment"
+			echo "  ${claude_label:-claude} had $1 in its environment"
 			return 1
 		fi
-	done <"$scratch/claude.env"
+	done <"$scratch/${claude_label:-claude}.env"
 }
 
 # The table bash.nix writes from ravnix.shell.secretEnv, "NAME=item" in name
@@ -1179,6 +1201,273 @@ claude_runs_the_binary_and_not_itself() {
 	called 'claude|'
 }
 
+# --- claude, with the binary bash.nix names -----------------------------
+# With programs.claude-code enabled, bash.nix sets _ravnix_claude_bin to the
+# claude that home-manager installs: the build the gate verified against the
+# release manifest. A person's PATH may find another claude first (a native
+# install in ~/.local/bin, say), and neither the secrets nor any fallback may
+# go there. In these tests fake_claude is that other one, which must stay
+# unstarted, and fake_configured_claude is the one the function must start.
+
+claude_gives_the_secrets_to_the_configured_binary_and_not_to_the_one_on_path() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	local claude_label=configured
+	printf 'token-one\n' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets; $set_bin"'; claude -p hi; echo "status $?"'
+	expect_out 'status 0'
+	[[ -z "$err" ]]
+	claude_env_has A_TOKEN token-one
+	claude_env_has B_TOKEN token-two
+	called 'configured|-p|hi'
+	# The claude of the PATH was never started.
+	not_called claude
+	[[ ! -e "$scratch/claude.env" ]]
+	# And the reads still come before the exports.
+	[[ "$(grep -c '^rbwenv|0$' "$calls")" == 2 ]]
+}
+
+claude_passes_arguments_standard_input_and_the_exit_status_to_the_configured_binary() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	echo 7 >"$scratch/configured.rc"
+	run "$two_secrets; $set_bin"'; printf "piped in\nsecond line\n" | claude -p "two words" "" --flag="a b" -- -x; echo "status $?"'
+	expect_out 'status 7'
+	[[ "$(cat "$scratch/configured.stdin")" == $'piped in\nsecond line' ]]
+	[[ "$(tr '\0' '|' <"$scratch/configured.args")" == '-p|two words||--flag=a b|--|-x|' ]]
+	not_called claude
+}
+
+claude_starts_the_configured_binary_inside_claude_code() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	local claude_label=configured
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	run "$two_secrets; $set_bin"'; export CLAUDECODE=1 A_TOKEN=inherited; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	never_called 'rbw'
+	claude_env_has A_TOKEN inherited
+	claude_env_lacks B_TOKEN
+	called 'configured|--version'
+	not_called claude
+}
+
+claude_starts_the_configured_binary_when_no_secrets_are_configured() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	run "_ravnix_secrets=(); $set_bin"'; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	never_called 'rbw'
+	[[ -z "$err" ]]
+	called 'configured|--version'
+	not_called claude
+}
+
+claude_starts_the_configured_binary_without_the_secrets_when_the_vault_is_locked() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	local claude_label=configured
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	echo 1 >"$scratch/rbw/unlocked"
+	run "$two_secrets; $set_bin"'; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	never_called 'rbw\|(get|unlock|sync)'
+	expect_err 'ai-unlock'
+	expect_err 'A_TOKEN'
+	expect_err 'B_TOKEN'
+	claude_env_lacks A_TOKEN
+	called 'configured|--version'
+	not_called claude
+}
+
+claude_starts_the_configured_binary_without_the_secrets_when_rbw_is_not_installed() {
+	setup
+	fake_claude
+	fake_configured_claude
+	bare_path
+	local claude_label=configured
+	run "$two_secrets; $set_bin"'; PATH='"$scratch/nobin:$bin"'; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	expect_err 'ai-unlock'
+	claude_env_lacks A_TOKEN
+	called 'configured|--version'
+	not_called claude
+}
+
+claude_returns_the_exit_status_of_the_configured_binary_on_every_fallback() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	echo 9 >"$scratch/configured.rc"
+	run "$two_secrets; $set_bin; CLAUDECODE=1"'; claude -p "a b"; echo "status $?"'
+	expect_out 'status 9'
+	run "_ravnix_secrets=(); $set_bin"'; claude -p "a b"; echo "status $?"'
+	expect_out 'status 9'
+	echo 1 >"$scratch/rbw/unlocked"
+	run "$two_secrets; $set_bin"'; claude -p "a b"; echo "status $?"'
+	expect_out 'status 9'
+	[[ "$(tr '\0' '|' <"$scratch/configured.args")" == '-p|a b|' ]]
+	not_called claude
+}
+
+# A host installs Claude Code through home-manager, and nothing needs another
+# one on the PATH. (The function used to look one up first, and to start none
+# when it found none.)
+claude_needs_no_claude_on_the_path_when_a_binary_is_configured() {
+	setup
+	fake_rbw
+	fake_configured_claude
+	bare_path
+	local claude_label=configured
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	run "$two_secrets; $set_bin"'; PATH='"$bin:$scratch/nobin"'; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	called 'rbw|get|--|Item One'
+	claude_env_has A_TOKEN token-one
+	called 'configured|--version'
+}
+
+# A configured binary that is gone is an error like any missing command. It
+# is not a reason to start whatever claude the PATH has, and not a reason to
+# read the vault.
+claude_does_not_start_another_claude_when_the_configured_binary_is_missing() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	run "$two_secrets"'; _ravnix_claude_bin='"$scratch"'/gone/claude; claude; echo "status $?"'
+	expect_out 'status 127'
+	never_called 'rbw'
+	not_called claude
+	[[ ! -e "$scratch/claude.env" ]]
+	run "$two_secrets"'; _ravnix_claude_bin='"$scratch"'/gone/claude; CLAUDECODE=1 claude; echo "status $?"'
+	expect_out 'status 127'
+	not_called claude
+}
+
+claude_does_not_start_another_claude_when_the_configured_binary_is_not_executable() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	mkdir -p "$scratch/plain"
+	printf '#!%s\n' "$BASH" >"$scratch/plain/claude"
+	run "$two_secrets"'; _ravnix_claude_bin='"$scratch"'/plain/claude; claude; echo "status $?"'
+	expect_out 'status 126'
+	never_called 'rbw'
+	not_called claude
+}
+
+claude_takes_a_configured_path_with_spaces_and_glob_characters() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude "$scratch/a b [x]*?"
+	local claude_label=configured
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	run "$two_secrets; $set_bin"'; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	claude_env_has A_TOKEN token-one
+	called 'configured|--version'
+	run "$set_bin"'; CLAUDECODE=1 claude -p x; echo "status $?"'
+	expect_out 'status 0'
+	called 'configured|-p|x'
+	not_called claude
+}
+
+# An empty _ravnix_claude_bin is a host without programs.claude-code: the
+# function is what it was, and starts the claude the PATH finds.
+claude_with_an_empty_binary_starts_the_claude_on_the_path_with_the_secrets() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets"'; _ravnix_claude_bin=; claude -p hi; echo "status $?"'
+	expect_out 'status 0'
+	claude_env_has A_TOKEN token-one
+	claude_env_has B_TOKEN token-two
+	called 'claude|-p|hi'
+	not_called configured
+}
+
+claude_with_an_empty_binary_starts_the_claude_on_the_path_on_every_fallback() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	run "$two_secrets; _ravnix_claude_bin="'; CLAUDECODE=1 claude --inside; echo "status $?"'
+	expect_out 'status 0'
+	run '_ravnix_secrets=(); _ravnix_claude_bin='"; claude --plain; echo \"status \$?\""
+	expect_out 'status 0'
+	echo 1 >"$scratch/rbw/unlocked"
+	run "$two_secrets; _ravnix_claude_bin="'; claude --locked; echo "status $?"'
+	expect_out 'status 0'
+	called 'claude|--inside'
+	called 'claude|--plain'
+	called 'claude|--locked'
+	not_called configured
+}
+
+claude_leaves_no_loader_variable_behind_with_a_configured_binary_under_allexport() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets; $set_bin"'; set -a; claude'
+	local rec seen=0
+	while IFS= read -r -d '' rec; do
+		case $rec in
+		name=* | item=* | value=* | entry=* | bin=* | launch=* | pairs=* | _ravnix_secrets=* | _ravnix_claude_bin=*)
+			echo "  leaked: ${rec%%=*}" && return 1
+			;;
+		*token-one* | *token-two*) seen=$((seen + 1)) ;;
+		esac
+	done <"$scratch/configured.env"
+	((seen == 2))
+}
+
+claude_never_traces_a_secret_to_a_configured_binary_under_xtrace_and_functrace() {
+	setup
+	fake_rbw
+	fake_claude
+	fake_configured_claude
+	local claude_label=configured
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets; $set_bin"'; dbg() { echo "DBG [${value-}] [${pairs[*]-}] [${A_TOKEN-}] [${B_TOKEN-}] [$_]" >>"'"$scratch"'/trap.log"; }
+		PS4="+<\${value-}\${A_TOKEN-}\${B_TOKEN-}> "; set -x -T; trap dbg DEBUG; claude; trap - DEBUG; set +x +T'
+	claude_env_has A_TOKEN token-one
+	claude_env_has B_TOKEN token-two
+	[[ -s "$scratch/trap.log" ]]
+	if grep -qE 'token-(one|two)' "$scratch/trap.log"; then
+		echo "  the DEBUG trap saw a secret"
+		return 1
+	fi
+	expect_no_err 'token-one'
+	expect_no_err 'token-two'
+	expect_no_out 'token-one'
+	expect_no_out 'token-two'
+}
+
 tests=(
 	over_prints_the_lines_wider_than_eighty_with_their_numbers
 	over_takes_the_width_and_reads_stdin
@@ -1260,6 +1549,21 @@ tests=(
 	claude_takes_an_item_name_that_starts_with_a_dash_as_a_name
 	claude_that_is_not_installed_fails_like_any_missing_command
 	claude_runs_the_binary_and_not_itself
+	claude_gives_the_secrets_to_the_configured_binary_and_not_to_the_one_on_path
+	claude_passes_arguments_standard_input_and_the_exit_status_to_the_configured_binary
+	claude_starts_the_configured_binary_inside_claude_code
+	claude_starts_the_configured_binary_when_no_secrets_are_configured
+	claude_starts_the_configured_binary_without_the_secrets_when_the_vault_is_locked
+	claude_starts_the_configured_binary_without_the_secrets_when_rbw_is_not_installed
+	claude_returns_the_exit_status_of_the_configured_binary_on_every_fallback
+	claude_needs_no_claude_on_the_path_when_a_binary_is_configured
+	claude_does_not_start_another_claude_when_the_configured_binary_is_missing
+	claude_does_not_start_another_claude_when_the_configured_binary_is_not_executable
+	claude_takes_a_configured_path_with_spaces_and_glob_characters
+	claude_with_an_empty_binary_starts_the_claude_on_the_path_with_the_secrets
+	claude_with_an_empty_binary_starts_the_claude_on_the_path_on_every_fallback
+	claude_leaves_no_loader_variable_behind_with_a_configured_binary_under_allexport
+	claude_never_traces_a_secret_to_a_configured_binary_under_xtrace_and_functrace
 )
 
 run_tests "${tests[@]}"
