@@ -99,8 +99,13 @@ A host is built from a private flake, against a local checkout of this one:
 
 ```sh
 nix build PRIVATE_FLAKE#nixosConfigurations.HOST.config.system.build.toplevel \
-  --override-input ravnix path:.
+  --override-input ravnix git+file:.
 ```
+
+Run it in the checkout. `git+file:` takes only the files git tracks, as
+GitHub serves them; `path:` would also copy git-ignored files such as
+`.superpowers/` into the world-readable store. A new file is invisible to
+the override until you `git add` it.
 
 ## Style
 
