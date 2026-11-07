@@ -27,8 +27,9 @@
 # in the store, so the builder key is a key to every host that trusts the
 # cache. Builds reach the internet but no private address and not this host:
 # the nix-firewall service keeps a rule for that in the host's firewall
-# (firewall.sh). The cache answers anyone who reaches its port, without a
-# login, so NIX_BIND_ADDRESS must be an address only the clients reach.
+# (firewall.sh), and their DNS goes to NIX_BUILDER_DNS, not to a resolver on
+# this host. The cache answers anyone who reaches its port, without a login,
+# so NIX_BIND_ADDRESS must be an address only the clients reach.
 #
 # Deploy: as root, make a directory outside every file share and give it to
 # root, mode 0755. A share's ACL makes its files writable by others, and
@@ -50,6 +51,8 @@
 #                               network on the host uses, e.g. 10.0.200.0/24;
 #                               the egress rule matches on it and on the
 #                               bridge, br-nix-builder
+#   NIX_BUILDER_DNS             the resolver the builder asks, a public one
+#                               such as one the host's resolv.conf lists
 #   NIX_BUILDER_AUTHORIZED_KEY  the clients' public key, one line
 #   NIX_CACHE_KEY_NAME          name of the cache key, e.g. cache.example.org-1
 #   NIX_BUILDER_NIXPKGS         optional: the nixpkgs that nix, openssh,
@@ -173,6 +176,12 @@ services:
     # /dev/kvm must drop these two lines.
     devices:
       - /dev/kvm:/dev/kvm
+    # Docker's resolver in the container forwards to these from the
+    # container's own network, under the egress rule. Without them it would
+    # forward to the host's resolvers from the host's network, past the rule,
+    # and a resolver on this host would answer builds with internal names.
+    dns:
+      - ${NIX_BUILDER_DNS:?set NIX_BUILDER_DNS in .env}
     # No cap_add, so the Nix sandbox cannot run here: it needs kernel
     # namespaces, which Docker's defaults withhold ("this system does not
     # support the kernel namespaces that are required for sandboxing").
