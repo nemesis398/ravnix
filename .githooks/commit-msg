@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # Checks the commit message against the deny list that git config
 # ravnix.denyList names, with scripts/check-public.sh, because a message is as
-# public as a file. Git keeps nothing below the scissors line that
-# git commit --verbose adds, and that part is a diff, which may show a value
-# being removed, so it is not checked. Comment lines above it are, since a
-# commit.cleanup setting can keep them. Without ravnix.denyList it says so
-# and lets the commit through.
+# public as a file. Without ravnix.denyList it says so and lets the commit
+# through.
+#
+# It stops reading at git's cut line, "<comment> ------------------------ >8
+# ------------------------" for the comment character git uses
+# (core.commentString, core.commentChar, # by default), because what follows
+# it is the diff that git commit --verbose shows in the editor, which may show
+# a value being removed, and git drops it in that mode and with
+# --cleanup=scissors. In other modes git keeps that text: a message given with
+# -m or -F that holds the exact cut line reaches the commit with the part
+# below it unchecked here. pre-push reads every message in full before it
+# leaves the machine. Comment lines above the cut line are checked, since a
+# commit.cleanup setting can keep them.
 #
 # Changing this file so it checks less needs the maintainer's explicit
 # approval (AGENTS.md, rule 6).
@@ -30,7 +38,23 @@ fi
 
 work="$(mktemp -d -p "${TMPDIR:-/tmp}" ravnix-commit-msg.XXXXXX)"
 trap 'rm -rf -- "$work"' EXIT
-sed -E '/^[^[:space:]]+ -{24} >8 -{24}$/,$d' -- "$msg" >"$work/message"
+# With core.commentChar=auto, git picks one of these characters.
+comment="$(git config --get core.commentString || git config --get core.commentChar || true)"
+case "$comment" in
+'') comments=('#') ;;
+auto) comments=('#' ';' '@' '!' '$' '%' '^' '&' '|' ':') ;;
+*) comments=("$comment") ;;
+esac
+cuts=()
+for c in "${comments[@]}"; do
+	cuts+=("$c ------------------------ >8 ------------------------")
+done
+while IFS= read -r line || [[ -n "$line" ]]; do
+	for cut in "${cuts[@]}"; do
+		[[ "$line" != "$cut" ]] || break 2
+	done
+	printf '%s\n' "$line"
+done <"$msg" >"$work/message"
 
 status=0
 (cd "$work" && "$top/scripts/check-public.sh" "$deny_list" message) || status=$?

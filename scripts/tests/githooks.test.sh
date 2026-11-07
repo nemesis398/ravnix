@@ -207,6 +207,70 @@ an_entry_in_a_comment_above_the_scissors_line_is_refused() {
 	expect_said "message:2:alice@example.org"
 }
 
+cut='# ------------------------ >8 ------------------------'
+
+a_cut_line_with_another_comment_character_is_not_a_cut() {
+	new_repo
+	printf '%s\n' 'docs: add b' '; ------------------------ >8 ------------------------' \
+		'alice@example.org' >"$repo/msg"
+	capture in_repo .githooks/commit-msg msg
+	expect_status 1
+	expect_said "message:3:alice@example.org"
+	# With ; as git's comment character, the same line is the cut line.
+	git -C "$repo" config core.commentChar ';'
+	capture in_repo .githooks/commit-msg msg
+	expect_status 0
+}
+
+a_line_that_only_resembles_the_cut_line_is_not_a_cut() {
+	new_repo
+	local line
+	for line in '# ----- >8 -----' "$cut trailing" " $cut" '## ------------------------ >8 ------------------------'; do
+		printf '%s\n' 'docs: add b' "$line" 'alice@example.org' >"$repo/msg"
+		capture in_repo .githooks/commit-msg msg
+		[[ "$status" == 1 ]] || {
+			echo "  cut at: $line"
+			return 1
+		}
+	done
+}
+
+# Git keeps what follows a cut line in a message given with -F or -m, and
+# commit-msg stops reading there; pre-push reads the whole message.
+a_value_below_a_forged_cut_line_is_refused_at_the_push() {
+	new_repo
+	stage b.md 'clean'
+	printf '%s\n' 'docs: add b' '' "$cut" 'mail alice@example.org' >"$repo/msg"
+	commit -F msg
+	expect_status 0
+	local by_file
+	by_file="$(head_sha)"
+	[[ "$(git -C "$repo" log -1 --format=%B)" == *alice@example.org* ]] || {
+		echo "  git did not keep the text below the cut line"
+		return 1
+	}
+	stage c.md 'clean'
+	commit -m 'docs: add c' -m "$cut" -m 'mail alice@example.org'
+	expect_status 0
+	local by_option
+	by_option="$(head_sha)"
+	pre_push "$by_option" "$zero"
+	expect_status 1
+	expect_said "messages/$by_file:4:alice@example.org"
+	expect_said "messages/$by_option:5:alice@example.org"
+	expect_no_gate
+}
+
+a_pushed_ref_name_holding_an_entry_is_refused() {
+	new_repo
+	capture in_repo .githooks/pre-push origin https://example.invalid/repo.git \
+		< <(printf 'refs/heads/for-alice@example.org %s refs/heads/for-alice@example.org %s\n' \
+			"$(head_sha)" "$zero")
+	expect_status 1
+	expect_said "alice@example.org"
+	expect_no_gate
+}
+
 the_commit_msg_hook_without_a_deny_list_passes_with_a_note() {
 	new_repo
 	git -C "$repo" config --unset ravnix.denyList
@@ -399,6 +463,10 @@ tests=(
 	a_clean_message_goes_through
 	an_entry_below_the_scissors_line_is_ignored
 	an_entry_in_a_comment_above_the_scissors_line_is_refused
+	a_cut_line_with_another_comment_character_is_not_a_cut
+	a_line_that_only_resembles_the_cut_line_is_not_a_cut
+	a_value_below_a_forged_cut_line_is_refused_at_the_push
+	a_pushed_ref_name_holding_an_entry_is_refused
 	the_commit_msg_hook_without_a_deny_list_passes_with_a_note
 	the_commit_msg_hook_without_a_message_file_fails
 	a_clean_push_runs_the_full_gate

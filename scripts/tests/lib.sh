@@ -93,6 +93,11 @@ expect_lines() {
 run_tests() {
 	local name t rc failed=0
 	name="$(basename "$0")"
+	# An empty or mistyped list of tests must not pass for a green run.
+	if (($# == 0)); then
+		echo "$name: no tests given to run_tests"
+		exit 1
+	fi
 	for t in "$@"; do
 		# Bash ignores errexit inside an if condition, so the status is read
 		# afterwards.

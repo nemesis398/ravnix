@@ -6,8 +6,9 @@
 #
 # The fingerprint is a SHA-256 over the gate command, the index (what the
 # next commit holds), the deny list that git config ravnix.denyList names,
-# and the path and contents of every tracked and untracked (not ignored) file:
-# the public-boundary check reads every file, so every file counts. A green run
+# and the path and contents of every tracked file: what the gate reads.
+# Untracked files are left out, as the gate leaves them out, so a log that
+# keeps changing cannot keep a red stop from being let through. A green run
 # writes it to ravnix-gate/green in the work tree's git directory, a red run
 # to ravnix-gate/red. A stop whose fingerprint matches ravnix-gate/green skips
 # the gate.
@@ -147,7 +148,7 @@ cd "$root"
 # A tracked file deleted from the work tree is recorded as missing.
 records() {
 	local path
-	git ls-files -z --cached --others --exclude-standard |
+	git ls-files -z --cached |
 		LC_ALL=C sort -zu |
 		while IFS= read -r -d '' path; do
 			printf '%s\0' "$path"

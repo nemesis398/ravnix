@@ -15,8 +15,10 @@
 # as text. Only three things are left out, the places that hold the authors'
 # names by right: LICENSE and AUTHORS directly in a directory argument (or in
 # the current directory, when a file argument names one of them), and
-# everything named .git. A symbolic link is checked by its target, as git
-# stores it, and is never followed.
+# everything named .git, at any depth. Git cannot track a path with a .git
+# component, so through the gate that is only git's own directory; a tree
+# checked outside git skips a nested repository's .git as well. A symbolic
+# link is checked by its target, as git stores it, and is never followed.
 #
 # The deny list holds one literal per line, matched without regard to case
 # (Unicode case folding, in any locale). Blank lines and lines that start with

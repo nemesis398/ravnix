@@ -227,16 +227,35 @@ the_gate_runs_without_colors() {
 	expect_err "TERM=dumb NO_COLOR=1"
 }
 
-a_new_file_runs_the_gate_again() {
+# The gate reads the index and the tracked files, so an untracked file does
+# not count until it is staged.
+a_new_untracked_file_skips_the_gate() {
 	new_repo
 	run_hook "$repo" false
 	expect_status 0
 	printf 'notes\n' >"$repo/docs.md"
 	gate_fails
 	run_hook "$repo" false
+	expect_status 0
+	expect_calls 1
+	git -C "$repo" add docs.md
+	run_hook "$repo" false
 	expect_status 2
 	expect_calls 2
 	expect_no_file "$markers/green"
+}
+
+# A log the agent's tools keep writing must not send a red stop back forever.
+a_changing_untracked_file_does_not_keep_a_red_stop_blocked() {
+	new_repo
+	gate_fails
+	run_hook "$repo" false
+	expect_status 2
+	printf 'line 1\n' >"$repo/build.log"
+	run_hook "$repo" true
+	expect_status 0
+	expect_message "still red"
+	expect_calls 1
 }
 
 a_renamed_file_runs_the_gate_again() {
@@ -296,9 +315,12 @@ every_kind_of_file_runs_the_gate() {
 	)
 	for path in "${paths[@]}"; do
 		new_repo
+		mkdir -p "$(dirname "$repo/$path")"
+		printf 'tracked\n' >>"$repo/$path"
+		git -C "$repo" add -- "$path"
 		run_hook "$repo" false
 		expect_status 0
-		mkdir -p "$(dirname "$repo/$path")"
+		# Changed in the work tree only.
 		printf '\n# changed\n' >>"$repo/$path"
 		gate_fails
 		run_hook "$repo" false
@@ -618,6 +640,44 @@ EOF
 	"git 'commit' '--no-verify'"
 	'git c""ommit -n'
 	'g""it commit -n'
+	'git config include.path /tmp/evil.cfg'
+	'git config include.path x'
+	'git config --local include.path ../evil.cfg'
+	'git config --global include.path x'
+	'git config --file .git/config include.path x'
+	'git config --add include.path x'
+	'git config --replace-all include.path x'
+	'git config set include.path x'
+	'git config set --all include.path x'
+	'git config Include.Path x'
+	'git config includeIf.gitdir:~/.path /tmp/evil.cfg'
+	'git config includeIf.gitdir:x.path y'
+	'git config --unset include.path'
+	'git config --rename-section old include'
+	'git config --rename-section old core'
+	'git config --rename-section old includeIf.gitdir:x'
+	"git config alias.ci 'commit --no-verify' && git ci -m x"
+	"git config alias.ci 'commit --no-verify'"
+	"git config --global alias.ci '!git commit -n -m x'"
+	"git config set alias.ci 'push --no-verify'"
+	'git config alias.ci commit && git ci -n -m x'
+	'git config alias.CI commit && git ci -n -m x'
+	'/usr/libexec/git-core/git-commit -n -m x'
+	'git-commit --no-verify -m x'
+	'git-push --no-verify'
+	'git-config core.hooksPath /dev/null'
+	"bash <<'EOF'
+git commit --no-verify -m x
+EOF"
+	"sh <<-EOF
+	git commit -n -m x
+	EOF"
+	'bash -s <<<"git commit -n -m x"'
+	'nix-shell --run "git commit -n -m x"'
+	"nix-shell -p hello --command 'git push --no-verify'"
+	"script -q -c 'git commit -n -m x' /dev/null"
+	"su -c 'git commit --no-verify -m x' user"
+	"flock /tmp/lock -c 'git commit -n -m x'"
 )
 
 # Commands the guard must let through.
@@ -695,6 +755,28 @@ EOF"
 	'git grep -n hooksPath'
 	'git commit -m "$(printf %s -n)"'
 	'git show HEAD -n 1'
+	'git config user.email x@example.org'
+	'git config --get include.path'
+	'git config --get-all include.path'
+	'git config get include.path'
+	'git config include.path'
+	'git config --list --show-origin'
+	'git config core.hooksPath .githooks/'
+	'git config core.hooksPath ./.githooks'
+	'git config alias.st status'
+	"git config alias.ci 'commit -v'"
+	'git config alias.st status && git st -s'
+	'git config --rename-section old new'
+	'git-lfs install'
+	'git-commit -m x'
+	"bash <<'EOF'
+git status
+EOF"
+	"cat <<'EOF' | sh
+echo hi
+EOF"
+	'nix-shell --run "git log -n 3"'
+	'nix develop -c git status'
 )
 
 expect_refused() {
@@ -802,7 +884,8 @@ tests=(
 	a_repeated_red_stop_after_a_change_runs_the_gate
 	a_green_run_after_a_red_one_clears_the_red_marker
 	the_gate_runs_without_colors
-	a_new_file_runs_the_gate_again
+	a_new_untracked_file_skips_the_gate
+	a_changing_untracked_file_does_not_keep_a_red_stop_blocked
 	a_renamed_file_runs_the_gate_again
 	a_deleted_tracked_file_runs_the_gate_again
 	a_staged_change_runs_the_gate_again

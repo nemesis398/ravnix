@@ -2,7 +2,8 @@
 # Runs before every push. First it checks every commit the push sends that
 # the remote does not have yet: what each commit adds or changes, and its
 # message, against the deny list that git config ravnix.denyList names, and
-# the message of each annotated tag it sends. A commit that never went
+# the names of the refs it pushes and the message of each annotated tag it
+# sends. A commit that never went
 # through pre-commit, from a rebase, a cherry-pick or plumbing, is caught
 # here, and so is a value that one commit adds and a later one removes, since
 # the remote keeps both. Then it runs the full gate, scripts/check.sh, on the
@@ -36,8 +37,10 @@ mkdir -p "$work/commits" "$work/messages"
 all_zero='^0+$'
 declare -A seen=()
 commits=()
-while read -r _ local_sha _ remote_sha; do
+while read -r local_ref local_sha remote_ref remote_sha; do
 	[[ -n "${local_sha:-}" && ! "$local_sha" =~ $all_zero ]] || continue
+	# A branch or tag name is as public as a file name.
+	printf '%s\n' "$local_ref" "${remote_ref:-}" >>"$work/messages/ref-names"
 	if [[ "$(git cat-file -t "$local_sha")" == tag ]]; then
 		git cat-file tag "$local_sha" | sed '1,/^$/d' >"$work/messages/tag-$local_sha"
 	fi

@@ -10,20 +10,25 @@
 #     --config-env, GIT_CONFIG_PARAMETERS and GIT_CONFIG_KEY_<n>; and
 #     include.path or includeIf, which can load such a setting
 #   - git config writing core.hooksPath to anything but .githooks, unsetting
-#     it, removing or renaming the core section, or opening the config in an
-#     editor
+#     it, writing include.path or includeIf (which load another file), moving
+#     a section to or from core or include, or opening the config in an
+#     editor; an alias it writes is judged by what the alias runs
 #
 # It reads the command the way bash does: quotes, escapes, comments,
 # heredocs, command and process substitution, and commands joined by ;, &&,
-# ||, | and newlines. It follows bash -c, sh -c, eval, git rebase --exec and
-# git aliases (from -c and from git's configuration), and finds git behind
-# wrappers such as env, sudo, timeout or xargs. A message that mentions
-# --no-verify, a heredoc body and a quoted argument are data, not options.
+# ||, | and newlines. It follows bash -c, sh -c, eval, a heredoc or
+# here-string a shell reads, nix-shell --run, script, su and flock -c,
+# git rebase --exec and git aliases (from -c, from a git config earlier in
+# the command, and from git's configuration), and finds git behind wrappers
+# such as env, sudo, timeout or xargs, and as a dashed builtin (git-commit).
+# A message that mentions --no-verify, a heredoc body that no shell reads and
+# a quoted argument are data, not options.
 #
-# What it does not catch: a command built at run time (a variable that holds
-# the option, base64, printf escapes), a configuration file edited by hand,
-# and hooks deleted or made non-executable. It stops the habit, not a
-# determined bypass; the reviewer and the maintainer are the rest of the net.
+# What it does not catch is in scripts/README.md, Known gaps: among others a
+# command built at run time, a script piped into a shell, a remote command
+# (ssh), a configuration file edited by hand, and hooks deleted or made
+# non-executable. It stops the habit, not a determined bypass; the reviewer
+# and the maintainer are the rest of the net.
 #
 # Claude Code passes the event as JSON on stdin. Exit 2 refuses the call and
 # shows stderr to Claude; exit 0 lets it through. When the guard cannot read
@@ -101,6 +106,9 @@ W=()
 C=()
 HD=()
 texts=()
+# Aliases that git config writes earlier in the same command define, by
+# lowercase name, so `git config alias.x V && git x` is judged as V.
+declare -A config_aliases=()
 
 plain_re=$'^[^\t\n ;&|()<>`\\\'"$]+'
 dq_plain_re=$'^[^"\\`$]+'
@@ -141,20 +149,24 @@ comment() {
 	done
 }
 
-# After a newline: the bodies of the heredocs started on that line are data.
+# After a newline: the bodies of the heredocs started on that line. A body
+# is data, unless a shell reads it as its script; then it is judged too.
 heredocs() {
-	local entry strip delim rest line
+	local entry strip script delim rest line body
 	for entry in "${HD[@]}"; do
 		strip="${entry:0:1}"
-		delim="${entry:1}"
+		script="${entry:1:1}"
+		delim="${entry:2}"
 		rest="${T:P}"
+		body=""
 		if ((strip == 0)); then
 			if [[ "$rest" == "$delim" || "$rest" == "$delim"$'\n'* ]]; then
 				P=$((P + ${#delim} + 1))
 			elif [[ "$rest" == *$'\n'"$delim"$'\n'* ]]; then
-				line="${rest%%$'\n'"$delim"$'\n'*}"
-				P=$((P + ${#line} + ${#delim} + 2))
+				body="${rest%%$'\n'"$delim"$'\n'*}"
+				P=$((P + ${#body} + ${#delim} + 2))
 			else
+				body="$rest"
 				P=$N
 			fi
 		else
@@ -164,10 +176,25 @@ heredocs() {
 				rest="${rest:${#line}+1}"
 				line="${line#"${line%%[!$'\t']*}"}"
 				[[ "$line" != "$delim" ]] || break
+				body+="$line"$'\n'
 			done
 		fi
+		((script == 0)) || texts+=("$body")
 	done
 	HD=()
+}
+
+# Whether the simple command read so far runs a shell, which reads a heredoc
+# or here-string as its script.
+feeds_shell() {
+	local w
+	for w in "${words[@]}"; do
+		((${#w} <= 256)) || continue
+		case "${w##*/}" in
+		bash | sh | dash | zsh | ksh | mksh | ash) return 0 ;;
+		esac
+	done
+	return 1
 }
 
 read_dq() {
@@ -340,7 +367,7 @@ read_word() {
 # At < or >: a redirection, whose target is dropped, a heredoc, whose
 # delimiter is noted, or a process substitution.
 redirect() {
-	local op strip=0
+	local op strip=0 script=0
 	peek
 	op="$ch"
 	P=$((P + 1))
@@ -358,6 +385,9 @@ redirect() {
 			P=$((P + 1))
 			skip_blanks
 			read_word
+			if feeds_shell; then
+				texts+=("$RW")
+			fi
 			return 0
 		fi
 		if [[ "$ch" == '-' ]]; then
@@ -366,7 +396,8 @@ redirect() {
 		fi
 		skip_blanks
 		read_word
-		HD+=("$strip$RW")
+		if feeds_shell; then script=1; fi
+		HD+=("$strip$script$RW")
 		return 0
 	fi
 	case "$ch" in
@@ -515,8 +546,21 @@ judge_setting() {
 	local name="${1%%=*}" value=""
 	[[ "$1" != *=* ]] || value="${1#*=}"
 	judge_setting_name "$name"
-	if [[ "${name,,}" == alias.* ]]; then
-		aliases["${name#*.}"]="$value"
+	name="${name,,}"
+	if [[ "$name" == alias.* ]]; then
+		aliases["${name#alias.}"]="$value"
+	fi
+	return 0
+}
+
+# Judges what an alias defined as $1 runs, with the arguments that follow.
+queue_alias() {
+	local value="$1"
+	shift
+	if [[ "$value" == '!'* ]]; then
+		texts+=("${value#!} $*")
+	elif [[ -n "$value" ]]; then
+		texts+=("git $value $*")
 	fi
 	return 0
 }
@@ -585,7 +629,7 @@ judge_no_verify() {
 }
 
 judge_config() {
-	local args=("$@") n=$# i a action="" pos=() name
+	local args=("$@") n=$# i a action="" pos=() name value section
 	for ((i = 0; i < n; i++)); do
 		a="${args[i]}"
 		case "$a" in
@@ -615,22 +659,43 @@ judge_config() {
 		esac
 		[[ -z "$action" ]] || pos=("${pos[@]:1}")
 	fi
+	# A name alone, with no action, reads its value.
+	if [[ -z "$action" ]]; then
+		if ((${#pos[@]} >= 2)); then action="set"; else action="get"; fi
+	fi
 	name="${pos[0]:-}"
 	name="${name,,}"
 	case "$action" in
-	get) ;;
+	get) return 0 ;;
 	edit) refuse "git config --edit can change core.hooksPath unseen; set one key with git config instead" ;;
-	unset)
-		[[ "$name" != core.hookspath ]] ||
-			refuse "unsetting core.hooksPath turns the git hooks off"
-		;;
 	section)
-		[[ "$name" != core ]] ||
-			refuse "removing or renaming the core section drops core.hooksPath"
+		for section in "${pos[@]:0:2}"; do
+			case "${section,,}" in
+			core) refuse "renaming or removing a section to or from core can drop or set core.hooksPath" ;;
+			include | includeif.*) refuse "renaming or removing a section to or from $section can include a configuration that sets core.hooksPath" ;;
+			esac
+		done
+		return 0
 		;;
-	*)
-		if [[ "$name" == core.hookspath && ${#pos[@]} -ge 2 && "${pos[1]}" != .githooks ]]; then
-			refuse "git config core.hooksPath ${pos[1]} points git at other hooks; it must stay .githooks"
+	esac
+	# Setting or unsetting one name.
+	case "$name" in
+	include.path | includeif.*)
+		refuse "git config $name loads another configuration file, which can set core.hooksPath"
+		;;
+	core.hookspath)
+		[[ "$action" != unset ]] ||
+			refuse "unsetting core.hooksPath turns the git hooks off"
+		value="${pos[1]:-}"
+		while [[ "$value" == ./* ]]; do value="${value#./}"; done
+		while [[ "$value" == */ ]]; do value="${value%/}"; done
+		[[ "$value" == .githooks ]] ||
+			refuse "git config core.hooksPath ${pos[1]:-} points git at other hooks; it must stay .githooks"
+		;;
+	alias.*)
+		if [[ "$action" == set && ${#pos[@]} -ge 2 ]]; then
+			config_aliases["${name#alias.}"]="${pos[1]}"
+			queue_alias "${pos[1]}"
 		fi
 		;;
 	esac
@@ -638,7 +703,7 @@ judge_config() {
 }
 
 judge_git() {
-	local args=("$@") n=$# i=0 a sub="" value
+	local args=("$@") n=$# i=0 a sub="" value key
 	local -A aliases=()
 	while ((i < n)); do
 		a="${args[i]}"
@@ -677,17 +742,18 @@ judge_git() {
 	push | merge | pull | am | rebase) judge_no_verify "$sub" "${rest[@]}" ;;
 	config) judge_config "${rest[@]}" ;;
 	*)
-		# An alias: judge what it expands to, with the same arguments.
-		if [[ -n "${aliases[$sub]+set}" ]]; then
-			value="${aliases[$sub]}"
+		# An alias: judge what it expands to, with the same arguments. One
+		# given with -c comes first, then one an earlier git config in this
+		# command wrote, then git's configuration.
+		key="${sub,,}"
+		if [[ -n "${aliases[$key]+set}" ]]; then
+			value="${aliases[$key]}"
+		elif [[ -n "${config_aliases[$key]+set}" ]]; then
+			value="${config_aliases[$key]}"
 		else
 			value="$(git config --get "alias.$sub" 2>/dev/null)" || value=""
 		fi
-		if [[ "$value" == '!'* ]]; then
-			texts+=("${value#!} ${rest[*]}")
-		elif [[ -n "$value" ]]; then
-			texts+=("git $value ${rest[*]}")
-		fi
+		queue_alias "$value" "${rest[@]}"
 		;;
 	esac
 	return 0
@@ -727,11 +793,45 @@ judge() {
 		case "${w##*/}" in
 		bash | sh | dash | zsh | ksh | mksh | ash) judge_shell "${words[@]:i+1}" ;;
 		eval) texts+=("${words[*]:i+1}") ;;
+		nix-shell) judge_runner --run --command -- "${words[@]:i+1}" ;;
+		script | su | flock) judge_runner -c --command -- "${words[@]:i+1}" ;;
 		git)
 			judge_git "${words[@]:i+1}"
 			return 0
 			;;
+		git-?*)
+			# A dashed builtin, as in git-core/git-commit.
+			w="${w##*/}"
+			judge_git "${w#git-}" "${words[@]:i+1}"
+			return 0
+			;;
 		esac
+	done
+	return 0
+}
+
+# A program that runs a command string given with one of the options before
+# --: judges that string.
+judge_runner() {
+	local options=() option a take=0
+	while (($# > 0)) && [[ "$1" != -- ]]; do
+		options+=("$1")
+		shift
+	done
+	shift
+	for a in "$@"; do
+		if ((take)); then
+			texts+=("$a")
+			take=0
+			continue
+		fi
+		for option in "${options[@]}"; do
+			if [[ "$a" == "$option" ]]; then
+				take=1
+			elif [[ "$a" == "$option="* ]]; then
+				texts+=("${a#*=}")
+			fi
+		done
 	done
 	return 0
 }
