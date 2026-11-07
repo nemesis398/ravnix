@@ -382,6 +382,14 @@ rounded_corners_are_a_hit_unless_off() {
 	expect_hits "modules/b.nix:1:radius" "modules/b.nix:2:radius" "modules/mangohud.conf:1:radius"
 }
 
+a_radius_of_the_lock_ring_is_geometry_not_a_corner() {
+	new_tree
+	put modules/a.toml 'ring_radius = 110\nlock-ring-radius = 100\nindicator_radius = 110\nRing_Radius = 9\n'
+	expect_clean
+	put modules/b.toml 'spring_radius = 5\nringradius = 5\nring_radius_x = 5\nring_corner_radius = 5\n'
+	expect_hits "modules/b.toml:1:radius" "modules/b.toml:2:radius" "modules/b.toml:4:radius"
+}
+
 any_radius_key_is_a_hit_except_the_lock_ring_gauge() {
 	new_tree
 	put modules/dunstrc 'progress_bar_corner_radius = 4\nicon_corner_radius = 4\n'
@@ -505,11 +513,29 @@ a_sway_command_in_a_nix_string_is_a_hit() {
 	expect_hits "modules/a.nix:1:opacity" "modules/a.nix:2:opacity"
 }
 
+prose_that_holds_the_word_transparent_is_no_hit() {
+	new_tree
+	put modules/a.nix 'description = \x27\x27\n    Default: transparent\n    Example: a transparent proxy;\n  \x27\x27;\nx = 1; # Default: transparent\n'
+	put modules/b.json5 '{ "default": "transparent", "note": "transparent" }\n'
+	expect_clean
+	put modules/c.nix 'description = \x27\x27\n    background: transparent;\n  \x27\x27;\nsettings."ui.menu" = transparent;\nx = 1; # background: transparent\n'
+	expect_hits "modules/c.nix:2:opacity" "modules/c.nix:4:opacity" "modules/c.nix:5:opacity"
+}
+
 the_transparent_keyword_is_a_hit() {
 	new_tree
 	put a.css '#clock { background: transparent; }\nb { border-bottom: 2px solid transparent; }\n@define-color marker transparent;\nc { background: inherit; border-bottom: 2px solid @mantle; }\n'
 	put modules/b.nix 'background = "transparent";\ndescription = "A transparent proxy";\n'
 	expect_hits "a.css:1:opacity" "a.css:2:opacity" "a.css:3:opacity" "modules/b.nix:1:opacity"
+}
+
+neovim_blend_is_transparency_unless_it_is_zero() {
+	new_tree
+	put modules/nvim/a.lua 'vim.o.pumblend = 10\nvim.opt.winblend = 20\nlocal t = { winblend = 5 }\nvim.wo.winblend = "30"\n'
+	put modules/nvim/b.vim 'set pumblend=10\nset winblend=0\n'
+	put modules/nvim/c.lua 'vim.o.pumblend = 0\nvim.opt.winblend = 0\nlocal t = { winblend = vim.o.pumblend }\nlocal u = { blendmode = 10, windowblend = 10 }\n'
+	expect_hits "modules/nvim/a.lua:1:opacity" "modules/nvim/a.lua:2:opacity" "modules/nvim/a.lua:3:opacity" \
+		"modules/nvim/a.lua:4:opacity" "modules/nvim/b.vim:1:opacity"
 }
 
 an_alpha_that_is_a_smoothing_factor_is_no_opacity() {
@@ -551,6 +577,22 @@ an_issue_number_in_a_trailing_comment_is_no_color() {
 	expect_hits "modules/b.nix:1:hex-color"
 }
 
+an_issue_number_in_a_lua_comment_is_no_color() {
+	new_tree
+	put modules/nvim/a.lua '-- see #290879\nlocal x = 1 -- see #290879\nlocal y = "#290879" -- a color\n'
+	expect_hits "modules/nvim/a.lua:3:hex-color"
+}
+
+a_word_of_hex_letters_on_a_color_key_is_no_color() {
+	new_tree
+	put modules/a.nix 'text = "facade";\ninput = "decade";\nborder = "deadbeef";\nbackground = "accede";\nmatch = "efface";\n'
+	expect_clean
+	# Letters only is a color when every byte is a doubled digit, as #fed is.
+	put modules/b.nix 'text = "ffeedd";\nborder = "cccccc";\nforeground = "ffffffff";\nbackground = "abcdef12";\n'
+	expect_hits "modules/b.nix:1:hex-color" "modules/b.nix:2:hex-color" "modules/b.nix:3:hex-color" \
+		"modules/b.nix:4:hex-color" "modules/b.nix:4:opacity"
+}
+
 a_link_anchor_is_no_color() {
 	new_tree
 	put docs/a.md 'See [the facade](#facade) and [x](#deadbeef), <a href="#facade">y</a>.\n'
@@ -574,6 +616,14 @@ turning_animations_on_is_a_hit() {
 	put modules/c.ini 'gtk-enable-animations=0\ngtk-enable-animations=false\n'
 	expect_hits "modules/a.nix:1:motion" "modules/a.nix:2:motion" "modules/a.nix:3:motion" \
 		"modules/b.ini:1:motion"
+}
+
+a_motion_key_in_an_attribute_path_is_judged() {
+	new_tree
+	put modules/a.nix 'gtk.gtk3.extraConfig.gtk-enable-animations = true;\ndconf.settings."org/gnome/desktop/interface".enable-animations = true;\nprograms.x.settings.animation = "slide";\nfoo.transition = 1;\nprograms.y.animations.enabled = true;\n'
+	put modules/b.nix 'gtk.gtk3.extraConfig.gtk-enable-animations = false;\ndconf.settings."org/gnome/desktop/interface".enable-animations = false;\nfoo.transition = 0;\nprograms.y.animations.enabled = false;\nsystemd.TransitionTime = 1;\nlib.animationsFoo = 1;\nprograms.z.gtk-enable-animations = "off";\n'
+	expect_hits "modules/a.nix:1:motion" "modules/a.nix:2:motion" "modules/a.nix:3:motion" \
+		"modules/a.nix:4:motion" "modules/a.nix:5:motion"
 }
 
 words_that_merely_contain_the_names_pass() {
@@ -886,6 +936,7 @@ tests=(
 	the_lock_ring_radius_is_a_gauge_not_a_corner
 	a_rounded_border_is_a_hit
 	rounded_corners_are_a_hit_unless_off
+	a_radius_of_the_lock_ring_is_geometry_not_a_corner
 	any_radius_key_is_a_hit_except_the_lock_ring_gauge
 	a_declaration_after_a_closed_comment_or_a_selector_star_is_judged
 	a_lua_comment_is_a_comment
@@ -902,14 +953,19 @@ tests=(
 	the_inside_of_the_lock_ring_is_the_one_exemption
 	no_other_swaylock_color_may_be_translucent
 	a_sway_command_in_a_nix_string_is_a_hit
+	prose_that_holds_the_word_transparent_is_no_hit
 	the_transparent_keyword_is_a_hit
+	neovim_blend_is_transparency_unless_it_is_zero
 	an_alpha_that_is_a_smoothing_factor_is_no_opacity
 	a_transition_or_animation_key_is_a_hit
 	a_key_that_turns_motion_off_passes
 	an_issue_number_in_a_trailing_comment_is_no_color
+	an_issue_number_in_a_lua_comment_is_no_color
+	a_word_of_hex_letters_on_a_color_key_is_no_color
 	a_link_anchor_is_no_color
 	an_issue_number_is_no_color
 	turning_animations_on_is_a_hit
+	a_motion_key_in_an_attribute_path_is_judged
 	words_that_merely_contain_the_names_pass
 	a_mermaid_init_block_identical_to_the_shared_one_passes
 	a_mermaid_init_block_with_a_changed_color_is_a_hit

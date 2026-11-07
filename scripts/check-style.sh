@@ -9,18 +9,22 @@
 #   hex-color     a hex color (#rrggbb or #rrggbbaa; #rgb and #rgba in CSS
 #                 files, in quotes and after a color property) outside
 #                 modules/theme/. A bare rrggbb or rrggbbaa value of a color
-#                 key (fuzzel, swaylock) counts too. Colors come from the theme
+#                 key (fuzzel, swaylock) counts too, unless it is a word made
+#                 of the letters a to f (facade). Colors come from the theme
 #                 module's roles, so the user's accent reaches them. A hex
 #                 color in a comment counts.
 #   radius        a border radius other than 0: border-radius and its
 #                 per-corner forms, every key that ends in radius, a border key
 #                 set to rounded, and round_corners or rounded_corners unless
-#                 it is 0 or false. indicator-radius is not one of these; the
-#                 lock ring is a gauge.
+#                 it is 0 or false. indicator-radius and ring-radius are not
+#                 among these; the lock ring is a gauge.
 #   opacity       anything below fully opaque: opacity or a background, window
 #                 or similar *_alpha key below 1, alpha(), rgba() and hsla()
 #                 with alpha below 1, sway's opacity command (also in a quoted
-#                 string), the CSS keyword transparent, a hex color or a bare
+#                 string), Neovim's winblend and pumblend above 0, the CSS
+#                 keyword transparent (after a colon only on a color property,
+#                 so prose such as "Default: transparent" is none), a hex color
+#                 or a bare
 #                 RRGGBBAA value of a color key whose alpha is not full. The
 #                 one exemption is the inside of the lock ring: swaylock's
 #                 inside-color and inside-*-color keys, with or without a #. A
@@ -28,8 +32,10 @@
 #   motion        a transition or animation key, or @keyframes, unless the
 #                 key turns motion off (none, false, off, no, 0s); also
 #                 enable-animations and gtk-enable-animations set to anything
-#                 else. Words that only contain the names, such as
-#                 systemd.TransitionTime, are no keys.
+#                 else, also as the last part of an attribute path
+#                 (gtk.gtk3.extraConfig.gtk-enable-animations = true). Words
+#                 that only contain the names, such as systemd.TransitionTime,
+#                 are no keys.
 #   mermaid-init  a Mermaid init block (%%{init: ...}%% or %%{initialize: ...}%%
 #                 at the start of a line) that differs from the shared one in
 #                 docs/mermaid-theme.json, compared without white space, or
@@ -69,8 +75,9 @@
 # A line that is only a comment is not searched for radius, opacity and
 # motion; the body lines of a block comment are, unless they start with a *.
 # Block comments that end before the code on their line are cut out of it.
-# In a document or in a trailing comment, an all-digit #123456 is an issue
-# number and no color, and so is a link target such as [x](#facade).
+# In a document or in a trailing comment (# or //, -- in Lua), an all-digit
+# #123456 is an issue number and no color, and so is a link target such as
+# [x](#facade).
 #
 # The shared Mermaid theme is docs/mermaid-theme.json, beside the scripts/
 # directory this script is in, or the file that RAVNIX_MERMAID_THEME names.
@@ -434,7 +441,7 @@ is_doc() {
 }
 
 # Whether the first #DIGITS of a line stands in a trailing comment: after a
-# # or // that has white space or the line start before it.
+# # or // (-- in Lua) that has white space or the line start before it.
 in_trailing_comment() {
 	local before
 	line_text "$1" "$2"
@@ -442,6 +449,9 @@ in_trailing_comment() {
 	[[ "$before" =~ (^|[[:space:]])\#([[:space:]]|$) ]] && return 0
 	if [[ " ${nonnix[*]} " == *" $1 "* ]]; then
 		[[ "$before" =~ (^|[[:space:]])// ]] && return 0
+	fi
+	if [[ " ${lua[*]} " == *" $1 "* ]]; then
+		[[ "$before" =~ (^|[[:space:]])-- ]] && return 0
 	fi
 	return 1
 }
@@ -536,10 +546,10 @@ radius_hit() {
 		match="${BASH_REMATCH[0]}"
 		key="${BASH_REMATCH[2]}"
 		value="${BASH_REMATCH[3]}"
-		case "$key" in
-		indicator-radius | indicator_radius) ;;
-		*) if radius_value "$value"; then hit "$path" "$line" radius; fi ;;
-		esac
+		# The lock ring is a gauge: its indicator and ring radii are geometry.
+		if [[ ! "$key" =~ (^|[_-])(indicator|ring)[_-]radius$ ]] && radius_value "$value"; then
+			hit "$path" "$line" radius
+		fi
 		rest="${rest#*"$match"}"
 	done
 	[[ ! "$text" =~ $rounded ]] || hit "$path" "$line" radius
@@ -575,6 +585,14 @@ opacity_hit() {
 		value="${BASH_REMATCH[3]}"
 		if below_one "$value"; then hit "$path" "$line" opacity; fi
 	fi
+	# Neovim's pseudo-transparency: winblend and pumblend above 0.
+	local blend='(^|[^[:alnum:]_-])(win|pum)blend["'"'"']?[[:space:]]*[=:][[:space:]]*["'"'"']?([0-9]+)'
+	rest="$text"
+	while [[ "$rest" =~ $blend ]]; do
+		match="${BASH_REMATCH[0]}"
+		if [[ "${BASH_REMATCH[3]}" =~ [1-9] ]]; then hit "$path" "$line" opacity; fi
+		rest="${rest#*"$match"}"
+	done
 	# alpha(@color, 0.5)
 	if [[ "$text" =~ (^|[^[:alnum:]_-])alpha[[:space:]]*\( ]]; then
 		hit "$path" "$line" opacity
@@ -599,18 +617,19 @@ opacity_hit() {
 }
 
 # The CSS keyword transparent as a value: background: transparent, a border
-# of 2px solid transparent, @define-color marker transparent, or a string
-# that is nothing else. A child that shows its parent uses the role color or
-# inherit. The word in prose is no value.
+# of 2px solid transparent, @define-color marker transparent, or any key set
+# to it with =. A child that shows its parent uses the role color or inherit.
+# After a colon only a color property counts, so prose such as "Default:
+# transparent" is no hit.
 transparent_hit() {
 	local path="$1" line="$2" text="$3"
 	is_comment "$path" "$line" && return 0
 	strip_comments "$text"
 	text="${REPLY,,}"
-	local value='[=:][[:space:]]*["'"'"']?transparent["'"'"']?[[:space:]]*([;,}!]|$)'
-	local decl='(^|[{;[:space:]])[a-z-]+[[:space:]]*:[^;{}]*[[:space:]]transparent[[:space:]]*([;}!]|$)'
+	local equals='=[[:space:]]*["'"'"']?transparent["'"'"']?[[:space:]]*([;,}!]|$)'
+	local colon='(^|[^[:alnum:]_-])[a-z-]*(color|background|border|outline|fill|stroke|shadow|caret)[a-z-]*["'"'"']?[[:space:]]*:[[:space:]]*([^;{}]*[[:space:]])?["'"'"']?transparent["'"'"']?[[:space:]]*([;,}!]|$)'
 	local define='@define-color[[:space:]]+[a-z0-9_-]+[[:space:]]+transparent'
-	if [[ "$text" =~ $value || "$text" =~ $decl || "$text" =~ $define ]]; then
+	if [[ "$text" =~ $equals || "$text" =~ $colon || "$text" =~ $define ]]; then
 		hit "$path" "$line" opacity
 	fi
 }
@@ -632,6 +651,14 @@ is_color_key() {
 	return 1
 }
 
+# Whether every byte of the hex digits $1 is one digit twice (ffeedd).
+doubled_digits() {
+	local v="$1" i
+	for ((i = 0; i < ${#v}; i += 2)); do
+		[[ "${v:i:1}" == "${v:i+1:1}" ]] || return 1
+	done
+}
+
 # A bare RRGGBB or RRGGBBAA value of a color key, as fuzzel and swaylock write
 # them: a hex color outside the theme module, and a translucent one.
 bare_color_hit() {
@@ -646,6 +673,11 @@ bare_color_hit() {
 	# Six digits and no letter is a number, unless it is one of the two colors
 	# of Mocha that have no letter.
 	if [[ "${#value}" -eq 6 && "$value" =~ ^[0-9]+$ && "$value" != 181825 && "$value" != 313244 ]]; then
+		return 0
+	fi
+	# Letters and no digit is a word (facade, deadbeef), unless every byte is a
+	# doubled digit, as #fed expands to ffeedd.
+	if [[ "$value" =~ ^[a-f]+$ ]] && ! doubled_digits "$value"; then
 		return 0
 	fi
 	hex_allowed "$path" || hit "$path" "$line" hex-color
@@ -675,10 +707,10 @@ motion_hit() {
 }
 
 search radius_hit code '(?i).{0,160}(?:radius|rounded|round[_-]corners).{0,160}'
-search opacity_hit code '(?i).{0,160}(?:opacity|alpha|rgba|hsla|rgb\(|hsl\().{0,160}'
+search opacity_hit code '(?i).{0,160}(?:opacity|alpha|blend|rgba|hsla|rgb\(|hsl\().{0,160}'
 search transparent_hit code '(?i).{0,160}transparent.{0,160}'
 search bare_color_hit code '(?i)(?:^|[^[:alnum:]_-])[a-z][a-z0-9_-]*["'"'"']?\s*[=:]\s*["'"'"']?(?:[0-9a-f]{8}|[0-9a-f]{6})["'"'"']?\s*[;,]?\s*$'
-search motion_hit code '(?i)(?:^|[\s{;"'"'"'(,])(?:(?:-(?:gtk|moz|webkit|ms|o)-)?(?:transition|animations?)(?:-[a-z-]+)?|(?:gtk-)?enable-animations)["'"'"']?\s*[=:][^;{}]{0,60}|@(?:-[a-z]+-)?keyframes\b'
+search motion_hit code '(?i)(?:^|[\s{;"'"'"'(,.])(?:(?:-(?:gtk|moz|webkit|ms|o)-)?(?:transition|animations?)(?:[-.][a-z.-]*[a-z])?|(?:gtk-)?enable-animations)["'"'"']?\s*[=:][^;{}]{0,60}|@(?:-[a-z]+-)?keyframes\b'
 
 # --- Report -------------------------------------------------------------------
 

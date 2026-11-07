@@ -100,8 +100,11 @@ What it sees, and what it does not (the false negatives):
   dash or underscore separated part `background`, `foreground`, `bg`, `fg`,
   `border`, `selection`, `match`, `placeholder`, `prompt`, `counter`,
   `separator`, `frame`, `text` or `input`. Not seen: a bare color on another
-  key, one that shares its line with other values, and a six-digit color with
-  no letter in it (`333333`), except Mocha's own Mantle and Surface0.
+  key, one that shares its line with other values, a six-digit color with
+  no letter in it (`333333`), except Mocha's own Mantle and Surface0, and a
+  value of the letters a to f only (`abcdef`, `facade`, `deadbeef`), which
+  counts as a color only when every byte is one digit twice (`ffeedd`, as
+  `#fed` expands).
 - `#rgb` and `#rgba` are searched only in CSS files, in quotes and after a
   color property, because `#123` and `#add` are issue numbers and anchors
   everywhere else. Colors written as `rgb(...)`, a name, `0xRRGGBB` or a
@@ -110,7 +113,7 @@ What it sees, and what it does not (the false negatives):
   (Qt, Android) is a hex-color hit anyway, and inside `modules/theme/` it is
   a false opacity hit unless it is fully opaque in both readings.
 - An all-digit `#123456` is taken for an issue number in Markdown, on a comment
-  line and in a trailing `#` or `//` comment. The all-digit Mocha colors
+  line and in a trailing `#`, `//` or (Lua) `--` comment. The all-digit Mocha colors
   Mantle and Surface0 are still found, but another all-digit color in prose
   (`#333333`) is not. A link target, `](#facade)` or `href="#facade"`, is no
   color, which also hides a real color written as a link target.
@@ -121,14 +124,24 @@ What it sees, and what it does not (the false negatives):
   or led by a surface (`background`, `bg`, `window`, `inactive`, `border`,
   `text`, ... `_alpha`), so a `smoothing_alpha` is no hit. Another alpha key
   (`layer_alpha`) is not seen, nor an alpha spelled `fade(`, `color-mix(` or
-  as a percentage word. Sway's `opacity` command is a hit also inside a
+  as a percentage word. Neovim's `winblend` and `pumblend` are hits above 0
+  (`vim.o.pumblend = 10`, `set winblend=10`); not seen: the same option set
+  from another option (`winblend = vim.o.pumblend`), a `blend` attribute of a
+  highlight group, and a program's own default that the configuration never
+  writes. LazyVim sets `pumblend = 10` itself, so a Neovim module has to write
+  `vim.opt.pumblend = 0`; the check cannot tell that it did not. Sway's `opacity` command is a hit also inside a
   quoted string; prose in a string that starts `opacity 0.5` is a false hit.
-- `transparent` is a hit as the value of a key, as the last word of a CSS
-  declaration, and in `@define-color name transparent`. It is not seen inside
-  a function (`linear-gradient(to right, transparent, red)`), and prose that
-  holds the word is no hit. `rgba(0, 0, 0, 0)` is judged by its alpha.
+- `transparent` is a hit as the value of a key set with `=`, as the last word of
+  a CSS declaration on a color property (a name with `color`, `background`,
+  `border`, `outline`, `fill`, `stroke`, `shadow` or `caret` in it), and in
+  `@define-color name transparent`. After a colon on any other key it is prose
+  (`Default: transparent`), so `"ui.menu": "transparent"` in JSON or YAML is not
+  seen. It is not seen inside a function (`linear-gradient(to right,
+  transparent, red)`). `rgba(0, 0, 0, 0)` is judged by its alpha.
 - Radius: `border-radius` and its per-corner forms, every key that ends in
-  `radius` or `-radius` (except the lock ring's `indicator-radius`), a key with
+  `radius` or `-radius` (except the lock ring's `indicator-radius` and
+  `ring-radius`, which are gauge geometry; any other radius that is no corner
+  is a false hit, and widening the exemption needs the maintainer), a key with
   `border` in its name set to `rounded`, and `round_corners` or
   `rounded_corners` with any value but 0, false, off, no or none. Not seen:
   other spellings of the same thing (Hyprland's `rounding`, a `style` set to
@@ -140,8 +153,11 @@ What it sees, and what it does not (the false negatives):
   `enable-animations` and `gtk-enable-animations` set to anything but an
   off-value (`none`, `false`, `off`, `no`, `0`, `0s`, `0ms`). Other ways to
   move are not judged: a blinking cursor, smooth scrolling, a key such as
-  `animations-enabled`. An attribute that is named like a key
-  (`animation-nvim = ...` in a plugin set) is a false hit.
+  `animations-enabled`. The key is judged also as the last part of a Nix
+  attribute path (`gtk.gtk3.extraConfig.gtk-enable-animations = true`), and
+  an attribute that is named like a key (`animation-nvim = ...` in a plugin
+  set) is a false hit, as is prose that starts `transition:` or `animation:`
+  (in a multi-line string, say).
 - Comment lines (`#` and a space, `;`, `//`, `--` in Lua, `/*`, a leading `*`)
   are not searched for radius, opacity and motion. A `/* ... */` that ends
   before more code is cut out of the line. The body lines of a block comment
