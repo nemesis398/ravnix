@@ -32,20 +32,24 @@ is_blank :: proc(text: string) -> bool {
 	return len(strings.trim_space(text)) == 0
 }
 
+// read_input reads the file at path, or standard input when path is "".
+// The caller deletes the data; on an error there is none to delete.
+read_input :: proc(path: string, allocator := context.allocator) -> (data: []byte, err: os.Error) {
+	if path == "" {
+		return os.read_entire_file(os.stdin, allocator)
+	}
+	return os.read_entire_file(path, allocator)
+}
+
 main :: proc() {
 	if len(os.args) > 2 {
 		fmt.eprintln("usage: template [FILE]")
 		os.exit(2)
 	}
-	data: []byte
-	err: os.Error
-	if len(os.args) == 2 {
-		data, err = os.read_entire_file(os.args[1], context.allocator)
-	} else {
-		data, err = os.read_entire_file(os.stdin, context.allocator)
-	}
+	path := os.args[1] if len(os.args) == 2 else ""
+	data, err := read_input(path)
 	if err != nil {
-		fmt.eprintfln("template: cannot read %s: %s", os.args[1] if len(os.args) == 2 else "standard input", os.error_string(err))
+		fmt.eprintfln("template: cannot read %s: %s", path if path != "" else "standard input", os.error_string(err))
 		os.exit(1)
 	}
 	defer delete(data)
