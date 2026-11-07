@@ -14,7 +14,10 @@
 #      /nix/var/nix/profiles/ravnix, whenever that revision is not the one
 #      installed: changing it is how the builder is updated. The image's Nix
 #      installs only the first time; after that the installed Nix installs
-#      its successor. A failed update keeps the old tools and says so;
+#      its successor. A new install goes into a profile of its own and
+#      replaces the old one only once each tool starts and is the pin's, at
+#      the pin's version. A failed or incomplete update keeps the old tools
+#      and says so;
 #   4. makes the SSH host key and the cache's signing key on the first start,
 #      in /state, and prints both public halves;
 #   5. starts harmonia, then waits until the egress rule holds (below), then
@@ -260,15 +263,79 @@ tools_complete() {
   done
 }
 
+# Exits 0 when the profile DIR holds each tool start.sh runs, linked from the
+# package PIN names for it, and each starts and reports that package's
+# version; prints the versions. Prints what is wrong, else. NIX evaluates
+# the pin. A tool runs only once its link is known to be the pin's.
+check_tools() { # dir pin nix
+  local dir=$1 pin=$2 nix=$3 tool attr out rc=0
+  local -A from=([nix]=nix [nix-daemon]=nix [sshd]=openssh [ssh-keygen]=openssh [harmonia-cache]=harmonia)
+  local -A version path
+  for tool in "${need[@]}"; do
+    [ -x "$dir/bin/$tool" ] || {
+      echo "the profile lacks $tool"
+      return 1
+    }
+  done
+  for attr in nix openssh harmonia; do
+    # Nix's own messages go to the log: it reports progress there too.
+    # shellcheck disable=SC2016 # Nix's ${...}, not the shell's.
+    out=$("$nix" eval --raw "$pin#$attr" --apply 'p: "${p.version} ${p}"') || {
+      echo "evaluating $pin#$attr failed (Nix says why above)"
+      return 1
+    }
+    read -r "version[$attr]" "path[$attr]" <<<"$out"
+  done
+  for tool in "${need[@]}"; do
+    attr=${from[$tool]}
+    out=$(readlink -- "$dir/bin/$tool") || out="not a link"
+    [ "$out" = "${path[$attr]}/bin/$tool" ] || {
+      echo "$tool is $out, not ${path[$attr]}/bin/$tool from $pin#$attr"
+      return 1
+    }
+  done
+  out=$(timeout 10 "$dir/bin/nix" --version 2>&1) || true
+  [ "$out" = "nix (Nix) ${version[nix]}" ] || {
+    echo "nix --version says '$out', not 'nix (Nix) ${version[nix]}'"
+    return 1
+  }
+  out=$(timeout 10 "$dir/bin/nix-daemon" --version 2>&1) || true
+  [ "$out" = "nix-daemon (Nix) ${version[nix]}" ] || {
+    echo "nix-daemon --version says '$out', not 'nix-daemon (Nix) ${version[nix]}'"
+    return 1
+  }
+  out=$(timeout 10 "$dir/bin/sshd" -V 2>&1) || true
+  [[ $out == "OpenSSH_${version[openssh]}"[,\ ]* ]] || {
+    echo "sshd -V says '$out', not OpenSSH_${version[openssh]}"
+    return 1
+  }
+  # Neither has a flag that only prints a version: ssh-keygen refuses an
+  # unknown option, and harmonia stops on a configuration file that is not
+  # there. An exit from 126 up means the tool did not start.
+  out=$(timeout 10 "$dir/bin/ssh-keygen" '-?' 2>&1) || rc=$?
+  [ "$rc" -lt 126 ] || {
+    echo "ssh-keygen does not start (exit $rc): ${out##*$'\n'}"
+    return 1
+  }
+  rc=0
+  out=$(CONFIG_FILE=$dir/no-such-config.toml timeout 10 "$dir/bin/harmonia-cache" 2>&1) || rc=$?
+  [ "$rc" -lt 126 ] || {
+    echo "harmonia-cache does not start (exit $rc): ${out##*$'\n'}"
+    return 1
+  }
+  echo "nix ${version[nix]}, openssh ${version[openssh]}, harmonia ${version[harmonia]}"
+}
+
 # Installs the tools from NIX_BUILDER_NIXPKGS when the profile lacks one or
-# holds another revision. The new profile is built beside the old one and
-# replaces it only once complete. The installed Nix installs its successor,
-# so the store is never opened by a Nix older than the one that ran last;
-# the image's Nix, frozen with the image tag, installs only the first time.
-# A failed install keeps the old tools, and the pin they came from, and the
-# next start tries again; only a first install that fails stops the start.
+# holds another revision. The new profile is built beside the old one, is
+# checked (check_tools), and replaces it only then. The installed Nix
+# installs its successor, so the store is never opened by a Nix older than
+# the one that ran last; the image's Nix, frozen with the image tag,
+# installs only the first time. An install that fails or fails the check
+# keeps the old tools, and the pin they came from, and the next start tries
+# again; only a first install stops the start that way.
 install_tools() {
-  local pin=$NIX_BUILDER_NIXPKGS stamp=$state/tools-pin next=$tools-next have nix=$bootstrap/nix
+  local pin=$NIX_BUILDER_NIXPKGS stamp=$state/tools-pin next=$tools-next have nix=$bootstrap/nix result
   have=$(cat -- "$stamp" 2>/dev/null || true)
   if tools_complete; then
     [ "$have" != "$pin" ] || return 0
@@ -277,16 +344,26 @@ install_tools() {
   say "installing nix, openssh and harmonia from $pin with $("$nix" --version)"
   rm -f -- "$next" "$next"-*-link
   if ! "$nix" profile add --profile "$next" "$pin#nix" "$pin#openssh" "$pin#harmonia"; then
-    rm -f -- "$next" "$next"-*-link
-    tools_complete || die "installing the tools from $pin failed, and there are no tools to fall back to"
-    say "installing the tools from $pin failed; keeping the tools of ${have:-an unknown pin} until a start succeeds"
+    keep_tools "installing the tools from $pin failed" "$next" "$have"
     return 0
   fi
+  if ! result=$(check_tools "$next" "$pin" "$nix"); then
+    keep_tools "the tools from $pin failed their check: $result" "$next" "$have"
+    return 0
+  fi
+  say "the tools from $pin start: $result"
   ln -sfn -- "$(readlink -f -- "$next")" "$tools.new"
   mv -fT -- "$tools.new" "$tools"
   rm -f -- "$tools"-*-link "$next" "$next"-*-link
-  tools_complete || die "the profile $tools lacks one of ${need[*]} after the install"
   echo "$pin" >"$stamp"
+}
+
+# Drops the profile NEXT and goes on with the old tools, or stops the start
+# when there are none.
+keep_tools() { # why next have
+  rm -f -- "$2" "$2"-*-link
+  tools_complete || die "$1, and there are no tools to fall back to"
+  say "$1; keeping the tools of ${3:-an unknown pin} until a start succeeds"
 }
 
 # --- 4. Keys ------------------------------------------------------------------

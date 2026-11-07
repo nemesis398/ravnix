@@ -31,7 +31,10 @@
 # - Installing the tools, with a fake nix: the image's Nix installs only the
 #   first time, after that the pinned Nix installs its successor; the same
 #   pin installs nothing; a failed install keeps the old tools and their pin,
-#   and fails the start only when there are no old tools.
+#   and fails the start only when there are no old tools. So does an install
+#   that succeeds but fails the check before the switch: a tool missing,
+#   one that does not start, one that reports another version than the pin
+#   names, one linked from another package, or a pin that does not evaluate.
 # - The compose file's default nixpkgs pin is the one in ravnix's flake.lock,
 #   so the builder runs the Nix and tools the checks ran against.
 #
@@ -57,6 +60,8 @@ pkgs.runCommand "deploy-nix-builder-start"
     ];
   }
   ''
+    # A command that stops the check says where.
+    trap 'echo "stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
     ${lib.optionalString (!pinned) ''
       echo "FAIL: docker-compose.yaml has ${toString defaults} defaults for NIX_BUILDER_NIXPKGS, not one that is ${pin}, the nixpkgs of flake.lock" >&2
       exit 1
@@ -395,7 +400,7 @@ pkgs.runCommand "deploy-nix-builder-start"
     [ -s "$t/nix.log" ] && fail "a start with the same pin installed again: $(cat "$t/nix.log")"
 
     got=$(install github:a/b/2) || fail "an update failed: $got"
-    grep -q "^$first/bin/nix profile add --profile $t/profiles/ravnix-next github:a/b/2#nix" "$t/nix.log" ||
+    grep -qF "$(readlink -f "$first/bin/nix") profile add --profile $t/profiles/ravnix-next github:a/b/2#nix" "$t/nix.log" ||
       fail "the update did not run on the pinned nix: $(cat "$t/nix.log")"
     second=$(readlink -f "$t/profiles/ravnix")
     [ "$second" != "$first" ] || fail "the update did not switch the tools"
@@ -407,11 +412,59 @@ pkgs.runCommand "deploy-nix-builder-start"
     [ "$(cat "$t/state/tools-pin")" = github:a/b/2 ] || fail "a failed update changed the pin stamp"
     leftover && fail "a failed update left links behind: $(ls "$t/profiles")"
 
+    # An install that succeeds but fails the check before the switch. Each
+    # case is a pin of its own, so its packages are made afresh.
+    n=10
+    rejected() { # what text VAR=VALUE..., leaving the output in got
+      local what=$1 text=$2
+      shift 2
+      n=$((n + 1))
+      got=$(
+        export "$@"
+        install github:a/b/$n
+      ) || fail "$what stopped the start: $got"
+      [[ $got == *"the tools from github:a/b/$n failed their check: $text"* ]] || fail "$what said: $got"
+      [[ $got == *"keeping the tools of github:a/b/2 until a start succeeds"* ]] || fail "$what did not keep the tools: $got"
+      [ "$(readlink -f "$t/profiles/ravnix")" = "$second" ] || fail "$what changed the tools"
+      [ "$(cat "$t/state/tools-pin")" = github:a/b/2 ] || fail "$what changed the pin stamp"
+      if leftover; then fail "$what left links behind: $(ls "$t/profiles")"; fi
+    }
+    rejected "a missing sshd" "the profile lacks sshd" FAKE_NIX_MISSING=sshd
+    rejected "a missing harmonia-cache" "the profile lacks harmonia-cache" FAKE_NIX_MISSING=harmonia-cache
+    rejected "a nix-daemon that does not start" "nix-daemon --version says 'nix-daemon: error while loading shared libraries" \
+      FAKE_NIX_BROKEN=nix-daemon
+    rejected "an ssh-keygen that does not start" "ssh-keygen does not start (exit 127)" FAKE_NIX_BROKEN=ssh-keygen
+    rejected "a harmonia-cache that does not start" "harmonia-cache does not start (exit 127)" FAKE_NIX_BROKEN=harmonia-cache
+    rejected "a nix of another version" "nix --version says 'nix (Nix) 0.0-skewed', not 'nix (Nix) 2.99.1'" FAKE_NIX_SKEW=nix
+    rejected "an sshd of another version" "sshd -V says 'OpenSSH_0.0-skewed, OpenSSL fake', not OpenSSH_10.99p1" FAKE_NIX_SKEW=openssh
+    rejected "a harmonia from another package" "harmonia-cache is $t/fake-store/foreign-harmonia/bin/harmonia-cache, not" \
+      FAKE_NIX_FOREIGN=harmonia
+    rejected "a pin that does not evaluate" "evaluating github:a/b/$((n + 1))#nix failed (Nix says why above)" FAKE_NIX_EVAL_FAIL=1
+    [[ $got == *"error: cannot evaluate github:a/b/$n#nix"* ]] || fail "a pin that does not evaluate hid Nix's error: $got"
+
+    # An update that passes the check switches; the running nix evaluated the
+    # pin for it.
+    : >"$t/nix.log"
+    got=$(install github:a/b/4) || fail "an update after rejected ones failed: $got"
+    [[ $got == *"the tools from github:a/b/4 start: nix 2.99.1, openssh 10.99p1, harmonia 3.99.0"* ]] ||
+      fail "an update that passes its check said: $got"
+    [ "$(readlink -f "$t/profiles/ravnix")" != "$second" ] || fail "an update that passes its check did not switch"
+    [ "$(cat "$t/state/tools-pin")" = github:a/b/4 ] || fail "an update that passes its check did not stamp its pin"
+    for attr in nix openssh harmonia; do
+      grep -qxF "$(readlink -f "$second/bin/nix") eval --raw github:a/b/4#$attr --apply p: \"\''${p.version} \''${p}\"" "$t/nix.log" ||
+        fail "the check did not evaluate $attr with the running nix: $(cat "$t/nix.log")"
+    done
+
     t2=$(fixture)
     mkdir -p "$t2/profiles/default/bin"
     cp "$t/profiles/default/bin/nix" "$t2/profiles/default/bin/nix"
     got=$(FAKE_NIX_FAIL=1 NIX_BUILDER_NIXPKGS=github:a/b/1 step "$t2" install_tools) && fail "a failed first install passed"
     [[ $got == *"no tools to fall back to"* ]] || fail "a failed first install said: $got"
+    got=$(FAKE_NIX_MISSING=nix-daemon NIX_BUILDER_NIXPKGS=github:a/b/1 step "$t2" install_tools) &&
+      fail "a first install that lacks nix-daemon passed"
+    [[ $got == *"failed their check: the profile lacks nix-daemon, and there are no tools to fall back to"* ]] ||
+      fail "a first install that lacks nix-daemon said: $got"
+    [ -e "$t2/profiles/ravnix" ] && fail "a first install that failed its check left a profile"
     unset FAKE_NIX_LOG FAKE_NIX_STORE
 
     [ "$failed" = 0 ]

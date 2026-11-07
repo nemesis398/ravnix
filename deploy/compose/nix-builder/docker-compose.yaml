@@ -78,12 +78,14 @@
 #
 # Update: set NIX_BUILDER_NIXPKGS to a newer nixpkgs, or take this file from
 # a newer ravnix, and run `docker compose up -d --build`. The next start
-# installs nix, openssh and harmonia from that revision beside the old ones,
-# with the Nix it already runs, switches to them once all three are there,
-# and runs the daemon, sshd and harmonia from them. A failed download keeps
-# the old tools running, says so in the log, and the next start tries again;
-# only on the first start, with no old tools, does it stop the builder until
-# the download works. `nix profile upgrade` updates none of the three.
+# installs nix, openssh and harmonia from that revision into a profile of
+# its own, with the Nix it already runs. It switches to them only once each
+# tool the builder runs is there, starts, and is the revision's package at
+# the revision's version, and then runs the daemon, sshd and harmonia from
+# them. A failed download, or tools that fail that check, keep the old tools
+# running, say so in the log, and the next start tries again; only on the
+# first start, with no old tools, does it stop the builder until an install
+# works. `nix profile upgrade` updates none of the three.
 #
 # The image tag must stay the tag the store was seeded with. The image's
 # /etc/passwd and the files next to it link into its own store, which the
