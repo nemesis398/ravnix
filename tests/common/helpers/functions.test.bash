@@ -38,12 +38,12 @@ run() {
 	capture env PATH="$bin:$PATH" LC_ALL=C.UTF-8 XDG_CACHE_HOME="$scratch/cache" \
 		HOME="$scratch/home" \
 		bash -c '
-			for f in "$1"/functions.bash "$1"/ai-unlock.bash; do
+			for f in "$1"/functions.bash "$1"/secrets.bash; do
 				. "$f" || exit 99
 			done
 			shift
 			eval "$1"
-		' bash "$dir" "$1"
+		' bash "$dir" "$1" </dev/null
 }
 
 # Whether the stand-ins were called with exactly these arguments.
@@ -78,7 +78,8 @@ setup() {
 	rm -f -- "${bin:?}"/*
 	mkdir -p "$scratch/home" "$scratch/cache" "$scratch/work"
 	: >"$calls"
-	unset TERM_PROGRAM
+	rm -f -- "${scratch:?}"/claude.*
+	unset TERM_PROGRAM CLAUDECODE
 	cd "$scratch/work"
 }
 
@@ -348,7 +349,13 @@ open_returns_at_once_and_stays_silent() {
 	expect_status 0
 	[[ -z "$out" && -z "$err" ]]
 	((SECONDS - start < 2))
-	sleep 0.3
+	# The call is written by the background job; wait for it, up to 10 s,
+	# instead of guessing how long a loaded builder needs.
+	local _
+	for _ in $(seq 100); do
+		grep -qxF 'xdg-open|a file.txt|https://example.org' "$calls" && break
+		sleep 0.1
+	done
 	called 'xdg-open|a file.txt|https://example.org'
 }
 
@@ -569,14 +576,17 @@ cat_without_arguments_reads_stdin_through_bat() {
 	not_called chafa
 }
 
-# --- ai-unlock ----------------------------------------------------------
+# --- ai-unlock, claude --------------------------------------------------
 
 # A stand-in rbw whose behavior the test sets in files under $scratch/rbw/:
 #   sync        its exit code ("0" by default) and sync.msg its stderr
 #   unlock      its exit code ("0" by default)
 #   unlocked    its exit code ("0" by default)
+#   config.json what `rbw config show` prints (a default account if missing)
 #   items/NAME  the secret rbw get prints for the item NAME (a missing file is
 #               an item that does not exist)
+# Like the real one it may read its standard input, which `get` does here:
+# a caller that leaves its own input open to rbw loses it.
 fake_rbw() {
 	mkdir -p "$scratch/rbw/items"
 	write_script "$bin/rbw" \
@@ -587,41 +597,87 @@ fake_rbw() {
 		'unlock) exit "$(cat "$r/unlock" 2>/dev/null || echo 0)" ;;' \
 		'unlocked) exit "$(cat "$r/unlocked" 2>/dev/null || echo 0)" ;;' \
 		'stop-agent) exit 0 ;;' \
-		'config) printf "{\"base_url\":\"https://vault.example.org\",\"email\":\"alice@example.org\"}\n" ;;' \
-		'get) shift; [ "$1" = -- ] && shift; [ -f "$r/items/$1" ] && { cat "$r/items/$1"; exit 0; }; echo "no item $1" >&2; exit 1 ;;' \
+		'config) if [ -f "$r/config.json" ]; then cat "$r/config.json"; else printf "{\"base_url\":\"https://vault.example.org\",\"email\":\"alice@example.org\"}\n"; fi ;;' \
+		'get) cat >/dev/null; shift; [ "$1" = -- ] && shift; [ -f "$r/items/$1" ] && { cat "$r/items/$1"; exit 0; }; echo "no item $1" >&2; exit 1 ;;' \
 		'esac'
 }
 
-ai_unlock_unlocks_and_loads_the_named_secrets() {
+# A stand-in claude: it writes its environment (NUL-separated), its arguments
+# (NUL-separated) and its standard input to $scratch/claude.{env,args,stdin},
+# and exits with the code in $scratch/claude.rc (0 by default).
+fake_claude() {
+	write_script "$bin/claude" \
+		'IFS="|"; printf "claude|%s\n" "$*" >>"'"$calls"'"' \
+		'env -0 >"'"$scratch"'/claude.env"' \
+		'printf "%s\0" "$@" >"'"$scratch"'/claude.args"' \
+		'cat >"'"$scratch"'/claude.stdin"' \
+		'exit "$(cat "'"$scratch"'/claude.rc" 2>/dev/null || echo 0)"'
+}
+
+# A directory with env and cat only, for the tests that must run without rbw
+# or without claude on PATH while the stand-ins still find their tools.
+bare_path() {
+	mkdir -p "$scratch/nobin"
+	ln -sf "$(command -v env)" "$scratch/nobin/env"
+	ln -sf "$(command -v cat)" "$scratch/nobin/cat"
+}
+
+# Whether the stand-in claude had NAME=VALUE in its environment, exactly.
+claude_env_has() {
+	local rec
+	while IFS= read -r -d '' rec; do
+		[[ $rec == "$1=$2" ]] && return 0
+	done <"$scratch/claude.env"
+	echo "  claude had no $1 with that value in its environment"
+	return 1
+}
+# Whether the stand-in claude had no variable NAME at all.
+claude_env_lacks() {
+	local rec
+	while IFS= read -r -d '' rec; do
+		if [[ $rec == "$1="* ]]; then
+			echo "  claude had $1 in its environment"
+			return 1
+		fi
+	done <"$scratch/claude.env"
+}
+
+# The table bash.nix writes from ravnix.shell.secretEnv, "NAME=item" in name
+# order, for two secrets.
+two_secrets='_ravnix_secrets=("A_TOKEN=Item One" "B_TOKEN=Item Two")'
+
+ai_unlock_unlocks_and_loads_nothing() {
 	setup
 	fake_rbw
 	printf 'token-one\n' >"$scratch/rbw/items/Item One"
 	printf 'token-two' >"$scratch/rbw/items/Item Two"
-	run 'declare -A _ravnix_secret_env=([B_TOKEN]="Item Two" [A_TOKEN]="Item One")
-		ai-unlock; echo "status $?"; printf "[%s][%s]" "$A_TOKEN" "$B_TOKEN"'
+	run "$two_secrets"'
+		ai-unlock; echo "status $?"; echo "[${A_TOKEN-unset}][${B_TOKEN-unset}]"; env | grep -cE "token-(one|two)"'
 	expect_out 'status 0'
 	called 'rbw|sync'
 	called 'rbw|unlock'
-	# In name order, whatever order the array has.
-	expect_out 'Secrets loaded: A_TOKEN B_TOKEN'
-	expect_out '[token-one][token-two]'
+	# Unlocking reads no item, and no secret is in the shell or its children.
+	never_called 'rbw\|get'
+	expect_out '[unset][unset]'
+	expect_no_out 'token-'
+	# It says what claude will get, by variable name.
+	expect_out 'A_TOKEN B_TOKEN'
+	expect_out 'claude'
 }
 
 ai_unlock_syncs_before_it_unlocks() {
 	setup
 	fake_rbw
-	run 'declare -A _ravnix_secret_env=(); ai-unlock'
+	run '_ravnix_secrets=(); ai-unlock'
 	[[ "$(grep -n '^rbw|sync' "$calls" | cut -d: -f1)" -lt "$(grep -n '^rbw|unlock' "$calls" | cut -d: -f1)" ]]
 }
 
-ai_unlock_fails_without_loading_when_the_unlock_fails() {
+ai_unlock_fails_when_the_unlock_fails() {
 	setup
 	fake_rbw
 	echo 1 >"$scratch/rbw/unlock"
-	printf 'secret' >"$scratch/rbw/items/Item One"
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="Item One"); ai-unlock; echo "status $?"; echo "[${A_TOKEN-unset}]"'
+	run "$two_secrets"'; ai-unlock; echo "status $?"'
 	expect_out 'status 1'
-	expect_out '[unset]'
 	never_called 'rbw\|get'
 }
 
@@ -630,124 +686,374 @@ ai_unlock_uses_the_cached_copy_when_the_sync_fails() {
 	fake_rbw
 	echo 1 >"$scratch/rbw/sync"
 	echo "network is down" >"$scratch/rbw/sync.msg"
-	printf 'secret' >"$scratch/rbw/items/Item One"
 	mkdir -p "$scratch/cache/rbw"
 	local db="$scratch/cache/rbw/https%3A%2F%2Fvault.example.org:alice@example.org.json"
 	echo '{}' >"$db"
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="Item One"); ai-unlock; echo "status $?"'
+	run "$two_secrets"'; ai-unlock; echo "status $?"'
 	expect_out 'status 0'
 	expect_err 'network is down'
 	expect_err 'using the cached vault copy'
-	expect_out 'Secrets loaded: A_TOKEN'
 	# The cache is left as it was.
 	[[ -f "$db" ]]
 	never_called 'rbw\|stop-agent'
 }
 
+rejected_token() {
+	echo 1 >"$scratch/rbw/sync"
+	printf 'rbw sync: failed to parse JSON: missing field `access_token`\n' >"$scratch/rbw/sync.msg"
+}
+
 ai_unlock_logs_in_again_when_the_refresh_token_was_rejected() {
 	setup
 	fake_rbw
-	echo 1 >"$scratch/rbw/sync"
-	printf 'rbw sync: failed to parse JSON: missing field `access_token`\n' >"$scratch/rbw/sync.msg"
+	rejected_token
 	mkdir -p "$scratch/cache/rbw"
 	local db="$scratch/cache/rbw/https%3A%2F%2Fvault.example.org:alice@example.org.json"
 	echo '{"stale":true}' >"$db"
-	run 'declare -A _ravnix_secret_env=(); ai-unlock; echo "status $?"'
+	# The unlock logs in and writes a new cache, as rbw does; the stand-in
+	# does it by hand once it is asked to unlock.
+	run '_ravnix_secrets=(); rbw() { if [[ $1 == unlock ]]; then echo "{\"fresh\":true}" >"'"$db"'"; fi; command rbw "$@"; }
+		ai-unlock; echo "status $?"'
 	expect_out 'status 0'
 	expect_err 'logging in again'
 	called 'rbw|stop-agent'
+	called 'rbw|unlock'
+	# The new cache is the one rbw made. The dead copy is gone: once the
+	# unlock worked it has nothing the user needs, and it holds the encrypted
+	# vault.
+	[[ "$(cat "$db")" == '{"fresh":true}' ]]
+	local stale=("$db".stale-*)
+	[[ ! -e "${stale[0]}" ]]
+}
+
+ai_unlock_keeps_the_dead_copy_when_the_login_fails() {
+	setup
+	fake_rbw
+	rejected_token
+	echo 1 >"$scratch/rbw/unlock"
+	mkdir -p "$scratch/cache/rbw"
+	local db="$scratch/cache/rbw/https%3A%2F%2Fvault.example.org:alice@example.org.json"
+	echo '{"stale":true}' >"$db"
+	run '_ravnix_secrets=(); ai-unlock; echo "status $?"'
+	expect_out 'status 1'
 	[[ ! -e "$db" ]]
-	# The cache is moved aside and not deleted.
+	# Moved aside and not deleted: it is all there is until a login works.
 	local stale=("$db".stale-*)
 	[[ -e "${stale[0]}" && "$(cat "${stale[0]}")" == '{"stale":true}' ]]
-	called 'rbw|unlock'
 }
 
 ai_unlock_survives_a_missing_cache_when_the_refresh_token_was_rejected() {
 	setup
 	fake_rbw
-	echo 1 >"$scratch/rbw/sync"
-	printf 'missing field `access_token`\n' >"$scratch/rbw/sync.msg"
-	run 'declare -A _ravnix_secret_env=(); ai-unlock; echo "status $?"'
+	rejected_token
+	run '_ravnix_secrets=(); ai-unlock; echo "status $?"'
 	expect_out 'status 0'
 	called 'rbw|unlock'
 	expect_no_err 'logging in again'
 }
 
-ai_unlock_skips_an_item_that_does_not_exist_and_says_which() {
+# rbw names the cache after the server as written in its config, with the
+# control characters, "/", "%" and ":" in percent form (rbw's src/dirs.rs),
+# and after the email as it is.
+ai_unlock_finds_the_cache_of_a_server_url_with_reserved_characters() {
 	setup
 	fake_rbw
-	printf 'there' >"$scratch/rbw/items/Item One"
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="Item One" [B_TOKEN]="Gone"); ai-unlock; echo "status $?"; echo "[${B_TOKEN-unset}]"'
-	expect_out 'Secrets loaded: A_TOKEN'
-	expect_no_out 'A_TOKEN B_TOKEN'
-	expect_out '[unset]'
-	expect_err 'B_TOKEN'
-	expect_err 'Gone'
+	rejected_token
+	printf '{"base_url":"https://vault.example.org:8443/a+b=c@d?e%%f;g,h~i","email":"al+ice@example.org"}\n' >"$scratch/rbw/config.json"
+	mkdir -p "$scratch/cache/rbw"
+	local db="$scratch/cache/rbw/https%3A%2F%2Fvault.example.org%3A8443%2Fa+b=c@d?e%25f;g,h~i:al+ice@example.org.json"
+	echo '{"stale":true}' >"$db"
+	run '_ravnix_secrets=(); ai-unlock; echo "status $?"'
+	expect_err 'logging in again'
+	[[ ! -e "$db" ]]
+	local stale=("$db".stale-*)
+	[[ -e "${stale[0]}" ]]
+}
+
+ai_unlock_encodes_what_is_not_ascii_the_way_rbw_does() {
+	setup
+	fake_rbw
+	rejected_token
+	printf '{"base_url":"https://vault.example.org/k\xc3\xb6ln\\t","email":"a@example.org"}\n' >"$scratch/rbw/config.json"
+	mkdir -p "$scratch/cache/rbw"
+	local db="$scratch/cache/rbw/https%3A%2F%2Fvault.example.org%2Fk%C3%B6ln%09:a@example.org.json"
+	echo '{"stale":true}' >"$db"
+	run '_ravnix_secrets=(); ai-unlock'
+	[[ ! -e "$db" ]]
+	local stale=("$db".stale-*)
+	[[ -e "${stale[0]}" ]]
+}
+
+ai_unlock_names_the_default_server_when_the_config_has_none() {
+	setup
+	fake_rbw
+	rejected_token
+	printf '{"base_url":null,"email":"a@example.org"}\n' >"$scratch/rbw/config.json"
+	mkdir -p "$scratch/cache/rbw"
+	local db="$scratch/cache/rbw/default:a@example.org.json"
+	echo '{"stale":true}' >"$db"
+	run '_ravnix_secrets=(); ai-unlock'
+	[[ ! -e "$db" ]]
+}
+
+ai_unlock_honors_the_rbw_profile() {
+	setup
+	fake_rbw
+	rejected_token
+	mkdir -p "$scratch/cache/rbw-work" "$scratch/cache/rbw"
+	local name="https%3A%2F%2Fvault.example.org:alice@example.org.json"
+	echo '{"profile":true}' >"$scratch/cache/rbw-work/$name"
+	echo '{"default":true}' >"$scratch/cache/rbw/$name"
+	run 'export RBW_PROFILE=work; _ravnix_secrets=(); ai-unlock'
+	# The profile's cache is the one moved, and the default one is left alone.
+	[[ ! -e "$scratch/cache/rbw-work/$name" ]]
+	[[ -e "$scratch/cache/rbw/$name" ]]
+}
+
+ai_unlock_cleans_up_the_dead_copies_of_its_own_cache_only_after_an_unlock() {
+	setup
+	fake_rbw
+	mkdir -p "$scratch/cache/rbw"
+	local name="https%3A%2F%2Fvault.example.org:alice@example.org.json"
+	local db="$scratch/cache/rbw/$name"
+	echo '{}' >"$db"
+	echo old >"$db.stale-2026-01-01-000000"
+	echo older >"$db.stale-2025-12-31-000000"
+	echo other >"$scratch/cache/rbw/https%3A%2F%2Fvault.example.org:bob@example.org.json.stale-2026-01-01-000000"
+	# A failed unlock keeps them.
+	echo 1 >"$scratch/rbw/unlock"
+	run '_ravnix_secrets=(); ai-unlock'
+	[[ -e "$db.stale-2026-01-01-000000" && -e "$db.stale-2025-12-31-000000" ]]
+	# A good one removes the copies of this account, and nothing else.
+	echo 0 >"$scratch/rbw/unlock"
+	run '_ravnix_secrets=(); ai-unlock'
+	[[ ! -e "$db.stale-2026-01-01-000000" && ! -e "$db.stale-2025-12-31-000000" ]]
+	[[ -e "$db" ]]
+	[[ -e "$scratch/cache/rbw/https%3A%2F%2Fvault.example.org:bob@example.org.json.stale-2026-01-01-000000" ]]
+}
+
+ai_unlock_does_not_clean_up_when_there_is_no_live_cache() {
+	setup
+	fake_rbw
+	mkdir -p "$scratch/cache/rbw"
+	local db="$scratch/cache/rbw/https%3A%2F%2Fvault.example.org:alice@example.org.json"
+	echo old >"$db.stale-2026-01-01-000000"
+	run '_ravnix_secrets=(); ai-unlock'
+	# An unlock that left no cache behind has not replaced the dead copy.
+	[[ -e "$db.stale-2026-01-01-000000" ]]
 }
 
 ai_unlock_with_no_secrets_configured_says_so() {
 	setup
 	fake_rbw
-	run 'declare -A _ravnix_secret_env=(); ai-unlock; echo "status $?"'
+	run '_ravnix_secrets=(); ai-unlock; echo "status $?"'
 	expect_out 'status 0'
 	expect_out 'ravnix.shell.secretEnv'
 	called 'rbw|unlock'
-}
-
-ai_unlock_never_evaluates_a_secret() {
-	setup
-	fake_rbw
-	# Values a human might store: spaces, a comment, command substitutions, a
-	# quote, a glob, an equals sign and a leading dash; and one with a newline.
-	printf '%s' 'a b #c $(touch pwned) `touch pwned2` "q" '"'"'s'"'"' * = -x' >"$scratch/rbw/items/Item One"
-	printf 'first\nsecond' >"$scratch/rbw/items/Item Two"
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="Item One" [B_TOKEN]="Item Two")
-		ai-unlock >/dev/null 2>&1; printf "%s" "$A_TOKEN" >a.out; printf "%s" "$B_TOKEN" >b.out'
-	[[ ! -e pwned && ! -e pwned2 ]]
-	[[ "$(cat a.out)" == 'a b #c $(touch pwned) `touch pwned2` "q" '"'"'s'"'"' * = -x' ]]
-	[[ "$(cat b.out)" == $'first\nsecond' ]]
 }
 
 ai_unlock_never_prints_a_secret() {
 	setup
 	fake_rbw
 	printf 'hunter2-secret' >"$scratch/rbw/items/Item One"
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="Item One"); ai-unlock'
+	run "$two_secrets"'; ai-unlock'
 	expect_no_out 'hunter2-secret'
 	expect_no_err 'hunter2-secret'
-}
-
-ai_unlock_passes_an_item_name_that_starts_with_a_dash_as_a_name() {
-	setup
-	fake_rbw
-	printf 'dashed' >"$scratch/rbw/items/-odd"
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="-odd"); ai-unlock >/dev/null; printf "[%s]" "$A_TOKEN"'
-	expect_out '[dashed]'
-}
-
-secrets_load_at_a_new_shell_only_when_the_vault_is_already_unlocked() {
-	setup
-	fake_rbw
-	printf 'there' >"$scratch/rbw/items/Item One"
-	echo 1 >"$scratch/rbw/unlocked"
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="Item One"); _ravnix_load_secrets; echo "status $?"; echo "[${A_TOKEN-unset}]"'
-	expect_out 'status 0'
-	expect_out '[unset]'
-	# A locked vault is not asked for a password, and not read.
-	never_called 'rbw\|unlock'
 	never_called 'rbw\|get'
-	echo 0 >"$scratch/rbw/unlocked"
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="Item One"); _ravnix_load_secrets; echo "[${A_TOKEN-unset}]"'
-	expect_out '[there]'
+}
+
+# What `claude` is: a bash function and not a script on PATH. A script named
+# claude would stand in front of the package that home-manager puts on PATH
+# for every program, not only the interactive shell, and would have to be
+# installed beside it. The function adds the secrets for the one command a
+# person types, and everything else (a launcher, ssh host claude, an editor)
+# runs the binary as it is.
+
+claude_gives_the_secrets_to_claude_and_to_nothing_else() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one\n' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets"'
+		# (stdenv exports a `name` of its own in the build sandbox.)
+		before=${name-unset}
+		claude; echo "status $?"
+		echo "[${A_TOKEN-unset}][${B_TOKEN-unset}]"
+		# Nothing of it is in the shell, in its exported variables, or in the
+		# environment of a child started afterwards.
+		echo "TOKENS $({ declare -p; export -p; env; sh -c env; } | grep -cE token-\(one\|two\))"
+		for v in item value entry bin; do [[ -v $v ]] && echo "LEFT $v"; done
+		[[ ${name-unset} == "$before" ]] || echo "LEFT name"
+		true'
+	expect_out 'status 0'
+	expect_out '[unset][unset]'
+	expect_no_out 'LEFT'
+	# No line of the shell's variables, of its exports, of its own environment
+	# or of a child's holds a token.
+	expect_out 'TOKENS 0'
+	[[ -z "$err" ]]
+	claude_env_has A_TOKEN token-one
+	claude_env_has B_TOKEN token-two
+	called 'rbw|unlocked'
+	called 'rbw|get|--|Item One'
+	called 'rbw|get|--|Item Two'
+}
+
+claude_passes_arguments_standard_input_and_the_exit_status_on() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	echo 7 >"$scratch/claude.rc"
+	run "$two_secrets"'; printf "piped in\nsecond line\n" | claude -p "two words" "" --flag="a b" -- -x; echo "status $?"'
+	expect_out 'status 7'
+	[[ "$(cat "$scratch/claude.stdin")" == $'piped in\nsecond line' ]]
+	[[ "$(tr '\0' '|' <"$scratch/claude.args")" == '-p|two words||--flag=a b|--|-x|' ]]
+}
+
+claude_passes_straight_through_inside_claude_code() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	run "$two_secrets"'; export CLAUDECODE=1 A_TOKEN=inherited; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	# Nothing was asked of rbw, and the environment is what it was.
+	never_called 'rbw'
+	claude_env_has A_TOKEN inherited
+	claude_env_lacks B_TOKEN
+	[[ "$(tr '\0' '|' <"$scratch/claude.args")" == '--version|' ]]
+}
+
+claude_starts_without_the_secrets_when_the_vault_is_locked() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	echo 1 >"$scratch/rbw/unlocked"
+	run "$two_secrets"'; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	# It never asks for a password, never reads an item, and says what to do.
+	never_called 'rbw\|(get|unlock|sync)'
+	expect_err 'ai-unlock'
+	expect_err 'A_TOKEN'
+	expect_err 'B_TOKEN'
+	claude_env_lacks A_TOKEN
+	called 'claude|--version'
+}
+
+claude_starts_without_the_secrets_when_rbw_is_not_installed() {
+	setup
+	fake_claude
+	bare_path
+	run "$two_secrets"'; PATH='"$scratch/nobin:$bin"'; claude --version; echo "status $?"'
+	expect_out 'status 0'
+	expect_err 'ai-unlock'
+	claude_env_lacks A_TOKEN
+	called 'claude|--version'
+}
+
+claude_is_the_plain_binary_when_no_secrets_are_configured() {
+	setup
+	fake_rbw
+	fake_claude
+	run '_ravnix_secrets=(); claude --version; echo "status $?"'
+	expect_out 'status 0'
+	never_called 'rbw'
 	[[ -z "$err" ]]
 }
 
-secrets_load_quietly_when_rbw_is_not_installed() {
+claude_names_an_item_it_cannot_read_and_goes_on_with_the_others() {
 	setup
-	run 'declare -A _ravnix_secret_env=([A_TOKEN]="Item One"); PATH=/nonexistent; _ravnix_load_secrets; echo "status $?"'
+	fake_rbw
+	fake_claude
+	printf 'there' >"$scratch/rbw/items/Item One"
+	run '_ravnix_secrets=("A_TOKEN=Item One" "B_TOKEN=Gone"); claude; echo "status $?"'
 	expect_out 'status 0'
-	[[ -z "$err" ]]
+	expect_err 'B_TOKEN'
+	expect_err 'Gone'
+	claude_env_has A_TOKEN there
+	claude_env_lacks B_TOKEN
+}
+
+claude_passes_a_secret_on_as_it_is_and_never_evaluates_it() {
+	setup
+	fake_rbw
+	fake_claude
+	# Values a human might store: spaces, a comment, command substitutions, a
+	# quote, a glob, an equals sign and a leading dash; and one with a newline.
+	local odd='a b #c $(touch pwned) `touch pwned2` "q" '"'"'s'"'"' * = -x'
+	printf '%s' "$odd" >"$scratch/rbw/items/Item One"
+	printf 'first\nsecond' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets"'; claude'
+	[[ ! -e pwned && ! -e pwned2 ]]
+	claude_env_has A_TOKEN "$odd"
+	claude_env_has B_TOKEN $'first\nsecond'
+}
+
+claude_never_puts_a_secret_on_a_command_line_or_into_a_message() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'hunter2-secret' >"$scratch/rbw/items/Item One"
+	run '_ravnix_secrets=("A_TOKEN=Item One" "B_TOKEN=Gone"); claude --version'
+	expect_no_out 'hunter2-secret'
+	expect_no_err 'hunter2-secret'
+	# The stand-ins log every argument they get: item names, no values.
+	! grep -q 'hunter2-secret' "$calls"
+}
+
+claude_leaves_no_loader_variable_behind_even_under_allexport() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets"'; set -a; claude'
+	local rec seen=0
+	while IFS= read -r -d '' rec; do
+		case $rec in
+		name=* | item=* | value=* | entry=* | bin=* | _ravnix_secrets=*) echo "  leaked: ${rec%%=*}" && return 1 ;;
+		*token-one* | *token-two*) seen=$((seen + 1)) ;;
+		esac
+	done <"$scratch/claude.env"
+	# Each secret is in the environment once, under its own name.
+	((seen == 2))
+}
+
+claude_takes_an_item_name_that_starts_with_a_dash_as_a_name() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'dashed' >"$scratch/rbw/items/-odd"
+	run '_ravnix_secrets=("A_TOKEN=-odd"); claude'
+	claude_env_has A_TOKEN dashed
+	called 'rbw|get|--|-odd'
+}
+
+claude_that_is_not_installed_fails_like_any_missing_command() {
+	setup
+	fake_rbw
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	bare_path
+	run "$two_secrets"'; PATH='"$scratch/nobin"'; claude; echo "status $?"'
+	expect_out 'status 127'
+	# It did not read the vault for a program it could not start.
+	never_called 'rbw'
+}
+
+claude_runs_the_binary_and_not_itself() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	# A binary that is claude's own name must be the one that runs, and the
+	# function must not call itself.
+	run "$two_secrets"'; claude; type -t claude; type -P claude'
+	expect_out 'function'
+	expect_out "$bin/claude"
+	called 'claude|'
 }
 
 tests=(
@@ -796,19 +1102,34 @@ tests=(
 	cat_hands_a_mix_of_text_and_images_to_bat_whole
 	cat_hands_a_missing_file_or_an_option_to_bat
 	cat_without_arguments_reads_stdin_through_bat
-	ai_unlock_unlocks_and_loads_the_named_secrets
+	ai_unlock_unlocks_and_loads_nothing
 	ai_unlock_syncs_before_it_unlocks
-	ai_unlock_fails_without_loading_when_the_unlock_fails
+	ai_unlock_fails_when_the_unlock_fails
 	ai_unlock_uses_the_cached_copy_when_the_sync_fails
 	ai_unlock_logs_in_again_when_the_refresh_token_was_rejected
+	ai_unlock_keeps_the_dead_copy_when_the_login_fails
 	ai_unlock_survives_a_missing_cache_when_the_refresh_token_was_rejected
-	ai_unlock_skips_an_item_that_does_not_exist_and_says_which
+	ai_unlock_finds_the_cache_of_a_server_url_with_reserved_characters
+	ai_unlock_encodes_what_is_not_ascii_the_way_rbw_does
+	ai_unlock_names_the_default_server_when_the_config_has_none
+	ai_unlock_honors_the_rbw_profile
+	ai_unlock_cleans_up_the_dead_copies_of_its_own_cache_only_after_an_unlock
+	ai_unlock_does_not_clean_up_when_there_is_no_live_cache
 	ai_unlock_with_no_secrets_configured_says_so
-	ai_unlock_never_evaluates_a_secret
 	ai_unlock_never_prints_a_secret
-	ai_unlock_passes_an_item_name_that_starts_with_a_dash_as_a_name
-	secrets_load_at_a_new_shell_only_when_the_vault_is_already_unlocked
-	secrets_load_quietly_when_rbw_is_not_installed
+	claude_gives_the_secrets_to_claude_and_to_nothing_else
+	claude_passes_arguments_standard_input_and_the_exit_status_on
+	claude_passes_straight_through_inside_claude_code
+	claude_starts_without_the_secrets_when_the_vault_is_locked
+	claude_starts_without_the_secrets_when_rbw_is_not_installed
+	claude_is_the_plain_binary_when_no_secrets_are_configured
+	claude_names_an_item_it_cannot_read_and_goes_on_with_the_others
+	claude_passes_a_secret_on_as_it_is_and_never_evaluates_it
+	claude_never_puts_a_secret_on_a_command_line_or_into_a_message
+	claude_leaves_no_loader_variable_behind_even_under_allexport
+	claude_takes_an_item_name_that_starts_with_a_dash_as_a_name
+	claude_that_is_not_installed_fails_like_any_missing_command
+	claude_runs_the_binary_and_not_itself
 )
 
 run_tests "${tests[@]}"

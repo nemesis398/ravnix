@@ -96,6 +96,10 @@ in
 
     lazygit = {
       enable = true;
+      # Home-manager's `lg` function, which changes the shell's directory to
+      # where lazygit was left: Fedora has none, and its `cd` would be the
+      # zd alias, expanded in the function body when it is defined.
+      enableBashIntegration = false;
       settings = {
         gui = {
           nerdFontsVersion = "3";
@@ -226,7 +230,7 @@ in
             keyWidth = 0;
             format = "";
           }
-          (rowWith "│   Palette" "colors" { symbol = "circle"; })
+          (rowWith "│   Palette" "colors" { symbol = "block"; })
           {
             type = "custom";
             key = "│";

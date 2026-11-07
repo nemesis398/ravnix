@@ -53,7 +53,7 @@ let
   atuinOn = withAtuin true;
   atuinOff = withAtuin false;
 
-  teal = (hm [ { ravnix.theme.accent = "teal"; } ]).config;
+  teal = (hm [ { ravnix.theme.accent = lib.mkForce "teal"; } ]).config;
   withCheckout =
     (hm [
       {
@@ -71,7 +71,7 @@ let
       evaluated = lib.evalModules {
         modules = [
           lib.genericModules.assertions
-          ../../modules/common/options.nix
+          ../../modules/options/shell.nix
           { ravnix.shell.secretEnv = lib.genAttrs names (_: "item"); }
         ];
       };
@@ -81,9 +81,36 @@ let
     "bad name"
     "1STARTS_WITH_A_DIGIT"
     "A=B"
+    "lower_case"
     "GOOD_ONE"
     "_ALSO_GOOD2"
   ];
+  # Names the shell, the loader or Claude Code read themselves.
+  reservedNames = secretNames [
+    "PATH"
+    "HOME"
+    "IFS"
+    "BASH_ENV"
+    "BASHOPTS"
+    "PROMPT_COMMAND"
+    "LD_PRELOAD"
+    "CLAUDECODE"
+    "UID"
+    "PS1"
+    "CLAUDE_CODE_OAUTH_TOKEN"
+    "PLANE_API_KEY"
+  ];
+  # A private flake's me.nix, checked the way its `me` check does: against
+  # nixosModules.options alone.
+  meWithSecrets =
+    (lib.evalModules {
+      modules = [
+        lib.genericModules.assertions
+        self.nixosModules.options
+        (import ../../templates/default/me.nix)
+        { ravnix.shell.secretEnv.A_TOKEN = "An item"; }
+      ];
+    }).config;
   # And a host refuses to build with one of them.
   hmRefuses =
     !(builtins.tryEval (hm [ { ravnix.shell.secretEnv."bad name" = "item"; } ]).config.home.username)
@@ -125,6 +152,11 @@ let
     gcad = "git commit -a --amend";
     gp = "git push";
   };
+
+  # The alias lines the bashrc must have, exactly, as `alias -- NAME=VALUE`.
+  aliasLines = lib.concatMapStringsSep "\n" (
+    n: "alias -- ${lib.escapeShellArg n}=${lib.escapeShellArg aliases.${n}}"
+  ) (lib.attrNames aliases);
 
   # What the spec drops (design spec, "Dropped"), plus Fedora's httpie.
   dropped = [
@@ -186,10 +218,13 @@ let
       base.programs.git.settings.init.defaultBranch != "main"
     ) "git init.defaultBranch is not main")
     (lib.optional (base.programs.git.settings.alias.st != "status -sb") "git alias st is missing")
-    # The Fedora aliases, exactly, and the shell options and history.
-    (lib.optional (
-      base.programs.bash.shellAliases != aliases
-    ) "the bash aliases differ from Fedora's: ${builtins.toJSON base.programs.bash.shellAliases}")
+    # The Fedora aliases are written by the module itself, at their place
+    # in the interactive part (checked on the bashrc below), not by
+    # home-manager, which would write them before everything else.
+    (lib.optional (base.programs.bash.shellAliases != { })
+      "programs.bash.shellAliases is set, so the aliases come before the seam: ${builtins.toJSON base.programs.bash.shellAliases}"
+    )
+    # The shell options and history.
     (lib.optional (
       lib.sort (a: b: a < b) base.programs.bash.shellOptions != [
         "autocd"
@@ -239,6 +274,15 @@ let
     (lib.optional (
       base.programs.lazygit.settings.update.method != "never"
     ) "lazygit offers to update itself")
+    # Nothing blinks and nothing is round (docs/style.md): atuin's cursor in
+    # every keymap mode, the palette swatches of fastfetch.
+    (lib.optional (lib.any (lib.hasPrefix "blink") (lib.attrValues base.programs.atuin.settings.keymap_cursor)) "atuin has a blinking cursor in one of its modes: ${builtins.toJSON base.programs.atuin.settings.keymap_cursor}")
+    (lib.optional (lib.any (m: (m.symbol or "block") != "block" && (m.type or "") == "colors") (
+      base.programs.fastfetch.settings.modules
+    )) "fastfetch draws its palette in a shape that is not the block")
+    # Home-manager's `lg` function for lazygit is Fedora's no more (and a `cd`
+    # in it would be the zd alias).
+    (lib.optional base.programs.lazygit.enableBashIntegration "lazygit's bash integration adds an lg function")
     # Atuin syncs through the service the user places, and nowhere else.
     (lib.optional (
       atuinOn.programs.atuin.settings.sync_address != "http://192.0.2.30:8888"
@@ -294,15 +338,26 @@ let
     # The secrets option takes shell-safe names only.
     (lib.optional (failed base != [ ]) "the default configuration fails: ${toString (failed base)}")
     (lib.optional (
-      lib.length badNames != 3
-    ) "secretEnv should refuse three names, refused: ${toString badNames}")
+      lib.length badNames != 4
+    ) "secretEnv should refuse four names, refused: ${toString badNames}")
     (lib.optional (
       !lib.all (n: lib.any (m: lib.hasInfix "\"${n}\"" m) badNames) [
         "bad name"
         "1STARTS_WITH_A_DIGIT"
         "A=B"
+        "lower_case"
       ]
     ) "the refused secretEnv names are not named in the messages")
+    (lib.optional (lib.length reservedNames != 10)
+      "secretEnv should refuse ten reserved names and take the last two, refused: ${toString reservedNames}"
+    )
+    (lib.optional (lib.any (n: lib.any (m: lib.hasInfix "\"${n}\"" m) reservedNames) [
+      "CLAUDE_CODE_OAUTH_TOKEN"
+      "PLANE_API_KEY"
+    ]) "secretEnv refuses a name that is a good secret's")
+    (lib.optional (
+      meWithSecrets.ravnix.shell.secretEnv != { A_TOKEN = "An item"; }
+    ) "me.nix cannot set ravnix.shell.secretEnv against nixosModules.options")
     (lib.optional (secretNames [ "GOOD_ONE" ] != [ ]) "a good secretEnv name is refused")
     (lib.optional (!hmRefuses) "home-manager builds with a bad secretEnv name")
     (lib.optional (failed withSecrets != [ ]) "good secretEnv names are refused")
@@ -318,6 +373,7 @@ pkgs.runCommand "common-files"
       pkgs.jq
     ];
     bashrc = fileOf base ".bashrc";
+    expectedAliases = aliasLines;
     bashrcSeam = fileOf withSeam ".bashrc";
     bashrcSecrets = fileOf withSecrets ".bashrc";
     inputrc = base.home.file.".inputrc".source or base.xdg.configFile."readline/inputrc".source;
@@ -326,26 +382,54 @@ pkgs.runCommand "common-files"
     status=0
     ${lib.concatMapStrings (m: "echo ${lib.escapeShellArg m} >&2; status=1\n") checks}
 
-    # The seam: the text goes in after the guard of the interactive shell and
-    # before anything else; with no text there is no hook at all.
+    # The order of the interactive part is the Fedora one: the guard, the
+    # seam (before home-manager's completion, and before anything of this
+    # module), the SWAYSOCK repair, the functions, and the aliases last, so
+    # that no alias is live in the repair or the seam and none is expanded in
+    # a function body when it is defined.
     line() { grep -nF -- "$2" "$1" | head -1 | cut -d: -f1; }
     guard=$(line "$bashrcSeam" '[[ $- == *i* ]] || return')
     seam=$(line "$bashrcSeam" 'echo THE-SEAM-TEXT')
-    first=$(line "$bashrcSeam" 'SWAYSOCK')
-    if ! [ -n "$guard" ] || ! [ -n "$seam" ] || ! [ -n "$first" ] \
-      || ! [ "$guard" -lt "$seam" ] || ! [ "$seam" -lt "$first" ]; then
-      echo "the seam is not between the interactive guard and the rest: guard=$guard seam=$seam first=$first" >&2
-      status=1
+    completion=$(line "$bashrcSeam" 'bash_completion.sh')
+    sway=$(line "$bashrcSeam" 'SWAYSOCK=$(')
+    claudefn=$(line "$bashrcSeam" 'claude() {')
+    unlockfn=$(line "$bashrcSeam" 'ai-unlock() {')
+    gcomplete=$(line "$bashrcSeam" '_g_complete_load() {')
+    firstalias=$(line "$bashrcSeam" 'alias -- ')
+    lastfn=$(grep -nE '^[a-z_-]+\(\) \{' "$bashrcSeam" | tail -1 | cut -d: -f1)
+    for n in guard seam completion sway claudefn unlockfn gcomplete firstalias lastfn; do
+      [ -n "''${!n}" ] || { echo "the bashrc has no $n" >&2; status=1; }
+    done
+    if [ "$status" = 0 ]; then
+      [ "$guard" -lt "$seam" ] || { echo "the seam is not after the interactive guard: $guard $seam" >&2; status=1; }
+      [ "$seam" -lt "$completion" ] || { echo "the seam is not before home-manager's completion: $seam $completion" >&2; status=1; }
+      [ "$completion" -lt "$sway" ] || { echo "the SWAYSOCK repair is not after the completion: $completion $sway" >&2; status=1; }
+      [ "$sway" -lt "$firstalias" ] || { echo "an alias comes before the SWAYSOCK repair: $sway $firstalias" >&2; status=1; }
+      [ "$seam" -lt "$firstalias" ] || { echo "an alias comes before the seam: $seam $firstalias" >&2; status=1; }
+      for fn in "$claudefn" "$unlockfn" "$gcomplete" "$lastfn"; do
+        [ "$fn" -lt "$firstalias" ] || { echo "a function is defined after the first alias: line $fn, alias $firstalias" >&2; status=1; }
+      done
     fi
+    # The alias lines are the Fedora set, exactly, and all at the end.
+    grep '^alias -- ' "$bashrc" > aliases.actual || true
+    printf '%s\n' "$expectedAliases" > aliases.expected
+    diff aliases.expected aliases.actual >&2 || { echo "the alias lines differ from Fedora's" >&2; status=1; }
+    ! grep -n '^alias ' "$bashrc" | grep -v ':alias -- ' >&2 || { echo "an alias is written another way" >&2; status=1; }
+    [ "$(grep -c '^alias -- ' "$bashrc")" = "$(wc -l < aliases.expected)" ] || status=1
     ! grep -q 'THE-SEAM-TEXT' "$bashrc" || { echo "seam text without being set" >&2; status=1; }
     ! grep -qE 'exec +herdr|herdr --session' "$bashrc" || { echo "the bashrc holds the herdr hook, which is Task 5.2's" >&2; status=1; }
     grep -qi 'auto-attach' "$bashrc" || { echo "the seam has no name in the bashrc" >&2; status=1; }
 
     # The secrets: none by default, and the item names quoted when there are.
-    grep -qF 'declare -A _ravnix_secret_env=()' "$bashrc" || { echo "no empty secret table by default" >&2; status=1; }
-    ! grep -q '_ravnix_load_secrets$' "$bashrc" || { echo "secrets load at startup without any configured" >&2; status=1; }
-    grep -qF "[PLANE_TOKEN]='Plane - token (it'\'''s here)'" "$bashrcSecrets" || { echo "the item name is not quoted for the shell" >&2; status=1; }
-    grep -qE '^(\(\(.*\)\) && )?_ravnix_load_secrets|_ravnix_load_secrets$' "$bashrcSecrets" || { echo "secrets are not loaded at startup when configured" >&2; status=1; }
+    # `claude` reads them when it starts; no shell loads one at startup, and
+    # ai-unlock exports none.
+    grep -qxF '_ravnix_secrets=()' "$bashrc" || { echo "no empty secret table by default" >&2; status=1; }
+    grep -qF "_ravnix_secrets=('OTHER_TOKEN=Other' 'PLANE_TOKEN=Plane - token (it'\'''s here)')" "$bashrcSecrets" || { echo "the item names are not quoted for the shell, in name order" >&2; status=1; }
+    for f in "$bashrc" "$bashrcSecrets"; do
+      ! grep -qE '_ravnix_load_secrets|_ravnix_read_secrets|declare -A _ravnix_secret_env' "$f" || { echo "the bashrc still loads secrets into every shell" >&2; status=1; }
+    done
+    grep -qE '^claude\(\) \{' "$bashrc" || { echo "no claude function" >&2; status=1; }
+    ! grep -qE '^(function )?lg\(\)' "$bashrc" || { echo "the bashrc has the lg function of home-manager's lazygit" >&2; status=1; }
 
     # Both bashrcs parse.
     bash -n "$bashrc" || status=1

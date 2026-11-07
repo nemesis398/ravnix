@@ -54,7 +54,7 @@ in
       keymap_mode = "emacs";
       keymap_cursor = {
         emacs = "steady-block";
-        vim_insert = "blink-block";
+        vim_insert = "steady-block";
         vim_normal = "steady-underline";
       };
       prefers_reduced_motion = false;

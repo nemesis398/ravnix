@@ -18,7 +18,7 @@ let
       lib
       ;
   };
-  configOf = accent: (hm [ { ravnix.theme.accent = accent; } ]).config;
+  configOf = accent: (hm [ { ravnix.theme.accent = lib.mkForce accent; } ]).config;
   mauve = configOf "mauve";
   palette = mauve.ravnix.theme.palette;
 

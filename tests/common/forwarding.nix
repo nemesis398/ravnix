@@ -22,6 +22,10 @@ let
         me
         {
           system.stateVersion = "26.05";
+          # The template's values are placeholders and warn about it (the
+          # options tests check that they do); here each warning would be
+          # printed again by every evaluation.
+          warnings = lib.mkForce [ ];
           # A host sets these; they are not what the test is about.
           boot.loader.grub.enable = false;
           fileSystems."/" = {
@@ -36,7 +40,8 @@ let
   plain = host [ ];
   forwarded = host [
     {
-      ravnix.theme.accent = "teal";
+      # The template says mauve; a host module that disagrees must force it.
+      ravnix.theme.accent = lib.mkForce "teal";
       ravnix.shell = {
         autoAttach = "echo FROM-THE-HOST";
         secretEnv.A_TOKEN = "An item";
@@ -53,8 +58,41 @@ let
     { home-manager.users.${user.username}.ravnix.shell.autoAttach = "echo FROM-THE-USER"; }
   ];
 
+  # A ravnix.* option that only NixOS declares, set by a module of the host.
+  # home-manager has no such option, and the host must still evaluate.
+  probe =
+    { lib, ... }:
+    {
+      options.ravnix.probe = lib.mkOption {
+        type = lib.types.str;
+        default = "unset";
+      };
+      config.ravnix.probe = "set by a host module";
+    };
+  nixosOnly = host [ probe ];
+
+  # The module imported a second time, by a host shape and by the private
+  # flake, say. It must change nothing.
+  once = host [ { ravnix.shell.autoAttach = "echo ONCE"; } ];
+  twice = host [
+    { ravnix.shell.autoAttach = "echo ONCE"; }
+    self.nixosModules.common
+    self.nixosModules.options
+    self.nixosModules.theme
+  ];
+  # And the home-manager module listed by the user's own configuration too.
+  userImports = host [
+    { home-manager.users.${user.username}.imports = [ self.homeModules.common ]; }
+    { ravnix.shell.autoAttach = "echo ONCE"; }
+  ];
+
   homeOf = c: c.home-manager.users.${user.username};
   hm = homeOf forwarded;
+
+  # The forwarded definitions, as the modules home-manager gets.
+  sharedAttrs = lib.filter builtins.isAttrs forwarded.home-manager.sharedModules;
+  forwardedFiles = map (m: m._file) (lib.filter (m: m ? _file) sharedAttrs);
+  count = x: xs: lib.length (lib.filter (y: y == x) xs);
 
   failures = lib.flatten [
     # The account.
@@ -107,6 +145,41 @@ let
       (homeOf plain).ravnix.theme.accent != "mauve"
     ) "the default accent changed on the way")
     (lib.optional ((homeOf plain).ravnix.shell.secretEnv != { }) "a secret appeared from nowhere")
+    # An option that only NixOS declares is no concern of home-manager: the
+    # host evaluates, and the option is not forwarded.
+    (lib.optional (
+      !(builtins.tryEval (builtins.deepSeq (homeOf nixosOnly).home.username true)).success
+    ) "a NixOS-only ravnix.* option breaks the home-manager evaluation")
+    (lib.optional (nixosOnly.ravnix.probe != "set by a host module") "the NixOS-only option is not set")
+    (lib.optional (
+      (homeOf nixosOnly).ravnix.user.email != user.email
+    ) "a NixOS-only option stops the other values from reaching home-manager")
+    # A forwarded value keeps the file it was written in, so an error names me.nix.
+    (lib.optional (
+      !lib.elem (toString me) forwardedFiles
+    ) "no forwarded value names me.nix as its file: ${toString forwardedFiles}")
+    (lib.optional (lib.any (
+      m: !(m ? _file) && !(m ? key)
+    ) sharedAttrs) "a forwarded module has neither a file nor a key")
+    # Imported twice, the module adds nothing the second time.
+    (lib.optional (
+      (homeOf twice).ravnix.shell.autoAttach != "echo ONCE"
+    ) "a second import doubles a forwarded value: ${(homeOf twice).ravnix.shell.autoAttach}")
+    (lib.optional (
+      (homeOf userImports).ravnix.shell.autoAttach != "echo ONCE"
+    ) "homeModules.common listed by the user doubles a forwarded value")
+    (lib.optional (
+      lib.length twice.home-manager.sharedModules != lib.length once.home-manager.sharedModules
+    ) "a second import lengthens home-manager.sharedModules")
+    (lib.optional (
+      count "wheel" twice.users.users.${user.username}.extraGroups != 1
+    ) "a second import lists wheel twice")
+    (lib.optional (
+      count "$HOME/.local/bin" (homeOf twice).home.sessionPath != 1
+    ) "a second import lists ~/.local/bin twice")
+    (lib.optional (
+      count "$HOME/.local/bin" (homeOf userImports).home.sessionPath != 1
+    ) "homeModules.common imported twice lists ~/.local/bin twice")
   ];
 in
 pkgs.runCommand "common-forwarding" { } ''

@@ -9,6 +9,7 @@
   self,
   inputs,
   pkgs,
+  lib,
   ...
 }:
 modules:
@@ -19,7 +20,13 @@ inputs.home-manager.lib.homeManagerConfiguration {
     self.homeModules.theme
     self.homeModules.common
     ../../../templates/default/me.nix
-    { home.stateVersion = "26.05"; }
+    {
+      home.stateVersion = "26.05";
+      # The template's values are placeholders and warn about it (the options
+      # tests check that they do); here each warning would be printed again
+      # by every evaluation.
+      warnings = lib.mkForce [ ];
+    }
   ]
   ++ modules;
 }

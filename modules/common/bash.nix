@@ -1,8 +1,17 @@
 # bash as the Fedora laptop has it, ported from its .bashrc: the history, the
 # aliases, the functions, the tools' shell integrations in the order they need
 # (bash-preexec, starship, zoxide, fzf, atuin), the readline keyboard layer,
-# and ai-unlock. The functions are real files in ./bash, so shellcheck reads
-# them and the tests source them.
+# and ai-unlock with the `claude` function. The functions are real files in
+# ./bash, so shellcheck reads them and the tests source them.
+#
+# The order of the interactive part is the Fedora one, and it matters:
+# the seam first (ravnix.shell.autoAttach), then the SWAYSOCK repair, the
+# tools, the functions, and last the aliases. Home-manager writes
+# programs.bash.shellAliases before everything in initExtra, so the aliases
+# of this module are not there: written that way, `ls` would be eza (and
+# `cd` zd, which is not defined yet) in the SWAYSOCK repair and in whatever
+# the seam runs, and a function body would have an alias in it, expanded
+# when the function is defined and not when it is called.
 #
 # Left to other modules, on purpose:
 #   - the terminal auto-attach, the herdr hook and its alias `t`, which Task
@@ -52,10 +61,20 @@ let
     gp = "git push";
   };
 
-  # Which variable comes from which rbw item (ravnix.shell.secretEnv). The
-  # names are checked to be shell names; the items are quoted.
+  # The aliases as shell code, in name order: what home-manager would write
+  # for programs.bash.shellAliases, but where this module chooses (see the
+  # header). The `--` keeps a name that starts with a dash from being an option.
+  aliasLines = lib.concatStringsSep "\n" (
+    lib.mapAttrsToList (
+      name: value: "alias -- ${lib.escapeShellArg name}=${lib.escapeShellArg value}"
+    ) aliases
+  );
+
+  # Which variable comes from which rbw item (ravnix.shell.secretEnv), as
+  # "NAME=item" in name order. The names are checked to be shell names, and
+  # so hold no "="; the items are quoted.
   secretTable = lib.concatStringsSep " " (
-    lib.mapAttrsToList (name: item: "[${name}]=${lib.escapeShellArg item}") cfg.secretEnv
+    lib.mapAttrsToList (name: item: lib.escapeShellArg "${name}=${item}") cfg.secretEnv
   );
 
   # The shell integrations of starship, zoxide, fzf and atuin, written once at
@@ -78,11 +97,15 @@ let
 
   # The seam: the text of ravnix.shell.autoAttach, first in the interactive
   # part, before the completion that home-manager loads early and before
-  # anything else, so a shell that `exec`s away has paid for nothing.
+  # anything else, so a shell that `exec`s away has paid for nothing. It runs
+  # before the aliases and the functions of this module, so `cd` there is the
+  # builtin; an alias another module adds through programs.bash.shellAliases
+  # is live, and a function is not.
   seam = ''
     # ─── Terminal auto-attach (a seam) ──────────────────────────────────────
     # The module that drops a new terminal into a persistent session adds its
     # code here, through ravnix.shell.autoAttach. Nothing in this module does.
+    # No alias of this module and no function is defined yet.
     ${cfg.autoAttach}
   '';
 
@@ -131,10 +154,16 @@ let
     complete -o bashdefault -o default -o nospace -F _g_complete_load g
 
     # ─── Secrets ────────────────────────────────────────────────────────────
-    # ravnix.shell.secretEnv: which variable comes from which rbw item.
-    declare -A _ravnix_secret_env=(${secretTable})
-    ${builtins.readFile ./bash/ai-unlock.bash}
-    ${lib.optionalString (cfg.secretEnv != { }) "_ravnix_load_secrets"}
+    # ravnix.shell.secretEnv: which variable comes from which rbw item, for
+    # `claude`; ai-unlock only unlocks the vault.
+    _ravnix_secrets=(${secretTable})
+    ${builtins.readFile ./bash/secrets.bash}
+
+    # ─── Aliases ────────────────────────────────────────────────────────────
+    # Last, after every function: a function body is read when it is defined,
+    # and an alias that was live then would be expanded in it for good (see
+    # the header).
+    ${aliasLines}
   '';
 in
 {
@@ -155,7 +184,6 @@ in
       "histappend"
       "autocd"
     ];
-    shellAliases = aliases;
 
     # Everything a shell needs that is not interactive too: home-manager's
     # session variables and PATH. A terminal in the graphical session, a herdr

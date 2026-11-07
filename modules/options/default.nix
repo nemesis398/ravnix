@@ -4,6 +4,12 @@
 # for a real value. The same module serves NixOS and home-manager
 # (nixosModules.options, homeModules.options); templates/default/me.nix
 # lists every option with a comment.
+#
+# An option that me.nix or a host sets and that a home-manager module reads
+# belongs here, in this directory (or in ../theme/options.nix, which it
+# imports): nixosModules.common hands on to home-manager only the options
+# declared in these files, so an option that NixOS alone declares can never
+# make the user's home-manager evaluation fail.
 { lib, options, ... }:
 let
   # A value without a default is one the user must set. Reading it unset
@@ -30,6 +36,7 @@ in
     ./dictionary.nix
     ./editor.nix
     ./claude.nix
+    ./shell.nix
     ./placeholders.nix
     # The accent is a value the user sets in me.nix, so the option is here too;
     # nixosModules.theme imports the same file and the module system keeps one.

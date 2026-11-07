@@ -175,6 +175,17 @@
       "web"
     ];
 
+    # The shell. secretEnv names the environment variables that `claude` gets
+    # from your Bitwarden when it starts: the variable's name (capital
+    # letters, digits and underscores) and the name of the item whose password
+    # is its value. Only item names go into this flake; rbw reads the values
+    # at the moment `claude` starts, and no other program sees them. For
+    # example:
+    #   secretEnv = { SERVICE_API_TOKEN = "Service - API token"; };
+    # (ravnix.shell.autoAttach is a seam for ravnix's own modules, not a value
+    # to set.)
+    shell.secretEnv = { };
+
     # Values the public Claude Code skills read (destinations, ids, house
     # rules), rendered to JSON. A skill that needs a missing value says
     # which key to set.
