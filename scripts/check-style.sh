@@ -16,8 +16,9 @@
 #   radius        a border radius other than 0: border-radius and its
 #                 per-corner forms, every key that ends in radius, a border key
 #                 set to rounded, and round_corners or rounded_corners unless
-#                 it is 0 or false. indicator-radius and ring-radius are not
-#                 among these; the lock ring is a gauge.
+#                 it is 0 or false. indicator-radius, ring-radius and
+#                 lock-ring-radius are not among these; the lock ring is a
+#                 gauge.
 #   opacity       anything below fully opaque: opacity or a background, window
 #                 or similar *_alpha key below 1, alpha(), rgba() and hsla()
 #                 with alpha below 1, sway's opacity command (also in a quoted
@@ -546,8 +547,10 @@ radius_hit() {
 		match="${BASH_REMATCH[0]}"
 		key="${BASH_REMATCH[2]}"
 		value="${BASH_REMATCH[3]}"
-		# The lock ring is a gauge: its indicator and ring radii are geometry.
-		if [[ ! "$key" =~ (^|[_-])(indicator|ring)[_-]radius$ ]] && radius_value "$value"; then
+		# The lock ring is a gauge: swaylock's indicator-radius, and a ring or
+		# lock-ring radius, are geometry. Any other ring (focus_ring_radius)
+		# has a corner.
+		if [[ ! "$key" =~ ^(indicator|ring|lock[_-]ring)[_-]radius$ ]] && radius_value "$value"; then
 			hit "$path" "$line" radius
 		fi
 		rest="${rest#*"$match"}"
@@ -689,11 +692,27 @@ bare_color_hit() {
 	hit "$path" "$line" opacity
 }
 
+# Whether a motion match that starts with a dot and has its colon before any =
+# is a CSS class selector with a pseudo-class (.animation-x:hover), not a key
+# written as an attribute path. In a CSS file it always is. Elsewhere (a
+# stylesheet in a Nix string) the selector ends the line with , or {, or the
+# rule opens right after the match.
+is_class_selector() {
+	local tail
+	[[ " ${css[*]} " != *" $1 "* ]] || return 0
+	line_text "$1" "$2"
+	tail="${REPLY#*"$3"}"
+	[[ "$tail" =~ ^[[:space:]]*\{ || "$REPLY" =~ [,{][[:space:]]*$ ]]
+}
+
 # A transition or animation key is a hit unless its value turns motion off:
 # none, false, off, no or a zero duration. @keyframes is always a hit.
 motion_hit() {
 	local text="${3,,}" value
 	is_comment "$1" "$2" && return 0
+	if [[ "$text" == .* && "$text" =~ ^[^=:]*: ]] && is_class_selector "$1" "$2" "$3"; then
+		return 0
+	fi
 	if [[ "$text" =~ [=:][[:space:]]*(.*)$ && "$text" != *@*keyframes* ]]; then
 		value="${BASH_REMATCH[1]}"
 		value="${value//[\"\']/}"

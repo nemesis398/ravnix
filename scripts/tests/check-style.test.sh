@@ -384,10 +384,18 @@ rounded_corners_are_a_hit_unless_off() {
 
 a_radius_of_the_lock_ring_is_geometry_not_a_corner() {
 	new_tree
-	put modules/a.toml 'ring_radius = 110\nlock-ring-radius = 100\nindicator_radius = 110\nRing_Radius = 9\n'
+	put modules/a.toml 'ring_radius = 110\nlock-ring-radius = 100\nlock_ring_radius = 100\nindicator_radius = 110\nindicator-radius = 110\nRing_Radius = 9\n'
 	expect_clean
 	put modules/b.toml 'spring_radius = 5\nringradius = 5\nring_radius_x = 5\nring_corner_radius = 5\n'
 	expect_hits "modules/b.toml:1:radius" "modules/b.toml:2:radius" "modules/b.toml:4:radius"
+}
+
+a_ring_that_is_not_the_lock_ring_has_a_corner() {
+	new_tree
+	put modules/a.toml 'focus_ring_radius = 8\nouter-ring-radius = 8\nunlock_ring_radius = 8\nwindow.focus_ring_radius = 8\n'
+	put modules/b.nix 'programs.x.settings.focus_ring_radius = 8;\nprograms.swaylock.settings.indicator-radius = 110;\nsettings.lock-ring-radius = 100;\n'
+	expect_hits "modules/a.toml:1:radius" "modules/a.toml:2:radius" "modules/a.toml:3:radius" \
+		"modules/a.toml:4:radius" "modules/b.nix:1:radius"
 }
 
 any_radius_key_is_a_hit_except_the_lock_ring_gauge() {
@@ -624,6 +632,18 @@ a_motion_key_in_an_attribute_path_is_judged() {
 	put modules/b.nix 'gtk.gtk3.extraConfig.gtk-enable-animations = false;\ndconf.settings."org/gnome/desktop/interface".enable-animations = false;\nfoo.transition = 0;\nprograms.y.animations.enabled = false;\nsystemd.TransitionTime = 1;\nlib.animationsFoo = 1;\nprograms.z.gtk-enable-animations = "off";\n'
 	expect_hits "modules/a.nix:1:motion" "modules/a.nix:2:motion" "modules/a.nix:3:motion" \
 		"modules/a.nix:4:motion" "modules/a.nix:5:motion"
+}
+
+a_css_class_selector_is_no_motion_key() {
+	new_tree
+	put a.css '.animation-paused:hover { color: red; }\nwindow .transition-x:focus { color: red; }\n.animation-x:hover,\n.b:active {\n  color: red;\n}\n'
+	put modules/b.nix 'programs.waybar.style = \x27\x27\n  .animation-x:hover { color: red; }\n  window .transition-y:focus > b { color: red; }\n  .animation-z:active,\n  .b {\n    color: red;\n  }\n\x27\x27;\n'
+	expect_clean
+	# A property is still a key, in a rule and in a string, and an attribute
+	# path still is one.
+	put c.css '.a { animation: spin 1s linear; }\n.b:hover { transition: all 1s; }\n'
+	put modules/d.nix 'programs.waybar.style = \x27\x27\n  .a { animation: spin 1s; }\n\x27\x27;\nfoo.animation = 1;\n'
+	expect_hits "c.css:1:motion" "c.css:2:motion" "modules/d.nix:2:motion" "modules/d.nix:4:motion"
 }
 
 words_that_merely_contain_the_names_pass() {
@@ -937,6 +957,7 @@ tests=(
 	a_rounded_border_is_a_hit
 	rounded_corners_are_a_hit_unless_off
 	a_radius_of_the_lock_ring_is_geometry_not_a_corner
+	a_ring_that_is_not_the_lock_ring_has_a_corner
 	any_radius_key_is_a_hit_except_the_lock_ring_gauge
 	a_declaration_after_a_closed_comment_or_a_selector_star_is_judged
 	a_lua_comment_is_a_comment
@@ -965,6 +986,7 @@ tests=(
 	a_link_anchor_is_no_color
 	an_issue_number_is_no_color
 	turning_animations_on_is_a_hit
+	a_css_class_selector_is_no_motion_key
 	a_motion_key_in_an_attribute_path_is_judged
 	words_that_merely_contain_the_names_pass
 	a_mermaid_init_block_identical_to_the_shared_one_passes

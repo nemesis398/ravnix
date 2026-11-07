@@ -139,9 +139,10 @@ What it sees, and what it does not (the false negatives):
   seen. It is not seen inside a function (`linear-gradient(to right,
   transparent, red)`). `rgba(0, 0, 0, 0)` is judged by its alpha.
 - Radius: `border-radius` and its per-corner forms, every key that ends in
-  `radius` or `-radius` (except the lock ring's `indicator-radius` and
-  `ring-radius`, which are gauge geometry; any other radius that is no corner
-  is a false hit, and widening the exemption needs the maintainer), a key with
+  `radius` or `-radius` (except the lock ring's `indicator-radius`,
+  `ring-radius` and `lock-ring-radius`, which are gauge geometry; any other
+  ring, such as `focus_ring_radius`, has a corner, and any other radius that is
+  no corner is a false hit: widening the exemption needs the maintainer), a key with
   `border` in its name set to `rounded`, and `round_corners` or
   `rounded_corners` with any value but 0, false, off, no or none. Not seen:
   other spellings of the same thing (Hyprland's `rounding`, a `style` set to
@@ -154,8 +155,12 @@ What it sees, and what it does not (the false negatives):
   off-value (`none`, `false`, `off`, `no`, `0`, `0s`, `0ms`). Other ways to
   move are not judged: a blinking cursor, smooth scrolling, a key such as
   `animations-enabled`. The key is judged also as the last part of a Nix
-  attribute path (`gtk.gtk3.extraConfig.gtk-enable-animations = true`), and
-  an attribute that is named like a key (`animation-nvim = ...` in a plugin
+  attribute path (`gtk.gtk3.extraConfig.gtk-enable-animations = true`); a CSS
+  class selector with a pseudo-class (`.animation-x:hover`) is no key, in a CSS
+  file and in a stylesheet inside a Nix string, as long as its line ends in `,`
+  or `{` or the rule opens right after it (a selector alone on its line, with
+  the `{` on the next, is a false hit in a string).
+  An attribute that is named like a key (`animation-nvim = ...` in a plugin
   set) is a false hit, as is prose that starts `transition:` or `animation:`
   (in a multi-line string, say).
 - Comment lines (`#` and a space, `;`, `//`, `--` in Lua, `/*`, a leading `*`)
