@@ -98,8 +98,8 @@ as its working directory, and in a fixed environment: `HOME`, `PATH`,
 `LC_ALL`, `TZ`, `TMPDIR` and `GLIBC_TUNABLES` set to the same values every
 time and nothing else, so nothing of the build reaches the program. It
 counts the instructions executed from the program's `main` on, inclusive,
-and fails when the count is more than 2 % above `bench/baseline.json`, which
-holds one positive whole number:
+and in every thread the program starts, and fails when the count is more
+than 2 % above `bench/baseline.json`, which holds one positive whole number:
 
 ```json
 {
@@ -114,6 +114,17 @@ detection, about 180 000 instructions that would dilute a regression in a
 small tool. Odin's own start, which `main` runs first (the runtime's setup
 and every `@(init)` procedure), is in the count. A program whose symbol
 table has been stripped has no `main` for callgrind to find, and fails.
+
+A thread does not run under `main`: it starts in glibc's `start_thread`,
+which `core:thread` reaches through `pthread_create`, and callgrind starts
+every thread with counting off. The bench therefore also counts from
+`start_thread` on. Without it, a worker thread's work was missing: in the
+harness's threaded fixture, a million rounds in the worker added 484
+instructions to the count from `main`. With it, ten times the rounds give
+ten times the worker's share of the count. Valgrind runs one thread at a
+time; the bench uses its fair scheduler, which hands the running slot from
+thread to thread in order, because with the default one a thread waiting
+for its worker woke once more in 2 of 27 runs.
 
 ### The same count on every host
 
@@ -137,6 +148,16 @@ newer glibc sets and the pin does not clear yet. An incomplete pin then
 fails with the bit to add, instead of a count that differs from another
 host's. The pin makes glibc use its plain SSE2 code, so a count measures
 the tool's work, not what it costs on the fastest CPU.
+
+The pin and its check cover glibc and nothing else. Code that asks the CPU
+itself which path to take is neither pinned nor checked: Odin's
+`core:crypto` picks its ChaCha20, AES and SHA-256 code at run time through
+`core:sys/info`, by AVX2, AES-NI and the SHA extensions, and other `core`
+packages may do the same. A tool whose hot path does that counts
+differently on hosts whose valgrind CPUs differ in those features, and the
+bench does not notice. Such a tool must say so in its own `README.md`. The
+proof across hosts is a run of `template-bench` and `odin-harness` on the
+server host, muninn, once it exists (plan Task 4.2).
 
 ### What fails, and what does not
 
@@ -180,19 +201,26 @@ records its first baseline the same way.
 
 Findings that are not fixed, so nobody mistakes them for covered.
 
-- The pin is shown complete only for the host differences the harness can
-  stand in for on one machine: CPU features and preferred bits masked
-  through `GLIBC_TUNABLES`, and other cache sizes. The synthetic CPUs that
-  valgrind shows on a host without AVX2 are not measured directly; the
-  check of glibc's state is what catches a difference there.
+- The glibc pin is shown complete only for the host differences the
+  harness can stand in for on one machine: CPU features and preferred bits
+  masked through `GLIBC_TUNABLES`, and other cache sizes. The synthetic
+  CPUs that valgrind shows on a host without AVX2 are not measured
+  directly; the check of glibc's state catches a difference in glibc there,
+  and nothing catches one outside it.
+- Run-time CPU dispatch outside glibc, as in `core:crypto`, is neither
+  pinned nor checked (see "The same count on every host").
 - A bump of nixpkgs moves Odin, glibc and valgrind, and with them every
   count. Record the baselines again in the commit that bumps `flake.lock`.
 - The bench runs with `PATH` set to nothing usable, so a tool that starts
   other programs cannot be benched as it is; such a tool needs a
   `benchPath` argument that does not exist yet.
-- Valgrind runs a program's threads one at a time. A threaded tool's count
-  is then the sum over its threads and may differ between runs, which the
-  double run turns into a failure, not a wrong number.
+- A threaded tool's count is the sum over its threads, each from its
+  start. Valgrind runs them one at a time, and the fair scheduler kept the
+  harness's fixture steady in 132 runs, but threads that race for a lock or
+  poll in a loop can still take another order and count differently. The
+  double run turns that into a failure, not a wrong number. A thread made
+  without `pthread_create` (a raw `clone`) does not pass through
+  `start_thread`, and its work is not counted.
 - The baselines hold only the count, not the Odin, glibc and valgrind
   versions they were taken with; a stale baseline is noticed only through
   the counts.

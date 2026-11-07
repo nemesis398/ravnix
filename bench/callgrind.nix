@@ -1,10 +1,10 @@
 # The callgrind gate: runs a program on a fixed input under valgrind's
-# callgrind, counts the instructions it executes from its main function on,
-# and fails when that count is more than limitPercent above a committed
-# baseline. An instruction count does not move with CPU load or a busy
-# machine, so it can gate a push where wall clock cannot; valgrind and glibc
-# come from the flake's nixpkgs, so a baseline stays valid until that pin
-# moves.
+# callgrind, counts the instructions it executes from its main function on
+# and in every thread it starts, and fails when that count is more than
+# limitPercent above a committed baseline. An instruction count does not
+# move with CPU load or a busy machine, so it can gate a push where wall
+# clock cannot; valgrind and glibc come from the flake's nixpkgs, so a
+# baseline stays valid until that pin moves.
 #
 #   mkBench { name; program; bench; args ? [ ]; stdin ? null; }
 #
@@ -184,8 +184,14 @@ let
       work="$scratch/bench"
 
       # The pin. CALLGRIND_MEASURE_HOST_TUNABLES, in GLIBC_TUNABLES syntax,
-      # stands for what another host would start from; it goes in front of
-      # the pin, so the pin has the last word. Only the harness sets it.
+      # stands for what another host would start from, for the harness. Its
+      # glibc.cpu.hwcaps tokens go in front of the pin's, and its other
+      # tunables in front of the pin's cache tunables, so for each tunable
+      # the pin sets, the pin's value is the one glibc applies. A tunable
+      # the pin does not set (glibc.malloc.*, glibc.rtld.*, glibc.pthread.*)
+      # applies as given, and the check of glibc's state does not look at
+      # it. No build sets the variable: mkBench passes no such attribute,
+      # and buildOdinTool refuses arguments it does not know.
       host_hwcaps="" host_rest=""
       if [[ -n "''${CALLGRIND_MEASURE_HOST_TUNABLES:-}" ]]; then
         IFS=: read -ra parts <<<"$CALLGRIND_MEASURE_HOST_TUNABLES"
@@ -225,7 +231,13 @@ let
 
       # run N: one run under callgrind, counting from main on, inclusive,
       # so the start of the process (the dynamic loader, glibc's own start
-      # and its CPU detection) is not in the count. Prints the count.
+      # and its CPU detection) is not in the count. callgrind starts every
+      # new thread with counting off, and a thread starts in glibc's
+      # start_thread, not under main, so start_thread toggles it on for
+      # that thread. The fair scheduler hands the one running slot from
+      # thread to thread in order: with the default one, a thread waiting
+      # for a worker woke once more in 2 of 27 runs (63 instructions),
+      # with the fair one in none of 132. Prints the count.
       run() {
         local n=$1 status=0 total
         shift
@@ -234,7 +246,8 @@ let
         chmod -R u+w -- "$work"
         (
           cd "$work"
-          isolated ${valgrind}/bin/valgrind --tool=callgrind --vgdb=no --toggle-collect=main \
+          isolated ${valgrind}/bin/valgrind --tool=callgrind --vgdb=no --fair-sched=yes \
+            --toggle-collect=main --toggle-collect=start_thread \
             --callgrind-out-file="$out/callgrind.$n.out" --log-file="$out/valgrind.$n.log" \
             -- "$program" "$@" <"$stdin" >"$out/stdout" 2>"$out/stderr"
         ) || status=$?

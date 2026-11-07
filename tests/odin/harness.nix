@@ -45,6 +45,11 @@ let
     src = fixtures + "/copier";
     odinFlags = [ "-extra-linker-flags:-Wl,--no-as-needed -lrt -ldl -lutil -lresolv" ];
   };
+  # A program whose work runs in a worker thread, never under main.
+  threaded = odin.buildOdinTool {
+    name = "threaded";
+    src = fixtures + "/threaded";
+  };
 
   evalFailures =
     lib.optional (problemsOf { src = tool; } != [ ])
@@ -149,6 +154,7 @@ pkgs.runCommand "odin-harness"
     program = "${good.package}/bin/fixture";
     copier = "${copier.package}/bin/copier";
     copierWithLibraries = "${copierWithLibraries.package}/bin/copier";
+    threaded = "${threaded.package}/bin/threaded";
     valgrind = "${callgrind.valgrind}/bin/valgrind";
     bench = tool + "/bench";
     inherit tool baselines;
@@ -203,20 +209,24 @@ pkgs.runCommand "odin-harness"
         status=1
       fi
     }
-    # measure OUT [HOST_TUNABLES] PROGRAM: the count callgrind-measure takes
-    # of PROGRAM with no input, starting from HOST_TUNABLES.
+    # measure OUT HOST_TUNABLES PROGRAM [ARG...]: the count callgrind-measure
+    # takes of PROGRAM, starting from HOST_TUNABLES.
     measure() {
-      CALLGRIND_MEASURE_HOST_TUNABLES="$2" callgrind-measure "$1" "$bench" - "$3" >/dev/null
-      cat "$1/instructions"
+      local out=$1 host=$2
+      shift 2
+      CALLGRIND_MEASURE_HOST_TUNABLES="$host" callgrind-measure "$out" "$bench" - "$@" >/dev/null
+      cat "$out/instructions"
     }
-    # unpinned TUNABLES PROGRAM [TOGGLE]: one callgrind count without the
-    # pin, from main or, with TOGGLE empty, of the whole process.
+    # unpinned TUNABLES TOGGLE PROGRAM [ARG...]: one callgrind count without
+    # the pin, of the function TOGGLE and what it calls, or, with TOGGLE -,
+    # of the whole process.
     unpinned() {
-      local out toggle=("--toggle-collect=''${3-main}")
+      local out tunables=$1 toggle=("--toggle-collect=$2")
+      shift 2
+      [ "''${toggle[0]}" != "--toggle-collect=-" ] || toggle=()
       out="$(mktemp -p "$TMPDIR")"
-      [ -n "''${3-main}" ] || toggle=()
-      env -i GLIBC_TUNABLES="$1" "$valgrind" --tool=callgrind --vgdb=no -q "''${toggle[@]}" \
-        --callgrind-out-file="$out" -- "$2" >/dev/null
+      env -i GLIBC_TUNABLES="$tunables" "$valgrind" --tool=callgrind --vgdb=no -q "''${toggle[@]}" \
+        --callgrind-out-file="$out" -- "$@" >/dev/null
       awk '$1 == "totals:" { print $2 }' "$out"
     }
 
@@ -276,16 +286,37 @@ pkgs.runCommand "odin-harness"
     # load cost instructions before main, and none after.
     pin="$(cat "$measured/glibc-tunables")"
     differ "more start-up work costs instructions in the whole process" \
-      "$(unpinned "$pin" "$copier" "")" "$(unpinned "$pin" "$copierWithLibraries" "")"
+      "$(unpinned "$pin" - "$copier")" "$(unpinned "$pin" - "$copierWithLibraries")"
     plain="$(measure out.copier "" "$copier")"
     same "and none in the count from main" "$plain" "$(measure out.libraries "" "$copierWithLibraries")"
+
+    # A worker thread's work is in the count: ten times its rounds, ten
+    # times its share, within 1 %. Counted under main alone, the same work
+    # barely moves the count, so the worker does it.
+    none="$(measure out.t0 "" "$threaded" 0)"
+    some="$(measure out.t1 "" "$threaded" 100000)"
+    more="$(measure out.t2 "" "$threaded" 1000000)"
+    if (((more - none) * 100 >= (some - none) * 990 && (more - none) * 100 <= (some - none) * 1010)); then
+      echo "ok   ten times a worker thread's work is ten times its share of the count ($none, $some, $more)"
+    else
+      echo "FAIL ten times a worker thread's work is not ten times its share of the count: $none, $some, $more"
+      status=1
+    fi
+    main_none="$(unpinned "$pin" main "$threaded" 0)"
+    main_more="$(unpinned "$pin" main "$threaded" 1000000)"
+    if (((main_more - main_none) * 100 < more - none)); then
+      echo "ok   and that work runs outside main ($main_none against $main_more from main alone)"
+    else
+      echo "FAIL the threaded fixture does its work under main: $main_none against $main_more from main alone"
+      status=1
+    fi
 
     # The CPU glibc sees is not in the count. Without the pin, another cache
     # layout changes how the copier's 4 MiB copies run, on any host.
     other_cache='glibc.cpu.x86_data_cache_size=0x10000:glibc.cpu.x86_shared_cache_size=0x2000000:glibc.cpu.x86_non_temporal_threshold=0x800000'
     differ "without the pin, another cache layout changes the count" \
-      "$(unpinned "" "$copier")" "$(unpinned "$other_cache" "$copier")"
-    echo "     (without the pin, AVX, AVX2, ERMS and FSRM off: $(unpinned "" "$copier") against $(unpinned 'glibc.cpu.hwcaps=-AVX,-AVX2,-ERMS,-FSRM' "$copier"))"
+      "$(unpinned "" main "$copier")" "$(unpinned "$other_cache" main "$copier")"
+    echo "     (without the pin, AVX, AVX2, ERMS and FSRM off: $(unpinned "" main "$copier") against $(unpinned 'glibc.cpu.hwcaps=-AVX,-AVX2,-ERMS,-FSRM' main "$copier"))"
     same "with the pin, a host without AVX, AVX2, ERMS and FSRM counts the same" \
       "$plain" "$(measure out.v2 'glibc.cpu.hwcaps=-AVX,-AVX2,-ERMS,-FSRM' "$copier")"
     same "with the pin, a host with other preferred bits counts the same" \
