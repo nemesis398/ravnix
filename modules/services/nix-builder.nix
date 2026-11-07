@@ -3,6 +3,21 @@
 # machine in /etc/nix/machines, with the builder's host key pinned. With
 # ravnix.nixBuilder.kvm it also takes the builds that need KVM, nixosTests
 # among them.
+#
+# What that costs: the builder gets nearly every build the host cannot
+# substitute, ravnix's own, every flake input's and every nixosTest, and runs
+# it without the Nix sandbox, as the container's build users, with the
+# container's world-readable files in reach. Its egress rule keeps those
+# builds off the LAN, the mesh and the NAS itself, not off the internet.
+# Their outputs are signed by the cache every host trusts, so a build that
+# behaves differently without the sandbox gives every host that output. The
+# host's own `sandbox = true` no longer describes where its builds run.
+#
+# The private key root logs in with is a root-only file on the host, written
+# by hand from the password manager (ravnix.nixBuilder.sshKey): a deliberate
+# exception to secrets from rbw at runtime, because the root Nix daemon
+# builds unattended, for example while muninn's update timer runs and rbw is
+# locked.
 { config, lib, ... }:
 let
   service = config.ravnix.services.nix-builder or { enable = false; };

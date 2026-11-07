@@ -3,6 +3,13 @@
 # key signed. The cache (deploy/compose/nix-builder) serves the builder's own
 # store, so whatever was built there, and everything the builder fetched to
 # build it, comes from the LAN.
+#
+# That trust is transitive. The cache signs every path in the builder's
+# store as it serves it, including inputs a host uploaded unsigned for a
+# remote build and anything pushed with `nix copy --no-check-sigs`. So root
+# on any host that holds the builder key can place a path that every host
+# with this module then substitutes ahead of cache.nixos.org. That is the
+# price of one shared, trusted builder for the hosts of one person.
 { config, lib, ... }:
 let
   service = config.ravnix.services.nix-cache or { enable = false; };

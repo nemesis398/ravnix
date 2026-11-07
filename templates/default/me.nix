@@ -76,7 +76,10 @@
       # container prints it. Not a real key.
       hostKey = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUV4YW1wbGVPbmx5Tm90QVJlYWxLZXlFeGFtcGxlT25seU5vdEFSZWFsS2V5IG5peC1idWlsZGVyCg==";
       # The user the hosts log in as, and the private key root logs in with:
-      # a root-only file on each host, written from your password manager.
+      # a root-only file on each host that you write by hand from your
+      # password manager (`sudo install -m 600 /dev/stdin <path>`). It is a
+      # file and not fetched at runtime, because the Nix daemon builds
+      # unattended; the option's description says more.
       sshUser = "nix-builder";
       sshKey = "/etc/nix/nix-builder_ed25519";
       # Whether the builder can run nixosTests: its start log says whether
