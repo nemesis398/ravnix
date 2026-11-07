@@ -1,0 +1,139 @@
+{
+   "blockdevices": [
+      {
+         "name": "sda",
+         "model": "MassStorageClass",
+         "serial": "000000000001",
+         "mountpoints": [
+            null
+         ],
+         "type": "disk",
+         "children": [
+            {
+               "name": "sda1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  "/run/media/alice/LIVE"
+               ],
+               "type": "part"
+            },
+            {
+               "name": "sda2",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  null
+               ],
+               "type": "part"
+            }
+         ]
+      },
+      {
+         "name": "zram0",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "[SWAP]"
+         ],
+         "type": "disk"
+      },
+      {
+         "name": "nvme1n1",
+         "model": "Keep SSD 1TB",
+         "serial": "KEEP0SERIAL",
+         "mountpoints": [
+            null
+         ],
+         "type": "disk",
+         "children": [
+            {
+               "name": "nvme1n1p1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  "/boot/efi"
+               ],
+               "type": "part"
+            },
+            {
+               "name": "nvme1n1p2",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  "/boot"
+               ],
+               "type": "part"
+            },
+            {
+               "name": "nvme1n1p3",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  null
+               ],
+               "type": "part",
+               "children": [
+                  {
+                     "name": "luks-00000000-0000-4000-8000-000000000000",
+                     "model": null,
+                     "serial": null,
+                     "mountpoints": [
+                        "/home",
+                        "/"
+                     ],
+                     "type": "crypt"
+                  }
+               ]
+            }
+         ]
+      },
+      {
+         "name": "nvme0n1",
+         "model": "Example SSD 1TB",
+         "serial": "EXAMPLE0SERIAL",
+         "mountpoints": [
+            null
+         ],
+         "type": "disk",
+         "children": [
+            {
+               "name": "nvme0n1p1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  null
+               ],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p2",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  null
+               ],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p3",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  null
+               ],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p4",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  null
+               ],
+               "type": "part"
+            }
+         ]
+      }
+   ]
+}

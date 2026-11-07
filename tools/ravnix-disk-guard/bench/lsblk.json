@@ -1,0 +1,272 @@
+{
+   "blockdevices": [
+      {
+         "name": "loop0",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core0/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop1",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core1/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop2",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core2/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop3",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core3/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop4",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core4/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop5",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core5/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop6",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core6/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop7",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core7/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop8",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core8/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop9",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core9/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop10",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core10/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop11",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core11/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop12",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core12/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop13",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core13/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop14",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core14/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "loop15",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "/var/lib/snapd/snap/core15/1"
+         ],
+         "type": "loop"
+      },
+      {
+         "name": "sda",
+         "model": "MassStorageClass",
+         "serial": "000000000001",
+         "mountpoints": [],
+         "type": "disk",
+         "children": [
+            {
+               "name": "sda1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  "/run/media/alice/LIVE"
+               ],
+               "type": "part"
+            },
+            {
+               "name": "sda2",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            }
+         ]
+      },
+      {
+         "name": "sdb",
+         "model": "Card Reader",
+         "serial": "000000000002",
+         "mountpoints": [],
+         "type": "disk"
+      },
+      {
+         "name": "zram0",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "[SWAP]"
+         ],
+         "type": "disk"
+      },
+      {
+         "name": "nvme1n1",
+         "model": "Keep SSD 1TB",
+         "serial": "KEEP0SERIAL",
+         "mountpoints": [],
+         "type": "disk",
+         "children": [
+            {
+               "name": "nvme1n1p1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  "/boot/efi"
+               ],
+               "type": "part"
+            },
+            {
+               "name": "nvme1n1p2",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  "/boot"
+               ],
+               "type": "part"
+            },
+            {
+               "name": "nvme1n1p3",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part",
+               "children": [
+                  {
+                     "name": "luks-00000000-0000-4000-8000-000000000000",
+                     "model": null,
+                     "serial": null,
+                     "mountpoints": [
+                        "/home",
+                        "/"
+                     ],
+                     "type": "crypt"
+                  }
+               ]
+            }
+         ]
+      },
+      {
+         "name": "nvme0n1",
+         "model": "Example SSD 1TB",
+         "serial": "EXAMPLE0SERIAL",
+         "mountpoints": [],
+         "type": "disk",
+         "children": [
+            {
+               "name": "nvme0n1p1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p2",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p3",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p4",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            }
+         ]
+      }
+   ]
+}

@@ -1,0 +1,91 @@
+{
+   "blockdevices": [
+      {
+         "name": "sda",
+         "model": "MassStorageClass",
+         "serial": "000000000001",
+         "mountpoints": [],
+         "type": "disk",
+         "children": [
+            {
+               "name": "sda1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [
+                  "/run/media/alice/LIVE"
+               ],
+               "type": "part"
+            },
+            {
+               "name": "sda2",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            }
+         ]
+      },
+      {
+         "name": "zram0",
+         "model": null,
+         "serial": null,
+         "mountpoints": [
+            "[SWAP]"
+         ],
+         "type": "disk"
+      },
+      {
+         "name": "nvme1n1",
+         "model": "Example SSD 1TB",
+         "serial": "EXAMPLE0SERIAL",
+         "mountpoints": [],
+         "type": "disk",
+         "children": [
+            {
+               "name": "nvme1n1p1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            }
+         ]
+      },
+      {
+         "name": "nvme0n1",
+         "model": "Example SSD 1TB",
+         "serial": "EXAMPLE0SERIAL",
+         "mountpoints": [],
+         "type": "disk",
+         "children": [
+            {
+               "name": "nvme0n1p1",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p2",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p3",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            },
+            {
+               "name": "nvme0n1p4",
+               "model": null,
+               "serial": null,
+               "mountpoints": [],
+               "type": "part"
+            }
+         ]
+      }
+   ]
+}

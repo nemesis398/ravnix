@@ -1,0 +1,10 @@
+#!/bin/sh
+# The lsblk of the command tests. A test writes what this lsblk does into
+# case.sh beside a symlink to this file and runs the symlink, so case.sh sees
+# lsblk's arguments and environment. Writing an executable and running it at
+# once fails now and then with ETXTBSY, when another test's thread forks
+# while the new file is still open for writing; a script that is only read
+# has no such race. The guard starts lsblk with nothing on PATH, so case.sh
+# uses shell builtins only.
+# shellcheck source=/dev/null
+. "${0%/*}/case.sh"
