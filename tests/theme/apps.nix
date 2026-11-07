@@ -86,45 +86,79 @@ let
         "palette = 14=${palette.teal}"
         "palette = 15=${palette.subtext0}"
       ];
-      fuzzel = [
-        "font=JetBrainsMono Nerd Font:size=11"
-        "width=50"
-        "icon-theme=Papirus-Dark"
-        "[border]"
-        "width=1"
-        "radius=0"
-        "[colors]"
-        # Rows of the style spec's table: opaque, and Surface1 for the selection.
-        "background=${lib.removePrefix "#" palette.base}ff"
-        "text=${lib.removePrefix "#" palette.text}ff"
-        "prompt=${lib.removePrefix "#" palette.subtext1}ff"
-        "placeholder=${lib.removePrefix "#" palette.overlay1}ff"
-        "input=${lib.removePrefix "#" palette.text}ff"
-        "match=${bare}ff"
-        "selection=${lib.removePrefix "#" palette.surface1}ff"
-        "selection-text=${lib.removePrefix "#" palette.text}ff"
-        "selection-match=${bare}ff"
-        "counter=${lib.removePrefix "#" palette.overlay1}ff"
-        "border=${bare}ff"
-      ];
-      # home-manager writes dunst's ini as key="value", integers bare.
-      dunst = [
-        "[global]"
-        ''font="JetBrainsMono Nerd Font 9"''
-        # A row of the style spec's table: 1 px, not 2.
-        "frame_width=1"
-        ''frame_color="${accent}"''
-        ''separator_color="frame"''
-        ''highlight="${accent}"''
-        "[urgency_low]"
-        "[urgency_normal]"
-        "[urgency_critical]"
-        ''background="${palette.base}"''
-        ''foreground="${palette.text}"''
-        # A critical notification is Peach whatever the accent is.
-        ''frame_color="${palette.peach}"''
-      ];
     };
+
+  # The ini files of fuzzel and dunst, section by section: each section holds
+  # these lines, so a line that moves to another section (the 1 px frame out
+  # of [global], the Peach frame of a critical notification) fails. The
+  # sections may hold more; home-manager adds some lines of its own.
+  expectedSections =
+    accent:
+    let
+      bare = lib.removePrefix "#" accent;
+      rrggbbaa = hex: "${lib.removePrefix "#" hex}ff";
+    in
+    {
+      fuzzel = {
+        main = [
+          "font=JetBrainsMono Nerd Font:size=11"
+          "width=50"
+          "icon-theme=Papirus-Dark"
+        ];
+        border = [
+          "width=1"
+          "radius=0"
+        ];
+        # Rows of the style spec's table: opaque, and Surface1 for the selection.
+        colors = [
+          "background=${rrggbbaa palette.base}"
+          "text=${rrggbbaa palette.text}"
+          "prompt=${rrggbbaa palette.subtext1}"
+          "placeholder=${rrggbbaa palette.overlay1}"
+          "input=${rrggbbaa palette.text}"
+          "match=${bare}ff"
+          "selection=${rrggbbaa palette.surface1}"
+          "selection-text=${rrggbbaa palette.text}"
+          "selection-match=${bare}ff"
+          "counter=${rrggbbaa palette.overlay1}"
+          "border=${bare}ff"
+        ];
+      };
+      # home-manager writes dunst's ini as key="value", integers bare.
+      dunst = {
+        global = [
+          ''font="JetBrainsMono Nerd Font 9"''
+          # A row of the style spec's table: 1 px, not 2.
+          "frame_width=1"
+          ''frame_color="${accent}"''
+          ''separator_color="frame"''
+          ''highlight="${accent}"''
+        ];
+        # Low and normal notifications have no frame color of their own: they
+        # take the accent from [global].
+        urgency_low = [
+          ''background="${palette.base}"''
+          ''foreground="${palette.text}"''
+        ];
+        urgency_normal = [
+          ''background="${palette.base}"''
+          ''foreground="${palette.text}"''
+        ];
+        # A critical notification is Peach whatever the accent is.
+        urgency_critical = [
+          ''background="${palette.base}"''
+          ''foreground="${palette.text}"''
+          ''frame_color="${palette.peach}"''
+        ];
+      };
+    };
+
+  # Keys a section must not set, so a setting meant for one urgency cannot
+  # spread to the others.
+  absentKeys.dunst = {
+    urgency_low = [ "frame_color" ];
+    urgency_normal = [ "frame_color" ];
+  };
 
   checkFiles =
     name: c: accent:
@@ -141,6 +175,38 @@ let
           }
         '') lines
       ) (expectedLines accent)
+    )
+    + lib.concatStrings (
+      lib.mapAttrsToList (
+        app: sections:
+        lib.concatStrings (
+          lib.mapAttrsToList (
+            section: lines:
+            lib.concatMapStrings (line: ''
+              section ${files.${app}} ${section} | grep -qxF ${lib.escapeShellArg line} || {
+                echo ${lib.escapeShellArg "${name}: [${section}] of ${app} lacks the line: ${line}"} >&2
+                status=1
+              }
+            '') lines
+          ) sections
+        )
+      ) (expectedSections accent)
+    )
+    + lib.concatStrings (
+      lib.mapAttrsToList (
+        app: sections:
+        lib.concatStrings (
+          lib.mapAttrsToList (
+            section: keys:
+            lib.concatMapStrings (key: ''
+              if section ${files.${app}} ${section} | grep -q ${lib.escapeShellArg "^${key}="}; then
+                echo ${lib.escapeShellArg "${name}: [${section}] of ${app} sets ${key}"} >&2
+                status=1
+              fi
+            '') keys
+          ) sections
+        )
+      ) absentKeys
     );
 
   # The Qt and GTK settings, read from the evaluated configuration.
@@ -283,6 +349,10 @@ pkgs.runCommand "theme-apps"
   }
   ''
     status=0
+    # The lines of one [section] of an ini file, sorted.
+    section() {
+      awk -v want="$2" '/^\[/ { cur = substr($0, 2, length($0) - 2); next } cur == want && NF { print }' "$1" | sort
+    }
     ${lib.concatMapStrings (e: "echo ${lib.escapeShellArg e} >&2; status=1\n") (
       evalFailures ++ headlessFailures
     )}
