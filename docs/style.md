@@ -226,7 +226,7 @@ Diagrams share one layout language, taken from the author's keyboard-layout diag
   "fontFamily": "JetBrainsMono Nerd Font, ui-monospace, monospace" }}}%%
 ```
 
-Use rectangles (`[ ]`) and, for a decision, a diamond. Never the rounded, stadium or circle shapes. Map categories to classes in the order above. Whether GitHub honors these theme variables is checked first, and if it does not, CI renders SVGs from the same sources.
+Use rectangles (`[ ]`) and, for a decision, a diamond. Never the rounded, stadium or circle shapes. Map categories to classes in the order above. Whether GitHub honors these theme variables is checked first, and if it does not, a script renders SVGs from the same sources.
 
 ## ✅ Applying this to something new
 
@@ -247,8 +247,8 @@ When a new application, screen or document needs styling, walk this list in orde
 The style becomes code in four places.
 
 - **One theme module** holds the roles. It exposes the typed `accent` option, the role-to-hex table, the two line widths, the font, and the sizes. Every other module reads from it and never writes a hex value itself. Where an application has a `catppuccin/nix` integration, that is used and fed the same flavor and accent.
-- **A style check in CI**, next to the deny-list check, that fails on a hex color outside the theme module, the vendored files, this document and a Mermaid init block identical to the shared one, on any `border-radius` other than 0, on any opacity below 1 outside the inside of the lock ring, and on any `transition` or `animation` key.
-- **The repo's `CLAUDE.md`** gets a *Style* section that points here and carries the checklist above, so an agent styling a new thing meets the rules before it picks a color.
+- **A style check in the local gate**, next to the deny-list check, that fails on a hex color outside the theme module, the vendored files, this document and a Mermaid init block identical to the shared one, on any `border-radius` other than 0, on any opacity below 1 outside the inside of the lock ring, and on any `transition` or `animation` key.
+- **The repo's agent rules** (`AGENTS.md`) get a *Style* section that points here and carries the checklist above, so an agent styling a new thing meets the rules before it picks a color.
 - **Acceptance** is a side-by-side screenshot of the Fedora reference and `huginn` for each surface and each state: every lock-ring state, a critical notification, the focus-mode bar, and each bar module at its widest value. The reference is shot before Fedora is retired, at the same scale. The list in the next section holds the only allowed differences.
 
 ## ⚠️ Where the Fedora configs differ

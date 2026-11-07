@@ -19,7 +19,7 @@ and the two hosts.
 
 - [Style](docs/style.md): how ravnix looks, and the checklist for styling
   anything new.
-- [CLAUDE.md](CLAUDE.md): the rules for AI agents working in this repository.
+- [AGENTS.md](AGENTS.md): the rules for AI agents working in this repository.
 
 ## License
 
