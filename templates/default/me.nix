@@ -58,7 +58,35 @@
     # names an entry of `hosts`, and clients read the derived, read-only
     # `url`, so moving a service is a change of one line. For example:
     #   paperless = { enable = true; host = "nas"; port = 8000; };
+    # The Nix binary cache and builder (deploy/compose/nix-builder) are the
+    # services nix-cache and nix-builder:
+    #   nix-cache = { enable = true; host = "nas"; port = 8501; };
+    #   nix-builder = { enable = true; host = "nas"; port = 2224; };
     services = { };
+
+    # What a host needs to use that cache and builder besides their place.
+    # The container prints both keys at its first start. Without the two
+    # services above, these values are not read.
+    nixCache = {
+      # The cache's public key, name:base64. Not a real key.
+      publicKey = "cache.example.org-1:rL9Ff7wZpxDq4Wv3mN2hK5sT8yU1oE6aG0jC3bV7nXA=";
+    };
+    nixBuilder = {
+      # The builder's SSH host key, the whole .pub line in base64, as the
+      # container prints it. Not a real key.
+      hostKey = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUV4YW1wbGVPbmx5Tm90QVJlYWxLZXlFeGFtcGxlT25seU5vdEFSZWFsS2V5IG5peC1idWlsZGVyCg==";
+      # The user the hosts log in as, and the private key root logs in with:
+      # a root-only file on each host, written from your password manager.
+      sshUser = "nix-builder";
+      sshKey = "/etc/nix/nix-builder_ed25519";
+      # Whether the builder can run nixosTests: its start log says whether
+      # its build users can open /dev/kvm.
+      kvm = false;
+      # Builds a host runs there at once, and how Nix ranks the builder.
+      maxJobs = 4;
+      speedFactor = 1;
+      systems = [ "x86_64-linux" ];
+    };
 
     # How the laptop's main terminal reaches the server.
     server = {

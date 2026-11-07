@@ -28,6 +28,7 @@ in
     ./user.nix
     ./hosts.nix
     ./services.nix
+    ./nix.nix
     ./laptop.nix
     ./server.nix
     ./secrets.nix

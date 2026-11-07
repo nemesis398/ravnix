@@ -1,0 +1,131 @@
+# The Nix builder and binary cache of ravnix, for a host that runs Docker but
+# not NixOS, such as a NAS.
+#
+# One container runs three processes on one Nix store:
+#   nix-daemon  builds;
+#   sshd        lets clients reach the daemon as ssh-ng://nix-builder@HOST,
+#               with one key and nothing else (no shell, no forwarding);
+#   harmonia    serves the same store over HTTP as a binary cache and signs
+#               every path on the fly with the cache key.
+# A build that finishes here is in the cache the same moment, so nothing is
+# pushed and there is no second store to keep in step. Whatever the builder
+# fetched from cache.nixos.org to build is in the cache too, so a host whose
+# closure was built here substitutes all of it from the LAN.
+#
+# Deploy: put this file and start.sh in one directory, write a .env next to
+# them with the variables below, and run `docker compose up -d`. The first
+# start copies the image's store into NIX_STORE_DIR and installs openssh and
+# harmonia into it, which takes a few minutes; later starts take seconds. The
+# log prints the SSH host key and the cache's public key, which the clients'
+# configuration needs (ravnix.nixBuilder.hostKey, ravnix.nixCache.publicKey).
+#
+#   NIX_BIND_ADDRESS            the one host address both ports listen on
+#   NIX_BUILDER_SSH_PORT        host port of the builder's sshd
+#   NIX_CACHE_PORT              host port of the binary cache
+#   NIX_STORE_DIR               host directory that becomes /nix
+#   NIX_BUILDER_AUTHORIZED_KEY  the clients' public key, one line
+#   NIX_CACHE_KEY_NAME          name of the cache key, e.g. cache.example.org-1
+#   NIX_MIN_FREE, NIX_MAX_FREE  optional: collect garbage while a build runs
+#                               and the store's filesystem has less than
+#                               NIX_MIN_FREE free, until NIX_MAX_FREE is free
+#
+# The two secrets, the cache's signing key and the SSH host key, are made on
+# the first start in ./state, which only root can read. The signing key is
+# also kept in the password manager; restore it into
+# ./state/cache/secret-key before the first start of a rebuilt host, or every
+# client has to trust a new key.
+#
+# A NAS interface may not list this project: UGOS's Project tab, for one,
+# shows only projects made in its own wizard. `docker compose ls` does.
+name: nix-builder
+
+services:
+  # Copies the image's /nix into NIX_STORE_DIR once. The builder mounts that
+  # directory over /nix, which hides the image's own store, so without this
+  # copy it would find no bash and no nix. The marker file makes a rerun a
+  # no-op and lets an interrupted copy start over. The image tag therefore
+  # matters only on the first start: later Nix updates happen in the store,
+  # with `docker compose exec nix-builder nix profile upgrade --all`.
+  nix-seed:
+    image: nixos/nix:2.35.4
+    restart: "no"
+    network_mode: none
+    volumes:
+      - ${NIX_STORE_DIR:?set NIX_STORE_DIR in .env}:/seed
+    command:
+      - sh
+      - -c
+      - "[ -e /seed/.ravnix-seeded ] || { cp -a /nix/. /seed/ && touch /seed/.ravnix-seeded; }"
+
+  nix-builder:
+    image: nixos/nix:2.35.4
+    container_name: nix-builder
+    hostname: nix-builder
+    depends_on:
+      nix-seed:
+        condition: service_completed_successfully
+    init: true
+    restart: unless-stopped
+    command: ["/nix/var/nix/profiles/default/bin/bash", "/start.sh"]
+    ports:
+      # Both ports on one address and not on all of them. A port published
+      # on every address skips the host's input chain, so no host firewall
+      # rule could narrow it again, and the NAS has legs in segments that
+      # have no business with the builder. A container that pins an address
+      # can come up without its port when Docker starts before the address
+      # exists (a DHCP lease that arrives late); give the NAS a static address
+      # and check `docker inspect nix-builder --format
+      # '{{json .NetworkSettings.Ports}}'` after its next reboot.
+      - "${NIX_BIND_ADDRESS:?set NIX_BIND_ADDRESS in .env}:${NIX_BUILDER_SSH_PORT:?set NIX_BUILDER_SSH_PORT in .env}:22"
+      - "${NIX_BIND_ADDRESS:?}:${NIX_CACHE_PORT:?set NIX_CACHE_PORT in .env}:5000"
+    # nixosTests boot QEMU guests, which need KVM. start.sh puts the build
+    # users into a group with this device's group id and offers the kvm and
+    # nixos-test features only when one of them can open it. A host without
+    # /dev/kvm must drop these two lines.
+    devices:
+      - /dev/kvm:/dev/kvm
+    # No added capabilities, so the Nix sandbox cannot run here: it needs
+    # kernel namespaces, which Docker's defaults withhold ("this system does
+    # not support the kernel namespaces that are required for sandboxing").
+    # Granting them takes SYS_ADMIN with seccomp and AppArmor off, and then
+    # whoever holds the builder key, which is root in this container by
+    # design (a trusted Nix user), is one step from root on the NAS that
+    # holds the backups. start.sh sets sandbox = false instead: builds run
+    # as the nixbld users, and only trusted users can start one.
+    environment:
+      NIX_BUILDER_AUTHORIZED_KEY: ${NIX_BUILDER_AUTHORIZED_KEY:?set NIX_BUILDER_AUTHORIZED_KEY in .env}
+      NIX_CACHE_KEY_NAME: ${NIX_CACHE_KEY_NAME:?set NIX_CACHE_KEY_NAME in .env}
+      NIX_MIN_FREE: ${NIX_MIN_FREE:-}
+      NIX_MAX_FREE: ${NIX_MAX_FREE:-}
+    volumes:
+      - ${NIX_STORE_DIR:?}:/nix
+      # Created by Docker as root on the first start, 0700 by start.sh:
+      # ssh/ holds the host key, cache/ the signing key.
+      - ./state:/state
+      - ./start.sh:/start.sh:ro
+    tmpfs:
+      # sshd's pid file and harmonia's copy of the signing key.
+      - /run:size=16m,mode=0755
+    # A NAS serves other things first. Ten of twelve threads at most, and a
+    # quarter of the default CPU weight, so the other containers win when
+    # both want the CPU. 12 GiB and no swap, so a runaway build is killed
+    # inside this container instead of slowing the whole NAS down.
+    cpus: 10
+    cpu_shares: 256
+    mem_limit: 12g
+    memswap_limit: 12g
+    ulimits:
+      nofile: 65536
+    healthcheck:
+      # Inside the container only: it cannot see whether the host published
+      # the ports (see ports: above).
+      test:
+        - CMD
+        - /nix/var/nix/profiles/default/bin/bash
+        - -c
+        - "curl -fsS -o /dev/null http://127.0.0.1:5000/nix-cache-info && : </dev/tcp/127.0.0.1/22"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      # The first start installs openssh and harmonia.
+      start_period: 15m
