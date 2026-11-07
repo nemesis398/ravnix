@@ -12,12 +12,33 @@
 # fetched from cache.nixos.org to build is in the cache too, so a host whose
 # closure was built here substitutes all of it from the LAN.
 #
-# Deploy: put this file and start.sh in one directory, write a .env next to
-# them with the variables below, and run `docker compose up -d`. The first
-# start copies the image's store into NIX_STORE_DIR and installs openssh and
-# harmonia into it, which takes a few minutes; later starts take seconds. The
-# log prints the SSH host key and the cache's public key, which the clients'
-# configuration needs (ravnix.nixBuilder.hostKey, ravnix.nixCache.publicKey).
+# Why harmonia and not ncps or attic: ncps is a caching proxy in front of
+# other caches, so the builder's outputs would still need a push into
+# something; attic is that something, a second store with its own database
+# and push tokens. Either way every build would be uploaded once more, and
+# the cache would gain a write path of its own. Harmonia serves the builder's
+# store as it is: one store, no push, and nothing reaches the cache but a
+# build or an upload through the builder's SSH key.
+#
+# What it costs. The builder runs every build its clients cannot substitute:
+# theirs, every flake input's, every nixosTest. It runs them without the Nix
+# sandbox ("No cap_add" below says why), as the build users, with this
+# container's world-readable files in reach. The cache signs whatever lands
+# in the store, so the builder key is a key to every host that trusts the
+# cache. The cache answers anyone who reaches its port, without a login, so
+# NIX_BIND_ADDRESS must be an address only the clients reach.
+#
+# Deploy: as root, make a directory outside every file share and give it to
+# root, mode 0755. A share's ACL makes its files writable by others, and
+# start.sh runs as root next to the signing key at every start, so whoever
+# can change it, or the directory, gets the key. Put this file and start.sh
+# in it, owned by root, mode 0644, and a .env next to them with the
+# variables below, also root's. Then run `docker compose up -d`. The first
+# start copies the image's store into NIX_STORE_DIR and installs nix,
+# openssh and harmonia, which takes a few minutes; later starts take
+# seconds. The log prints the SSH host key and the cache's public key, which
+# the clients' configuration needs (ravnix.nixBuilder.hostKey,
+# ravnix.nixCache.publicKey).
 #
 #   NIX_BIND_ADDRESS            the one host address both ports listen on
 #   NIX_BUILDER_SSH_PORT        host port of the builder's sshd
@@ -25,9 +46,25 @@
 #   NIX_STORE_DIR               host directory that becomes /nix
 #   NIX_BUILDER_AUTHORIZED_KEY  the clients' public key, one line
 #   NIX_CACHE_KEY_NAME          name of the cache key, e.g. cache.example.org-1
+#   NIX_BUILDER_NIXPKGS         optional: the nixpkgs that nix, openssh and
+#                               harmonia come from; the default below is the
+#                               nixpkgs of ravnix's flake.lock
 #   NIX_MIN_FREE, NIX_MAX_FREE  optional: collect garbage while a build runs
 #                               and the store's filesystem has less than
 #                               NIX_MIN_FREE free, until NIX_MAX_FREE is free
+#
+# Update: set NIX_BUILDER_NIXPKGS to a newer nixpkgs, or take this file from
+# a newer ravnix, and run `docker compose up -d`. The next start
+# installs nix, openssh and harmonia from that revision beside the old ones,
+# switches to them once all three are there, and runs the daemon, sshd and
+# harmonia from them. A failed download leaves the old tools running.
+# `nix profile upgrade` updates none of the three.
+#
+# The image tag must stay the tag the store was seeded with. The image's
+# /etc/passwd and the files next to it link into its own store, which the
+# /nix volume hides, so a new tag's links point at nothing; start.sh then
+# stops and says so. Nix itself is updated through NIX_BUILDER_NIXPKGS, not
+# the tag.
 #
 # The two secrets, the cache's signing key and the SSH host key, are made on
 # the first start in ./state, which only root can read. The signing key is
@@ -39,15 +76,16 @@
 # shows only projects made in its own wizard. `docker compose ls` does.
 name: nix-builder
 
+x-nix-image: &nix-image nixos/nix:2.35.4
+x-nixpkgs: &nixpkgs ${NIX_BUILDER_NIXPKGS:-github:NixOS/nixpkgs/f9a75f41be3a74eab55d3a7679d34ad6cc0da977}
+
 services:
   # Copies the image's /nix into NIX_STORE_DIR once. The builder mounts that
   # directory over /nix, which hides the image's own store, so without this
   # copy it would find no bash and no nix. The marker file makes a rerun a
-  # no-op and lets an interrupted copy start over. The image tag therefore
-  # matters only on the first start: later Nix updates happen in the store,
-  # with `docker compose exec nix-builder nix profile upgrade --all`.
+  # no-op and lets an interrupted copy start over.
   nix-seed:
-    image: nixos/nix:2.35.4
+    image: *nix-image
     restart: "no"
     network_mode: none
     volumes:
@@ -58,7 +96,7 @@ services:
       - "[ -e /seed/.ravnix-seeded ] || { cp -a /nix/. /seed/ && touch /seed/.ravnix-seeded; }"
 
   nix-builder:
-    image: nixos/nix:2.35.4
+    image: *nix-image
     container_name: nix-builder
     hostname: nix-builder
     depends_on:
@@ -84,15 +122,21 @@ services:
     # /dev/kvm must drop these two lines.
     devices:
       - /dev/kvm:/dev/kvm
-    # No added capabilities, so the Nix sandbox cannot run here: it needs
-    # kernel namespaces, which Docker's defaults withhold ("this system does
-    # not support the kernel namespaces that are required for sandboxing").
-    # Granting them takes SYS_ADMIN with seccomp and AppArmor off, and then
-    # whoever holds the builder key, which is root in this container by
-    # design (a trusted Nix user), is one step from root on the NAS that
-    # holds the backups. start.sh sets sandbox = false instead: builds run
-    # as the nixbld users, and only trusted users can start one.
+    # No cap_add, so the Nix sandbox cannot run here: it needs kernel
+    # namespaces, which Docker's defaults withhold ("this system does not
+    # support the kernel namespaces that are required for sandboxing").
+    # Granting them takes SYS_ADMIN with seccomp and AppArmor off, and then a
+    # build, or whoever holds the builder key (root in this container by
+    # design, a trusted Nix user), is one step from root on the host that
+    # holds the backups. start.sh sets sandbox = false instead. Only trusted
+    # users can start a build, but what runs is the code of every derivation
+    # a client asks for and cannot substitute: its own, every flake input's
+    # and every nixosTest, as the nixbld users and with this container's
+    # files and network.
     environment:
+      # start.sh rewrites /etc and refuses to run without this.
+      NIX_BUILDER_CONTAINER: "1"
+      NIX_BUILDER_NIXPKGS: *nixpkgs
       NIX_BUILDER_AUTHORIZED_KEY: ${NIX_BUILDER_AUTHORIZED_KEY:?set NIX_BUILDER_AUTHORIZED_KEY in .env}
       NIX_CACHE_KEY_NAME: ${NIX_CACHE_KEY_NAME:?set NIX_CACHE_KEY_NAME in .env}
       NIX_MIN_FREE: ${NIX_MIN_FREE:-}
@@ -102,6 +146,7 @@ services:
       # Created by Docker as root on the first start, 0700 by start.sh:
       # ssh/ holds the host key, cache/ the signing key.
       - ./state:/state
+      # Root's, and writable by root alone (see Deploy above).
       - ./start.sh:/start.sh:ro
     tmpfs:
       # sshd's pid file and harmonia's copy of the signing key.
@@ -127,5 +172,5 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      # The first start installs openssh and harmonia.
+      # The first start installs nix, openssh and harmonia.
       start_period: 15m
