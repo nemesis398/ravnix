@@ -253,7 +253,7 @@ The style becomes code in four places.
 
 ## ⚠️ Where the Fedora configs differ
 
-Verified against the configs on 2026-11-07. A later audit of the Fedora setup found nine more rows, which are at the end of the table. Everything not listed already matches. The login greeter, the boot text and the NixOS logo have no Fedora counterpart, and the wallpaper and the lock image change by design (see *Identity*), so screenshots cannot judge them: they are judged against this document.
+Verified against the configs on 2026-11-07. A later audit of the Fedora setup found eight more rows, which are added before the last row. Everything not listed already matches. The login greeter, the boot text and the NixOS logo have no Fedora counterpart, and the wallpaper and the lock image change by design (see *Identity*), so screenshots cannot judge them: they are judged against this document.
 
 | Config | Today | Ravnix |
 | --- | --- | --- |
