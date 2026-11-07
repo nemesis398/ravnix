@@ -129,19 +129,29 @@ ai-unlock() {
 #     which variables are missing and what unlocks them. It never asks for a
 #     password itself, so `claude --version` in a script does not stop at a
 #     prompt.
-#   - Otherwise a subshell reads the items one by one, exports each value, and
-#     replaces itself with the real claude (`exec`). The values live in the
-#     subshell's variables for the length of the loop, are passed by `export`
-#     and not on a command line, so `ps` does not show them, and the subshell
-#     is gone, with its variables, when claude runs; the interactive shell
-#     never held one. Standard input is /dev/null for rbw, so a program that
-#     reads it cannot take what is piped into claude.
+#   - Otherwise a subshell reads every item, one `rbw get` each, and only then
+#     exports all the values at once and replaces itself with the real claude
+#     (`exec`). Exporting last matters: an `rbw get` is a child process, and
+#     one started after an export would carry the values read before it. The
+#     values live in the subshell's variables for the length of the loop, are
+#     passed by `export` and not on a command line, so `ps` does not show
+#     them, and the subshell is gone, with its variables, when claude runs;
+#     the interactive shell never held one. Standard input is /dev/null for
+#     rbw, so a program that reads it cannot take what is piped into claude.
+#   - It does not trace. `set -x` prints every command with its words
+#     expanded, `value=...` and `export NAME=...` among them, to stderr or to
+#     the file BASH_XTRACEFD names, where a terminal's scrollback or a log
+#     would keep the secret. xtrace is off from the first line of the
+#     function (the trace shows only `set +a +x` itself), so what PS4 or
+#     BASH_XTRACEFD say does not matter, and `local -` gives the caller's
+#     `set -x` back when the function returns.
 # shellcheck disable=SC2120 # arguments are for the caller to give
 claude() {
-    # Not allexport, and the options as they were when the function returns:
-    # with `set -a` in the caller every variable below would be exported.
+    # The options as they were when the function returns. Not allexport: with
+    # `set -a` in the caller every variable below would be exported. Not
+    # xtrace: it would print the secrets (see above).
     local - bin
-    set +a
+    set +a +x
     if [[ -n ${CLAUDECODE-} ]] || ((${#_ravnix_secrets[@]} == 0)); then
         command claude "$@"
         return
@@ -161,16 +171,22 @@ claude() {
         return
     fi
     (
+        pairs=()
         for entry in "${_ravnix_secrets[@]}"; do
             name=${entry%%=*}
             item=${entry#*=}
             if value=$(rbw get -- "$item" 2>/dev/null </dev/null); then
-                export "$name=$value"
+                pairs+=("$name=$value")
             else
                 printf 'claude: %s: rbw cannot read the item "%s"\n' "$name" "$item" >&2
             fi
         done
-        unset entry name item value
+        # Only now, when no child is left to start: and never a bare `export`,
+        # which would list the whole environment.
+        if ((${#pairs[@]})); then
+            export "${pairs[@]}"
+        fi
+        unset entry name item value pairs
         exec "$bin" "$@"
     )
 }

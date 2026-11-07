@@ -586,7 +586,9 @@ cat_without_arguments_reads_stdin_through_bat() {
 #   items/NAME  the secret rbw get prints for the item NAME (a missing file is
 #               an item that does not exist)
 # Like the real one it may read its standard input, which `get` does here:
-# a caller that leaves its own input open to rbw loses it.
+# a caller that leaves its own input open to rbw loses it. And `get` records,
+# as "rbwenv|N" in $calls, how many of A_TOKEN and B_TOKEN it finds in its own
+# environment.
 fake_rbw() {
 	mkdir -p "$scratch/rbw/items"
 	write_script "$bin/rbw" \
@@ -598,7 +600,7 @@ fake_rbw() {
 		'unlocked) exit "$(cat "$r/unlocked" 2>/dev/null || echo 0)" ;;' \
 		'stop-agent) exit 0 ;;' \
 		'config) if [ -f "$r/config.json" ]; then cat "$r/config.json"; else printf "{\"base_url\":\"https://vault.example.org\",\"email\":\"alice@example.org\"}\n"; fi ;;' \
-		'get) cat >/dev/null; shift; [ "$1" = -- ] && shift; [ -f "$r/items/$1" ] && { cat "$r/items/$1"; exit 0; }; echo "no item $1" >&2; exit 1 ;;' \
+		'get) cat >/dev/null; printf "rbwenv|%s\n" "$(env | grep -cE "^(A|B)_TOKEN=")" >>"'"$calls"'"; shift; [ "$1" = -- ] && shift; [ -f "$r/items/$1" ] && { cat "$r/items/$1"; exit 0; }; echo "no item $1" >&2; exit 1 ;;' \
 		'esac'
 }
 
@@ -1022,6 +1024,102 @@ claude_leaves_no_loader_variable_behind_even_under_allexport() {
 	((seen == 2))
 }
 
+# xtrace prints every command with its words expanded, so `export A_TOKEN=...`
+# would put the value on stderr, or into the file BASH_XTRACEFD names. The
+# function turns it off before it reads anything, and gives it back.
+claude_never_traces_a_secret_to_stderr() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	# A PS4 that shows the loader's variables, and a trace that is on.
+	run "$two_secrets"'; PS4="+<\${value-}\${A_TOKEN-}\${B_TOKEN-}> "; set -x; claude; set +x'
+	claude_env_has A_TOKEN token-one
+	claude_env_has B_TOKEN token-two
+	expect_no_err 'token-one'
+	expect_no_err 'token-two'
+	expect_no_out 'token-one'
+	expect_no_out 'token-two'
+}
+
+claude_never_traces_a_secret_to_the_trace_file() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets"'; exec {fd}>"'"$scratch"'/trace.log"; BASH_XTRACEFD=$fd; set -x; claude; set +x; exec {fd}>&-'
+	claude_env_has A_TOKEN token-one
+	claude_env_has B_TOKEN token-two
+	# The trace is there (the call is in it), and holds neither value.
+	[[ -s "$scratch/trace.log" ]]
+	if grep -qE 'token-(one|two)' "$scratch/trace.log"; then
+		echo "  the trace holds a secret:"
+		grep -E 'token-(one|two)' "$scratch/trace.log" | sed 's/^/    /'
+		return 1
+	fi
+	expect_no_err 'token-one'
+	expect_no_err 'token-two'
+}
+
+claude_gives_xtrace_back_to_the_caller() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	run "$two_secrets"'; set -x; claude 2>/dev/null; case $- in *x*) echo "XTRACE-ON" ;; *) echo "XTRACE-OFF-" ;; esac; set +x
+		claude; case $- in *x*) echo "XTRACE-ON2" ;; *) echo "XTRACE-OFF2" ;; esac'
+	expect_out 'XTRACE-ON'
+	expect_no_out 'XTRACE-OFF-'
+	expect_out 'XTRACE-OFF2'
+}
+
+# The reads happen before any export: an `rbw get` is a child, and a child
+# of the loop would carry every value read so far.
+claude_reads_every_item_before_it_exports_one() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets"'; claude'
+	# Two reads, and neither found a secret in its environment.
+	[[ "$(grep -c '^rbwenv|' "$calls")" == 2 ]]
+	[[ "$(grep -c '^rbwenv|0$' "$calls")" == 2 ]] || {
+		echo "  an rbw get inherited a secret:"
+		grep '^rbwenv|' "$calls" | sed 's/^/    /'
+		return 1
+	}
+	claude_env_has A_TOKEN token-one
+	claude_env_has B_TOKEN token-two
+}
+
+claude_exports_the_secrets_that_could_be_read_when_one_item_is_missing() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run '_ravnix_secrets=("A_TOKEN=Gone" "B_TOKEN=Item Two"); claude'
+	claude_env_has B_TOKEN token-two
+	claude_env_lacks A_TOKEN
+	[[ "$(grep -c '^rbwenv|0$' "$calls")" == 2 ]]
+}
+
+claude_with_nothing_readable_starts_with_nothing_added_and_prints_no_environment() {
+	setup
+	fake_rbw
+	fake_claude
+	run '_ravnix_secrets=("A_TOKEN=Gone" "B_TOKEN=Gone too"); claude --version; echo "status $?"'
+	expect_out 'status 0'
+	# A bare `export` would list the whole environment on stdout.
+	expect_no_out 'declare -x'
+	expect_no_out 'PATH='
+	claude_env_lacks A_TOKEN
+	claude_env_lacks B_TOKEN
+	called 'claude|--version'
+}
+
 claude_takes_an_item_name_that_starts_with_a_dash_as_a_name() {
 	setup
 	fake_rbw
@@ -1127,6 +1225,12 @@ tests=(
 	claude_passes_a_secret_on_as_it_is_and_never_evaluates_it
 	claude_never_puts_a_secret_on_a_command_line_or_into_a_message
 	claude_leaves_no_loader_variable_behind_even_under_allexport
+	claude_never_traces_a_secret_to_stderr
+	claude_never_traces_a_secret_to_the_trace_file
+	claude_gives_xtrace_back_to_the_caller
+	claude_reads_every_item_before_it_exports_one
+	claude_exports_the_secrets_that_could_be_read_when_one_item_is_missing
+	claude_with_nothing_readable_starts_with_nothing_added_and_prints_no_environment
 	claude_takes_an_item_name_that_starts_with_a_dash_as_a_name
 	claude_that_is_not_installed_fails_like_any_missing_command
 	claude_runs_the_binary_and_not_itself
