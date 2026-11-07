@@ -44,6 +44,24 @@ let
     "-define:ODIN_TEST_FANCY=false"
   ];
 
+  # The compiler and the LLVM it runs: what a tool's package must not carry
+  # at run time. The odin wrapper puts these on its PATH, so a reference to
+  # odin brings all of them, about 2.3 GiB. tests/odin/harness.nix checks
+  # that odin is built with this llvmPackages, so the list does not go stale.
+  toolchain = with pkgs.llvmPackages; [
+    odin
+    llvm
+    llvm.lib
+    lld
+    clang
+    clang-unwrapped
+    clang-unwrapped.lib
+    bintools
+    bintools-unwrapped
+    compiler-rt-libc
+    compiler-rt-libc.dev
+  ];
+
   # How long a test run may take before the check fails, in seconds; the
   # environment variable ODIN_TOOL_TESTS_TIMEOUT overrides it.
   testTimeoutSeconds = 600;
@@ -229,7 +247,10 @@ let
       package = pkgs.stdenvNoCC.mkDerivation {
         inherit name;
         src = packageSrc;
-        nativeBuildInputs = [ odin ];
+        nativeBuildInputs = [
+          odin
+          pkgs.removeReferencesTo
+        ];
         buildPhase = ''
           runHook preBuild
           export HOME="$TMPDIR"
@@ -241,6 +262,16 @@ let
           install -Dm755 ${lib.escapeShellArg name} "$out/bin/${name}"
           runHook postInstall
         '';
+        # The binary names files of odin's core library: a panic or a failed
+        # assertion prints where it happened, and #caller_location gives the
+        # path under ODIN_ROOT. Nothing opens them at run time, yet the path
+        # is a store reference that keeps the whole toolchain alive. The hash
+        # is overwritten in place, so the code and the count stay the same,
+        # and the message keeps the file name.
+        postFixup = ''
+          remove-references-to -t ${odin} "$out/bin/${name}"
+        '';
+        disallowedRequisites = toolchain;
         meta = {
           mainProgram = name;
           platforms = [ "x86_64-linux" ];
@@ -279,6 +310,7 @@ in
 {
   inherit
     odin
+    toolchain
     callgrind
     testRunner
     testTimeoutSeconds

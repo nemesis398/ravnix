@@ -61,6 +61,15 @@ binary never depends on the CPU of the machine that builds it, and `-vet`,
 which refuses unused variables and imports and shadowing. The package is
 built with `-o:speed`.
 
+The compiler stays at build time. A binary keeps the paths of the core
+library files it was built from, for the location a panic or a failed
+assertion prints, and each path is a store reference to `odin`, which would
+pull the compiler and its LLVM into every host, about 2.3 GiB. The package
+build overwrites the hash in those paths with `remove-references-to`, which
+leaves the code and the bench count as they were, and it lists the
+toolchain in `disallowedRequisites`, so a package that still reaches the
+compiler fails to build. The package then needs only glibc at run time.
+
 ## Tests
 
 `NAME-tests` runs `odin test` on `tests/` with:

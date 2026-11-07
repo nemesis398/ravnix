@@ -50,6 +50,14 @@ let
     name = "threaded";
     src = fixtures + "/threaded";
   };
+  # Everything the fixture packages need at run time.
+  closure = pkgs.closureInfo {
+    rootPaths = [
+      good.package
+      copier.package
+      threaded.package
+    ];
+  };
 
   evalFailures =
     lib.optional (problemsOf { src = tool; } != [ ])
@@ -70,6 +78,16 @@ let
       !(good.checks.fixture-bench.measure.preferLocalBuild or false)
       || (good.checks.fixture-bench.measure.allowSubstitutes or true)
     ) "the measurement may come from a remote builder or a cache"
+    ++ lib.optional (
+      !(builtins.elem odin.odin (odin.toolchain or [ ]))
+      || !(lib.all (
+        dep: builtins.elem "${dep}" (map toString (good.package.disallowedRequisites or [ ]))
+      ) odin.toolchain)
+    ) "the package does not refuse the compiler and LLVM in its closure"
+    ++ lib.optional (
+      odin.odin.stdenv.cc.outPath != pkgs.llvmPackages.clang.outPath
+      || odin.odin.stdenv.cc.cc.libllvm.outPath != pkgs.llvmPackages.llvm.outPath
+    ) "odin is built with an LLVM other than pkgs.llvmPackages, which the toolchain list names"
     ++ expectProblem "no tests directory" "no tests directory" {
       src = tool;
       tests = tool + "/no-such-tests";
@@ -155,6 +173,7 @@ pkgs.runCommand "odin-harness"
     copier = "${copier.package}/bin/copier";
     copierWithLibraries = "${copierWithLibraries.package}/bin/copier";
     threaded = "${threaded.package}/bin/threaded";
+    inherit closure;
     valgrind = "${callgrind.valgrind}/bin/valgrind";
     bench = tool + "/bench";
     inherit tool baselines;
@@ -229,6 +248,17 @@ pkgs.runCommand "odin-harness"
         --callgrind-out-file="$out" -- "$@" >/dev/null
       awk '$1 == "totals:" { print $2 }' "$out"
     }
+
+    # A package carries what it runs with, not what built it: no compiler,
+    # no LLVM, in the closure of any fixture.
+    toolchain="$(grep -E -- '-(odin|llvm|clang|lld|compiler-rt)-' "$closure/store-paths" || true)"
+    if [ -z "$toolchain" ]; then
+      echo "ok   the packages' closure holds no compiler ($(wc -l <"$closure/store-paths") paths)"
+    else
+      echo "FAIL the packages' closure holds the compiler:"
+      printf '%s\n' "$toolchain" | sed 's/^/     | /'
+      status=1
+    fi
 
     # The test runner.
     expect "passing tests pass" 0 "2 tests passed" odin-tool-tests fixture "$tool" ./tests out.pass
