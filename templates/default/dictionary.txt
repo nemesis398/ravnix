@@ -1,0 +1,16 @@
+# Your dictionary: the words every tool with a word list should know (names,
+# tools, hostnames, terms in your languages). Speech recognition, the spell
+# checker and Claude Code's prose checker all get them, and a word added in
+# any of those tools comes back here.
+#
+# One entry per line: the word, then optional fields after " | ":
+#   lang=   the languages it belongs to, as two-letter codes
+#   heard=  what speech recognition wrote instead, separated by ";"
+# Lines starting with # are comments. A word is removed only here.
+NixOS
+ravnix
+huginn | lang=en,de | heard=Hugin;who gin
+muninn | lang=en,de | heard=Munin
+Catppuccin
+Open WebUI
+CLAUDE.md

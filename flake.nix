@@ -88,14 +88,18 @@
       clashes = lib.attrNames (lib.intersectAttrs ownChecks discovered);
     in
     {
-      nixosModules = { };
-      homeModules = { };
+      # The typed ravnix.* options, one module for NixOS and home-manager.
+      nixosModules.options = ./modules/options;
+      homeModules.options = ./modules/options;
       packages.${system} = { };
       checks.${system} =
         if clashes != [ ] then
           throw "tests/: ${toString clashes} is already a check of flake.nix; pick another name"
         else
           discovered // ownChecks;
-      templates = { };
+      templates.default = {
+        path = ./templates/default;
+        description = "A private flake with your personal values, built on ravnix";
+      };
     };
 }
