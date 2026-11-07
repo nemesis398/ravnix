@@ -1,0 +1,1 @@
+{ buildOdinTool, ... }: buildOdinTool { name = "alpha"; }

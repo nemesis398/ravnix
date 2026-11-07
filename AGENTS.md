@@ -24,6 +24,7 @@ its starting point.
 | `hosts/` | the two shapes, `laptop` and `server` |
 | `packages/` | derivations for what nixpkgs lacks |
 | `tools/` | the tools ravnix writes itself, in Odin |
+| `bench/` | the bench harnesses, starting with the callgrind gate |
 | `templates/default/` | the starter private flake |
 | `docs/` | the install guide, the architecture, and `docs/style.md` |
 
@@ -94,6 +95,14 @@ A test is a file, and adding one never touches `flake.nix`. Every
 helpers and fixtures go in a subdirectory of the area. A shell test is
 `scripts/tests/NAME.test.sh` on top of `scripts/tests/lib.sh`, and the check
 `scripts-tests` runs it in the sandbox.
+
+A tool is a directory, and adding one never touches `flake.nix` either.
+Every `tools/NAME/default.nix` returns `buildOdinTool { ... }` from
+`lib/odin.nix` and gives the package `NAME` and two checks: `NAME-tests`
+runs `odin test` with a fixed seed and fails on a leak, and `NAME-bench`
+fails when the callgrind instruction count on `bench/` rises more than 2 %
+above `bench/baseline.json`. Start from `tools/_template/`. A baseline
+changes only by the command in `tools/README.md`, never by itself.
 
 A host is built from a private flake, against a local checkout of this one:
 

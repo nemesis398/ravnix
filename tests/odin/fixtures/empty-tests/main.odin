@@ -1,0 +1,3 @@
+package empty
+
+main :: proc() {}

@@ -86,17 +86,32 @@
             '';
       };
       clashes = lib.attrNames (lib.intersectAttrs ownChecks discovered);
+
+      # Odin tools, found like checks: every
+      # tools/<name>/default.nix is the package <name> and the checks
+      # <name>-tests and <name>-bench (lib/discover-tools.nix, built by
+      # buildOdinTool in lib/odin.nix); a directory that starts with "_", the
+      # template, gets its checks and no package. tools/README.md has the rest.
+      odin = import ./lib/odin.nix { inherit pkgs lib; };
+      tools = import ./lib/discover-tools.nix { inherit lib; } ./tools {
+        inherit (odin) buildOdinTool;
+        inherit pkgs lib;
+      };
+      toolClashes = lib.attrNames (lib.intersectAttrs tools.checks (discovered // ownChecks));
+      # End of the Odin tools.
     in
     {
       # The typed ravnix.* options, one module for NixOS and home-manager.
       nixosModules.options = ./modules/options;
       homeModules.options = ./modules/options;
-      packages.${system} = { };
+      packages.${system} = tools.packages;
       checks.${system} =
         if clashes != [ ] then
           throw "tests/: ${toString clashes} is already a check of flake.nix; pick another name"
+        else if toolClashes != [ ] then
+          throw "tools/: ${toString toolClashes} is already a check of tests/ or flake.nix; rename the tool or the test"
         else
-          discovered // ownChecks;
+          discovered // ownChecks // tools.checks;
       templates.default = {
         path = ./templates/default;
         description = "A private flake with your personal values, built on ravnix";
