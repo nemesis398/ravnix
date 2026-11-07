@@ -47,35 +47,37 @@
       # laptop, and muninn, the server, each built from ravnix's host shape
       # and ./me.nix.
 
-      checks.${system} = {
-        # Every value evaluates, and each one that is still a documentation
-        # placeholder (an example.org name, a 192.0.2.x address) is named in
-        # a warning.
-        me =
-          if failed != [ ] then
-            throw "me.nix:\n${lib.concatMapStrings (m: "- ${m}\n") failed}"
-          else
-            lib.foldr lib.warn (builtins.deepSeq me.config.ravnix (
-              pkgs.runCommand "me" { } "touch $out"
-            )) me.config.warnings;
-      }
-      # If you contribute to ravnix, keep a deny-list.txt of your own values
-      # here (one per line, `#` for comments) and `git add deny-list.txt`: a
-      # flake sees only the files git tracks. This check then proves that
-      # none of them is in the ravnix you build from.
-      // (
-        if builtins.pathExists ./deny-list.txt then
-          {
-            public-boundary = pkgs.runCommand "public-boundary" { nativeBuildInputs = [ pkgs.ripgrep ]; } ''
-              cd ${ravnix}
-              bash ${ravnix}/scripts/check-public.sh ${./deny-list.txt} .
-              touch $out
-            '';
-          }
-        else
-          lib.warn
-            "checks.public-boundary is off: this flake tracks no deny-list.txt (git add it to turn the check on)."
-            { }
-      );
+      checks.${system} =
+        let
+          hasDenyList = builtins.pathExists ./deny-list.txt;
+        in
+        {
+          # Every value evaluates, and each one that is still a documentation
+          # placeholder (an example.org name, a 192.0.2.x address) is named in
+          # a warning. So is a deny list that ravnix.dev.denyList promises
+          # and this flake does not track.
+          me =
+            if failed != [ ] then
+              throw "me.nix:\n${lib.concatMapStrings (m: "- ${m}\n") failed}"
+            else
+              lib.warnIf (me.config.ravnix.dev.denyList != null && !hasDenyList)
+                "ravnix.dev.denyList is set, but this flake tracks no deny-list.txt, so checks.public-boundary is off: git add deny-list.txt."
+                (
+                  lib.foldr lib.warn (builtins.deepSeq me.config.ravnix (
+                    pkgs.runCommand "me" { } "touch $out"
+                  )) me.config.warnings
+                );
+        }
+        # If you contribute to ravnix, keep a deny-list.txt of your own values
+        # here (one per line, `#` for comments) and `git add deny-list.txt`: a
+        # flake sees only the files git tracks. This check then proves that
+        # none of them is in the ravnix you build from.
+        // lib.optionalAttrs hasDenyList {
+          public-boundary = pkgs.runCommand "public-boundary" { nativeBuildInputs = [ pkgs.ripgrep ]; } ''
+            cd ${ravnix}
+            bash ${ravnix}/scripts/check-public.sh ${./deny-list.txt} .
+            touch $out
+          '';
+        };
     };
 }

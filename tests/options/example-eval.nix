@@ -39,27 +39,59 @@ let
   badWords = lib.filter (l: builtins.match entry l == null) dictionaryLines;
 
   # The template's flake.nix, its inputs given by hand: ravnix is this
-  # checkout, nixpkgs and claude-code are the ones this flake locks. Its
-  # `me` check prints a warning per placeholder, which the template is full
-  # of; options-placeholders tests those, so they are silenced here and do
-  # not flood this flake's own check.
-  quietRavnix = self // {
-    nixosModules = self.nixosModules // {
-      options = {
-        imports = [ self.nixosModules.options ];
-        config.warnings = lib.mkForce [ ];
-      };
+  # checkout (or it with one module more), nixpkgs and claude-code are the
+  # ones this flake locks. Its nixpkgs.lib turns a warning into a value the
+  # test reads, { warning = "..."; }, instead of printing it, so this
+  # flake's own check prints none and the test sees each one.
+  recording = inputs.nixpkgs // {
+    lib = inputs.nixpkgs.lib // {
+      warn = message: _: { warning = message; };
+      warnIf =
+        condition: message: value:
+        if condition then { warning = message; } else value;
     };
   };
   templateFlake = import (template + "/flake.nix");
-  templateOutputs = templateFlake.outputs {
-    self = templateOutputs // {
-      outPath = template;
+  templateChecksWith =
+    ravnix:
+    let
+      outputs = templateFlake.outputs {
+        self = outputs // {
+          outPath = template;
+        };
+        inherit ravnix;
+        nixpkgs = recording;
+        inherit (inputs) claude-code;
+      };
+    in
+    outputs.checks.${system} or { };
+  ravnixWith =
+    module:
+    self
+    // {
+      nixosModules = self.nixosModules // {
+        options.imports = [
+          self.nixosModules.options
+          module
+        ];
+      };
     };
-    ravnix = quietRavnix;
-    inherit (inputs) nixpkgs claude-code;
-  };
-  templateChecks = templateOutputs.checks.${system} or { };
+  # The template's placeholders warn on purpose (options-placeholders tests
+  # them); without them it must warn about nothing at all.
+  quiet.config.warnings = lib.mkForce [ ];
+  templateChecks = templateChecksWith (ravnixWith quiet);
+  warned = lib.attrNames (
+    lib.filterAttrs (name: c: name == "warning" || (builtins.isAttrs c && c ? warning)) templateChecks
+  );
+  # With them, its me check names them.
+  placeholderMe = (templateChecksWith self).me;
+  # A contributor who sets dev.denyList but did not git add the list is
+  # told, because public-boundary is then silently off.
+  contributorMe =
+    (templateChecksWith (ravnixWith {
+      imports = [ quiet ];
+      config.ravnix.dev.denyList = lib.mkForce "/home/alice/src/ravnix-private/deny-list.txt";
+    })).me;
 
   failures =
     lib.optional (me.failed != [ ])
@@ -75,6 +107,18 @@ let
       (templateFlake.inputs.ravnix.inputs.claude-code.follows or null) != "claude-code"
     ) "the template does not hand its claude-code input to ravnix"
     ++ lib.optional (!(templateChecks ? me)) "the template's flake has no check `me`"
+    ++ map (
+      name:
+      "the template's flake warns by default, in ${name}: ${
+        (templateChecks.${name}.warning or templateChecks.${name})
+      }"
+    ) warned
+    ++ lib.optional (
+      !(lib.hasPrefix "ravnix." (placeholderMe.warning or ""))
+    ) "the template's me check does not name its placeholders"
+    ++ lib.optional (
+      !(lib.hasInfix "git add deny-list.txt" (contributorMe.warning or ""))
+    ) "a contributor whose deny-list.txt is not tracked is not told to git add it"
     ++ lib.optional (
       templateChecks ? public-boundary
     ) "the template has no deny-list.txt, so its flake must not define public-boundary"
