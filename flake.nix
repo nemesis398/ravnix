@@ -147,7 +147,7 @@
       # activation step puts its hooks into the settings. Each carries a
       # key, so a second import adds nothing.
       homeModules.claude-code = {
-        key = "ravnix#homeModules.claude-code";
+        key = "ravnix/homeModules.claude-code";
         imports = [
           ./modules/common/claude-code.nix
           (
@@ -161,7 +161,7 @@
         ];
       };
       homeModules.claude-skills = {
-        key = "ravnix#homeModules.claude-skills";
+        key = "ravnix/homeModules.claude-skills";
         imports = [
           self.homeModules.claude-code
           ./modules/common/claude-skills.nix
