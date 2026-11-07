@@ -25,11 +25,16 @@
 # sandbox ("No cap_add" below says why), as the build users, with this
 # container's world-readable files in reach. The cache signs whatever lands
 # in the store, so the builder key is a key to every host that trusts the
-# cache. Builds reach the internet but no private address and not this host:
-# the nix-firewall service keeps a rule for that in the host's firewall
-# (firewall.sh), and their DNS goes to NIX_BUILDER_DNS, not to a resolver on
-# this host. The cache answers anyone who reaches its port, without a login,
-# so NIX_BIND_ADDRESS must be an address only the clients reach.
+# cache. While the nix-firewall service keeps its rule in the host's firewall
+# (firewall.sh), builds reach the internet but no private address and not
+# this host. The builder checks that from inside before it serves a build
+# and every ten seconds after (start.sh, NIX_BUILDER_PROBES), and stops the
+# Nix daemon and sshd when the check fails three times in a row; a window of
+# up to half a minute stays open when the rule goes. Its DNS goes to
+# NIX_BUILDER_DNS, not to a resolver on this host. The router's public
+# address is not a private one, so the rule does not cover it (README.md).
+# The cache answers anyone who reaches its port, without a login, so
+# NIX_BIND_ADDRESS must be an address only the clients reach.
 #
 # Deploy: as root, make a directory outside every file share and give it to
 # root, mode 0755. A share's ACL makes its files writable by others, and
@@ -51,6 +56,11 @@
 #                               network on the host uses, e.g. 10.0.200.0/24;
 #                               the egress rule matches on it and on the
 #                               bridge, br-nix-builder
+#   NIX_BUILDER_PROBE_LAN       a LAN address:port that answers, by connecting
+#                               or refusing, when the egress rule is missing,
+#                               such as the router's DNS port; the builder
+#                               serves builds only while it gets no answer
+#                               from it and from NIX_BIND_ADDRESS
 #   NIX_BUILDER_DNS             the resolver the builder asks, a public one
 #                               such as one the host's resolv.conf lists
 #   NIX_BUILDER_AUTHORIZED_KEY  the clients' public key, one line
@@ -110,11 +120,12 @@ services:
   # Keeps the egress rule in the host's firewall: from the project's bridge
   # and from NIX_BUILDER_SUBNET, nothing reaches 10.0.0.0/8, 172.16.0.0/12,
   # 192.168.0.0/16, 100.64.0.0/10 or this host itself, except replies to
-  # connections that came in (firewall.sh says how). It runs in the host's
-  # network namespace with NET_ADMIN, from an image of its own: the
-  # builder's store is writable by whoever holds the builder key, so nothing
-  # of it runs here. The rule stays when this container stops. To take it
-  # out:
+  # connections that came in (firewall.sh says how). The builder does not
+  # rely on this container's word for it, but probes the rule itself. It
+  # runs in the host's network namespace with NET_ADMIN, from an image of
+  # its own: the builder's store is writable by whoever holds the builder
+  # key, so nothing of it runs here. The rule stays when this container
+  # stops. To take it out:
   #   docker compose stop nix-firewall
   #   docker compose run --rm --no-deps nix-firewall bash /firewall.sh --remove
   nix-firewall:
@@ -154,8 +165,8 @@ services:
       nix-seed:
         condition: service_completed_successfully
       # Compose starts the builder only once the rule is in place. After a
-      # reboot Docker starts both on its own, in no order, and the rule is
-      # back within the firewall's first check.
+      # reboot Docker starts both on its own, in no order, and the builder
+      # waits for the rule at its gate (start.sh).
       nix-firewall:
         condition: service_healthy
     init: true
@@ -203,6 +214,10 @@ services:
       NIX_CACHE_KEY_NAME: ${NIX_CACHE_KEY_NAME:?set NIX_CACHE_KEY_NAME in .env}
       NIX_MIN_FREE: ${NIX_MIN_FREE:-}
       NIX_MAX_FREE: ${NIX_MAX_FREE:-}
+      # Each must give no answer while the egress rule holds: this host's
+      # address, which the rule's input chain drops, and a LAN target, which
+      # its output chain drops.
+      NIX_BUILDER_PROBES: "${NIX_BIND_ADDRESS:?}:${NIX_BUILDER_SSH_PORT:?} ${NIX_BUILDER_PROBE_LAN:?set NIX_BUILDER_PROBE_LAN in .env}"
     volumes:
       - ${NIX_STORE_DIR:?}:/nix
       # Created by Docker as root on the first start, 0700 by start.sh:
@@ -224,16 +239,18 @@ services:
     ulimits:
       nofile: 65536
     healthcheck:
-      # Inside the container only: it cannot see whether the host published
-      # the ports (see ports: above).
+      # The cache, sshd, and the probe of the egress rule. Inside the
+      # container only: it cannot see whether the host published the ports
+      # (see ports: above). While the builder waits for the rule, sshd is
+      # down and the check fails.
       test:
         - CMD
         - /nix/var/nix/profiles/default/bin/bash
         - -c
-        - "curl -fsS -o /dev/null http://127.0.0.1:5000/nix-cache-info && : </dev/tcp/127.0.0.1/22"
+        - "curl -fsS -o /dev/null http://127.0.0.1:5000/nix-cache-info && : </dev/tcp/127.0.0.1/22 && /nix/var/nix/profiles/default/bin/bash /start.sh --probe"
       interval: 60s
       timeout: 10s
-      retries: 3
+      retries: 2
       # The first start installs nix, openssh and harmonia.
       start_period: 15m
 

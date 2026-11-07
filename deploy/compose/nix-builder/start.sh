@@ -17,9 +17,20 @@
 #      its successor. A failed update keeps the old tools and says so;
 #   4. makes the SSH host key and the cache's signing key on the first start,
 #      in /state, and prints both public halves;
-#   5. starts nix-daemon, harmonia and sshd from that profile, and exits as
-#      soon as one of them does, so that Docker's restart policy brings all
-#      three back.
+#   5. starts harmonia, then waits until the egress rule holds (below), then
+#      starts nix-daemon and sshd, all from that profile. It exits as soon as
+#      one of them does, or once the rule has failed
+#      NIX_BUILDER_PROBE_FAILURES probes in a row, so that Docker's restart
+#      policy brings the container back, and it waits for the rule again.
+#
+# The egress rule (nix-firewall, firewall.sh) keeps builds off the LAN, and
+# it is kept by another container, so the builder checks it from inside:
+# every target in NIX_BUILDER_PROBES, an address and port that answers when
+# the rule is missing, must give no answer within NIX_BUILDER_PROBE_TIMEOUT
+# seconds, because the rule drops the connect. A connect that succeeds or is
+# refused means the rule does not hold, and no build may run.
+# `start.sh --probe` runs only that check; the health check calls it every
+# minute, and the running script every NIX_BUILDER_PROBE_INTERVAL seconds.
 #
 # Nothing here prints a secret. The image links /etc/passwd, /etc/nix/nix.conf
 # and other files into /nix/store, which is writable in this container, so a
@@ -40,6 +51,12 @@ profiles=${NIX_BUILDER_PROFILES:-/nix/var/nix/profiles}
 tools=$profiles/ravnix
 bootstrap=$profiles/default/bin
 need=(nix nix-daemon sshd ssh-keygen harmonia-cache)
+probes=${NIX_BUILDER_PROBES:-}
+probe_timeout=${NIX_BUILDER_PROBE_TIMEOUT:-2}
+probe_interval=${NIX_BUILDER_PROBE_INTERVAL:-10}
+probe_failures=${NIX_BUILDER_PROBE_FAILURES:-3}
+pids=()
+sleeper=
 
 say() { echo "start.sh: $*"; }
 die() {
@@ -90,6 +107,36 @@ check_env() {
     [ -z "$value" ] || [[ $value =~ ^[0-9]+[KMGT]?$ ]] ||
       die "$var must be a size like 500G, not '$value'"
   done
+  check_probe_env
+}
+
+# The probe's variables, all that `start.sh --probe` needs.
+check_probe_env() {
+  local target octet part='(0|[1-9][0-9]{0,2})'
+  local re="^$part\\.$part\\.$part\\.$part:([1-9][0-9]{0,4})\$"
+  local -a targets
+  [[ $probes =~ ^[0-9.:\ ]+$ ]] && read -ra targets <<<"$probes" && [ ${#targets[@]} -gt 0 ] ||
+    die "NIX_BUILDER_PROBES must be IPv4 address:port pairs, separated by spaces, not '$probes'"
+  for target in "${targets[@]}"; do
+    [[ $target =~ $re ]] ||
+      die "NIX_BUILDER_PROBES must be IPv4 address:port pairs without leading zeros, not '$target'"
+    for octet in "${BASH_REMATCH[@]:1:4}"; do
+      [ "$octet" -le 255 ] || die "NIX_BUILDER_PROBES must be IPv4 address:port pairs; '$target' has a number over 255"
+    done
+    [ "${BASH_REMATCH[5]}" -le 65535 ] || die "NIX_BUILDER_PROBES must be IPv4 address:port pairs; '$target' has a port over 65535"
+  done
+  seconds "$probe_timeout" 30 || die "NIX_BUILDER_PROBE_TIMEOUT must be more than 0 and at most 30 seconds, not '$probe_timeout'"
+  seconds "$probe_interval" 3600 || die "NIX_BUILDER_PROBE_INTERVAL must be more than 0 and at most 3600 seconds, not '$probe_interval'"
+  [[ $probe_failures =~ ^[1-9][0-9]?$|^100$ ]] ||
+    die "NIX_BUILDER_PROBE_FAILURES must be a count from 1 to 100, not '$probe_failures'"
+}
+
+# Exits 0 when VALUE is a number of seconds, decimals allowed, above 0 and
+# at most MAX.
+seconds() { # value max
+  [[ $1 =~ ^([0-9]{1,4})(\.[0-9]{1,3})?$ ]] || return 1
+  [ "${BASH_REMATCH[1]}" -lt "$2" ] || { [ "${BASH_REMATCH[1]}" = "$2" ] && [[ ${BASH_REMATCH[2]} =~ ^(\.0*)?$ ]]; } || return 1
+  [[ $1 =~ [1-9] ]]
 }
 
 # --- 2. Accounts ----------------------------------------------------------------
@@ -320,32 +367,132 @@ EOF
 
 # --- 5. Run -------------------------------------------------------------------
 
-run_services() {
-  local pids=() status=0
-  stop() {
-    kill -TERM "${pids[@]}" 2>/dev/null || true
-    wait || true
-  }
-  trap 'stop; exit 0' TERM INT
+# Exits 0 when a connect to TARGET (address:port) gets no answer within the
+# probe timeout, as when the egress rule drops it. A connect that succeeds,
+# or that is refused or unreachable, got an answer.
+silent() { # target
+  local rc=0
+  # shellcheck disable=SC2016 # $1 and $2 are the inner shell's.
+  timeout "$probe_timeout" "$BASH" -c 'exec 3<>"/dev/tcp/$1/$2"' _ "${1%:*}" "${1##*:}" 2>/dev/null || rc=$?
+  [ "$rc" = 124 ]
+}
 
-  "$tools/bin/nix-daemon" &
-  pids+=($!)
+# Exits 0 when every probe target is silent. Prints the ones that answered,
+# else. They are probed at once, so this takes one timeout.
+rule_holds() {
+  local target i=0
+  local -a targets jobs answered=()
+  read -ra targets <<<"$probes"
+  for target in "${targets[@]}"; do
+    silent "$target" &
+    jobs+=($!)
+  done
+  for target in "${targets[@]}"; do
+    wait "${jobs[i]}" || answered+=("$target")
+    i=$((i + 1))
+  done
+  [ ${#answered[@]} = 0 ] && return 0
+  echo "${answered[*]}"
+  return 1
+}
+
+# Exits 0 when process PID runs: exists and is not a zombie.
+alive() { # pid
+  [ -e "/proc/$1/status" ] && ! grep -q $'^State:\tZ' "/proc/$1/status" 2>/dev/null
+}
+
+# Sleeps for the probe interval, in a way a signal interrupts.
+pause() {
+  sleep "$probe_interval" &
+  sleeper=$!
+  wait "$sleeper" || true
+}
+
+# Waits until the egress rule holds, saying what answered whenever that
+# changes. Returns 1 when the process PID, which should run all along,
+# exits first.
+wait_for_rule() { # pid
+  local answered last=""
+  until answered=$(rule_holds); do
+    if [ "$answered" != "$last" ]; then
+      say "waiting for the egress rule (nix-firewall): $answered answered, so builds would reach it"
+      last=$answered
+    fi
+    alive "$1" || return 1
+    pause
+  done
+  say "the egress rule holds: no answer from $probes"
+}
+
+# Probes every NIX_BUILDER_PROBE_INTERVAL seconds and returns 1 once
+# NIX_BUILDER_PROBE_FAILURES probes in a row found the rule missing.
+watchdog() {
+  local fails=0 answered
+  while :; do
+    pause
+    if answered=$(rule_holds); then
+      fails=0
+      continue
+    fi
+    fails=$((fails + 1))
+    say "the egress rule failed a probe ($fails of $probe_failures in a row): $answered answered"
+    if [ "$fails" -ge "$probe_failures" ]; then
+      say "the egress rule no longer holds; stopping the Nix daemon and sshd"
+      return 1
+    fi
+  done
+}
+
+start_harmonia() {
   chroot --userspec=harmonia:harmonia / env HOME="$var/lib/harmonia" \
     CONFIG_FILE="$run/harmonia/config.toml" SIGN_KEY_PATHS="$run/harmonia/secret-key" \
     "$(readlink -f "$tools/bin/harmonia-cache")" &
   pids+=($!)
+}
+
+start_builder() {
+  "$tools/bin/nix-daemon" &
+  pids+=($!)
   # sshd re-executes itself and wants its absolute path.
   "$(readlink -f "$tools/bin/sshd")" -D -e -f "$etc/ssh/sshd_config" &
+  pids+=($!)
+}
+
+run_services() {
+  local status=0
+  pids=()
+  stop() {
+    kill -TERM "${pids[@]}" ${sleeper:+"$sleeper"} 2>/dev/null || true
+    wait "${pids[@]}" 2>/dev/null || true
+  }
+  trap 'stop; exit 0' TERM INT
+
+  # The cache runs no build, so it does not wait for the rule.
+  start_harmonia
+  if ! wait_for_rule "${pids[0]}"; then
+    say "harmonia exited while the builder waited for the egress rule"
+    stop
+    exit 1
+  fi
+  start_builder
+  watchdog &
   pids+=($!)
   say "running $("$tools/bin/nix" --version), harmonia, sshd"
 
   wait -n "${pids[@]}" || status=$?
-  say "a service exited with status $status; stopping the others so Docker restarts the container"
+  say "a service or the probe of the egress rule exited with status $status; stopping the others so Docker restarts the container"
   stop
   exit 1
 }
 
 main() {
+  if [ "${1:-}" = --probe ]; then
+    check_probe_env
+    local answered
+    answered=$(rule_holds) || die "the egress rule does not hold: $answered answered"
+    say "the egress rule holds: no answer from $probes"
+    exit 0
+  fi
   check_env
   if [ "${1:-}" = --check-env ]; then
     say "the variables are fine"

@@ -37,12 +37,16 @@ in
       builder nearly every build it cannot substitute: its own, every flake
       input's, every nixosTest. Builds there run without the Nix sandbox, as
       the container's build users, and can read the container's
-      world-readable files. They reach the internet from the NAS but not the
-      LAN, the mesh or the NAS itself, which the builder's egress rule
-      (deploy/compose/nix-builder/firewall.sh) refuses. Their outputs are
-      signed by the cache that every host trusts ahead of cache.nixos.org, so
-      a build that behaves differently without the sandbox gives every host
-      that different output. The host's own `sandbox = true` no longer
+      world-readable files. While the builder's egress rule
+      (deploy/compose/nix-builder/firewall.sh) holds, they reach the
+      internet from the NAS but not the LAN, the mesh or the NAS itself. The
+      builder probes the rule from inside before it serves and every ten
+      seconds after, and stops serving builds after three failed probes in a
+      row, so up to about half a minute of builds can run without it. The
+      router's public address is not covered. Their outputs are signed by the
+      cache that every host trusts ahead of cache.nixos.org, so a build that
+      behaves differently without the sandbox gives every host that
+      different output. The host's own `sandbox = true` no longer
       describes where those builds run.
     '';
     type = types.submodule {

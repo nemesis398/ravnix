@@ -7,11 +7,15 @@
 # What that costs: the builder gets nearly every build the host cannot
 # substitute, ravnix's own, every flake input's and every nixosTest, and runs
 # it without the Nix sandbox, as the container's build users, with the
-# container's world-readable files in reach. Its egress rule keeps those
-# builds off the LAN, the mesh and the NAS itself, not off the internet.
-# Their outputs are signed by the cache every host trusts, so a build that
-# behaves differently without the sandbox gives every host that output. The
-# host's own `sandbox = true` no longer describes where its builds run.
+# container's world-readable files in reach. While the NAS keeps the
+# builder's egress rule, those builds reach the internet but not the LAN,
+# the mesh or the NAS itself. The builder probes the rule from inside before
+# it serves and every ten seconds after, and stops serving within about half
+# a minute once the rule is gone; the router's public address is not
+# covered. Their outputs are signed by the cache every host trusts, so a
+# build that behaves differently without the sandbox gives every host that
+# output. The host's own `sandbox = true` no longer describes where its
+# builds run.
 #
 # The private key root logs in with is a root-only file on the host, written
 # by hand from the password manager (ravnix.nixBuilder.sshKey): a deliberate
