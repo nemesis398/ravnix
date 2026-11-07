@@ -194,9 +194,96 @@ A frozen process is not a closed lid. The host's kernel still acknowledged every
 - **Priority 30 off the LAN.** The cache says `Priority: 30`, ahead of cache.nixos.org's 40, so a host away from home without the mesh tries it first. `connect-timeout = 5` (`modules/services/nix-cache.nix`) bounds each attempt.
 - **Garbage collection.** The store's filesystem is shared with every backup. When the backups bring its free space under `NIX_MIN_FREE`, every build starts a collection, and since nothing but the two tool profiles is rooted there, each collection empties the cache. `NIX_MAX_FREE` can then never be reached, so the next build collects again. Today the pool has 11 TiB free, against a `NIX_MIN_FREE` of 2000 GiB, and the store holds 3.5 GiB. A limit on the store's own size, enforced by a job, would be the real policy; there is none yet.
 
+## Third run of 2026-11-07: failing closed
+
+More placeholders: `LAN_PROBE` is `NIX_BUILDER_PROBE_LAN`, `RESOLVER` is `NIX_BUILDER_DNS`, `LAN_RESOLVER` is the LAN's own resolver, `INTERNAL_NAME` is a name that only it knows, and `WAN` is the router's public address.
+
+### Putting the rule back
+
+Written down before the rule was taken out to show that the builder stops. From `PROJECT`, either of:
+
+```sh
+docker compose start nix-firewall      # its first pass puts the rule back
+docker compose run --rm --no-deps nix-firewall bash /firewall.sh --once
+```
+
+### The project recreated
+
+The bridge got a fixed name, `br-nix-builder`, so the network had to be made again: `docker compose down` and `docker compose up -d --build`. Before that, `/state/tools-pin` was deleted inside the running container, so that the next start would install the tools again although they were complete. Its log:
+
+```text
+start.sh: installing nix, openssh and harmonia from github:NixOS/nixpkgs/<flake.lock's nixpkgs> with nix (Nix) 2.34.9
+start.sh: the egress rule holds: no answer from NAS_A:SSH_PORT LAN_PROBE
+start.sh: running nix (Nix) 2.34.9, harmonia, sshd
+```
+
+The installed Nix 2.34.9 did the install, not the image's 2.35.4. The gate opened 2 s after the keys were printed. The keeper's log said `put the rule for br-nix-builder and SUBNET in place`, and the rule now has two jumps in each chain, the bridge's first:
+
+```text
+-A DOCKER-USER -i br-nix-builder -j RAVNIX-NIX-BUILDER-OUT
+-A DOCKER-USER -s SUBNET -j RAVNIX-NIX-BUILDER-OUT
+-A DOCKER-USER -j UG_FORWARD
+-A DOCKER-USER ! -i docker0 ! -o docker0 -j ACCEPT
+-A INPUT -i br-nix-builder -j RAVNIX-NIX-BUILDER-IN
+-A INPUT -s SUBNET -j RAVNIX-NIX-BUILDER-IN
+-A INPUT -j UGDOS_PROTECT
+-A INPUT -j UG_SSH_INPUT
+-A INPUT -j UG_INPUT
+```
+
+`firewall.sh --check` said `in place`, and no `back in place` followed in the keeper's log, so the real iptables prints the new jumps as the script writes them. Docker's port forwarding now reads `! -i br-nix-builder`, so a connect from the container to `NAS_A:SSH_PORT` goes to the host, through the input chain.
+
+The probes from inside the builder, as in the second run, plus `NAS_A:SSH_PORT`: every private, mesh and host target gave no answer in 5 s, and cache.nixos.org and github.com answered HTTP 200. The counters rose on `-d 10.0.0.0/8 -j DROP` and `-d 100.64.0.0/10 -j DROP`.
+
+### DNS
+
+The container's `/etc/resolv.conf` listed `ExtServers: [host(127.0.0.1) host(LAN_RESOLVER) host(RESOLVER) host(::1)]` before: Docker's resolver forwarded every query from the host's network, past the rule, to the resolver on the host itself first. With `dns: [RESOLVER]`, the one public resolver in the host's own `resolv.conf`, it lists `ExtServers: [RESOLVER]`, forwarded from the container's network. `dig +short` from inside the builder:
+
+| Query | Before | After |
+| --- | --- | --- |
+| `INTERNAL_NAME` through `127.0.0.11` | a LAN address | no answer |
+| the host's own name through `127.0.0.11` | `127.0.1.1`, from the host's resolver | no answer |
+| `cache.nixos.org` through `127.0.0.11` | an address | an address; curl's name lookup took 15 ms |
+| `cache.nixos.org` straight to `LAN_RESOLVER`, `NAS_A`, `GATEWAY` | | `timed out` |
+
+### The router's public address
+
+From inside the builder, TCP to `WAN` ports 22, 53, 80, 443, 8080, 8443, `SSH_PORT`, `CACHE_PORT`, 51820 and 1194 failed at once with `No route to host`: the router rejects them, so packets reach it. A DNS query over UDP to `WAN` timed out. No service answered, but nothing on the host stops a build from reaching that address either. It is the ISP's and changes, so there is no rule for it on the host. `deploy/compose/nix-builder/README.md` lists it as a known gap.
+
+### The builder stops without the rule
+
+With `nix-firewall` stopped and the rule taken out by `firewall.sh --remove` (19:13:42Z), from the builder's log:
+
+```text
+19:13:42  start.sh: the egress rule failed a probe (1 of 3 in a row): NAS_A:SSH_PORT LAN_PROBE answered
+19:13:52  start.sh: the egress rule failed a probe (2 of 3 in a row): NAS_A:SSH_PORT LAN_PROBE answered
+19:14:02  start.sh: the egress rule failed a probe (3 of 3 in a row): NAS_A:SSH_PORT LAN_PROBE answered
+19:14:02  start.sh: the egress rule no longer holds; stopping the Nix daemon and sshd
+19:14:02  start.sh: a service or the probe of the egress rule exited with status 1; stopping the others so Docker restarts the container
+19:14:05  start.sh: waiting for the egress rule (nix-firewall): NAS_A:SSH_PORT LAN_PROBE answered, so builds would reach it
+```
+
+At the gate, from the client: `ssh-keyscan -p SSH_PORT BUILDER` got no key, and the cache still answered HTTP 200, because harmonia runs no build and does not wait. Inside, `start.sh --probe` exited 1, and the health check's log shows `Connection refused` for port 22. Docker had restarted the container once.
+
+`docker compose start nix-firewall` put the rule back at 19:14:11Z (`put the rule … in place`). The builder's next probe, at 19:14:17Z, logged `the egress rule holds`, and `running nix (Nix) 2.34.9, harmonia, sshd` followed. `ssh-keyscan` got the host key again, the health check passed (`exit=0`, `the egress rule holds`), and the container was `healthy`. The cache's narinfo of the image's `base-system` path still carried `Sig: KEY_NAME:…`. The new nix-daemon and sshd have later process ids than harmonia, which ran through the wait.
+
+### A failed update
+
+`NIX_BUILDER_NIXPKGS=github:NixOS/nixpkgs/0000000000000000000000000000000000000000 docker compose up -d --no-deps nix-builder`, a revision that does not exist:
+
+```text
+start.sh: installing nix, openssh and harmonia from github:NixOS/nixpkgs/0000000000000000000000000000000000000000 with nix (Nix) 2.34.9
+       error: Failed to open archive (… unable to download 'https://github.com/NixOS/nixpkgs/archive/0000000000000000000000000000000000000000.tar.gz': HTTP error 404
+start.sh: installing the tools from github:NixOS/nixpkgs/0000000000000000000000000000000000000000 failed; keeping the tools of github:NixOS/nixpkgs/<flake.lock's nixpkgs> until a start succeeds
+start.sh: the egress rule holds: no answer from NAS_A:SSH_PORT LAN_PROBE
+start.sh: running nix (Nix) 2.34.9, harmonia, sshd
+```
+
+The profile still pointed at the same store path, the pin stamp kept the lock's revision, and no `ravnix-next` link was left. `docker compose up -d --no-deps nix-builder` without the override then started the builder on the lock's pin again, with nothing to install.
+
 ## Still to check
 
-- After the host's next reboot: both ports in `docker inspect nix-builder --format '{{json .NetworkSettings.Ports}}'`, the cache answering from a client, and the egress rule back in place (`docker compose ps` shows `nix-firewall` healthy, and the probes above give the same results). Docker starts both containers by itself after a reboot, in no order, so a build that arrives before `nix-firewall`'s first pass would still reach the LAN. The window is the time between the two containers' starts.
+- After the host's next reboot: both ports in `docker inspect nix-builder --format '{{json .NetworkSettings.Ports}}'`, the cache answering from a client, and the egress rule back in place (`docker compose ps` shows `nix-firewall` healthy, and the probes above give the same results). Docker starts both containers by itself after a reboot, in no order; the builder's log should show it waiting at the gate, or passing it, before `running`.
 - The host's next UGOS update: the rule still in place afterward, or put back by the keeper within its interval.
 - A real lid close or network change on a laptop in the middle of a remote build, and not only a frozen connection (above).
 - A host built from ravnix with both services enabled: `nixos-rebuild build` sends its builds to the builder, and a second host substitutes them.
