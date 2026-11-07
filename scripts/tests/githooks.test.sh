@@ -361,6 +361,24 @@ without_a_deny_list_the_push_check_is_skipped_and_the_gate_runs() {
 	expect_full_gate
 }
 
+pre_push_leaves_no_files_behind() {
+	new_repo
+	local tmp="$scratch/pre-push-tmp"
+	mkdir -p "$tmp"
+	capture in_repo env TMPDIR="$tmp" .githooks/pre-push origin https://example.invalid/repo.git \
+		< <(printf 'refs/heads/main %s refs/heads/main %s\n' "$(head_sha)" "$zero")
+	expect_status 0
+	stage hosts.nix '198.51.100.7'
+	commit_without_hooks -m 'add hosts'
+	capture in_repo env TMPDIR="$tmp" .githooks/pre-push origin https://example.invalid/repo.git \
+		< <(printf 'refs/heads/main %s refs/heads/main %s\n' "$(head_sha)" "$zero")
+	expect_status 1
+	[[ -z "$(find "$tmp" -mindepth 1 -print -quit)" ]] || {
+		echo "  pre-push left files in its TMPDIR: $(ls -A "$tmp")"
+		return 1
+	}
+}
+
 a_failing_full_gate_fails_the_push() {
 	new_repo
 	write_script "$bin/nix" "exit 4"
@@ -395,6 +413,7 @@ tests=(
 	a_license_in_a_pushed_commit_passes
 	a_pushed_annotated_tag_with_a_leak_in_its_message_is_refused
 	without_a_deny_list_the_push_check_is_skipped_and_the_gate_runs
+	pre_push_leaves_no_files_behind
 	a_failing_full_gate_fails_the_push
 )
 

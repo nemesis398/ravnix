@@ -89,4 +89,7 @@ if ((status != 0)); then
 	exit "$status"
 fi
 
+# exec replaces this shell, so its EXIT trap would never run.
+rm -rf -- "$work"
+trap - EXIT
 exec scripts/check.sh
