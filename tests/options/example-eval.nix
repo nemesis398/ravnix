@@ -1,8 +1,9 @@
 # The template a new user starts from, templates/default/, evaluates: its
-# me.nix passes every type and assertion of ravnix's options, sets every
-# option there is (so it stays the complete list a user fills in), its
-# backups.toml and dictionary.txt hold what their tools read, and its
-# flake.nix's own checks evaluate against this checkout of ravnix.
+# me.nix passes every type and assertion of ravnix's options (the
+# retention schema of its backups.toml among them), sets every option there
+# is (so it stays the complete list a user fills in), its dictionary.txt
+# holds what ravnix-dict reads, and its flake.nix's own checks evaluate
+# against this checkout of ravnix.
 {
   self,
   inputs,
@@ -29,35 +30,6 @@ let
     lib.filter (o: !o.isDefined || o.highestPrio >= onlyDefault) settable
   );
 
-  retention = builtins.fromTOML (builtins.readFile me.config.ravnix.backup.retentionFile);
-  counts = [
-    "daily"
-    "weekly"
-    "monthly"
-    "yearly"
-  ];
-  badTargets =
-    lib.concatMap
-      (
-        target:
-        let
-          t = retention.targets.${target} or null;
-        in
-        if t == null then
-          [ "backups.toml has no [targets.${target}]" ]
-        else
-          lib.concatMap (
-            key:
-            lib.optional (
-              !(builtins.isInt (t.${key} or null)) || t.${key} < 0
-            ) "backups.toml: targets.${target}.${key} is not a non-negative integer"
-          ) counts
-      )
-      [
-        "nas"
-        "internxt"
-      ];
-
   # The dictionary format of ravnix-dict: `word`, then optional fields
   # ` | lang=de,en` and ` | heard=Hugin;def VM`; `#` starts a comment line.
   dictionaryLines = lib.filter (l: l != "" && !(lib.hasPrefix "#" l)) (
@@ -67,13 +39,24 @@ let
   badWords = lib.filter (l: builtins.match entry l == null) dictionaryLines;
 
   # The template's flake.nix, its inputs given by hand: ravnix is this
-  # checkout, nixpkgs and claude-code are the ones this flake locks.
+  # checkout, nixpkgs and claude-code are the ones this flake locks. Its
+  # `me` check prints a warning per placeholder, which the template is full
+  # of; options-placeholders tests those, so they are silenced here and do
+  # not flood this flake's own check.
+  quietRavnix = self // {
+    nixosModules = self.nixosModules // {
+      options = {
+        imports = [ self.nixosModules.options ];
+        config.warnings = lib.mkForce [ ];
+      };
+    };
+  };
   templateFlake = import (template + "/flake.nix");
   templateOutputs = templateFlake.outputs {
     self = templateOutputs // {
       outPath = template;
     };
-    ravnix = self;
+    ravnix = quietRavnix;
     inherit (inputs) nixpkgs claude-code;
   };
   templateChecks = templateOutputs.checks.${system} or { };
@@ -85,7 +68,6 @@ let
     ++
       lib.optional (unset != [ ])
         "the template's me.nix does not set ${lib.concatStringsSep ", " unset}; it must list every option, with a comment"
-    ++ badTargets
     ++ lib.optional (dictionaryLines == [ ]) "the template's dictionary.txt has no entries"
     ++ map (l: "dictionary.txt: not an entry: ${l}") badWords
     ++ lib.optional (!(templateFlake.inputs ? ravnix)) "the template's flake.nix has no ravnix input"

@@ -3,6 +3,7 @@
 { lib, ... }:
 let
   inherit (lib) mkOption types;
+  ravnix = import ./types.nix { inherit lib; };
 in
 {
   options.ravnix.hosts = mkOption {
@@ -12,10 +13,7 @@ in
       types.submodule {
         options = {
           address = mkOption {
-            # An IPv4 address or a DNS name (no colon), or an IPv6 address
-            # (two colons at least), without a scheme, a port or a prefix
-            # length, because the services' URLs are built from it.
-            type = types.strMatching "[A-Za-z0-9._-]+|[0-9A-Fa-f.]*:[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*";
+            type = ravnix.address;
             example = "192.0.2.10";
             description = "Where the host is reached: an IPv4 or IPv6 address, or a DNS name.";
           };
@@ -35,10 +33,10 @@ in
           };
 
           sshTarget = mkOption {
-            type = types.nullOr types.nonEmptyStr;
+            type = types.nullOr ravnix.sshTarget;
             default = null;
             example = "admin@nas.example.org";
-            description = "How ssh reaches the host (user@host or an ssh alias), or null when nothing logs in.";
+            description = "How ssh reaches the host: `[user@]host` (host an address or an ssh alias) or `ssh://[user@]host[:port]`; null when nothing logs in.";
           };
         };
       }

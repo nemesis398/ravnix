@@ -48,25 +48,34 @@
       # and ./me.nix.
 
       checks.${system} = {
+        # Every value evaluates, and each one that is still a documentation
+        # placeholder (an example.org name, a 192.0.2.x address) is named in
+        # a warning.
         me =
           if failed != [ ] then
             throw "me.nix:\n${lib.concatMapStrings (m: "- ${m}\n") failed}"
           else
-            builtins.deepSeq [
-              me.config.ravnix
-              # The retention file is TOML that the prune jobs parse.
-              (builtins.fromTOML (builtins.readFile ./backups.toml))
-            ] (pkgs.runCommand "me" { } "touch $out");
+            lib.foldr lib.warn (builtins.deepSeq me.config.ravnix (
+              pkgs.runCommand "me" { } "touch $out"
+            )) me.config.warnings;
       }
       # If you contribute to ravnix, keep a deny-list.txt of your own values
-      # here (one per line, `#` for comments): this check then proves that
+      # here (one per line, `#` for comments) and `git add deny-list.txt`: a
+      # flake sees only the files git tracks. This check then proves that
       # none of them is in the ravnix you build from.
-      // lib.optionalAttrs (builtins.pathExists ./deny-list.txt) {
-        public-boundary = pkgs.runCommand "public-boundary" { nativeBuildInputs = [ pkgs.ripgrep ]; } ''
-          cd ${ravnix}
-          bash ${ravnix}/scripts/check-public.sh ${./deny-list.txt} .
-          touch $out
-        '';
-      };
+      // (
+        if builtins.pathExists ./deny-list.txt then
+          {
+            public-boundary = pkgs.runCommand "public-boundary" { nativeBuildInputs = [ pkgs.ripgrep ]; } ''
+              cd ${ravnix}
+              bash ${ravnix}/scripts/check-public.sh ${./deny-list.txt} .
+              touch $out
+            '';
+          }
+        else
+          lib.warn
+            "checks.public-boundary is off: this flake tracks no deny-list.txt (git add it to turn the check on)."
+            { }
+      );
     };
 }

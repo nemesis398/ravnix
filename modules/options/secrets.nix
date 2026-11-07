@@ -3,18 +3,19 @@
 # which account.
 { lib, ... }:
 let
-  inherit (lib) mkOption types;
+  inherit (lib) mkOption;
+  ravnix = import ./types.nix { inherit lib; };
 in
 {
   options.ravnix.secrets = {
     rbwBaseUrl = mkOption {
-      type = types.strMatching "https?://[^[:space:]]+";
+      type = ravnix.url;
       example = "https://vault.example.org";
       description = "The Bitwarden or Vaultwarden server rbw logs in to (`rbw config set base_url`).";
     };
 
     rbwEmail = mkOption {
-      type = types.strMatching "[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+";
+      type = ravnix.mail;
       example = "alice@example.org";
       description = "The account rbw logs in as (`rbw config set email`).";
     };

@@ -4,11 +4,12 @@
 { lib, ... }:
 let
   inherit (lib) mkOption types;
+  ravnix = import ./types.nix { inherit lib; };
 in
 {
   options.ravnix.matrix = {
     homeserver = mkOption {
-      type = types.strMatching "https?://[^[:space:]]+";
+      type = ravnix.url;
       example = "https://matrix.example.org";
       description = "The URL of your Matrix homeserver's client API.";
     };

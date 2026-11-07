@@ -55,8 +55,10 @@ in
     );
   };
 
+  # Every service, enabled or not: a host that is not declared is a mistake
+  # either way, and the url of such a service cannot be read.
   config.assertions = lib.mapAttrsToList (name: service: {
-    assertion = !service.enable || hosts ? ${service.host};
+    assertion = hosts ? ${service.host};
     message = unknownHost name service.host;
   }) config.ravnix.services;
 }

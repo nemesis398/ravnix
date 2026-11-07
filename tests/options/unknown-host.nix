@@ -1,7 +1,7 @@
 # A service is placed by naming a host of ravnix.hosts, and clients read only
 # its derived url. A service whose host names an undeclared host fails with a
-# message naming both; the url follows the host when the service moves, puts
-# an IPv6 address in brackets, and cannot be set by hand.
+# message naming both, enabled or not; the url follows the host when the
+# service moves, puts an IPv6 address in brackets, and cannot be set by hand.
 {
   self,
   pkgs,
@@ -49,7 +49,7 @@ let
   ) unknown.failed;
   unknownUrl = builtins.tryEval unknown.config.ravnix.services.paperless.url;
 
-  # A disabled service is not placed, so its host is not checked.
+  # Disabled or not, an undeclared host is a mistake.
   disabled = with' [
     {
       ravnix.services.paperless = {
@@ -83,8 +83,10 @@ let
       "no failed assertion names both the service and the missing host; failed: ${toString unknown.failed}"
     ++ lib.optional unknownUrl.success "the url of a service on an undeclared host evaluated"
     ++ lib.optional (
-      disabled.failed != [ ]
-    ) "a disabled service on an undeclared host failed an assertion: ${toString disabled.failed}"
+      lib.filter (
+        m: lib.hasInfix "ravnix.services.paperless" m && lib.hasInfix "\"nowhere\"" m
+      ) disabled.failed == [ ]
+    ) "a disabled service on an undeclared host passed the assertions"
     ++ lib.optional setUrl.success "ravnix.services.paperless.url was set by hand and accepted"
     ++ expect "box-a" "http://198.51.100.7:8000"
     ++ expect "box-b" "http://[2001:db8::7]:8000"

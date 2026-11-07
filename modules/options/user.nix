@@ -3,7 +3,7 @@
 { lib, ... }:
 let
   inherit (lib) mkOption types;
-  absolutePath = types.strMatching "/.*";
+  ravnix = import ./types.nix { inherit lib; };
 in
 {
   options.ravnix.user = {
@@ -14,7 +14,7 @@ in
     };
 
     email = mkOption {
-      type = types.strMatching "[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+";
+      type = ravnix.mail;
       example = "alice@example.org";
       description = "Your mail address, as git commits show it.";
     };
@@ -45,7 +45,7 @@ in
 
   options.ravnix.dev = {
     checkout = mkOption {
-      type = types.nullOr absolutePath;
+      type = types.nullOr ravnix.absolutePath;
       default = null;
       example = "/home/alice/src/ravnix";
       description = ''
@@ -56,7 +56,7 @@ in
     };
 
     denyList = mkOption {
-      type = types.nullOr absolutePath;
+      type = types.nullOr ravnix.absolutePath;
       default = null;
       example = "/home/alice/src/ravnix-private/deny-list.txt";
       description = ''

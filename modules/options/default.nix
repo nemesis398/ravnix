@@ -29,6 +29,7 @@ in
     ./backup.nix
     ./dictionary.nix
     ./claude.nix
+    ./placeholders.nix
   ];
 
   config.assertions = map (opt: {
