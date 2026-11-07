@@ -131,6 +131,10 @@ let
     "a target that keeps nothing" = retention "keeps-nothing";
     "a host override that keeps nothing" = retention "host-keeps-nothing";
     "a misspelt key in a host override" = retention "host-misspelt-key";
+    "a host entry that is a number, not a table" = retention "host-not-table";
+    "a hosts entry that is a number, not a table" = retention "hosts-not-table";
+    "a target that is a number, not a table" = retention "target-not-table";
+    "targets that is a string, not a table" = retention "targets-not-table";
     "a disabled service on an undeclared host" = {
       ravnix.services.paperless = {
         enable = false;
@@ -229,8 +233,29 @@ let
     };
   };
 
+  # A retention entry of the wrong kind is named in the message, not left
+  # to a raw type error that names neither the key nor the file.
+  notTable = {
+    host-not-table = "targets.nas.hosts.muninn is not a table";
+    hosts-not-table = "targets.nas.hosts is not a table";
+    target-not-table = "targets.nas is not a table";
+    targets-not-table = "targets is not a table";
+  };
+  unnamed = lib.filterAttrs (
+    name: message:
+    !(lib.any (lib.hasInfix message)
+      (eval [
+        template
+        (force (retention name))
+      ]).failed
+    )
+  ) notTable;
+
   failures =
-    lib.mapAttrsToList (what: _: "accepted ${what}") (lib.filterAttrs (_: accepted) refused)
+    lib.mapAttrsToList (
+      name: message: "retention fixture ${name}: no message says \"${message}\""
+    ) unnamed
+    ++ lib.mapAttrsToList (what: _: "accepted ${what}") (lib.filterAttrs (_: accepted) refused)
     ++ lib.mapAttrsToList (what: _: "refused ${what}") (lib.filterAttrs (_: m: !(accepted m)) allowed);
 in
 pkgs.runCommand "options-malformed" { } (

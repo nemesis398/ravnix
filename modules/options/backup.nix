@@ -26,8 +26,12 @@ let
   problems =
     let
       toml = builtins.fromTOML (builtins.readFile file);
-      given = toml.targets or { };
-      # A host's numbers: its own where it has them, the target's otherwise.
+      # A key that must hold a table and holds something else (`muninn = 14`
+      # where `[targets.nas.hosts.muninn]` belongs) is reported, and nothing
+      # below it is read.
+      table =
+        where: value: check:
+        if builtins.isAttrs value then check value else [ "${where} is not a table" ];
       checkCounts =
         where: numbers: required:
         lib.concatMap (
@@ -45,31 +49,38 @@ let
         lib.optional (lib.all (
           key: (numbers.${key} or 1) == 0
         ) counts) "${where} keeps nothing, so a prune would delete every snapshot";
-      checkTarget =
-        name:
+      # A host's numbers: its own where it has them, the target's otherwise.
+      checkHost =
+        name: target: host:
         let
-          t = given.${name};
-          hosts = t.hosts or { };
+          where = "targets.${name}.hosts.${host}";
         in
-        checkCounts "targets.${name}" t true
-        ++ allZero "targets.${name}" t
-        ++ lib.concatLists (
-          lib.mapAttrsToList (
-            host: own:
-            let
-              where = "targets.${name}.hosts.${host}";
-            in
-            checkCounts where own false
-            ++ lib.optional (own ? hosts) "${where}.hosts is not a key of the file"
-            ++ allZero where (t // own)
-          ) hosts
+        table where target.hosts.${host} (
+          own:
+          checkCounts where own false
+          ++ lib.optional (own ? hosts) "${where}.hosts is not a key of the file"
+          ++ allZero where (target // own)
+        );
+      checkTarget =
+        name: target:
+        checkCounts "targets.${name}" target true
+        ++ allZero "targets.${name}" target
+        ++ lib.optionals (target ? hosts) (
+          table "targets.${name}.hosts" target.hosts (
+            hosts: lib.concatMap (checkHost name target) (lib.attrNames hosts)
+          )
+        );
+      checkTargets =
+        given:
+        map (name: "targets.${name} is missing") (lib.subtractLists (lib.attrNames given) targets)
+        ++ map (name: "targets.${name} is not a target ravnix backs up to") (
+          lib.subtractLists targets (lib.attrNames given)
+        )
+        ++ lib.concatMap (name: table "targets.${name}" given.${name} (checkTarget name)) (
+          lib.intersectLists targets (lib.attrNames given)
         );
     in
-    map (name: "targets.${name} is missing") (lib.subtractLists (lib.attrNames given) targets)
-    ++ map (name: "targets.${name} is not a target ravnix backs up to") (
-      lib.subtractLists targets (lib.attrNames given)
-    )
-    ++ lib.concatMap checkTarget (lib.intersectLists targets (lib.attrNames given));
+    table "targets" (toml.targets or { }) checkTargets;
 in
 {
   options.ravnix.backup.retentionFile = mkOption {
