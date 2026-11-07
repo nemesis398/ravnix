@@ -209,6 +209,16 @@
           ./modules/common/claude-skills.nix
         ];
       };
+
+      # The laptop shape, huginn: the common module, the disk layout of
+      # hosts/laptop/disko.nix and the boot. A private flake imports it with
+      # the hardware module of its laptop. It carries a key, so a second
+      # import adds nothing.
+      nixosModules.laptop = {
+        key = "ravnix/nixosModules.laptop";
+        imports = [ (import ./hosts/laptop { inherit self inputs; }) ];
+      };
+
       packages.${system} =
         # A tool named claude-code is an error of lib/ravnix-packages.nix, which
         # packagesOf runs through.
