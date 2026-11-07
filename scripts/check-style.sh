@@ -8,27 +8,34 @@
 #
 #   hex-color     a hex color (#rrggbb or #rrggbbaa; #rgb and #rgba in CSS
 #                 files, in quotes and after a color property) outside
-#                 modules/theme/. Colors come from the theme module's roles,
-#                 so the user's accent reaches them. A hex color in a comment
-#                 counts.
+#                 modules/theme/. A bare rrggbb or rrggbbaa value of a color
+#                 key (fuzzel, swaylock) counts too. Colors come from the theme
+#                 module's roles, so the user's accent reaches them. A hex
+#                 color in a comment counts.
 #   radius        a border radius other than 0: border-radius and its
-#                 per-corner forms, and the keys radius and corner_radius.
-#                 indicator-radius is not one of these; the lock ring is a
-#                 gauge.
-#   opacity       anything below fully opaque: opacity or *_alpha below 1,
-#                 alpha(), rgba() and hsla() with alpha below 1, sway's
-#                 opacity command, a hex color or a bare RRGGBBAA value of a
-#                 color key whose alpha is not full. The one exemption is the
-#                 inside of the lock ring: swaylock's inside-*color keys.
+#                 per-corner forms, every key that ends in radius, a border key
+#                 set to rounded, and round_corners or rounded_corners unless
+#                 it is 0 or false. indicator-radius is not one of these; the
+#                 lock ring is a gauge.
+#   opacity       anything below fully opaque: opacity or a background, window
+#                 or similar *_alpha key below 1, alpha(), rgba() and hsla()
+#                 with alpha below 1, sway's opacity command (also in a quoted
+#                 string), the CSS keyword transparent, a hex color or a bare
+#                 RRGGBBAA value of a color key whose alpha is not full. The
+#                 one exemption is the inside of the lock ring: swaylock's
+#                 inside-color and inside-*-color keys, with or without a #. A
+#                 child that shows its parent uses the role color or inherit.
 #   motion        a transition or animation key, or @keyframes, unless the
-#                 key turns motion off (none, false, off, 0s). Words that
-#                 only contain the names, such as gtk-enable-animations, are
-#                 no keys.
-#   mermaid-init  a Mermaid init block (%%{init: ...}%% at the start of a line)
-#                 that differs from the shared one in docs/mermaid-theme.json,
-#                 compared without white space, or that never closes. The
-#                 shared block may hold hex colors. Prose that mentions the
-#                 syntax in the middle of a line is no block.
+#                 key turns motion off (none, false, off, no, 0s); also
+#                 enable-animations and gtk-enable-animations set to anything
+#                 else. Words that only contain the names, such as
+#                 systemd.TransitionTime, are no keys.
+#   mermaid-init  a Mermaid init block (%%{init: ...}%% or %%{initialize: ...}%%
+#                 at the start of a line) that differs from the shared one in
+#                 docs/mermaid-theme.json, compared without white space, or
+#                 that never closes. The shared block may hold hex colors.
+#                 Prose that mentions the syntax in the middle of a line is no
+#                 block.
 #
 # Usage: check-style.sh PATH...
 #
@@ -39,25 +46,31 @@
 #
 #   judged        *.nix, *.css, *.scss, *.tcss, *.rasi, *.ini, *.conf,
 #                 *.toml, *.jsonc, *.kdl, *.colors, and every other file
-#                 below modules/ or hosts/ (Sway's config has no extension),
-#                 for all four rules; Markdown and Mermaid files (*.md,
-#                 *.markdown, *.mmd, *.mermaid) for hex colors and Mermaid
-#                 blocks. Images, fonts and lock files are never judged.
-#   not judged    paths with a component named .git, .worktrees,
-#                 .superpowers, node_modules, vendor, vendored, third_party,
-#                 third-party, themes (vendored files), tests, fixtures,
-#                 fixture or testdata (fixtures that fail on purpose).
-#   hex allowed   below modules/theme/ and in docs/style.md. Those two may
-#                 not be translucent, round or animated either.
+#                 below a modules/ or hosts/ directory (Sway's config has no
+#                 extension), for all five rules; Markdown and Mermaid files
+#                 (*.md, *.markdown, *.mmd, *.mermaid) for hex colors and
+#                 Mermaid blocks. Images, fonts and lock files are never judged.
+#   not judged    anywhere: a directory named .git or node_modules. At the
+#                 root of the judged tree only: .worktrees/, .superpowers/,
+#                 and the fixture roots tests/, scripts/tests/ and
+#                 tools/NAME/tests/, where fixtures fail on purpose.
+#   hex allowed   at the root of the judged tree only: below modules/theme/
+#                 and docs/style.md, and below vendor/, the one root for
+#                 vendored files. Those places may not be translucent, round or
+#                 animated either: vendor/ is exempt from the hex rule and no
+#                 other.
 #
-# For a directory the components below it count, for a file argument the
-# path as given, or below the current directory when it is below it, so
-# scripts/check.sh hands it repository-relative paths and an absolute path
-# in a checkout under a directory named tests is judged all the same.
+# The root of the judged tree is the current directory. A relative path, or an
+# absolute one below the current directory, is placed by its path from there,
+# so scripts/check.sh hands it repository-relative paths and the rules mean
+# the same wherever the repository is checked out. A directory that is not
+# below the current directory is the root of its own tree. A file that is not
+# below it is placed by its path as given, so no exemption applies to it.
 # A line that is only a comment is not searched for radius, opacity and
 # motion; the body lines of a block comment are, unless they start with a *.
-# In a document or on a comment line, an all-digit #123456 is an issue number
-# and no color.
+# Block comments that end before the code on their line are cut out of it.
+# In a document or in a trailing comment, an all-digit #123456 is an issue
+# number and no color, and so is a link target such as [x](#facade).
 #
 # The shared Mermaid theme is docs/mermaid-theme.json, beside the scripts/
 # directory this script is in, or the file that RAVNIX_MERMAID_THEME names.
@@ -109,6 +122,7 @@ code=()    # judged files, all four rules
 docs=()    # Markdown and Mermaid files: hex colors and Mermaid blocks
 css=()     # code files whose short hex colors are searched too
 nonnix=()  # code files where // starts a comment
+lua=()     # code files where -- starts a comment
 declare -A relative=() # displayed path -> path below its directory argument
 
 # Whether the directory part of $1 has a component named in the arguments
@@ -128,14 +142,21 @@ has_component() {
 	return 1
 }
 
-# classify REL SHOWN: judges the file whose path below its argument is REL and
-# which is displayed as SHOWN, and files it under the kinds above.
+# classify REL SHOWN: judges the file whose path from the root of the judged
+# tree is REL and which is displayed as SHOWN, and files it under the kinds
+# above. The exemptions name places, not directory names: a themes/ or tests/
+# directory further down is judged like any other.
 classify() {
-	local rel="$1" shown="$2" name="${1##*/}" kind
-	if has_component "$rel" .git .worktrees .superpowers node_modules vendor \
-		vendored third_party third-party themes tests fixtures fixture testdata; then
+	local rel="$1" shown="$2" name kind
+	while [[ "$rel" == ./* ]]; do rel="${rel#./}"; done
+	name="${rel##*/}"
+	if has_component "$rel" .git node_modules; then
 		return 0
 	fi
+	case "$rel" in
+	.worktrees/* | .superpowers/* | tests/* | scripts/tests/*) return 0 ;;
+	esac
+	[[ ! "$rel" =~ ^tools/[^/]+/tests/ ]] || return 0
 	name="${name,,}"
 	case "$name" in
 	*.svg | *.png | *.jpg | *.jpeg | *.gif | *.ico | *.webp | *.ttf | *.otf | *.woff | *.woff2 | *.lock)
@@ -152,6 +173,7 @@ classify() {
 		esac
 		;;
 	esac
+	[[ "$kind" != code || "$name" != *.lua ]] || kind=lua
 	relative["$shown"]="$rel"
 	case "$kind" in
 	docs) docs+=("$shown") ;;
@@ -165,14 +187,36 @@ classify() {
 		code+=("$shown")
 		nonnix+=("$shown")
 		;;
+	lua)
+		code+=("$shown")
+		lua+=("$shown")
+		;;
 	esac
 }
 
+# walk DIR: classifies the files below DIR. The root of the judged tree is the
+# current directory when DIR is below it, and DIR itself otherwise.
 walk() {
-	local dir="$1" path rel
+	local dir="$1" path rel prefix="" glob
 	while [[ "$dir" == */ && "$dir" != / ]]; do
 		dir="${dir%/}"
 	done
+	case "$dir" in
+	. | "$PWD") ;;
+	/* | .. | ../*)
+		if [[ "$dir" == "$PWD"/* ]]; then prefix="${dir#"$PWD"/}/"; fi
+		;;
+	*)
+		prefix="${dir#./}/"
+		;;
+	esac
+	# Tool state at the root of the tree is pruned here, to spare the walk
+	# through whole checkouts; .git and node_modules wherever they are.
+	local -a prune=(-name .git -o -name node_modules)
+	if [[ -z "$prefix" ]]; then
+		glob="$(printf '%s' "$dir" | sed 's/[][\\*?]/\\&/g')"
+		prune+=(-o -path "$glob/.worktrees" -o -path "$glob/.superpowers")
+	fi
 	# find's status comes last, as a record without a slash, which no path it
 	# prints can be.
 	while IFS= read -r -d '' path; do
@@ -180,14 +224,14 @@ walk() {
 			[[ "$path" == "find-status:0" ]] || die "could not walk $dir"
 			continue
 		fi
-		rel="${path#"$dir"/}"
+		rel="$prefix${path#"$dir"/}"
 		if [[ "$dir" == . ]]; then
-			classify "$rel" "$rel"
+			classify "$rel" "${path#./}"
 		else
 			classify "$rel" "$path"
 		fi
 	done < <(
-		find "$dir" \( -name .git -o -name .worktrees -o -name .superpowers -o -name node_modules \) -prune -o -type f -print0
+		find "$dir" \( "${prune[@]}" \) -prune -o -type f -print0
 		printf 'find-status:%s\0' "$?"
 	)
 }
@@ -244,18 +288,37 @@ search() {
 	done
 }
 
-# Lines that are only a comment, found before the rules that skip them. A *
-# that opens a CSS selector (* { ... }) is code.
+# Lines that are only a comment, found before the rules that skip them. A
+# block comment that ends before more code on its line does not make the line
+# a comment, and a * that opens a CSS selector (* button { ... }) is code.
 declare -A comment=()
 note_comment() {
 	comment["$1"$'\t'"$2"]=1
 }
-comment_lines='^[ \t]*(?:#(?:[ \t]|$)|;|/\*|\*/|\*(?:[ \t]+[^ \t{,:.#\[>+~]|[ \t]*$))'
+comment_lines='^[ \t]*(?:#(?:[ \t]|$)|;|/\*(?:[^*]|\*+[^*/])*(?:\**|\*+/[ \t]*)$|\*+/[ \t]*$|\*[ \t]*$|\*[ \t]+[^ \t{,:.#\[>+~][^{]*$)'
 search note_comment code "$comment_lines"
 search note_comment nonnix '^[ \t]*//'
+search note_comment lua '^[ \t]*--'
 
 is_comment() {
 	[[ -n "${comment["$1"$'\t'"$2"]:-}" ]]
+}
+
+# strip_comments TEXT: TEXT without its /* ... */ spans, and without the open
+# comment at its end, in REPLY.
+strip_comments() {
+	local t="$1" re='^(.*)/\*([^*]|\*+[^*/])*\*+/(.*)$'
+	while [[ "$t" =~ $re ]]; do
+		t="${BASH_REMATCH[1]} ${BASH_REMATCH[3]}"
+	done
+	REPLY="${t%%/\**}"
+}
+
+# line_text FILE LINE: the whole line, in REPLY. Used for the few matches that
+# need what stands around them.
+line_text() {
+	REPLY="$(sed -n -- "${2}p" "$1")"
+	REPLY="${REPLY%$'\r'}"
 }
 
 # Whether the number $1 is below the full value: below 1, or below 100%.
@@ -295,7 +358,7 @@ init_blocks() {
 		{
 			line = $0
 			if (!inside) {
-				if (!match(line, /^[ \t]*%%\{init:/)) next
+				if (!match(line, /^[ \t]*%%\{[ \t]*(init|initialize)[ \t]*:/)) next
 				inside = 1; start = NR; block = ""
 				line = substr(line, RSTART + RLENGTH)
 			}
@@ -321,7 +384,7 @@ search_files_with_init() {
 		while IFS= read -r -d '' path; do
 			with_init+=("$path")
 		done < <(rg --no-config --no-ignore --hidden --text \
-			--files-with-matches --null -- '^[ \t]*%%\{init:' "${all[@]:i:slice}")
+			--files-with-matches --null -- '^[ \t]*%%\{[ \t]*init(?:ialize)?[ \t]*:' "${all[@]:i:slice}")
 		wait $! || status=$?
 		((status <= 1)) || die "the search failed (rg exit $status); see above"
 	done
@@ -348,8 +411,9 @@ fi
 
 # A color is # and 6 or 8 hex digits, not glued to a word, a path, a URL, a
 # shell expansion ($#, ${#a}) or an entity (&#). The match includes the
-# characters around it; hex_hit reads the digits.
-hex_long='(?:^|[^[:alnum:]_#&/$.@{-])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})(?:[^[:alnum:]_-]|$)'
+# characters around it; hex_hit reads the digits. A link target, ](#facade) or
+# href="#facade", is matched whole so hex_hit can tell it from a color.
+hex_long='(?:\]\(|(?i:href)=["'"'"']|^|[^[:alnum:]_#&/$.@{-])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})(?:[^[:alnum:]_-]|$)'
 # #rgb and #rgba are too common as anchors and issue numbers to search
 # everywhere: in CSS files they are searched, elsewhere only in quotes and
 # after a color property.
@@ -358,11 +422,10 @@ hex_short_quoted='["'"'"']#(?:[0-9a-fA-F]{4}|[0-9a-fA-F]{3})["'"'"']'
 hex_short_property='(?i)(?:color|background|border|outline|fill|stroke|shadow)[a-z-]*\s*:[^;{}]*#(?:[0-9a-f]{4}|[0-9a-f]{3})(?:[^[:alnum:]_-]|$)'
 
 # Whether the file may hold hex colors: the theme module and the style
-# document.
+# document, and the one root for vendored files, all at the root of the tree.
 hex_allowed() {
-	local path
-	path="/${relative["$1"]}"
-	[[ "$path" == */modules/theme/* || "$path" == */docs/style.md ]]
+	local rel="${relative["$1"]}"
+	[[ "$rel" == modules/theme/* || "$rel" == docs/style.md || "$rel" == vendor/* ]]
 }
 
 is_doc() {
@@ -370,23 +433,52 @@ is_doc() {
 		"${relative["$1"]}" == *.mmd || "${relative["$1"]}" == *.mermaid ]]
 }
 
+# Whether the first #DIGITS of a line stands in a trailing comment: after a
+# # or // that has white space or the line start before it.
+in_trailing_comment() {
+	local before
+	line_text "$1" "$2"
+	before="${REPLY%%"#$3"*}"
+	[[ "$before" =~ (^|[[:space:]])\#([[:space:]]|$) ]] && return 0
+	if [[ " ${nonnix[*]} " == *" $1 "* ]]; then
+		[[ "$before" =~ (^|[[:space:]])// ]] && return 0
+	fi
+	return 1
+}
+
+# Whether the first #DIGITS of a line is the value of one of swaylock's
+# inside-color keys, the one place a color may be see-through.
+lock_ring_inside() {
+	local lower
+	line_text "$1" "$2"
+	lower="${REPLY,,}"
+	[[ "$lower" =~ (^|[^[:alnum:]_-])inside(-[a-z]+)*-color[\"\']?[[:space:]]*[=:][[:space:]]*[\"\']?\#${3,,} ]]
+}
+
 hex_hit() {
 	local path="$1" line="$2" text="$3" digits=""
 	in_init_block "$path" "$line" && return 0
+	case "$text" in
+	"]("* | [hH][rR][eE][fF]=*) return 0 ;;
+	esac
 	if [[ "$text" =~ \#([0-9a-fA-F]+) ]]; then
 		digits="${BASH_REMATCH[1]}"
 	fi
 	# #123456 in a document or a comment is an issue number, not a color. The
 	# two colors of Mocha that are all digits, Mantle and Surface0, are not.
 	if [[ "$digits" =~ ^[0-9]+$ && "$digits" != 181825 && "$digits" != 313244 ]]; then
-		if is_doc "$path" || is_comment "$path" "$line"; then return 0; fi
+		if is_doc "$path" || is_comment "$path" "$line" || in_trailing_comment "$path" "$line" "$digits"; then
+			return 0
+		fi
 	fi
 	# Alpha: the last two digits of #rrggbbaa, the last of #rgba. A document
 	# only shows a color; what is translucent is code.
 	if ! is_doc "$path"; then
 		case "${#digits}" in
-		8) [[ "${digits:6:2}" == [fF][fF] ]] || hit "$path" "$line" opacity ;;
-		4) [[ "${digits:3:1}" == [fF] ]] || hit "$path" "$line" opacity ;;
+		8) [[ "${digits:6:2}" == [fF][fF] ]] || lock_ring_inside "$path" "$line" "$digits" ||
+			hit "$path" "$line" opacity ;;
+		4) [[ "${digits:3:1}" == [fF] ]] || lock_ring_inside "$path" "$line" "$digits" ||
+			hit "$path" "$line" opacity ;;
 		esac
 	fi
 	hex_allowed "$path" || hit "$path" "$line" hex-color
@@ -408,13 +500,30 @@ radius_value() {
 	[[ "$whole" =~ [1-9] || "$whole" == *var\(* || "$whole" == *calc\(* || "$whole" == *env\(* ]]
 }
 
+# Whether the value of round_corners is neither 0 nor false.
+corners_value() {
+	local v="${1%%[;\}]*}"
+	v="${v%%!*}"
+	v="${v//[\"\' ,]/}"
+	v="${v%%#*}"
+	case "$v" in
+	"" | 0 | 0px | 0.0 | false | off | no | none) return 1 ;;
+	esac
+	return 0
+}
+
 radius_hit() {
-	local path="$1" line="$2" text="$3" rest match value
+	local path="$1" line="$2" text="$3" rest match value key
 	is_comment "$path" "$line" && return 0
-	text="${text%%/\**}"
-	text="${text,,}"
+	strip_comments "$text"
+	text="${REPLY,,}"
 	local property='(^|[^[:alnum:]_-])(-[a-z]+-)?(outline|border)-([a-z]+-[a-z]+-)?radius["'"'"']?[[:space:]]*:[[:space:]]*([^;}]*)'
-	local key='(^|[[:space:]{.,"'"'"'])(radius|corner[_-]?radius|border[_-]radius)["'"'"']?[[:space:]]*[=:][[:space:]]*([^;]*)'
+	# Any key that ends in radius, except the lock ring's gauge.
+	local radius_key='(^|[[:space:]{.,"'"'"'])([a-z0-9_-]*radius)["'"'"']?[[:space:]]*[=:][[:space:]]*([^;]*)'
+	# A border key set to rounded: ui = { border = "rounded"; }, winborder.
+	local rounded='border[a-z0-9_-]*["'"'"']?[[:space:]]*[=:][[:space:]]*["'"'"']?rounded([^a-z0-9_]|$)'
+	# round_corners = 10, rounded-corners = true.
+	local corners='(^|[^[:alnum:]])round(ed)?[_-]corners["'"'"']?[[:space:]]*[=:][[:space:]]*([^;]*)'
 	rest="$text"
 	while [[ "$rest" =~ $property ]]; do
 		match="${BASH_REMATCH[0]}"
@@ -423,10 +532,22 @@ radius_hit() {
 		rest="${rest#*"$match"}"
 	done
 	rest="$text"
-	while [[ "$rest" =~ $key ]]; do
+	while [[ "$rest" =~ $radius_key ]]; do
+		match="${BASH_REMATCH[0]}"
+		key="${BASH_REMATCH[2]}"
+		value="${BASH_REMATCH[3]}"
+		case "$key" in
+		indicator-radius | indicator_radius) ;;
+		*) if radius_value "$value"; then hit "$path" "$line" radius; fi ;;
+		esac
+		rest="${rest#*"$match"}"
+	done
+	[[ ! "$text" =~ $rounded ]] || hit "$path" "$line" radius
+	rest="$text"
+	while [[ "$rest" =~ $corners ]]; do
 		match="${BASH_REMATCH[0]}"
 		value="${BASH_REMATCH[3]}"
-		if radius_value "$value"; then hit "$path" "$line" radius; fi
+		if corners_value "$value"; then hit "$path" "$line" radius; fi
 		rest="${rest#*"$match"}"
 	done
 }
@@ -434,19 +555,22 @@ radius_hit() {
 opacity_hit() {
 	local path="$1" line="$2" text="$3" rest match value
 	is_comment "$path" "$line" && return 0
-	text="${text%%/\**}"
-	text="${text,,}"
-	# opacity and *_alpha keys.
-	local key='(^|[^[:alnum:]])(([a-z]+[_-])*)(opacity|alpha)["'"'"']?[[:space:]]*[=:][[:space:]]*["'"'"']?([^;,}"'"'"'[:space:]]*)'
+	strip_comments "$text"
+	text="${REPLY,,}"
+	# opacity keys, and alpha keys that make a surface see-through: a bare
+	# alpha or one led by the surface it belongs to. A smoothing_alpha is a
+	# factor, not a transparency.
+	local surfaces='background|bg|foreground|fg|window|inactive|active|bar|border|cursor|selection|text|panel|menu|popup|overlay|fill|inner|outer|tab|title|titlebar|frame|focus|focused|unfocused|dim|shadow|notification'
+	local key='(^|[^[:alnum:]_-])-?(([a-z0-9]+[_-])*opacity|((('"$surfaces"')[_-])?alpha))["'"'"']?[[:space:]]*[=:][[:space:]]*["'"'"']?([^;,}"'"'"'[:space:]]*)'
 	rest="$text"
 	while [[ "$rest" =~ $key ]]; do
 		match="${BASH_REMATCH[0]}"
-		value="${BASH_REMATCH[5]}"
+		value="${BASH_REMATCH[${#BASH_REMATCH[@]} - 1]}"
 		if below_one "$value"; then hit "$path" "$line" opacity; fi
 		rest="${rest#*"$match"}"
 	done
-	# sway: opacity 0.9, opacity set 0.9
-	local sway='(^|[][:space:]])opacity[[:space:]]+(set[[:space:]]+)?([0-9]*\.?[0-9]+)([[:space:]]|$)'
+	# sway: opacity 0.9, opacity set 0.9, also inside a quoted string.
+	local sway='(^|[][:space:]"'"'"'])opacity[[:space:]]+(set[[:space:]]+)?([0-9]*\.?[0-9]+)([[:space:]"'"'"';]|$)'
 	if [[ "$text" =~ $sway ]]; then
 		value="${BASH_REMATCH[3]}"
 		if below_one "$value"; then hit "$path" "$line" opacity; fi
@@ -474,25 +598,63 @@ opacity_hit() {
 	done
 }
 
-# A bare RRGGBBAA value of a color key, as fuzzel and swaylock write them.
+# The CSS keyword transparent as a value: background: transparent, a border
+# of 2px solid transparent, @define-color marker transparent, or a string
+# that is nothing else. A child that shows its parent uses the role color or
+# inherit. The word in prose is no value.
+transparent_hit() {
+	local path="$1" line="$2" text="$3"
+	is_comment "$path" "$line" && return 0
+	strip_comments "$text"
+	text="${REPLY,,}"
+	local value='[=:][[:space:]]*["'"'"']?transparent["'"'"']?[[:space:]]*([;,}!]|$)'
+	local decl='(^|[{;[:space:]])[a-z-]+[[:space:]]*:[^;{}]*[[:space:]]transparent[[:space:]]*([;}!]|$)'
+	local define='@define-color[[:space:]]+[a-z0-9_-]+[[:space:]]+transparent'
+	if [[ "$text" =~ $value || "$text" =~ $decl || "$text" =~ $define ]]; then
+		hit "$path" "$line" opacity
+	fi
+}
+
+# Whether the word KEY names a color: it holds color, or one of its dash or
+# underscore separated parts is the name of a part of a surface. Words that
+# merely contain a part, such as context or inputs, are no color keys.
+is_color_key() {
+	local key="$1" word
+	local -a words
+	[[ "$key" == *color* || "$key" == *colour* ]] && return 0
+	IFS='_-' read -r -a words <<<"$key"
+	for word in "${words[@]}"; do
+		case "$word" in
+		background | foreground | bg | fg | border | selection | match | placeholder | prompt | \
+			counter | separator | frame | text | input) return 0 ;;
+		esac
+	done
+	return 1
+}
+
+# A bare RRGGBB or RRGGBBAA value of a color key, as fuzzel and swaylock write
+# them: a hex color outside the theme module, and a translucent one.
 bare_color_hit() {
 	local path="$1" line="$2" text="$3" key value
 	is_comment "$path" "$line" && return 0
 	text="${text,,}"
-	local re='(^|[^[:alnum:]_-])([a-z][a-z0-9_-]*)["'"'"']?[[:space:]]*[=:][[:space:]]*["'"'"']?([0-9a-f]{8})["'"'"']?[[:space:]]*[;,]?[[:space:]]*$'
+	local re='(^|[^[:alnum:]_-])([a-z][a-z0-9_-]*)["'"'"']?[[:space:]]*[=:][[:space:]]*["'"'"']?([0-9a-f]{8}|[0-9a-f]{6})["'"'"']?[[:space:]]*[;,]?[[:space:]]*$'
 	[[ "$text" =~ $re ]] || return 0
 	key="${BASH_REMATCH[2]}"
 	value="${BASH_REMATCH[3]}"
-	case "$key" in
-	*color* | *colour* | *background* | *foreground* | *border* | *selection* | *match* | \
-		*placeholder* | *prompt* | *counter* | *separator* | *frame* | *text* | *input*) ;;
-	*) return 0 ;;
-	esac
+	is_color_key "$key" || return 0
+	# Six digits and no letter is a number, unless it is one of the two colors
+	# of Mocha that have no letter.
+	if [[ "${#value}" -eq 6 && "$value" =~ ^[0-9]+$ && "$value" != 181825 && "$value" != 313244 ]]; then
+		return 0
+	fi
+	hex_allowed "$path" || hit "$path" "$line" hex-color
+	[[ "${#value}" -eq 8 && "${value:6:2}" != ff ]] || return 0
 	# The inside of the lock ring is the one place a color may be see-through.
 	case "$key" in
 	inside-color | inside-*-color) return 0 ;;
 	esac
-	[[ "${value:6:2}" == ff ]] || hit "$path" "$line" opacity
+	hit "$path" "$line" opacity
 }
 
 # A transition or animation key is a hit unless its value turns motion off:
@@ -512,10 +674,11 @@ motion_hit() {
 	hit "$1" "$2" motion
 }
 
-search radius_hit code '(?i).{0,160}radius["'"'"']?\s*[=:].{0,160}'
+search radius_hit code '(?i).{0,160}(?:radius|rounded|round[_-]corners).{0,160}'
 search opacity_hit code '(?i).{0,160}(?:opacity|alpha|rgba|hsla|rgb\(|hsl\().{0,160}'
-search bare_color_hit code '(?i)(?:^|[^[:alnum:]_-])[a-z][a-z0-9_-]*["'"'"']?\s*[=:]\s*["'"'"']?[0-9a-f]{8}["'"'"']?\s*[;,]?\s*$'
-search motion_hit code '(?i)(?:^|[\s{;"'"'"'(,])(?:-(?:gtk|moz|webkit|ms|o)-)?(?:transition|animations?)(?:-[a-z-]+)?["'"'"']?\s*[=:][^;{}]{0,60}|@(?:-[a-z]+-)?keyframes\b'
+search transparent_hit code '(?i).{0,160}transparent.{0,160}'
+search bare_color_hit code '(?i)(?:^|[^[:alnum:]_-])[a-z][a-z0-9_-]*["'"'"']?\s*[=:]\s*["'"'"']?(?:[0-9a-f]{8}|[0-9a-f]{6})["'"'"']?\s*[;,]?\s*$'
+search motion_hit code '(?i)(?:^|[\s{;"'"'"'(,])(?:(?:-(?:gtk|moz|webkit|ms|o)-)?(?:transition|animations?)(?:-[a-z-]+)?|(?:gtk-)?enable-animations)["'"'"']?\s*[=:][^;{}]{0,60}|@(?:-[a-z]+-)?keyframes\b'
 
 # --- Report -------------------------------------------------------------------
 

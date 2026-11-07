@@ -329,7 +329,7 @@ pkgs.runCommand "theme-apps"
     cp ${
       pkgs.writeText "kdeglobals" mauve.xdg.configFile."kdeglobals".text
     } gen/modules/theme/kdeglobals
-    bash ${self}/scripts/check-style.sh gen || status=1
+    (cd gen && bash ${self}/scripts/check-style.sh .) || status=1
 
     [ "$status" = 0 ]
     touch $out

@@ -149,13 +149,46 @@ the_same_hex_color_inside_the_theme_module_passes() {
 	expect_clean
 }
 
-a_vendored_directory_is_not_judged() {
+the_vendor_root_is_exempt_from_the_hex_rule_only() {
 	new_tree
-	put vendor/catppuccin/mocha.css 'a { color: #cba6f7; border-radius: 6px; transition: all 1s; }\n'
-	put themes/mocha.css 'a { color: #cba6f7; }\n'
-	put modules/desktop/third_party/x.css 'a { color: #cba6f7; }\n'
+	put vendor/catppuccin/mocha.css 'a { color: #cba6f7; }\n'
 	put node_modules/x/y.css 'a { color: #cba6f7; }\n'
+	put modules/desktop/node_modules/y.css 'a { color: #cba6f7; }\n'
 	expect_clean
+	put vendor/catppuccin/round.css 'a { border-radius: 6px; transition: all 1s; opacity: 0.5; }\n'
+	expect_hits "vendor/catppuccin/round.css:1:motion" "vendor/catppuccin/round.css:1:opacity" \
+		"vendor/catppuccin/round.css:1:radius"
+}
+
+an_exemption_is_a_place_and_not_a_name() {
+	new_tree
+	put modules/desktop/themes/g.css 'a { border-radius: 9px; color: #ff0000; }\n'
+	put modules/desktop/tests/g2.css 'a { border-radius: 9px; }\n'
+	put modules/desktop/vendor/g3.css 'a { color: #ff0000; }\n'
+	put modules/desktop/fixtures/y.nix 'c = "#cba6f7";\n'
+	put modules/.worktrees/w.nix 'c = "#cba6f7";\n'
+	put templates/default/modules/theme/g4.nix 'c = "#ff0000";\n'
+	put tools/ravnix-x/src/tests/z.nix 'c = "#cba6f7";\n'
+	put other/docs/style.md 'The accent is #cba6f7.\n'
+	put themes/mocha.css 'a { color: #cba6f7; }\n'
+	put third_party/x.css 'a { color: #cba6f7; }\n'
+	expect_hits "modules/.worktrees/w.nix:1:hex-color" "modules/desktop/fixtures/y.nix:1:hex-color" \
+		"modules/desktop/tests/g2.css:1:radius" "modules/desktop/themes/g.css:1:hex-color" \
+		"modules/desktop/themes/g.css:1:radius" "modules/desktop/vendor/g3.css:1:hex-color" \
+		"other/docs/style.md:1:hex-color" "templates/default/modules/theme/g4.nix:1:hex-color" \
+		"themes/mocha.css:1:hex-color" "third_party/x.css:1:hex-color" \
+		"tools/ravnix-x/src/tests/z.nix:1:hex-color"
+}
+
+a_directory_argument_is_anchored_at_the_current_directory() {
+	new_tree
+	put modules/theme/x.nix 'c = "#cba6f7";\n'
+	put modules/y.nix 'c = "#cba6f7";\n'
+	put tests/z.css 'a { border-radius: 4px; }\n'
+	run_check modules tests
+	expect_status 1
+	expect_lines 1
+	expect_out "modules/y.nix:1:hex-color"
 }
 
 the_style_document_itself_may_hold_hex_colors() {
@@ -222,7 +255,8 @@ the_theme_exemption_is_the_directory_not_a_prefix() {
 	put modules/theme-extra/x.nix 'c = "#cba6f7";\n'
 	put modules/themed/y.nix 'c = "#cba6f7";\n'
 	put other/modules/theme/z.nix 'c = "#cba6f7";\n'
-	expect_hits "modules/theme-extra/x.nix:1:hex-color" "modules/themed/y.nix:1:hex-color"
+	expect_hits "modules/theme-extra/x.nix:1:hex-color" "modules/themed/y.nix:1:hex-color" \
+		"other/modules/theme/z.nix:1:hex-color"
 }
 
 # Places that are not judged.
@@ -232,8 +266,8 @@ tests_fixtures_and_other_languages_are_not_judged() {
 	put tests/theme/palette.nix 'base = "#1e1e2e";\n'
 	put tests/theme/fixtures/bad.css 'a { color: #fff; border-radius: 4px; opacity: 0.5; transition: all 1s; }\n'
 	put scripts/tests/x.sh 'echo "#cba6f7"\n'
-	put modules/desktop/fixtures/y.nix 'c = "#cba6f7";\n'
-	put modules/testdata/z.css 'a { border-radius: 9px; }\n'
+	put scripts/tests/z.nix 'c = "#cba6f7";\n'
+	put tools/ravnix-x/tests/y.nix 'c = "#cba6f7";\n'
 	put tools/ravnix-x/main.odin 'c :: "#cba6f7"\n'
 	put tools/ravnix-x/tests/x_test.odin 'c :: "#cba6f7"\n'
 	put bench/run.py 'c = "#cba6f7"\n'
@@ -331,6 +365,46 @@ the_lock_ring_radius_is_a_gauge_not_a_corner() {
 	expect_clean
 }
 
+a_rounded_border_is_a_hit() {
+	new_tree
+	put modules/a.nix 'ui = { border = "rounded"; };\nwinborder = "rounded";\n'
+	put modules/nvim/init.lua 'vim.o.winborder = "rounded"\nui = { border = "single" }\nvim.o.winborder = "single"\n'
+	put modules/b.nix 'border = "single";\nstyle = "rounded";\n'
+	expect_hits "modules/a.nix:1:radius" "modules/a.nix:2:radius" "modules/nvim/init.lua:1:radius"
+}
+
+rounded_corners_are_a_hit_unless_off() {
+	new_tree
+	put modules/mangohud.conf 'round_corners=10\n'
+	put modules/b.nix 'rounded_corners = true;\nround-corners = 1;\n'
+	put modules/c.conf 'round_corners=0\n'
+	put modules/d.nix 'rounded_corners = false;\n'
+	expect_hits "modules/b.nix:1:radius" "modules/b.nix:2:radius" "modules/mangohud.conf:1:radius"
+}
+
+any_radius_key_is_a_hit_except_the_lock_ring_gauge() {
+	new_tree
+	put modules/dunstrc 'progress_bar_corner_radius = 4\nicon_corner_radius = 4\n'
+	put modules/b.nix 'selection_radius = 3;\nfoo-radius: 2px;\n'
+	put modules/c.nix 'progress_bar_corner_radius = 0;\nindicator_radius = 110;\n"indicator-radius" = 110;\n'
+	expect_hits "modules/b.nix:1:radius" "modules/b.nix:2:radius" "modules/dunstrc:1:radius" \
+		"modules/dunstrc:2:radius"
+}
+
+a_declaration_after_a_closed_comment_or_a_selector_star_is_judged() {
+	new_tree
+	put a.css '/* x */ border-radius: 4px;\n* button { border-radius: 4px; }\n'
+	expect_hits "a.css:1:radius" "a.css:2:radius"
+}
+
+a_lua_comment_is_a_comment() {
+	new_tree
+	put modules/nvim/init.lua '-- No animations: no smooth scrolling, corner_radius = 4\nvim.g.snacks_animate = false\nvim.o.winborder = "single"\nlocal half = 6 // 2\n'
+	expect_clean
+	put modules/nvim/b.lua 'animations = true\n-- animations = true\n'
+	expect_hits "modules/nvim/b.lua:1:motion"
+}
+
 a_radius_in_a_comment_passes() {
 	new_tree
 	put a.css '/* border-radius: 4px */\n/*\n * border-radius: 4px;\n */\na { border-radius: 0; /* was border-radius: 4px */ }\n'
@@ -349,7 +423,7 @@ an_opacity_below_one_is_a_hit() {
 
 an_opacity_of_one_passes() {
 	new_tree
-	put a.css 'a { opacity: 1; }\nb { opacity: 1.0; }\nc { opacity: 100%; }\nd { background: transparent; border-bottom: 2px solid transparent; }\n'
+	put a.css 'a { opacity: 1; }\nb { opacity: 1.0; }\nc { opacity: 100%; }\n'
 	put modules/b.nix 'opacity = 1;\ncfg.opacity = config.x.opacity;\n'
 	expect_clean
 }
@@ -383,31 +457,68 @@ the_sway_opacity_command_is_a_hit() {
 
 a_translucent_bare_color_in_a_config_is_a_hit() {
 	new_tree
-	put modules/fuzzel.ini '[colors]\nbackground=1e1e2edd\ntext=cdd6f4ff\nselection=45475acc\n'
-	put modules/b.nix 'border = "cba6f780";\n'
-	put modules/c.ini '[colors]\nbackground=1e1e2eff\nselection=45475aFF\n'
-	expect_hits "modules/b.nix:1:opacity" "modules/fuzzel.ini:2:opacity" "modules/fuzzel.ini:4:opacity"
+	# Below the theme module, where a hex color is allowed, only the alpha counts.
+	put modules/theme/fuzzel.ini '[colors]\nbackground=1e1e2edd\ntext=cdd6f4ff\nselection=45475acc\n'
+	put modules/theme/b.nix 'border = "cba6f780";\nring-color = "#585b7080";\n'
+	put modules/theme/c.ini '[colors]\nbackground=1e1e2eff\nselection=45475aFF\n'
+	expect_hits "modules/theme/b.nix:1:opacity" "modules/theme/b.nix:2:opacity" \
+		"modules/theme/fuzzel.ini:2:opacity" "modules/theme/fuzzel.ini:4:opacity"
+}
+
+a_bare_color_outside_the_theme_is_a_hex_color_hit() {
+	new_tree
+	put modules/fuzzel.ini '[colors]\nbackground=1e1e2eff\ntext=cdd6f4\nselection=45475aFF\n'
+	put modules/swaylock.conf 'inside-color=00000000\nring-color=585b70\n'
+	put modules/b.nix '"inside-ver-color" = "#1e1e2ecc";\nborder = "cba6f7";\n'
+	put modules/theme/ok.conf 'background=1e1e2eff\ninside-color=00000000\nring-color=585b70\n'
+	expect_hits "modules/b.nix:1:hex-color" "modules/b.nix:2:hex-color" \
+		"modules/fuzzel.ini:2:hex-color" "modules/fuzzel.ini:3:hex-color" "modules/fuzzel.ini:4:hex-color" \
+		"modules/swaylock.conf:1:hex-color" "modules/swaylock.conf:2:hex-color"
 }
 
 an_eight_digit_value_that_is_not_a_color_passes() {
 	new_tree
-	put modules/a.nix 'version = "20240101";\nrev = "deadbeef";\nserial = "12345678";\n'
+	put modules/a.nix 'version = "20240101";\nrev = "deadbeef";\nserial = "12345678";\nshort = "123456";\n'
+	put modules/b.nix 'contextId = "1a2b3c4d";\ninputs = "1a2b3c4d";\nframework = "1a2b3c";\nrematched = "1a2b3c4d";\n'
 	expect_clean
 }
 
 the_inside_of_the_lock_ring_is_the_one_exemption() {
 	new_tree
-	put modules/swaylock.conf 'inside-color=00000000\ninside-clear-color=1e1e2e00\ninside-ver-color=1e1e2ecc\ninside-wrong-color=1e1e2ecc\ninside-caps-lock-color=1e1e2ecc\n'
-	put modules/swaylock.nix '"inside-ver-color" = "1e1e2ecc";\ninside-color = "00000000";\n'
+	put modules/theme/swaylock.conf 'inside-color=00000000\ninside-clear-color=1e1e2e00\ninside-ver-color=1e1e2ecc\ninside-wrong-color=1e1e2ecc\ninside-caps-lock-color=1e1e2ecc\n'
+	put modules/theme/swaylock.nix '"inside-ver-color" = "1e1e2ecc";\ninside-color = "00000000";\n"inside-wrong-color" = "#1e1e2ecc";\ninside-clear-color = "#1e1e2e00";\n'
 	expect_clean
 }
 
 no_other_swaylock_color_may_be_translucent() {
 	new_tree
-	put modules/swaylock.conf 'ring-color=585b7080\nline-color=1e1e2e00\ntext-color=cdd6f4cc\nseparator-color=00000000\nkey-hl-color=cba6f7cc\n'
-	expect_hits "modules/swaylock.conf:1:opacity" "modules/swaylock.conf:2:opacity" \
-		"modules/swaylock.conf:3:opacity" "modules/swaylock.conf:4:opacity" \
-		"modules/swaylock.conf:5:opacity"
+	put modules/theme/swaylock.conf 'ring-color=585b7080\nline-color=1e1e2e00\ntext-color=cdd6f4cc\nseparator-color=00000000\nkey-hl-color=cba6f7cc\n'
+	put modules/theme/swaylock.nix 'text-color = "#cdd6f4cc";\n'
+	expect_hits "modules/theme/swaylock.conf:1:opacity" "modules/theme/swaylock.conf:2:opacity" \
+		"modules/theme/swaylock.conf:3:opacity" "modules/theme/swaylock.conf:4:opacity" \
+		"modules/theme/swaylock.conf:5:opacity" "modules/theme/swaylock.nix:1:opacity"
+}
+
+a_sway_command_in_a_nix_string_is_a_hit() {
+	new_tree
+	put modules/a.nix 'command = "opacity 0.9";\ncmd2 = "opacity set 0.8";\ncmd3 = "opacity 1";\n'
+	expect_hits "modules/a.nix:1:opacity" "modules/a.nix:2:opacity"
+}
+
+the_transparent_keyword_is_a_hit() {
+	new_tree
+	put a.css '#clock { background: transparent; }\nb { border-bottom: 2px solid transparent; }\n@define-color marker transparent;\nc { background: inherit; border-bottom: 2px solid @mantle; }\n'
+	put modules/b.nix 'background = "transparent";\ndescription = "A transparent proxy";\n'
+	expect_hits "a.css:1:opacity" "a.css:2:opacity" "a.css:3:opacity" "modules/b.nix:1:opacity"
+}
+
+an_alpha_that_is_a_smoothing_factor_is_no_opacity() {
+	new_tree
+	put modules/a.toml 'smoothing_alpha = 0.3\nlearning-alpha = 0.1\n'
+	expect_clean
+	put modules/b.toml 'alpha = 0.5\nbg_alpha = 0.5\nwindow-alpha: 0.9\ninactive_opacity = 0.9\n'
+	expect_hits "modules/b.toml:1:opacity" "modules/b.toml:2:opacity" "modules/b.toml:3:opacity" \
+		"modules/b.toml:4:opacity"
 }
 
 # Motion.
@@ -433,6 +544,20 @@ a_key_that_turns_motion_off_passes() {
 	expect_hits "c.css:1:motion" "modules/c.nix:1:motion"
 }
 
+an_issue_number_in_a_trailing_comment_is_no_color() {
+	new_tree
+	put modules/a.nix 'x = 1; # see issue #290879\n'
+	put modules/b.nix 'c = "#333333"; # see #290879\n'
+	expect_hits "modules/b.nix:1:hex-color"
+}
+
+a_link_anchor_is_no_color() {
+	new_tree
+	put docs/a.md 'See [the facade](#facade) and [x](#deadbeef), <a href="#facade">y</a>.\n'
+	put docs/b.md 'Mauve (#cba6f7) and [x](#cba6f7) here.\n'
+	expect_hits "docs/b.md:1:hex-color"
+}
+
 an_issue_number_is_no_color() {
 	new_tree
 	put docs/a.md 'See issue #290879 and PR #216321, [#221181](https://example.org).\n'
@@ -440,6 +565,15 @@ an_issue_number_is_no_color() {
 	put docs/b.md 'Surface0 is #313244 and Mantle #181825.\n'
 	put modules/b.nix 'c = "#333333";\n# was #313244\n'
 	expect_hits "docs/b.md:1:hex-color" "modules/b.nix:1:hex-color" "modules/b.nix:2:hex-color"
+}
+
+turning_animations_on_is_a_hit() {
+	new_tree
+	put modules/a.nix '"gtk-enable-animations" = true;\nenable-animations = true;\n"enable-animations" = "true";\n'
+	put modules/b.ini 'gtk-enable-animations=1\n'
+	put modules/c.ini 'gtk-enable-animations=0\ngtk-enable-animations=false\n'
+	expect_hits "modules/a.nix:1:motion" "modules/a.nix:2:motion" "modules/a.nix:3:motion" \
+		"modules/b.ini:1:motion"
 }
 
 words_that_merely_contain_the_names_pass() {
@@ -469,6 +603,15 @@ a_one_line_init_block_and_a_different_theme_are_judged_too() {
 	put docs/a.md '%%{init: {"theme": "dark"}}%%\n'
 	put docs/b.md '%%{init: {"theme": "base", "themeVariables": {"background": "#1e1e2e", "primaryColor": "#313244", "fontFamily": "JetBrainsMono Nerd Font, ui-monospace, monospace"}}}%%\n'
 	expect_hits "docs/a.md:1:mermaid-init"
+}
+
+init_spellings_with_spaces_or_initialize_are_blocks() {
+	new_tree
+	put docs/a.md '%%{ init: {"theme": "dark"} }%%\n'
+	put docs/b.md '%%{initialize: {"theme": "dark"}}%%\n'
+	put docs/c.md '%%{initialize: {"theme": "base", "themeVariables": {"background": "#1e1e2e", "primaryColor": "#313244", "fontFamily": "JetBrainsMono Nerd Font, ui-monospace, monospace"}}}%%\n'
+	put docs/d.md '%%{ init: {"theme": "base", "themeVariables": {"background": "#1e1e2e", "primaryColor": "#313244", "fontFamily": "JetBrainsMono Nerd Font, ui-monospace, monospace"}} }%%\n'
+	expect_hits "docs/a.md:1:mermaid-init" "docs/b.md:1:mermaid-init"
 }
 
 prose_about_the_init_syntax_is_no_block() {
@@ -625,6 +768,50 @@ a_file_argument_is_judged_by_its_own_path() {
 	expect_lines 1
 }
 
+a_directory_outside_the_current_directory_is_its_own_root() {
+	new_tree
+	put modules/theme/x.nix 'c = "#cba6f7";\n'
+	put modules/y.nix 'c = "#cba6f7";\n'
+	put tests/z.css 'a { border-radius: 4px; }\n'
+	put themes/t.css 'a { border-radius: 4px; }\n'
+	local elsewhere="$scratch/elsewhere"
+	mkdir -p "$elsewhere"
+	capture env -C "$elsewhere" "$check" "$tree"
+	expect_status 1
+	expect_out "$tree/modules/y.nix:1:hex-color
+$tree/themes/t.css:1:radius"
+}
+
+an_absolute_directory_below_the_current_directory_is_anchored_there() {
+	new_tree
+	put modules/theme/x.nix 'c = "#cba6f7";\n'
+	put modules/y.nix 'c = "#cba6f7";\n'
+	put tests/z.css 'a { border-radius: 4px; }\n'
+	capture env -C "$tree" "$check" "$tree/modules" "$tree/tests"
+	expect_status 1
+	expect_out "$tree/modules/y.nix:1:hex-color"
+	run_check ./modules ./tests
+	expect_status 1
+	expect_out "./modules/y.nix:1:hex-color"
+}
+
+a_file_outside_the_current_directory_gets_no_exemption() {
+	new_tree
+	put modules/theme/x.nix 'c = "#cba6f7";\n'
+	local elsewhere="$scratch/elsewhere"
+	mkdir -p "$elsewhere"
+	capture env -C "$elsewhere" "$check" "$tree/modules/theme/x.nix"
+	expect_status 1
+	expect_out "$tree/modules/theme/x.nix:1:hex-color"
+}
+
+a_double_slash_comment_hides_an_issue_number_except_in_nix() {
+	new_tree
+	put modules/a.conf 'x = 1 // see #290879\n'
+	put modules/b.nix 'x = a // b; # not #290879\nx = a // b; // see #290879\nx = "#290879"; # a color\n'
+	expect_hits "modules/b.nix:2:hex-color" "modules/b.nix:3:hex-color"
+}
+
 a_file_given_by_an_absolute_path_is_judged_below_the_current_directory() {
 	local dir="$scratch/tests/vendor/proj"
 	mkdir -p "$dir/modules" "$dir/tests"
@@ -674,7 +861,9 @@ tests=(
 	a_missing_rg_is_bad_usage
 	a_hex_color_in_a_module_outside_the_theme_is_a_hit
 	the_same_hex_color_inside_the_theme_module_passes
-	a_vendored_directory_is_not_judged
+	the_vendor_root_is_exempt_from_the_hex_rule_only
+	an_exemption_is_a_place_and_not_a_name
+	a_directory_argument_is_anchored_at_the_current_directory
 	the_style_document_itself_may_hold_hex_colors
 	the_theme_exemption_is_the_directory_not_a_prefix
 	another_document_may_not
@@ -695,6 +884,11 @@ tests=(
 	a_radius_of_zero_passes
 	radius_keys_in_configs_are_judged
 	the_lock_ring_radius_is_a_gauge_not_a_corner
+	a_rounded_border_is_a_hit
+	rounded_corners_are_a_hit_unless_off
+	any_radius_key_is_a_hit_except_the_lock_ring_gauge
+	a_declaration_after_a_closed_comment_or_a_selector_star_is_judged
+	a_lua_comment_is_a_comment
 	a_radius_in_a_comment_passes
 	an_opacity_below_one_is_a_hit
 	an_opacity_of_one_passes
@@ -703,16 +897,24 @@ tests=(
 	an_alpha_key_in_a_config_is_a_hit
 	the_sway_opacity_command_is_a_hit
 	a_translucent_bare_color_in_a_config_is_a_hit
+	a_bare_color_outside_the_theme_is_a_hex_color_hit
 	an_eight_digit_value_that_is_not_a_color_passes
 	the_inside_of_the_lock_ring_is_the_one_exemption
 	no_other_swaylock_color_may_be_translucent
+	a_sway_command_in_a_nix_string_is_a_hit
+	the_transparent_keyword_is_a_hit
+	an_alpha_that_is_a_smoothing_factor_is_no_opacity
 	a_transition_or_animation_key_is_a_hit
 	a_key_that_turns_motion_off_passes
+	an_issue_number_in_a_trailing_comment_is_no_color
+	a_link_anchor_is_no_color
 	an_issue_number_is_no_color
+	turning_animations_on_is_a_hit
 	words_that_merely_contain_the_names_pass
 	a_mermaid_init_block_identical_to_the_shared_one_passes
 	a_mermaid_init_block_with_a_changed_color_is_a_hit
 	a_one_line_init_block_and_a_different_theme_are_judged_too
+	init_spellings_with_spaces_or_initialize_are_blocks
 	prose_about_the_init_syntax_is_no_block
 	an_indented_init_block_is_judged
 	an_init_block_that_never_closes_is_a_hit
@@ -729,6 +931,10 @@ tests=(
 	many_files_are_judged_in_slices
 	an_unreadable_file_is_bad_usage
 	a_file_argument_is_judged_by_its_own_path
+	a_directory_outside_the_current_directory_is_its_own_root
+	an_absolute_directory_below_the_current_directory_is_anchored_there
+	a_file_outside_the_current_directory_gets_no_exemption
+	a_double_slash_comment_hides_an_issue_number_except_in_nix
 	a_file_given_by_an_absolute_path_is_judged_below_the_current_directory
 	the_same_file_given_twice_is_reported_once
 	two_runs_at_once_agree

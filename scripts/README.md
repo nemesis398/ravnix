@@ -8,7 +8,7 @@ of each script.
 | --- | --- |
 | `check.sh` | the gate: `--fast` (boundary check, style check, shellcheck) on every commit and stop, the full gate (adds `nix flake check`) before every push |
 | `check-public.sh` | the public-boundary check: no deny-list value in any file, file name or link target |
-| `check-style.sh` | the style check: no hex color outside `modules/theme/`, no radius other than 0, nothing translucent but the inside of the lock ring, no transition or animation, no Mermaid init block but the shared one (`docs/mermaid-theme.json`); prints `file:line:rule` |
+| `check-style.sh` | the style check: no hex color outside `modules/theme/`, no radius other than 0, nothing translucent (the keyword `transparent` too) but the inside of the lock ring, no transition or animation, no Mermaid init block but the shared one (`docs/mermaid-theme.json`); prints `file:line:rule`. A child that shows its parent uses the role color or `inherit`, never `transparent` |
 | `lib/git-snapshot.sh` | lays out the index or a commit as plain files, for the checks to read what git will commit or push |
 | `hooks/stop-gate.sh` | the Claude Code Stop hook: the fast gate before the agent may stop |
 | `hooks/no-verify-guard.sh` | the Claude Code PreToolUse hook: refuses commands that skip or redirect the git hooks |
@@ -70,44 +70,88 @@ Findings that are not fixed, so nobody mistakes them for covered.
 
 ### `check-style.sh`
 
+What it judges, and where:
+
 - It judges styling sources by type and place: `*.nix`, CSS, `*.ini`,
-  `*.conf`, `*.toml`, `*.jsonc`, `*.kdl`, `*.colors`, anything below
-  `modules/` or `hosts/`, and Markdown and Mermaid files (hex colors and init
-  blocks only). A styling source of another kind outside those places (a
-  Python script that draws, an SVG, Odin code) is not read, so "never write a
-  hex color outside `modules/theme/`" (AGENTS.md) is wider than what the
+  `*.conf`, `*.toml`, `*.jsonc`, `*.kdl`, `*.colors`, anything below a
+  `modules/` or `hosts/` directory, and Markdown and Mermaid files (hex colors
+  and init blocks only). A styling source of another kind outside those places
+  (a Python script that draws, an SVG, Odin code) is not read, so "never write
+  a hex color outside `modules/theme/`" (AGENTS.md) is wider than what the
   check enforces there.
-- Directories named `vendor`, `vendored`, `third_party`, `third-party`,
-  `themes`, `tests`, `fixtures`, `fixture` and `testdata` are skipped whole,
-  at any depth, because they hold vendored files and fixtures that fail on
-  purpose. Anything put there is not judged.
-- Hex colors are `#` plus 6 or 8 digits. `#rgb` and `#rgba` are searched only
-  in CSS files, in quotes and after a color property, because `#123` and
-  `#add` are issue numbers and anchors everywhere else. Colors written as
-  `rgb(...)`, a name, `0xRRGGBB`, a decimal triple (KDE) or a bare `rrggbb`
-  are not hex colors to it; a bare `rrggbbaa` is judged for its alpha, on
-  color keys only (`color`, `background`, `border`, `selection`, ...), so a
-  version or a revision is never mistaken for one.
-- The lock ring's exemption is a key name: `inside-color` and
-  `inside-*-color`. A translucent value on any other key is a hit.
-- Comment lines (`#` and a space, `;`, `//`, `/*`, a leading `*`) are not
-  searched for radius, opacity and motion. The body lines of a block comment
-  that do not start with `*` are, so prose there can be a false positive; a
-  hex color in a comment is a hit on purpose.
-- A radius or opacity built by interpolation (`"border-${side}-radius"`), taken
-  from a variable (`var(--r)` is a hit, `cfg.radius` is not) or set by a
-  sibling rule is not followed. Motion is the keys `transition*`,
-  `animation*` and `@keyframes`, except a key whose value turns motion off
-  (`none`, `false`, `off`, `0`, `0s`, `0ms`); other ways to move (a blinking
-  cursor, smooth scrolling) are not judged.
+- An exemption is a place at the root of the judged tree, never a directory
+  name. Skipped whole: `.worktrees/`, `.superpowers/`, `tests/`,
+  `scripts/tests/` and `tools/NAME/tests/` (fixtures that fail on purpose),
+  and a directory named `.git` or `node_modules` at any depth. Hex colors are
+  allowed in `modules/theme/` and `docs/style.md`, and in `vendor/`, the one
+  root for vendored files, which every other rule still judges. A `themes/`,
+  `tests/` or `vendor/` further down is judged like any other directory.
+- The root is the current directory. A relative path, or an absolute one below
+  the current directory, is placed by its path from there. A directory outside
+  it is the root of its own tree. A file outside it is placed by its path as
+  given, so it gets no exemption: run the check from the root of the checkout.
+
+What it sees, and what it does not (the false negatives):
+
+- Hex colors are `#` plus 6 or 8 digits, and a bare `rrggbb` or `rrggbbaa`
+  value on a color key (`fuzzel` and `swaylock` write them), which is a
+  hex-color hit outside `modules/theme/` and, with an alpha below `ff`, an
+  opacity hit. A color key is one that holds `color` or `colour`, or has a
+  dash or underscore separated part `background`, `foreground`, `bg`, `fg`,
+  `border`, `selection`, `match`, `placeholder`, `prompt`, `counter`,
+  `separator`, `frame`, `text` or `input`. Not seen: a bare color on another
+  key, one that shares its line with other values, and a six-digit color with
+  no letter in it (`333333`), except Mocha's own Mantle and Surface0.
+- `#rgb` and `#rgba` are searched only in CSS files, in quotes and after a
+  color property, because `#123` and `#add` are issue numbers and anchors
+  everywhere else. Colors written as `rgb(...)`, a name, `0xRRGGBB` or a
+  decimal triple (KDE) are not hex colors to it.
 - An eight-digit hex color is read as `#rrggbbaa`. One written `#aarrggbb`
   (Qt, Android) is a hex-color hit anyway, and inside `modules/theme/` it is
   a false opacity hit unless it is fully opaque in both readings.
-- In Markdown and on comment lines an all-digit `#123456` is taken for an
-  issue number. The all-digit Mocha colors Mantle and Surface0 are still
-  found, but another all-digit color in prose (`#333333`) is not.
-- Mermaid blocks are compared with the shared one without white space, so the
-  key order counts. Theme settings given other than by `%%{init: ...}%%`
-  (front matter `config:`) and Mermaid shapes are not judged.
+- An all-digit `#123456` is taken for an issue number in Markdown, on a comment
+  line and in a trailing `#` or `//` comment. The all-digit Mocha colors
+  Mantle and Surface0 are still found, but another all-digit color in prose
+  (`#333333`) is not. A link target, `](#facade)` or `href="#facade"`, is no
+  color, which also hides a real color written as a link target.
+- The lock ring's exemption is a key name: `inside-color` and
+  `inside-*-color`, bare or with a `#`, when the key and the value are on one
+  line. A translucent value on any other key is a hit.
+- Opacity keys are every key that ends in `opacity` and the key `alpha` bare
+  or led by a surface (`background`, `bg`, `window`, `inactive`, `border`,
+  `text`, ... `_alpha`), so a `smoothing_alpha` is no hit. Another alpha key
+  (`layer_alpha`) is not seen, nor an alpha spelled `fade(`, `color-mix(` or
+  as a percentage word. Sway's `opacity` command is a hit also inside a
+  quoted string; prose in a string that starts `opacity 0.5` is a false hit.
+- `transparent` is a hit as the value of a key, as the last word of a CSS
+  declaration, and in `@define-color name transparent`. It is not seen inside
+  a function (`linear-gradient(to right, transparent, red)`), and prose that
+  holds the word is no hit. `rgba(0, 0, 0, 0)` is judged by its alpha.
+- Radius: `border-radius` and its per-corner forms, every key that ends in
+  `radius` or `-radius` (except the lock ring's `indicator-radius`), a key with
+  `border` in its name set to `rounded`, and `round_corners` or
+  `rounded_corners` with any value but 0, false, off, no or none. Not seen:
+  other spellings of the same thing (Hyprland's `rounding`, a `style` set to
+  `rounded`, rounded box-drawing glyphs `╭╮╰╯` in a prompt or a border
+  string), and a radius built by interpolation (`"border-${side}-radius"`),
+  taken from a variable (`var(--r)` is a hit, `cfg.radius` is not) or set by a
+  sibling rule.
+- Motion is the keys `transition*`, `animation*` and `@keyframes`, and
+  `enable-animations` and `gtk-enable-animations` set to anything but an
+  off-value (`none`, `false`, `off`, `no`, `0`, `0s`, `0ms`). Other ways to
+  move are not judged: a blinking cursor, smooth scrolling, a key such as
+  `animations-enabled`. An attribute that is named like a key
+  (`animation-nvim = ...` in a plugin set) is a false hit.
+- Comment lines (`#` and a space, `;`, `//`, `--` in Lua, `/*`, a leading `*`)
+  are not searched for radius, opacity and motion. A `/* ... */` that ends
+  before more code is cut out of the line. The body lines of a block comment
+  that do not start with `*` are searched, so prose there can be a false
+  positive; a comment that trails code on its line (`x = 1; # radius: 4`) is
+  searched too. A hex color in a comment is a hit on purpose.
 - The line of a hit is the line of the match; a declaration that spans lines
   (`border-radius:` on one, its value on the next) is judged by the first.
+- Mermaid blocks (`%%{init: ...}%%` and `%%{initialize: ...}%%`, also with
+  white space after the brace) are compared with the shared one without white
+  space, so the key order counts. Theme settings given other than by an init
+  block (front matter `config:`), directives other than init, and Mermaid
+  shapes are not judged.
