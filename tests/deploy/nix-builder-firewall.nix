@@ -11,13 +11,23 @@
 #   chain that is gone. The keeper loop does so on its own, logs what it repaired, and
 #   stops on TERM; restarted on a table that has the rule, it changes nothing.
 # - Two runs at once leave the table right after the next pass.
-# - --remove gives back the table as it was, and is harmless twice.
+# - --remove gives back the table as it was, and is harmless twice, and
+#   needs none of the control's variables.
+# - The control, against real loopback ports (helpers/listeners.py): a
+#   target that connects or refuses answers; one that gives no answer in
+#   time, or has no route, is dark. Each pass writes `ok TIME TARGETS` or
+#   `dark TIME TARGETS` to the control file, whole, and probes the targets
+#   at once. A dark target leaves the rule in place and fails --check,
+#   which writes nothing. The keeper says when a target goes dark and when
+#   it answers again, and the file follows. A control file it cannot write
+#   stops it.
 # - It refuses, before any iptables call, a subnet that is no IPv4 network
 #   (host bits, a leading zero, an octet or prefix out of range, IPv6, extra
-#   words), a bridge that is no interface name, and an interval that is no
-#   number of seconds; a missing
-#   DOCKER-USER, a missing iptables and a failing one stop it with an error,
-#   which the service's restart policy retries.
+#   words), a bridge that is no interface name, an interval that is no
+#   number of seconds, probe targets that are no IPv4 address:port pairs, a
+#   control file that is no absolute path, and a probe timeout out of
+#   range; a missing DOCKER-USER, a missing iptables and a failing one stop
+#   it with an error, which the service's restart policy retries.
 #
 # That the real iptables prints the rules the way the script compares them
 # is in tests/services/nix-builder.md, from the NAS.
@@ -26,12 +36,16 @@ pkgs.runCommand "deploy-nix-builder-firewall"
   {
     script = ../../deploy/compose/nix-builder/firewall.sh;
     fake = ./helpers/fake-iptables.sh;
+    listeners = ./helpers/listeners.py;
     nativeBuildInputs = [
       pkgs.shellcheck
       pkgs.util-linux
+      pkgs.python3
     ];
   }
   ''
+    # A command that stops the check says where.
+    trap 'echo "stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
     shellcheck -s bash "$script" "$fake"
 
     bash=$(command -v bash)
@@ -44,6 +58,16 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       printf 'FAIL: %s\n' "$*"
       failed=1
     }
+
+    # Loopback ports that accept, refuse, never answer, and switch.
+    python3 -I "$listeners" >"$TMPDIR/ports" &
+    listeners_pid=$!
+    for _ in $(seq 100); do
+      [ -s "$TMPDIR/ports" ] && break
+      sleep 0.1
+    done
+    read -r accepting refusing silent switch <"$TMPDIR/ports"
+    answering="127.0.0.1:$accepting 127.0.0.1:$refusing"
 
     # table: a fresh filter table as the NAS has it, in a new directory.
     table() {
@@ -60,14 +84,15 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       echo "$d"
     }
     # fw TABLE ARGS...: firewall.sh against TABLE, with only the variables
-    # subnet and bridge (unset: good ones), interval and broken (empty: none)
-    # give, and
-    # under the command in the array limit.
+    # subnet, bridge, probes and control (unset: good ones, the control in
+    # TABLE), interval, broken and timeout (empty: none) give, and under the
+    # command in the array limit.
     limit=()
     fw() {
       local d=$1
       local -a vars=(PATH="$PATH" FAKE_IPT="$d" IPTABLES="$fake" NIX_BUILDER_SUBNET="''${subnet-10.0.200.0/24}"
-        NIX_BUILDER_BRIDGE="''${bridge-br-nix-builder}")
+        NIX_BUILDER_BRIDGE="''${bridge-br-nix-builder}" NIX_BUILDER_PROBES="''${probes-$answering}"
+        NIX_BUILDER_CONTROL_FILE="''${control-$d/control}" NIX_BUILDER_PROBE_TIMEOUT="''${timeout:-1}")
       shift
       [ -z "''${interval-}" ] || vars+=(NIX_FIREWALL_INTERVAL="$interval")
       [ -z "''${broken-}" ] || vars+=(FAKE_IPT_FAIL="$broken")
@@ -153,6 +178,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     t=$(table)
     # Started without fw, so that $! is the script itself.
     env -i PATH="$PATH" FAKE_IPT="$t" IPTABLES="$fake" NIX_BUILDER_SUBNET=10.0.200.0/24 NIX_BUILDER_BRIDGE=br-nix-builder \
+      NIX_BUILDER_PROBES="$answering" NIX_BUILDER_CONTROL_FILE="$t/control" NIX_BUILDER_PROBE_TIMEOUT=1 \
       NIX_FIREWALL_INTERVAL=1 "$bash" "$script" >"$TMPDIR/keeper.log" 2>&1 &
     keeper=$!
     settled() { # table: --check passes within ten seconds
@@ -188,6 +214,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     [ "$rc" = 0 ] || fail "the keeper exited $rc on TERM"
     want=$(printf '%s\n' "firewall.sh: keeping the rule for br-nix-builder and 10.0.200.0/24, checked every 1s" \
       "firewall.sh: put the rule for br-nix-builder and 10.0.200.0/24 in place" \
+      "firewall.sh: the probe targets answer from the host: $answering" \
       "firewall.sh: put the rule for br-nix-builder and 10.0.200.0/24 back in place")
     [ "$(cat "$TMPDIR/keeper.log")" = "$want" ] ||
       fail "the keeper's log: wanted $want, got $(cat "$TMPDIR/keeper.log")"
@@ -198,6 +225,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     fw "$t" --once >/dev/null
     : >"$t/log"
     env -i PATH="$PATH" FAKE_IPT="$t" IPTABLES="$fake" NIX_BUILDER_SUBNET=10.0.200.0/24 NIX_BUILDER_BRIDGE=br-nix-builder \
+      NIX_BUILDER_PROBES="$answering" NIX_BUILDER_CONTROL_FILE="$t/control" NIX_BUILDER_PROBE_TIMEOUT=1 \
       NIX_FIREWALL_INTERVAL=1 "$bash" "$script" >"$TMPDIR/keeper.log" 2>&1 &
     keeper=$!
     logged "firewall.sh: the rule for br-nix-builder and 10.0.200.0/24 is in place" ||
@@ -211,15 +239,19 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     wait "$keeper" || fail "the keeper on a table with the rule exited $?"
     [ "$(changes "$t")" = 0 ] || fail "a keeper on a table with the rule changed it: $(cat "$t/log")"
     want=$(printf '%s\n' "firewall.sh: keeping the rule for br-nix-builder and 10.0.200.0/24, checked every 1s" \
-      "firewall.sh: the rule for br-nix-builder and 10.0.200.0/24 is in place")
+      "firewall.sh: the rule for br-nix-builder and 10.0.200.0/24 is in place" \
+      "firewall.sh: the probe targets answer from the host: $answering")
     [ "$(cat "$TMPDIR/keeper.log")" = "$want" ] ||
       fail "the restarted keeper's log: wanted $want, got $(cat "$TMPDIR/keeper.log")"
 
     # Two runs at once, then one pass.
     t=$(table)
     fw "$t" --once >/dev/null 2>&1 &
+    one=$!
     fw "$t" --once >/dev/null 2>&1 &
-    wait
+    two=$!
+    # Not a bare wait: the listeners run in the background too.
+    wait "$one" "$two" || true
     fw "$t" --once >/dev/null || fail "the pass after two runs at once failed"
     is_applied "$t" "two runs at once and one pass"
 
@@ -235,6 +267,86 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     sed -i 1d "$t/chains/INPUT"
     fw "$t" --remove >/dev/null || fail "--remove of a chain without its jump failed"
     [ "$(snapshot "$t")" = "$initial" ] || fail "--remove of a chain without its jump left: $(snapshot "$t")"
+    # The rollback needs none of the control's variables.
+    t=$(table)
+    fw "$t" --once >/dev/null
+    got=$(env -i PATH="$PATH" FAKE_IPT="$t" IPTABLES="$fake" NIX_BUILDER_SUBNET=10.0.200.0/24 NIX_BUILDER_BRIDGE=br-nix-builder \
+      "$bash" "$script" --remove 2>&1) || fail "--remove without the control's variables failed: $got"
+    [ "$(snapshot "$t")" = "$initial" ] || fail "--remove without the control's variables left: $(snapshot "$t")"
+
+    # The control. A line is "STATE TIME TARGETS", TIME this clock's.
+    fresh() { # file state targets: FILE holds that line, written in the last five seconds
+      local state at rest now
+      read -r state at rest <"$1" || return 1
+      now=$(date +%s)
+      [ "$state" = "$2" ] && [ "$rest" = "$3" ] && [ "$at" -le "$now" ] && [ "$at" -ge $((now - 5)) ] &&
+        [ "$(wc -l <"$1")" = 1 ]
+    }
+    t=$(table)
+    got=$(fw "$t" --once) || fail "--once with answering targets failed: $got"
+    fresh "$t/control" ok "$answering" || fail "the control after --once: $(cat "$t/control" 2>&1)"
+    [[ $got == *"the probe targets answer from the host: $answering"* ]] || fail "--once with answering targets said: $got"
+    [ -e "$t/control.new" ] && fail "--once left control.new behind"
+    got=$(fw "$t" --check) || fail "--check with the rule and answering targets failed: $got"
+    [[ $got == *"is in place, and the probe targets answer from the host"* ]] || fail "--check said: $got"
+
+    for dead in "127.0.0.1:$silent" 192.0.2.1:53; do
+      t=$(table)
+      rc=0
+      got=$(probes="$answering $dead" fw "$t" --once) || rc=$?
+      [ "$rc" = 0 ] || fail "--once with the dark target $dead exited $rc: $got"
+      is_applied "$t" "--once with the dark target $dead"
+      fresh "$t/control" dark "$dead" || fail "the control with the dark target $dead: $(cat "$t/control" 2>&1)"
+      [[ $got == *"$dead gave no answer from the host"* ]] || fail "--once with the dark target $dead said: $got"
+      cp "$t/control" "$t/control.before"
+      sleep 1
+      : >"$t/log"
+      got=$(probes="$answering $dead" fw "$t" --check 2>&1) && fail "--check passed with the dark target $dead"
+      [[ $got == *"but $dead gave no answer from the host"* ]] || fail "--check with the dark target $dead said: $got"
+      [ "$(changes "$t")" = 0 ] || fail "--check with a dark target changed the table"
+      cmp -s "$t/control" "$t/control.before" || fail "--check wrote the control"
+    done
+
+    # Three dark targets with a one-second timeout take one second, not three.
+    t=$(table)
+    begin=$(date +%s%N)
+    probes="127.0.0.1:$silent 127.0.0.1:$silent 127.0.0.1:$silent" fw "$t" --once >/dev/null
+    took=$((($(date +%s%N) - begin) / 1000000))
+    [ "$took" -lt 2500 ] || fail "three dark targets took $took ms with a 1 s timeout: they were probed one after another"
+
+    t=$(table)
+    got=$(control=/no/such/dir/control fw "$t" --once 2>&1) && fail "a control file in a missing directory passed"
+    [[ $got == *"cannot write the control /no/such/dir/control"* ]] || fail "an unwritable control said: $got"
+
+    # The keeper, with a target that goes dark and comes back.
+    t=$(table)
+    env -i PATH="$PATH" FAKE_IPT="$t" IPTABLES="$fake" NIX_BUILDER_SUBNET=10.0.200.0/24 NIX_BUILDER_BRIDGE=br-nix-builder \
+      NIX_BUILDER_PROBES="$answering 127.0.0.1:$switch" NIX_BUILDER_CONTROL_FILE="$t/control" NIX_BUILDER_PROBE_TIMEOUT=1 \
+      NIX_FIREWALL_INTERVAL=1 "$bash" "$script" >"$TMPDIR/keeper.log" 2>&1 &
+    keeper=$!
+    dark_line="firewall.sh: 127.0.0.1:$switch gave no answer from the host, so the builder's probe of it proves nothing; the builder serves no build until it answers"
+    logged "$dark_line" || fail "the keeper did not say the target is dark: $(cat "$TMPDIR/keeper.log")"
+    fresh "$t/control" dark "127.0.0.1:$switch" || fail "the keeper's control with a dark target: $(cat "$t/control" 2>&1)"
+    kill -USR1 "$listeners_pid"
+    logged "firewall.sh: the probe targets answer from the host again: $answering 127.0.0.1:$switch" ||
+      fail "the keeper did not say the target answers again: $(cat "$TMPDIR/keeper.log")"
+    sleep 1.5
+    fresh "$t/control" ok "$answering 127.0.0.1:$switch" || fail "the keeper's control once the target answers: $(cat "$t/control" 2>&1)"
+    kill -USR2 "$listeners_pid"
+    for i in $(seq 50); do
+      [ "$(grep -cxF -- "$dark_line" "$TMPDIR/keeper.log")" = 2 ] && break
+      sleep 0.2
+    done
+    kill -TERM "$keeper"
+    wait "$keeper" || fail "the keeper with a target that switches exited $?"
+    is_applied "$t" "the keeper with a target that switches"
+    want=$(printf '%s\n' "firewall.sh: keeping the rule for br-nix-builder and 10.0.200.0/24, checked every 1s" \
+      "firewall.sh: put the rule for br-nix-builder and 10.0.200.0/24 in place" \
+      "$dark_line" \
+      "firewall.sh: the probe targets answer from the host again: $answering 127.0.0.1:$switch" \
+      "$dark_line")
+    [ "$(cat "$TMPDIR/keeper.log")" = "$want" ] ||
+      fail "the log of the keeper with a target that switches: wanted $want, got $(cat "$TMPDIR/keeper.log")"
 
     # Refused before any iptables call.
     refuse() { # text, with subnet/interval set by the caller
@@ -242,10 +354,14 @@ pkgs.runCommand "deploy-nix-builder-firewall"
       t=$(table)
       got=$(fw "$t" --once 2>&1) || rc=$?
       if [ "$rc" != 1 ] || [[ $got != *"$1"* ]]; then
-        fail "subnet '$subnet', interval '$interval', bridge '$bridge': wanted exit 1 and \"$1\", got exit $rc: $got"
+        fail "subnet '$subnet', interval '$interval', bridge '$bridge', probes '$probes', control '$control', timeout '$timeout': wanted exit 1 and \"$1\", got exit $rc: $got"
       fi
       [ ! -s "$t/log" ] || fail "subnet '$subnet', interval '$interval', bridge '$bridge': iptables was called: $(cat "$t/log")"
     }
+    probes=$answering
+    control=/control/probes
+    timeout=""
+
     for subnet in "" 10.0.200.0 10.0.200/24 10.0.256.0/24 10.0.200.0/33 10.0.200.0/7 10.0.200.0/31 \
       fd00::/64 " 10.0.200.0/24" "10.0.200.0/24 -j ACCEPT" $'10.0.200.0/24\n-j ACCEPT' 10.0.200.0/24/8; do
       refuse "NIX_BUILDER_SUBNET"
@@ -262,7 +378,20 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     for bridge in "" -oops "br nix" br/nix "br-nix-builder;x" br-nix-builder-0 $'br\nnix' .hidden; do
       refuse "NIX_BUILDER_BRIDGE"
     done
-    unset bridge
+    bridge=br-nix-builder
+    for probes in "" 192.0.2.1 192.0.2.1:0 192.0.2.1:65536 192.0.2.300:53 host.example:53 "192.0.2.1:53;x" \
+      "[2001:db8::1]:53" 192.0.2.01:53 192.0.2.1:053 "192.0.2.1:53 -x" $'192.0.2.1:53\n198.51.100.1:53'; do
+      refuse "NIX_BUILDER_PROBES must be"
+    done
+    probes=$answering
+    for control in "" control relative/control "/a b" $'/a\nb' '/a;b' '/$x'; do
+      refuse "NIX_BUILDER_CONTROL_FILE must be"
+    done
+    control=/control/probes
+    for timeout in 0 abc 31 1.5 " 2" -1; do
+      refuse "NIX_BUILDER_PROBE_TIMEOUT must be"
+    done
+    unset bridge probes control timeout
 
     for subnet in 10.0.0.0/8 192.168.254.0/24 172.20.0.0/16; do
       t=$(table)
@@ -290,6 +419,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
 
     t=$(table)
     got=$(env -i PATH="$PATH" IPTABLES="$TMPDIR/no-such-iptables" NIX_BUILDER_SUBNET=10.0.200.0/24 NIX_BUILDER_BRIDGE=br-nix-builder \
+      NIX_BUILDER_PROBES="$answering" NIX_BUILDER_CONTROL_FILE="$t/control" \
       "$bash" "$script" --once 2>&1) && fail "a missing iptables passed"
     [[ $got == *"no-such-iptables is not installed"* ]] || fail "a missing iptables: $got"
 
@@ -308,6 +438,7 @@ pkgs.runCommand "deploy-nix-builder-firewall"
     done
     unset broken
 
+    kill "$listeners_pid"
     [ "$failed" = 0 ]
     touch "$out"
   ''

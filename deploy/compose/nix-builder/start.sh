@@ -32,6 +32,15 @@
 # the rule is missing, must give no answer within NIX_BUILDER_PROBE_TIMEOUT
 # seconds, because the rule drops the connect. A connect that succeeds or is
 # refused means the rule does not hold, and no build may run.
+#
+# No answer proves the rule only while the target would answer without it,
+# and a target that went dark gives no answer either. So nix-firewall, which
+# runs in the host's network namespace, past the rule, connects to the same
+# targets on every pass and writes what it found to NIX_BUILDER_CONTROL_FILE:
+# `ok TIME TARGETS` when each connected or was refused, `dark TIME TARGETS`
+# naming the ones that did not. A probe counts only next to a control that
+# says ok for these very targets and is at most NIX_BUILDER_CONTROL_MAX_AGE
+# seconds old; a dark, stale, missing or unreadable control fails it.
 # `start.sh --probe` runs only that check; the health check calls it every
 # minute, and the running script every NIX_BUILDER_PROBE_INTERVAL seconds.
 #
@@ -58,6 +67,8 @@ probes=${NIX_BUILDER_PROBES:-}
 probe_timeout=${NIX_BUILDER_PROBE_TIMEOUT:-2}
 probe_interval=${NIX_BUILDER_PROBE_INTERVAL:-10}
 probe_failures=${NIX_BUILDER_PROBE_FAILURES:-3}
+control=${NIX_BUILDER_CONTROL_FILE:-}
+control_max_age=${NIX_BUILDER_CONTROL_MAX_AGE:-30}
 pids=()
 sleeper=
 
@@ -132,6 +143,10 @@ check_probe_env() {
   seconds "$probe_interval" 3600 || die "NIX_BUILDER_PROBE_INTERVAL must be more than 0 and at most 3600 seconds, not '$probe_interval'"
   [[ $probe_failures =~ ^[1-9][0-9]?$|^100$ ]] ||
     die "NIX_BUILDER_PROBE_FAILURES must be a count from 1 to 100, not '$probe_failures'"
+  [[ $control =~ ^/[A-Za-z0-9/._-]+$ ]] ||
+    die "NIX_BUILDER_CONTROL_FILE must be an absolute path of letters, digits, '/', '.', '_' and '-', not '$control'"
+  [[ $control_max_age =~ ^[1-9][0-9]{0,3}$ ]] && [ "$control_max_age" -le 3600 ] ||
+    die "NIX_BUILDER_CONTROL_MAX_AGE must be 1 to 3600 seconds, not '$control_max_age'"
 }
 
 # Exits 0 when VALUE is a number of seconds, decimals allowed, above 0 and
@@ -454,11 +469,53 @@ silent() { # target
   [ "$rc" = 124 ]
 }
 
-# Exits 0 when every probe target is silent. Prints the ones that answered,
-# else. They are probed at once, so this takes one timeout.
+# Exits 0 when the keeper's control is fresh and says that every probe
+# target answered from the host. Prints why not, else.
+control_holds() {
+  local line state at rest now age
+  local -a want got
+  line=
+  { IFS= read -r line <"$control" || [ -n "$line" ]; } 2>/dev/null || true
+  if [ -z "$line" ]; then
+    echo "nix-firewall's control $control is missing, empty or unreadable"
+    return 1
+  fi
+  read -r state at rest <<<"$line"
+  if ! [[ $state =~ ^(ok|dark)$ && $at =~ ^[0-9]{1,12}$ ]]; then
+    echo "nix-firewall's control $control is not 'ok TIME TARGETS' or 'dark TIME TARGETS': '$line'"
+    return 1
+  fi
+  now=$(date +%s)
+  age=$((now - at))
+  if [ "$age" -gt "$control_max_age" ]; then
+    echo "nix-firewall's control is ${age}s old, more than NIX_BUILDER_CONTROL_MAX_AGE (${control_max_age}s): the keeper no longer checks the targets"
+    return 1
+  fi
+  if [ "$age" -lt -5 ]; then
+    echo "nix-firewall's control is dated ${age#-}s ahead of this clock"
+    return 1
+  fi
+  if [ "$state" = dark ]; then
+    echo "$rest gave no answer from the host either, so no answer here proves nothing"
+    return 1
+  fi
+  read -ra want <<<"$probes"
+  read -ra got <<<"$rest"
+  if [ "${got[*]}" != "${want[*]}" ]; then
+    echo "nix-firewall's control is for '$rest', not for NIX_BUILDER_PROBES '${want[*]}'"
+    return 1
+  fi
+}
+
+# Exits 0 when the control holds and every probe target is silent. Prints
+# why not, else. The targets are probed at once, so this takes one timeout.
 rule_holds() {
-  local target i=0
+  local target why i=0
   local -a targets jobs answered=()
+  why=$(control_holds) || {
+    echo "$why"
+    return 1
+  }
   read -ra targets <<<"$probes"
   for target in "${targets[@]}"; do
     silent "$target" &
@@ -469,7 +526,7 @@ rule_holds() {
     i=$((i + 1))
   done
   [ ${#answered[@]} = 0 ] && return 0
-  echo "${answered[*]}"
+  echo "${answered[*]} answered, so builds would reach it"
   return 1
 }
 
@@ -485,34 +542,33 @@ pause() {
   wait "$sleeper" || true
 }
 
-# Waits until the egress rule holds, saying what answered whenever that
-# changes. Returns 1 when the process PID, which should run all along,
-# exits first.
+# Waits until the egress rule holds, saying why not whenever that changes.
+# Returns 1 when the process PID, which should run all along, exits first.
 wait_for_rule() { # pid
-  local answered last=""
-  until answered=$(rule_holds); do
-    if [ "$answered" != "$last" ]; then
-      say "waiting for the egress rule (nix-firewall): $answered answered, so builds would reach it"
-      last=$answered
+  local why last=""
+  until why=$(rule_holds); do
+    if [ "$why" != "$last" ]; then
+      say "waiting for the egress rule (nix-firewall): $why"
+      last=$why
     fi
     alive "$1" || return 1
     pause
   done
-  say "the egress rule holds: no answer from $probes"
+  say "the egress rule holds: no answer from $probes, which answer from the host"
 }
 
 # Probes every NIX_BUILDER_PROBE_INTERVAL seconds and returns 1 once
 # NIX_BUILDER_PROBE_FAILURES probes in a row found the rule missing.
 watchdog() {
-  local fails=0 answered
+  local fails=0 why
   while :; do
     pause
-    if answered=$(rule_holds); then
+    if why=$(rule_holds); then
       fails=0
       continue
     fi
     fails=$((fails + 1))
-    say "the egress rule failed a probe ($fails of $probe_failures in a row): $answered answered"
+    say "the egress rule failed a probe ($fails of $probe_failures in a row): $why"
     if [ "$fails" -ge "$probe_failures" ]; then
       say "the egress rule no longer holds; stopping the Nix daemon and sshd"
       return 1
@@ -565,9 +621,9 @@ run_services() {
 main() {
   if [ "${1:-}" = --probe ]; then
     check_probe_env
-    local answered
-    answered=$(rule_holds) || die "the egress rule does not hold: $answered answered"
-    say "the egress rule holds: no answer from $probes"
+    local why
+    why=$(rule_holds) || die "the egress rule is not confirmed: $why"
+    say "the egress rule holds: no answer from $probes, which answer from the host"
     exit 0
   fi
   check_env

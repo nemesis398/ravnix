@@ -16,11 +16,23 @@
 # repairs what is missing, changed, or no longer first. A check that finds
 # everything in place changes nothing.
 #
+# The builder probes the rule from inside: each target in NIX_BUILDER_PROBES
+# must give no answer there. That proves the rule only while the target
+# would answer without it, so every pass also connects to each target from
+# here, the host's network namespace, which the rule does not touch, and
+# writes the outcome to NIX_BUILDER_CONTROL_FILE, which the builder reads:
+# `ok TIME TARGETS` when each connected or refused within
+# NIX_BUILDER_PROBE_TIMEOUT seconds, `dark TIME TARGETS` naming those that
+# gave no answer or were unreachable. A dark target leaves the rule as it is
+# and keeps the builder from serving builds, until it answers again.
+#
 #   firewall.sh            check and repair forever (the service's command)
-#   firewall.sh --once     check and repair once
-#   firewall.sh --check    exit 0 when the rule is in place, change nothing
-#                          (the service's health check)
-#   firewall.sh --remove   take the rule out again (the rollback)
+#   firewall.sh --once     check and repair once, and write the control
+#   firewall.sh --check    exit 0 when the rule is in place and every target
+#                          answers here; change nothing (the service's health
+#                          check)
+#   firewall.sh --remove   take the rule out again (the rollback); needs no
+#                          probe targets
 #
 # Every error ends the script, and the service's restart policy runs it
 # again. Two copies at once can leave a rule twice; the next check takes
@@ -36,12 +48,17 @@ ipt=${IPTABLES:-iptables-nft}
 subnet=${NIX_BUILDER_SUBNET:-}
 bridge=${NIX_BUILDER_BRIDGE:-}
 interval=${NIX_FIREWALL_INTERVAL:-10}
+probes=${NIX_BUILDER_PROBES:-}
+control=${NIX_BUILDER_CONTROL_FILE:-}
+probe_timeout=${NIX_BUILDER_PROBE_TIMEOUT:-2}
 out_chain=RAVNIX-NIX-BUILDER-OUT
 in_chain=RAVNIX-NIX-BUILDER-IN
 blocked=(10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10)
 changed=no
 dry=no
 what=
+dark=
+said=
 
 say() { echo "firewall.sh: $*"; }
 die() {
@@ -74,6 +91,29 @@ check_env() {
   [[ $bridge =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$ ]] ||
     die "NIX_BUILDER_BRIDGE must be an interface name of up to 15 letters, digits, '.', '_' and '-', not '$bridge'"
   what="$bridge and $subnet"
+}
+
+# The variables of the control, which all but --remove need. The same
+# targets as the builder's, so the same check as start.sh's.
+check_control_env() {
+  local target octet part='(0|[1-9][0-9]{0,2})'
+  local re="^$part\\.$part\\.$part\\.$part:([1-9][0-9]{0,4})\$"
+  local -a targets
+  [[ $probes =~ ^[0-9.:\ ]+$ ]] && read -ra targets <<<"$probes" && [ ${#targets[@]} -gt 0 ] ||
+    die "NIX_BUILDER_PROBES must be IPv4 address:port pairs, separated by spaces, not '$probes'"
+  for target in "${targets[@]}"; do
+    [[ $target =~ $re ]] ||
+      die "NIX_BUILDER_PROBES must be IPv4 address:port pairs without leading zeros, not '$target'"
+    for octet in "${BASH_REMATCH[@]:1:4}"; do
+      [ "$octet" -le 255 ] || die "NIX_BUILDER_PROBES must be IPv4 address:port pairs; '$target' has a number over 255"
+    done
+    [ "${BASH_REMATCH[5]}" -le 65535 ] || die "NIX_BUILDER_PROBES must be IPv4 address:port pairs; '$target' has a port over 65535"
+  done
+  probes="${targets[*]}"
+  [[ $control =~ ^/[A-Za-z0-9/._-]+$ ]] ||
+    die "NIX_BUILDER_CONTROL_FILE must be an absolute path of letters, digits, '/', '.', '_' and '-', not '$control'"
+  [[ $probe_timeout =~ ^[1-9][0-9]?$ ]] && [ "$probe_timeout" -le 30 ] ||
+    die "NIX_BUILDER_PROBE_TIMEOUT must be 1 to 30 seconds, not '$probe_timeout'"
 }
 
 # What each chain of ours must hold, as `iptables -S` prints it.
@@ -180,6 +220,58 @@ remove() {
   say "removed the rule for $what"
 }
 
+# Exits 0 when a connect to TARGET (address:port) from here connects or is
+# refused within the probe timeout. No answer, or no route, is no answer.
+answers() { # target
+  local err rc=0
+  # shellcheck disable=SC2016 # $1 and $2 are the inner shell's.
+  err=$(LC_ALL=C timeout "$probe_timeout" "$BASH" -c 'exec 3<>"/dev/tcp/$1/$2"' _ "${1%:*}" "${1##*:}" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || [[ $err == *"Connection refused"* ]]
+}
+
+# Connects to every target at once and sets dark to the ones that gave no
+# answer.
+control() {
+  local target i=0
+  local -a targets jobs off=()
+  read -ra targets <<<"$probes"
+  for target in "${targets[@]}"; do
+    answers "$target" &
+    jobs+=($!)
+  done
+  for target in "${targets[@]}"; do
+    wait "${jobs[i]}" || off+=("$target")
+    i=$((i + 1))
+  done
+  dark="${off[*]}"
+}
+
+# Writes the control for the builder: replaced whole, so a reader never sees
+# half of it.
+publish() {
+  local line
+  if [ -z "$dark" ]; then
+    line="ok $(date +%s) $probes"
+  else
+    line="dark $(date +%s) $dark"
+  fi
+  { printf '%s\n' "$line" >"$control.new" && mv -f -- "$control.new" "$control"; } 2>/dev/null ||
+    die "cannot write the control $control"
+}
+
+# Says what the control found: on the first pass, and whenever it changes.
+tell() { # first|later
+  [ "$1" = first ] || [ "$dark" != "$said" ] || return 0
+  if [ -n "$dark" ]; then
+    say "$dark gave no answer from the host, so the builder's probe of it proves nothing; the builder serves no build until it answers"
+  elif [ "$1" = first ]; then
+    say "the probe targets answer from the host: $probes"
+  else
+    say "the probe targets answer from the host again: $probes"
+  fi
+  said=$dark
+}
+
 report() {
   if [ "$changed" = yes ]; then
     say "put the rule for $what in place"
@@ -190,6 +282,7 @@ report() {
 
 main() {
   check_env
+  [ "${1:-}" = --remove ] || check_control_env
   command -v "$ipt" >/dev/null || die "$ipt is not installed (IPTABLES)"
   case ${1:-} in
     --remove)
@@ -199,22 +292,34 @@ main() {
       dry=yes
       apply
       [ "$changed" = no ] || die "the rule for $what is not in place"
-      say "the rule for $what is in place"
+      control
+      [ -z "$dark" ] ||
+        die "the rule for $what is in place, but $dark gave no answer from the host, so the builder's probe of it proves nothing"
+      say "the rule for $what is in place, and the probe targets answer from the host"
       ;;
     --once)
       apply
       report
+      control
+      publish
+      tell first
       ;;
     "")
       trap 'exit 0' TERM INT
       say "keeping the rule for $what, checked every ${interval}s"
       apply
       report
+      control
+      publish
+      tell first
       while :; do
         sleep "$interval" &
         wait $!
         apply
         [ "$changed" = no ] || say "put the rule for $what back in place"
+        control
+        publish
+        tell later
       done
       ;;
     *)

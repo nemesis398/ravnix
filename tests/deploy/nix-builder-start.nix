@@ -23,11 +23,16 @@
 #   that connects or is refused got an answer, and fails, naming the target.
 #   The targets are probed at once. `start.sh --probe` runs only that, and
 #   checks only its own variables, so the health check can call it.
+# - The control nix-firewall writes: a probe passes only next to a control
+#   that says ok for these very targets and is fresh. A control that is
+#   missing, unreadable, malformed, dark, too old, dated ahead, or for other
+#   targets fails the probe even when every target is silent, and says why.
 # - The gate, with the probe and the services stubbed: harmonia starts at
-#   once, sshd and the daemon only once the rule holds; probes that fail
-#   NIX_BUILDER_PROBE_FAILURES times in a row stop everything with exit 1,
-#   so Docker restarts the container into the gate again; TERM ends the wait;
-#   harmonia dying during the wait ends it with exit 1.
+#   once, sshd and the daemon only once the rule holds and the control says
+#   ok; probes that fail NIX_BUILDER_PROBE_FAILURES times in a row, for
+#   either reason, stop everything with exit 1, so Docker restarts the
+#   container into the gate again; TERM ends the wait; harmonia dying during
+#   the wait ends it with exit 1.
 # - Installing the tools, with a fake nix: the image's Nix installs only the
 #   first time, after that the pinned Nix installs its successor; the same
 #   pin installs nothing; a failed install keeps the old tools and their pin,
@@ -89,7 +94,8 @@ pkgs.runCommand "deploy-nix-builder-start"
       fi
     }
     probes="192.0.2.1:2224 198.51.100.1:53"
-    ok=(NIX_BUILDER_AUTHORIZED_KEY="$key" NIX_CACHE_KEY_NAME="$name" NIX_BUILDER_NIXPKGS="$pin" NIX_BUILDER_PROBES="$probes")
+    ok=(NIX_BUILDER_AUTHORIZED_KEY="$key" NIX_CACHE_KEY_NAME="$name" NIX_BUILDER_NIXPKGS="$pin" NIX_BUILDER_PROBES="$probes"
+      NIX_BUILDER_CONTROL_FILE=/control/probes)
 
     expect 0 "the variables are fine" "''${ok[@]}"
     expect 0 "the variables are fine" "''${ok[@]}" NIX_MIN_FREE=2000G NIX_MAX_FREE=3T
@@ -253,6 +259,13 @@ pkgs.runCommand "deploy-nix-builder-start"
     for bad in 0 1.5 x 101; do
       expect 1 "NIX_BUILDER_PROBE_FAILURES must be" "''${ok[@]}" NIX_BUILDER_PROBE_FAILURES="$bad"
     done
+    for bad in "" control relative/control "/a b" $'/a\nb' '/a;b' '/$x'; do
+      expect 1 "NIX_BUILDER_CONTROL_FILE must be" "''${ok[@]}" NIX_BUILDER_CONTROL_FILE="$bad"
+    done
+    expect 0 "the variables are fine" "''${ok[@]}" NIX_BUILDER_CONTROL_MAX_AGE=3600
+    for bad in 0 abc 3601 1.5 " 30" -1; do
+      expect 1 "NIX_BUILDER_CONTROL_MAX_AGE must be" "''${ok[@]}" NIX_BUILDER_CONTROL_MAX_AGE="$bad"
+    done
 
     # The probe against real ports. --probe needs nothing but its own
     # variables, so the health check can run it.
@@ -262,12 +275,21 @@ pkgs.runCommand "deploy-nix-builder-start"
       [ -s "$TMPDIR/ports" ] && break
       sleep 0.1
     done
-    read -r accepting refusing silent <"$TMPDIR/ports"
-    probe() { # exit text targets
+    read -r accepting refusing silent _ <"$TMPDIR/ports"
+    # probe EXIT TEXT TARGETS [CONTROL]: --probe of TARGETS next to a control
+    # file that holds the line CONTROL, by default a fresh ok for TARGETS,
+    # exits EXIT and prints TEXT. CONTROL "none" means no file.
+    control_file=$TMPDIR/control
+    probe() {
       local want=$1 text=$2 got rc=0
-      got=$(env -i PATH="$PATH" NIX_BUILDER_PROBES="$3" NIX_BUILDER_PROBE_TIMEOUT=1 "$bash" "$script" --probe 2>&1) || rc=$?
+      rm -f "$control_file"
+      if [ "''${4-}" != none ]; then
+        printf '%s\n' "''${4-ok $(date +%s) $3}" >"$control_file"
+      fi
+      got=$(env -i PATH="$PATH" NIX_BUILDER_PROBES="$3" NIX_BUILDER_PROBE_TIMEOUT=1 NIX_BUILDER_CONTROL_FILE="$control_file" \
+        "$bash" "$script" --probe 2>&1) || rc=$?
       if [ "$rc" != "$want" ] || [[ $got != *"$text"* ]]; then
-        fail "--probe of $3: wanted exit $want and \"$text\", got exit $rc: $got"
+        fail "--probe of $3 next to the control '$(cat "$control_file" 2>/dev/null)': wanted exit $want and \"$text\", got exit $rc: $got"
       fi
     }
     probe 0 "the egress rule holds" "127.0.0.1:$silent"
@@ -282,22 +304,72 @@ pkgs.runCommand "deploy-nix-builder-start"
     took=$((($(date +%s%N) - begin) / 1000000))
     [ "$took" -lt 2500 ] || fail "three silent targets took $took ms with a 1 s timeout: they were probed one after another"
     probe 1 "NIX_BUILDER_PROBES must be" "127.0.0.1"
+
+    # The control. Every target is silent, so only the control decides.
+    s1=127.0.0.1:$silent
+    ago() { echo $(($(date +%s) - $1)); }
+    now=$(date +%s)
+    probe 0 "which answer from the host" "$s1" "ok $(ago 25) $s1"
+    probe 0 "the egress rule holds" "$s1 $s1" "ok $now $s1   $s1"
+    probe 1 "is missing, empty or unreadable" "$s1" none
+    probe 1 "is missing, empty or unreadable" "$s1" ""
+    probe 1 "s old, more than NIX_BUILDER_CONTROL_MAX_AGE (30s)" "$s1" "ok $(ago 41) $s1"
+    probe 1 "s old, more than" "$s1" "ok 0 $s1"
+    probe 1 "s ahead of this clock" "$s1" "ok $(ago -100) $s1"
+    probe 1 "$s1 gave no answer from the host either" "$s1" "dark $now $s1"
+    probe 1 "is for '127.0.0.1:1', not for NIX_BUILDER_PROBES '$s1'" "$s1" "ok $now 127.0.0.1:1"
+    probe 1 "not for NIX_BUILDER_PROBES" "$s1 $s1" "ok $now $s1"
+    probe 1 "not for NIX_BUILDER_PROBES" "$s1" "ok $now"
+    for bad in garbage "ok" "ok abc $s1" "maybe $now $s1" "ok -5 $s1" "ok 1234567890123 $s1" "OK $now $s1"; do
+      probe 1 "is not 'ok TIME TARGETS' or 'dark TIME TARGETS'" "$s1" "$bad"
+    done
+    probe 1 "127.0.0.1:$accepting answered" "127.0.0.1:$accepting" "ok $now 127.0.0.1:$accepting"
+    # The control is checked first: a dark one fails without probing.
+    begin=$(date +%s%N)
+    probe 1 "gave no answer from the host either" "$s1" "dark $now $s1"
+    took=$((($(date +%s%N) - begin) / 1000000))
+    [ "$took" -lt 900 ] || fail "a dark control took $took ms: the targets were probed anyway"
+    printf 'ok %s %s\n' "$(date +%s)" "$s1" >"$control_file"
+    chmod 000 "$control_file"
+    got=$(env -i PATH="$PATH" NIX_BUILDER_PROBES="$s1" NIX_BUILDER_PROBE_TIMEOUT=1 NIX_BUILDER_CONTROL_FILE="$control_file" \
+      "$bash" "$script" --probe 2>&1) && fail "an unreadable control passed"
+    [[ $got == *"is missing, empty or unreadable"* ]] || fail "an unreadable control: $got"
+    chmod 644 "$control_file"
+    printf 'ok %s %s\n' "$(date +%s)" "$s1" >"$control_file"
+    sleep 2.1
+    got=$(env -i PATH="$PATH" NIX_BUILDER_PROBES="$s1" NIX_BUILDER_PROBE_TIMEOUT=1 NIX_BUILDER_CONTROL_FILE="$control_file" \
+      NIX_BUILDER_CONTROL_MAX_AGE=1 "$bash" "$script" --probe 2>&1) && fail "a control older than NIX_BUILDER_CONTROL_MAX_AGE=1 passed"
+    [[ $got == *"more than NIX_BUILDER_CONTROL_MAX_AGE (1s)"* ]] || fail "a control older than its maximum age: $got"
     kill "$listeners_pid"
 
     # The gate, with the probe stubbed by a file: the rule holds while it
     # exists. The services are sleeps that stand in for them.
     holds=$TMPDIR/rule-holds
-    gate() { # root [interval]: runs run_services in the background, its pid in root/pid
-      local root=$1 interval=''${2:-0.1}
+    # gate ROOT [INTERVAL [MAX_AGE [STATE]]]: runs run_services in the
+    # background, its pid in ROOT/pid, next to a fresh control in ROOT/control
+    # that says STATE, ok by default.
+    gate() {
+      local root=$1 interval=''${2:-0.1} age=''${3:-30} state=''${4:-ok}
       mkdir -p "$root/profiles/ravnix/bin"
       printf '#!%s\necho "nix (Nix) fake"\n' "$bash" >"$root/profiles/ravnix/bin/nix"
       chmod +x "$root/profiles/ravnix/bin/nix"
-      NIX_BUILDER_PROBES=192.0.2.1:1 NIX_BUILDER_PROBE_INTERVAL=$interval NIX_BUILDER_PROBE_FAILURES=3 step "$root" "
+      echo "$state $(date +%s) 192.0.2.1:1" >"$root/control"
+      NIX_BUILDER_PROBES=192.0.2.1:1 NIX_BUILDER_PROBE_INTERVAL=$interval NIX_BUILDER_PROBE_FAILURES=3 \
+        NIX_BUILDER_CONTROL_FILE="$root/control" NIX_BUILDER_CONTROL_MAX_AGE=$age step "$root" "
         echo \$BASHPID >'$root/pid'
         silent() { [ -e '$holds' ]; }
         start_harmonia() { sleep 1000 & pids+=(\$!); echo harmonia >>'$root/order'; }
         start_builder() { sleep 1000 & pids+=(\$!); echo \$! >'$root/builder'; echo builder >>'$root/order'; }
         run_services" >"$root/log" &
+    }
+    # ends SECONDS ROOT TEXT: the runner for ROOT ends within SECONDS, or the
+    # check fails with TEXT and ends it, so that a regression fails the
+    # check instead of hanging it.
+    ends() {
+      timeout "$1" tail --pid="$runner" -f /dev/null && return 0
+      fail "$3"
+      kill -TERM "$(cat "$2/pid")" 2>/dev/null || true
+      timeout 5 tail --pid="$runner" -f /dev/null || kill -KILL "$runner" "$(cat "$2/pid")" 2>/dev/null || true
     }
     until_true() { # seconds code: CODE succeeds within SECONDS
       local i
@@ -322,31 +394,64 @@ pkgs.runCommand "deploy-nix-builder-start"
     kill -0 "$runner" 2>/dev/null || fail "the builder stopped while the rule held: $(cat "$t/log")"
     rm -f "$holds"
     rc=0
-    timeout 10 tail --pid="$runner" -f /dev/null || fail "the builder kept running without the rule"
+    ends 10 "$t" "the builder kept running without the rule"
     wait "$runner" || rc=$?
     [ "$rc" = 1 ] || fail "the builder exited $rc when the rule went, not 1"
     [ "$(grep -c "failed a probe" "$t/log")" = 3 ] || fail "not three failed probes before the stop: $(cat "$t/log")"
     grep -q "the egress rule no longer holds" "$t/log" || fail "no stop message: $(cat "$t/log")"
     kill -0 "$(cat "$t/builder")" 2>/dev/null && fail "the daemon and sshd stand-in still runs after the stop"
 
-    # Probes that fail now and then, but never three times in a row.
+    # Probes that fail now and then, but never three times in a row: the rule
+    # goes for one probe, half a second apart, three times.
     t=$(fixture)
     touch "$holds"
-    gate "$t"
+    gate "$t" 0.5
     runner=$!
     until_true 5 'grep -q "running nix (Nix) fake" "$t/log"' || fail "the gate did not open: $(cat "$t/log")"
-    for _ in 1 2 3; do
+    # Not i: until_true counts with its own.
+    for round in 1 2 3; do
       rm -f "$holds"
-      until_true 5 'grep -q "failed a probe (1 of 3" "$t/log"' || true
-      sleep 0.15
+      until_true 5 '[ "$(grep -c "failed a probe (1 of 3" "$t/log")" = "$round" ]' ||
+        fail "probe $round did not fail: $(cat "$t/log")"
       touch "$holds"
-      sleep 0.3
+      sleep 1.2
     done
     kill -0 "$runner" 2>/dev/null || fail "single failed probes stopped the builder: $(cat "$t/log")"
+    grep -q "failed a probe (2 of 3" "$t/log" && fail "a single failed probe was counted twice: $(cat "$t/log")"
     kill -TERM "$(cat "$t/pid")"
     rc=0
     wait "$runner" || rc=$?
     [ "$rc" = 0 ] || fail "TERM while running gave exit $rc"
+
+    # A dark control keeps the gate closed while every target is silent, and
+    # an ok one opens it.
+    t=$(fixture)
+    touch "$holds"
+    gate "$t" 0.1 30 dark
+    runner=$!
+    until_true 5 'grep -q "waiting for the egress rule (nix-firewall): 192.0.2.1:1 gave no answer from the host either" "$t/log"' ||
+      fail "the gate did not wait for a dark control: $(cat "$t/log")"
+    sleep 0.5
+    grep -q builder "$t/order" && fail "the builder started next to a dark control: $(cat "$t/log")"
+    echo "ok $(date +%s) 192.0.2.1:1" >"$t/control"
+    until_true 5 'grep -q "running nix (Nix) fake" "$t/log"' || fail "an ok control did not open the gate: $(cat "$t/log")"
+    kill -TERM "$(cat "$t/pid")"
+    ends 5 "$t" "TERM after a dark control did not end the builder"
+    wait "$runner" || fail "TERM after a dark control gave exit $?"
+
+    # A control that goes stale while the builder runs: the keeper stopped.
+    t=$(fixture)
+    touch "$holds"
+    gate "$t" 0.2 1
+    runner=$!
+    until_true 5 'grep -q "running nix (Nix) fake" "$t/log"' || fail "the gate did not open: $(cat "$t/log")"
+    rc=0
+    ends 10 "$t" "the builder kept running next to a stale control"
+    wait "$runner" || rc=$?
+    [ "$rc" = 1 ] || fail "a stale control gave exit $rc, not 1"
+    [ "$(grep -c "failed a probe (.* in a row): nix-firewall's control is .*s old" "$t/log")" = 3 ] ||
+      fail "not three failed probes for a stale control: $(cat "$t/log")"
+    kill -0 "$(cat "$t/builder")" 2>/dev/null && fail "the daemon and sshd stand-in still runs after a stale control"
 
     # TERM while it waits at the gate, between two probes a minute apart.
     t=$(fixture)
@@ -357,7 +462,7 @@ pkgs.runCommand "deploy-nix-builder-start"
     sleep 0.3
     kill -TERM "$(cat "$t/pid")"
     rc=0
-    timeout 4 tail --pid="$runner" -f /dev/null || fail "TERM did not end the wait at the gate within 4 s"
+    ends 4 "$t" "TERM did not end the wait at the gate within 4 s"
     wait "$runner" || rc=$?
     [ "$rc" = 0 ] || fail "TERM at the gate gave exit $rc"
     grep -q builder "$t/order" && fail "the builder started after TERM at the gate"
@@ -367,13 +472,14 @@ pkgs.runCommand "deploy-nix-builder-start"
     rm -f "$holds"
     mkdir -p "$t/profiles/ravnix/bin"
     NIX_BUILDER_PROBES=192.0.2.1:1 NIX_BUILDER_PROBE_INTERVAL=0.1 step "$t" "
+      echo \$BASHPID >'$t/pid'
       silent() { [ -e '$holds' ]; }
       start_harmonia() { sleep 0.3 & pids+=(\$!); }
       start_builder() { echo builder >>'$t/order'; }
       run_services" >"$t/log" &
     runner=$!
     rc=0
-    timeout 10 tail --pid="$runner" -f /dev/null || fail "the gate kept waiting after harmonia died"
+    ends 10 "$t" "the gate kept waiting after harmonia died"
     wait "$runner" || rc=$?
     [ "$rc" = 1 ] || fail "harmonia dying at the gate gave exit $rc"
     grep -q "harmonia exited" "$t/log" || fail "no message for harmonia dying: $(cat "$t/log")"
