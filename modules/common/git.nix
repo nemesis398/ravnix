@@ -151,7 +151,10 @@ in
 
   # Turn the hooks of the user's own checkout of ravnix on, and point them at
   # the deny list. Each switch does it again, so a checkout cloned later is
-  # picked up; one that is not there yet is no error.
+  # picked up by the next switch, or by `systemctl restart
+  # home-manager-USER.service` straight after the clone. One that is not there
+  # yet is no error, but a warning in the journal of that service: until then
+  # the checkout has no hooks and no boundary check.
   home.activation = lib.mkIf (dev.checkout != null) {
     ravnixDevCheckout = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       run ${lib.getExe devCheckout} ${lib.escapeShellArg dev.checkout}${

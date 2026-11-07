@@ -51,7 +51,10 @@ in
       description = ''
         Your checkout of ravnix, if you work on it, as an absolute path in a
         string (a Nix path would copy the checkout into the store). Its git
-        hooks get turned on there. Null when you do not work on ravnix.
+        hooks get turned on there, at every switch: after you clone it, switch
+        again or run `systemctl restart home-manager-<user>.service`, because
+        until then the checkout has no hooks and no boundary check. Null when
+        you do not work on ravnix.
       '';
     };
 

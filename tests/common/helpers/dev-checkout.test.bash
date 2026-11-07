@@ -87,6 +87,8 @@ it_does_not_fail_the_activation_for_a_checkout_that_is_not_there_yet() {
 	expect_status 0
 	expect_err "$scratch/not-cloned-yet"
 	expect_err "does not exist"
+	expect_err "WARNING"
+	expect_err "OFF"
 	# Nothing is created for it.
 	[[ ! -e "$scratch/not-cloned-yet" ]]
 }
@@ -98,6 +100,8 @@ it_does_not_fail_for_a_directory_that_is_no_repository() {
 	expect_status 0
 	expect_err "$scratch/plain"
 	expect_err "not a git repository"
+	expect_err "WARNING"
+	expect_err "OFF"
 	# No repository is made, and no file is written into it.
 	[[ -z "$(ls -A "$scratch/plain")" ]]
 }
@@ -130,14 +134,120 @@ it_works_through_a_symbolic_link() {
 	[[ "$(config_of "$repo" core.hooksPath)" == .githooks ]]
 }
 
-it_configures_the_repository_a_subdirectory_belongs_to() {
+# The checkout is the repository at that path and no other: a directory that
+# lies inside another repository (an empty submodule directory, a clone that
+# failed after mkdir, a home directory under git) is not it, and the other
+# repository's hooks are none of this tool's business.
+it_leaves_an_enclosing_repository_alone_for_a_subdirectory() {
 	fresh
 	local repo
 	repo="$(new_repo repo)"
 	mkdir "$repo/sub"
-	capture ravnix-dev-checkout "$repo/sub"
+	capture ravnix-dev-checkout "$repo/sub" /deny.txt
+	expect_status 0
+	[[ -z "$(config_of "$repo" core.hooksPath)" ]]
+	[[ -z "$(config_of "$repo" ravnix.denyList)" ]]
+	expect_err "WARNING"
+	expect_err "$repo/sub"
+	expect_err "top level"
+	expect_err "$repo"
+}
+
+it_leaves_the_repository_of_an_uninitialized_submodule_directory_alone() {
+	fresh
+	local parent library
+	library="$(new_repo library)"
+	parent="$(new_repo parent)"
+	git -C "$parent" -c protocol.file.allow=always submodule add -q "$library" ravnix
+	git -C "$parent" submodule deinit -q -f ravnix
+	[[ -d "$parent/ravnix" && -z "$(ls -A "$parent/ravnix")" ]]
+	capture ravnix-dev-checkout "$parent/ravnix" /deny.txt
+	expect_status 0
+	[[ -z "$(config_of "$parent" core.hooksPath)" ]]
+	[[ -z "$(config_of "$parent" ravnix.denyList)" ]]
+	expect_err "WARNING"
+	expect_err "$parent/ravnix"
+}
+
+it_leaves_a_home_directory_under_git_alone() {
+	fresh
+	local home
+	home="$(new_repo home)"
+	mkdir -p "$home/src/ravnix"
+	capture ravnix-dev-checkout "$home/src/ravnix"
+	expect_status 0
+	[[ -z "$(config_of "$home" core.hooksPath)" ]]
+	expect_err "WARNING"
+}
+
+it_configures_a_repository_inside_another_one_by_its_own_top_level() {
+	fresh
+	local outer inner
+	outer="$(new_repo outer)"
+	mkdir "$outer/vendor"
+	inner="$(new_repo "outer/vendor/inner")"
+	capture ravnix-dev-checkout "$inner" /deny.txt
+	expect_status 0
+	[[ "$(config_of "$inner" core.hooksPath)" == .githooks ]]
+	[[ -z "$(config_of "$outer" core.hooksPath)" ]]
+	[[ -z "$err" ]]
+}
+
+it_leaves_the_inside_of_the_git_directory_alone() {
+	fresh
+	local repo
+	repo="$(new_repo repo)"
+	capture ravnix-dev-checkout "$repo/.git" /deny.txt
+	expect_status 0
+	[[ -z "$(config_of "$repo" core.hooksPath)" ]]
+	expect_err "WARNING"
+}
+
+it_leaves_a_bare_repository_alone() {
+	fresh
+	git init -q --bare "$scratch/bare.git"
+	capture ravnix-dev-checkout "$scratch/bare.git" /deny.txt
+	expect_status 0
+	[[ -z "$(config_of "$scratch/bare.git" core.hooksPath)" ]]
+	expect_err "WARNING"
+}
+
+it_leaves_the_repository_behind_a_symbolic_link_to_a_subdirectory_alone() {
+	fresh
+	local repo
+	repo="$(new_repo repo)"
+	mkdir "$repo/sub"
+	ln -s "$repo/sub" "$scratch/link"
+	capture ravnix-dev-checkout "$scratch/link"
+	expect_status 0
+	[[ -z "$(config_of "$repo" core.hooksPath)" ]]
+	expect_err "WARNING"
+}
+
+it_takes_a_path_with_a_trailing_slash_or_dot_dot_for_the_same_checkout() {
+	fresh
+	local repo
+	repo="$(new_repo repo)"
+	mkdir "$scratch/elsewhere"
+	capture ravnix-dev-checkout "$repo/"
 	expect_status 0
 	[[ "$(config_of "$repo" core.hooksPath)" == .githooks ]]
+	git -C "$repo" config --unset core.hooksPath
+	capture ravnix-dev-checkout "$scratch/elsewhere/../repo"
+	expect_status 0
+	[[ "$(config_of "$repo" core.hooksPath)" == .githooks ]]
+	[[ -z "$err" ]]
+}
+
+it_does_not_let_an_inherited_git_dir_point_it_at_another_repository() {
+	fresh
+	local repo other
+	repo="$(new_repo repo)"
+	other="$(new_repo other)"
+	GIT_DIR="$other/.git" GIT_WORK_TREE="$other" capture ravnix-dev-checkout "$repo" /deny.txt
+	expect_status 0
+	[[ "$(config_of "$repo" core.hooksPath)" == .githooks ]]
+	[[ -z "$(config_of "$other" core.hooksPath)" ]]
 }
 
 it_configures_a_checkout_that_is_a_linked_work_tree() {
@@ -179,6 +289,7 @@ it_says_so_and_still_succeeds_when_the_configuration_cannot_be_written() {
 	expect_status 0
 	expect_err "$repo"
 	expect_err "could not"
+	expect_err "WARNING"
 }
 
 it_ignores_the_users_own_git_configuration() {
@@ -226,7 +337,15 @@ tests=(
 	it_does_not_fail_for_a_file_in_place_of_the_checkout
 	it_copes_with_spaces_quotes_and_glob_characters_in_the_path
 	it_works_through_a_symbolic_link
-	it_configures_the_repository_a_subdirectory_belongs_to
+	it_leaves_an_enclosing_repository_alone_for_a_subdirectory
+	it_leaves_the_repository_of_an_uninitialized_submodule_directory_alone
+	it_leaves_a_home_directory_under_git_alone
+	it_configures_a_repository_inside_another_one_by_its_own_top_level
+	it_leaves_the_inside_of_the_git_directory_alone
+	it_leaves_a_bare_repository_alone
+	it_leaves_the_repository_behind_a_symbolic_link_to_a_subdirectory_alone
+	it_takes_a_path_with_a_trailing_slash_or_dot_dot_for_the_same_checkout
+	it_does_not_let_an_inherited_git_dir_point_it_at_another_repository
 	it_configures_a_checkout_that_is_a_linked_work_tree
 	it_takes_an_absolute_path_only_so_nothing_reads_as_an_option
 	it_says_so_and_still_succeeds_when_the_configuration_cannot_be_written
