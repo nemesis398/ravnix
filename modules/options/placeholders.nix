@@ -16,8 +16,8 @@ let
     || match "(.*[^0-9a-f:])?2001:0*db8:.*"
     || match "(.*[^a-z0-9-])?example[.](org|com|net)([^a-z0-9.].*|[.])?";
 
-  # Every string under config.ravnix, with where it is. A service's url is
-  # derived from its host's address, which is reported already. The walk
+  # Every string under config.ravnix, with where it is. A service's url and
+  # authority are derived from its host's address, which is reported already. The walk
   # enters plain attribute sets and lists only: a package is a derivation,
   # which contains itself (its `out` is the derivation again) and would never
   # end, and a value marked with _type (an override, an option, a literal
@@ -31,7 +31,15 @@ let
       lib.concatLists (
         lib.mapAttrsToList (
           name: v:
-          lib.optionals (!(lib.hasPrefix "ravnix.services." where && name == "url")) (
+          lib.optionals (
+            !(
+              lib.hasPrefix "ravnix.services." where
+              && lib.elem name [
+                "url"
+                "authority"
+              ]
+            )
+          ) (
             strings "${where}.${name}" v
           )
         ) value

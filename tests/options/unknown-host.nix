@@ -43,6 +43,13 @@ let
       (service host)
     ]).config.ravnix.services.paperless.url;
 
+  authorityOn =
+    host:
+    (with' [
+      hosts
+      (service host)
+    ]).config.ravnix.services.paperless.authority or "missing";
+
   unknown = with' [ (service "nowhere") ];
   naming = lib.filter (
     m: lib.hasInfix "ravnix.services.paperless" m && lib.hasInfix "\"nowhere\"" m
@@ -90,7 +97,9 @@ let
     ++ lib.optional setUrl.success "ravnix.services.paperless.url was set by hand and accepted"
     ++ expect "box-a" "http://198.51.100.7:8000"
     ++ expect "box-b" "http://[2001:db8::7]:8000"
-    ++ expect "box-c" "http://cache.example.org:8000";
+    ++ expect "box-c" "http://cache.example.org:8000"
+    ++ lib.optional (authorityOn "box-a" != "198.51.100.7:8000") "the authority of a service on box-a is ${authorityOn "box-a"}"
+    ++ lib.optional (authorityOn "box-b" != "[2001:db8::7]:8000") "the authority of a service on box-b is ${authorityOn "box-b"}";
 in
 pkgs.runCommand "options-unknown-host" { } (
   if failures == [ ] then

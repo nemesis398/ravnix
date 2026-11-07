@@ -3,7 +3,7 @@
 # shows in every build. The template, made of such values, warns for each;
 # a value that only looks like one (192.0.20.1, notexample.org,
 # 2001:db80::1) and every real-looking value does not. A service's derived
-# url is not reported again, and the walk does not enter a package an
+# url and authority are not reported again, and the walk does not enter a package an
 # option holds (a derivation contains itself, so it would never end).
 {
   self,
@@ -114,6 +114,7 @@ let
   failures =
     map (option: "no warning names ${option}") (lib.filter (o: !(named o)) expected)
     ++ lib.optional (named "ravnix.services.paperless.url") "the derived url of a service is reported as well"
+    ++ lib.optional (named "ravnix.services.paperless.authority") "the derived authority of a service is reported as well"
     ++ map (w: "a warning does not start with the option it names: ${w}") (
       lib.filter (w: !(lib.hasPrefix "ravnix." w)) withService.config.warnings
     )

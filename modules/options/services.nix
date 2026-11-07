@@ -38,15 +38,23 @@ in
               description = "The port the service listens on.";
             };
 
-            url = mkOption {
+            authority = mkOption {
               type = types.str;
               readOnly = true;
               default =
                 if hosts ? ${config.host} then
-                  "http://${inUrl hosts.${config.host}.address}:${toString config.port}"
+                  "${inUrl hosts.${config.host}.address}:${toString config.port}"
                 else
                   throw (unknownHost name config.host);
-              defaultText = lib.literalExpression ''"http://''${ravnix.hosts.''${host}.address}:''${toString port}"'';
+              defaultText = lib.literalExpression ''"''${ravnix.hosts.''${host}.address}:''${toString port}"'';
+              description = "The service's host and port as a URL writes them, an IPv6 address in brackets, for clients that speak something other than http (ssh-ng, for one). Derived like url. Read-only.";
+            };
+
+            url = mkOption {
+              type = types.str;
+              readOnly = true;
+              default = "http://${config.authority}";
+              defaultText = lib.literalExpression ''"http://''${authority}"'';
               description = "Where clients reach the service, derived from its host and port. Read-only.";
             };
           };

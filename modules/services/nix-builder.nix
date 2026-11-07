@@ -7,12 +7,6 @@
 let
   service = config.ravnix.services.nix-builder or { enable = false; };
   cfg = config.ravnix.nixBuilder;
-  hosts = config.ravnix.hosts;
-  # An IPv6 address goes in brackets in a URL (RFC 3986).
-  inUrl = address: if lib.hasInfix ":" address then "[${address}]" else address;
-  # ravnix.services asserts that the host exists; this only keeps the
-  # machine line from failing before that assertion can speak.
-  address = hosts.${service.host}.address or "unknown-host";
 in
 {
   config = lib.mkIf service.enable {
@@ -31,8 +25,8 @@ in
     nix.buildMachines = [
       {
         # Nix reads a port in ssh-ng://user@host:port and pins the host key
-        # for it (checked against Nix 2.35 in tests/services/nix-builder.md).
-        hostName = "${inUrl address}:${toString service.port}";
+        # for it (tests/services/nix-builder.md).
+        hostName = service.authority;
         protocol = "ssh-ng";
         inherit (cfg)
           sshUser
