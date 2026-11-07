@@ -212,11 +212,17 @@
 
       # The laptop shape, huginn: the common module, the disk layout of
       # hosts/laptop/disko.nix and the boot. A private flake imports it with
-      # the hardware module of its laptop. It carries a key, so a second
-      # import adds nothing.
+      # the hardware module of its laptop, such as the one below. Each
+      # carries a key, so a second import adds nothing.
       nixosModules.laptop = {
         key = "ravnix/nixosModules.laptop";
         imports = [ (import ./hosts/laptop { inherit self inputs; }) ];
+      };
+      # The Lenovo IdeaPad Pro 5 16AHP9: the 780M, PRIME offload to the RTX
+      # 4050 with runtime power management, its kernel parameters and initrd.
+      nixosModules.hardware-ideapad-pro-5-16ahp9 = {
+        key = "ravnix/nixosModules.hardware-ideapad-pro-5-16ahp9";
+        imports = [ ./modules/hardware/ideapad-pro-5-16ahp9 ];
       };
 
       packages.${system} =
