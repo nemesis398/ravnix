@@ -42,7 +42,7 @@ vim.lsp.commands["_ltex.addToDictionary"] = function(command, ctx)
   if client then
     local lang = client.settings.ltex.language
     client.settings.ltex.dictionary = { [lang] = lt.words(lang) }
-    client:notify("workspace/didChangeConfiguration", { settings = client.settings })
+    lt.push_settings(client)
   end
   notify("Added to " .. lt.dictionary .. ": " .. table.concat(added, ", "))
 end

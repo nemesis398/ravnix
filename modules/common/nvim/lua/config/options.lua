@@ -76,8 +76,8 @@ vim.opt.winblend = 0
 
 -- Spell-check English. LazyVim turns spell on for markdown, text and commit
 -- messages. Another language needs its word list, which is not part of Neovim
--- (it would be downloaded at the first use, and this editor never goes to the
--- network): add it in lua/user/options.lua, with the list itself under
+-- (it would be downloaded at the first use, and nothing here downloads on its
+-- own): add it in lua/user/options.lua, with the list itself under
 -- ~/.local/share/nvim/site/spell/. Add a word with `zg`, step with `]s`.
 vim.opt.spelllang = { "en" }
 

@@ -54,6 +54,30 @@ let
     ];
   });
 
+  # One definition of the list, with no me.nix beside it, is the value. The
+  # editor module brings the options it reads (the list, the dictionary, the
+  # theme) by itself.
+  lone = closureOf "lone" (
+    (inputs.home-manager.lib.homeManagerConfiguration {
+      inherit pkgs;
+      modules = [
+        ../../modules/common/nvim.nix
+        {
+          home = {
+            username = "alice";
+            homeDirectory = "/home/alice";
+            stateVersion = "26.05";
+          };
+          ravnix.dictionary.file = "/home/alice/dictionary.txt";
+          ravnix.editor.languages = [
+            "lua"
+            "nix"
+          ];
+        }
+      ];
+    }).config.programs.neovim.finalPackage
+  );
+
   unknown = builtins.tryEval (
     builtins.deepSeq
       (evaluated { ravnix.editor.languages = lib.mkForce [ "cobol" ]; }).config.ravnix.editor.languages
@@ -78,6 +102,7 @@ pkgs.runCommand "common-nvim-closure"
       noOdin
       noLanguageTool
       luaAndNix
+      lone
       ;
   }
   ''
@@ -112,6 +137,12 @@ pkgs.runCommand "common-nvim-closure"
     must_lack "$luaAndNix" '^(ols|odin|llvm|clang|lld|ltex-ls-plus|pyright|ruff|marksman|bash-language-server|shellcheck|shfmt|prettier|markdownlint-cli2|markdown-toc|vscode-langservers-extracted)[-0-9]' "lua and nix"
     for tool in '^lua-language-server-' '^stylua-' '^nil-' '^nixfmt-' '^statix-'; do
       must_have "$luaAndNix" "$tool" "lua and nix"
+    done
+
+    # One plain definition (no mkForce, no me.nix) narrows the same way.
+    must_lack "$lone" '^(ols|odin|llvm|clang|lld|ltex-ls-plus|pyright|ruff|marksman|bash-language-server|shellcheck|shfmt|prettier|markdownlint-cli2|markdown-toc|vscode-langservers-extracted)[-0-9]' "one definition"
+    for tool in '^lua-language-server-' '^nil-'; do
+      must_have "$lone" "$tool" "one definition"
     done
 
     [ "$status" = 0 ]

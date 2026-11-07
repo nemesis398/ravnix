@@ -69,8 +69,16 @@ function M.credentials()
   -- unlocked: a locked one would open a prompt.
   if (not c.key or not c.user) and vim.fn.executable("rbw") == 1 and run_rbw({ "unlocked" }) then
     local item = env("LANGUAGETOOL_RBW_ITEM") or "LanguageTool"
-    c.key = c.key or rbw({ "get", item })
-    c.user = c.user or rbw({ "get", "--field", "username", item })
+    -- A vault that did not answer the first question is not asked a second:
+    -- the editor would wait for it again.
+    local silent = false
+    if not c.key then
+      c.key = rbw({ "get", item })
+      silent = c.key == nil
+    end
+    if not c.user and not silent then
+      c.user = rbw({ "get", "--field", "username", item })
+    end
   end
 
   local file = vim.fn.expand("~/.config/languagetool/credentials")
@@ -102,6 +110,20 @@ function M.with_key(settings, c)
   return full
 end
 
+-- The credentials of the running clients, by client id: in memory, and not in
+-- the client's settings.
+local of_client = {}
+
+---Sends a client's settings to its server, with the key. Whatever changes the
+---settings afterwards (a word added to the dictionary) sends them through
+---here, since a server that applies what it is sent would lose the key.
+---@param client vim.lsp.Client
+function M.push_settings(client)
+  local c = of_client[client.id]
+  local ltex = c and M.with_key(client.settings.ltex, c) or client.settings.ltex
+  client:notify("workspace/didChangeConfiguration", { settings = { ltex = ltex } })
+end
+
 ---Handlers and the init hook that give a client the key without keeping it in
 ---the client's settings.
 ---@param c { key: string, user: string }
@@ -121,9 +143,11 @@ function M.client_config(c)
       end,
     },
     on_init = function(client)
-      client:notify("workspace/didChangeConfiguration", {
-        settings = { ltex = M.with_key(client.settings.ltex, c) },
-      })
+      of_client[client.id] = c
+      M.push_settings(client)
+    end,
+    on_exit = function(_, _, client_id)
+      of_client[client_id] = nil
     end,
   }
 end

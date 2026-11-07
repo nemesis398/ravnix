@@ -18,8 +18,9 @@
 #   - every plugin lazy.nvim knows lives in /nix/store, nothing was cloned or
 #     installed into the user's own directories, Mason is gone, and a plugin
 #     that is not in the store is an error and never a download;
-#   - the editor starts clean under a real terminal as well (a pty), and an
-#     error that only comes when VeryLazy does fails the probe;
+#   - the editor starts clean under a real terminal as well (a pty), after
+#     Insert mode (which loads blink.cmp), and an error that only comes when
+#     VeryLazy does fails the probe, headless and under the pty;
 #   - the first file of a language starts that language's server within
 #     10 s, and the server's binary is a Nix one (nil for Nix, ols for Odin,
 #     and the servers of the other languages the setup edits);
@@ -31,7 +32,8 @@
 #   - the LanguageTool checks: dictionary and credentials (missing, malformed,
 #     conflicting and unwritable input, a vault that does not answer), and the
 #     toggle against ltex-ls-plus itself and a stand-in server, with the API
-#     key found in no setting, command line, environment, message or file;
+#     key found in no setting, command line, environment, message or file, and
+#     sent again with the settings when a word is added to the dictionary;
 #   - a host that leaves languages out gets an editor that does not start
 #     what they would have started;
 #   - an empty file, a binary file and a 10 MB line open without a hang.
@@ -77,6 +79,8 @@ let
   # at all while the vault is locked (FAKE_RBW_LOCKED); and no answer in time
   # (FAKE_RBW_HANG names the command that hangs).
   fakeRbw = pkgs.writeShellScriptBin "rbw" ''
+    # What it was asked, when the test wants to know.
+    [ -z "$FAKE_RBW_LOG" ] || echo "$*" >> "$FAKE_RBW_LOG"
     if [ "$FAKE_RBW_HANG" = "$1" ]; then
       exec sleep 30
     fi
@@ -276,6 +280,11 @@ lib.throwIf (warnings != [ ])
 
         with subtest("an error that only comes with VeryLazy fails the probe"):
             must_fail("dave", "clean", "boom at VeryLazy")
+            # And under a real terminal, which is where VeryLazy comes from a UI.
+            status, out = run("dave", "TERM=xterm-256color PROBE_ALLOW=E1568 PROBE_EXPECT_FAILURE=1 PROBE=clean script -qec \"nvim -c 'luafile ${probe}'\" /dev/null")
+            assert status != 0, f"dave under a pty: the probe passed, and it must fail:\n{out}"
+            assert "boom at VeryLazy" in out, f"dave under a pty failed, but not because of the error:\n{out}"
+            print(f"(expected) dave under a pty: probe clean failed because of boom at VeryLazy:\n{out}")
 
         with subtest("the plugins come from the store, and Mason is gone"):
             probe("alice", "store")

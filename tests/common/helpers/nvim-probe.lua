@@ -58,6 +58,9 @@ local function settle()
   check(vim.wait(10000, function()
     return vim.g.did_very_lazy == true
   end, 50), "VeryLazy did not fire")
+  -- Insert mode loads blink.cmp, which checks its fuzzy library (a version
+  -- mismatch after an update of nixpkgs is a warning, at this point).
+  vim.api.nvim_feedkeys("i\27", "x", false)
   vim.wait(300)
 end
 
@@ -140,7 +143,10 @@ local probes = {}
 
 -- Nothing more than the start itself: the editor comes up, sets up everything
 -- that waits for VeryLazy, and says nothing.
-function probes.clean() end
+function probes.clean()
+  -- settle() entered Insert mode, which is what loads the completion.
+  check(package.loaded["blink.cmp"] ~= nil, "blink.cmp was not loaded by Insert mode")
+end
 
 -- The plugins and tools come from the store, and nothing was fetched.
 function probes.store()
@@ -304,7 +310,7 @@ function probes.languagetool()
   local home = vim.fn.tempname()
   vim.fn.mkdir(home .. "/.config/languagetool", "p")
   vim.env.HOME = home
-  local names = { "LANGUAGETOOL_API_KEY", "LANGUAGETOOL_USERNAME", "LANGUAGETOOL_SERVER", "LANGUAGETOOL_RBW_ITEM", "FAKE_RBW_LOCKED", "FAKE_RBW_HANG" }
+  local names = { "LANGUAGETOOL_API_KEY", "LANGUAGETOOL_USERNAME", "LANGUAGETOOL_SERVER", "LANGUAGETOOL_RBW_ITEM", "FAKE_RBW_LOCKED", "FAKE_RBW_HANG", "FAKE_RBW_LOG" }
   local function reset()
     for _, name in ipairs(names) do
       vim.env[name] = nil
@@ -330,11 +336,19 @@ function probes.languagetool()
   for _, hang in ipairs({ "unlocked", "get" }) do
     reset()
     vim.env.FAKE_RBW_HANG = hang
+    local calls = vim.fn.tempname()
+    vim.env.FAKE_RBW_LOG = calls
     local started = vim.uv.hrtime()
     local c = lt.credentials()
     local seconds = (vim.uv.hrtime() - started) / 1e9
     check(seconds < 3, ("rbw that hangs in `%s` held the editor up for %.1f s"):format(hang, seconds))
     check(c.key == nil, "a hanging rbw gave a key: " .. vim.inspect(c))
+    -- A vault that did not answer is asked once more at most: `unlocked`
+    -- that hangs ends it, a `get` that hangs is not followed by the second.
+    local asked = vim.fn.filereadable(calls) == 1 and vim.fn.readfile(calls) or {}
+    local expected = hang == "unlocked" and { "unlocked" } or { "unlocked", "get LanguageTool" }
+    check(vim.deep_equal(asked, expected), ("rbw that hangs in `%s` was asked %s"):format(hang, vim.inspect(asked)))
+    vim.fn.delete(calls)
     -- The process that did not answer is gone.
     vim.wait(300)
     for _, pid in ipairs(descendants()) do
@@ -413,6 +427,25 @@ function probes.toggle()
     return server_log():find("apiKey=" .. secret, 1, true) ~= nil
   end, "the server never got the API key:\n" .. server_log(), 60000)
   check(server_log():find("username=" .. user, 1, true), "the server got no user name:\n" .. server_log())
+
+  -- A word added to the dictionary while the check runs: the settings go to
+  -- the server again, and the key goes with them (a server that applies what
+  -- it is sent would lose its login otherwise).
+  local running = clients()[1]
+  local sent = {}
+  local original = running.notify
+  running.notify = function(self, method, params)
+    if method == "workspace/didChangeConfiguration" then
+      table.insert(sent, vim.inspect(params))
+    end
+    return original(self, method, params)
+  end
+  vim.lsp.commands["_ltex.addToDictionary"]({ arguments = { { words = { ["en-US"] = { "Sentense" } } } } }, { client_id = running.id })
+  running.notify = nil
+  check(#sent == 1, "adding a word sent the settings " .. #sent .. " times")
+  check(sent[1]:find(secret, 1, true) ~= nil, "the settings sent after adding a word have no key: " .. sent[1]:gsub("\n", " "))
+  check(vim.tbl_contains(running.settings.ltex.dictionary["en-US"], "Sentense"), "the added word is not in the client's dictionary")
+  check(vim.tbl_contains(vim.fn.readfile(require("ravnix_languagetool").dictionary), "Sentense | lang=en"), "the added word is not in the dictionary file")
 
   -- The key is in none of these.
   for _, client in ipairs(clients()) do
@@ -574,8 +607,8 @@ function probes.opaque()
   vim.api.nvim_buf_set_lines(0, 0, -1, false, { "hello" })
   vim.cmd("write")
   Snacks.notify("a notification")
-  Snacks.notify.error("an error")
-  allow("an error")
+  Snacks.notify.error("probe-notification-7c1")
+  allow("probe-notification-7c1")
   local float = Snacks.win({ text = "x", style = "float" })
   vim.wait(600)
   local count = 0

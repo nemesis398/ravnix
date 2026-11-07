@@ -160,7 +160,9 @@
 
     # The languages the editor installs language servers, formatters and
     # linters for. All of them; drop the ones you do not edit to keep the
-    # editor small (the Odin toolchain behind "odin" is 2.3 GiB).
+    # editor small (the Odin toolchain behind "odin" is 2.3 GiB). Edit this
+    # list: a second definition elsewhere is an error, unless it is a
+    # lib.mkForce.
     editor.languages = [
       "bash"
       "json"
