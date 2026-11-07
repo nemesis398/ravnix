@@ -138,7 +138,11 @@ ai-unlock() {
 #     copies the user's shell functions into the shells it starts, so this
 #     function is there too, and it must not read the vault again for every
 #     command an agent runs: the environment Claude Code runs with is
-#     already the one it was started with.
+#     already the one it was started with. That snapshot copies functions but
+#     not variables, so there _ravnix_secrets and _ravnix_claude_bin are both
+#     unset and this function cannot choose the binary: `claude` starts the
+#     first claude on the PATH, with no read of the vault, and that process
+#     holds only what Claude Code's own environment holds.
 #   - With the vault locked it starts claude without the secrets and says
 #     which variables are missing and what unlocks them. It never asks for a
 #     password itself, so `claude --version` in a script does not stop at a

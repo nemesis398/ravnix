@@ -12,10 +12,15 @@ earlier setup and stay Bash, behind their tests, until their port to Odin
 
 `homeModules.common` imports `homeModules.claude-skills`, which brings
 `homeModules.claude-code` along, so a host that imports `common` has Claude
-Code, its hooks and its skills, and the shell's `claude` function starts that
-build (`modules/common/bash/secrets.bash`). To turn it off, set
-`programs.claude-code.enable = false`; the function then starts the first
-`claude` on the PATH.
+Code, its hooks and its skills, and the shell's `claude` function starts the
+`claude` of the home-manager profile, that build, with the secrets of
+`ravnix.shell.secretEnv` (`modules/common/bash/secrets.bash`). The shell that
+Claude Code builds from its snapshot is the exception: the snapshot copies
+functions but not variables, so there the function does not know the build,
+and `claude` starts the first one on the PATH with only the environment
+Claude Code itself holds. To turn the function's choice off, set
+`programs.claude-code.enable = false`; it then starts the first `claude` on
+the PATH everywhere.
 
 Import `homeModules.claude-code` from the flake, not the file. The flake's
 module sets the package to `packages.claude-code`, the build with the
