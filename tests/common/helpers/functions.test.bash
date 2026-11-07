@@ -1063,6 +1063,31 @@ claude_never_traces_a_secret_to_the_trace_file() {
 	expect_no_err 'token-two'
 }
 
+# With functrace (set -T) a DEBUG trap is inherited by functions and subshells
+# and runs before every command in them, with the loader's variables in
+# reach. The function turns functrace off for the time it has the values, and
+# gives it back.
+claude_hides_the_secrets_from_a_debug_trap_under_functrace() {
+	setup
+	fake_rbw
+	fake_claude
+	printf 'token-one' >"$scratch/rbw/items/Item One"
+	printf 'token-two' >"$scratch/rbw/items/Item Two"
+	run "$two_secrets"'; dbg() { echo "DBG [${value-}] [${pairs[*]-}] [${A_TOKEN-}] [${B_TOKEN-}] [$_]" >>"'"$scratch"'/trap.log"; }
+		set -T; trap dbg DEBUG; claude; case $- in *T*) echo "FUNCTRACE-ON" ;; *) echo "FUNCTRACE-OFF" ;; esac
+		trap - DEBUG; set +T'
+	claude_env_has A_TOKEN token-one
+	claude_env_has B_TOKEN token-two
+	expect_out 'FUNCTRACE-ON'
+	# The trap ran (for the call in the caller), and saw no value.
+	[[ -s "$scratch/trap.log" ]]
+	if grep -qE 'token-(one|two)' "$scratch/trap.log"; then
+		echo "  the DEBUG trap saw a secret:"
+		grep -E 'token-(one|two)' "$scratch/trap.log" | sed 's/^/    /'
+		return 1
+	fi
+}
+
 claude_gives_xtrace_back_to_the_caller() {
 	setup
 	fake_rbw
@@ -1227,6 +1252,7 @@ tests=(
 	claude_leaves_no_loader_variable_behind_even_under_allexport
 	claude_never_traces_a_secret_to_stderr
 	claude_never_traces_a_secret_to_the_trace_file
+	claude_hides_the_secrets_from_a_debug_trap_under_functrace
 	claude_gives_xtrace_back_to_the_caller
 	claude_reads_every_item_before_it_exports_one
 	claude_exports_the_secrets_that_could_be_read_when_one_item_is_missing

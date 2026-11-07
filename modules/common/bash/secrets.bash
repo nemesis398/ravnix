@@ -142,16 +142,20 @@ ai-unlock() {
 #     expanded, `value=...` and `export NAME=...` among them, to stderr or to
 #     the file BASH_XTRACEFD names, where a terminal's scrollback or a log
 #     would keep the secret. xtrace is off from the first line of the
-#     function (the trace shows only `set +a +x` itself), so what PS4 or
+#     function (the trace shows only `set +a +x +T` itself), so what PS4 or
 #     BASH_XTRACEFD say does not matter, and `local -` gives the caller's
-#     `set -x` back when the function returns.
+#     `set -x` back when the function returns. Functrace is off for the same
+#     reason: a DEBUG trap the caller has under `set -T` would run inside the
+#     subshell, where the values are.
 # shellcheck disable=SC2120 # arguments are for the caller to give
 claude() {
     # The options as they were when the function returns. Not allexport: with
     # `set -a` in the caller every variable below would be exported. Not
-    # xtrace: it would print the secrets (see above).
+    # xtrace: it would print the secrets (see above). Not functrace: with
+    # `set -T` a DEBUG trap of the caller is inherited by the subshell below
+    # and runs before each of its commands, with the values in reach.
     local - bin
-    set +a +x
+    set +a +x +T
     if [[ -n ${CLAUDECODE-} ]] || ((${#_ravnix_secrets[@]} == 0)); then
         command claude "$@"
         return
