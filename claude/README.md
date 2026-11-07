@@ -18,7 +18,10 @@ Code, its hooks and its skills, and the shell's `claude` function starts the
 Claude Code builds from its snapshot is the exception: the snapshot copies
 functions but not variables, so there the function does not know the build,
 and `claude` starts the first one on the PATH with only the environment
-Claude Code itself holds. To turn the function's choice off, set
+Claude Code itself holds, its secrets included. One more `claude` can win
+over this one: a package in the host's own `users.users.USER.packages`,
+because NixOS builds that profile with collisions ignored. Keep Claude Code
+out of that list. To turn the function's choice off, set
 `programs.claude-code.enable = false`; it then starts the first `claude` on
 the PATH everywhere.
 
