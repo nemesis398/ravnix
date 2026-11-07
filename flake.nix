@@ -119,6 +119,19 @@
           ./modules/theme
         ];
       };
+      # The shell, the prompt, git, the command-line tools and the user's
+      # account, for both hosts. nixosModules.common brings home-manager, the
+      # options and the theme along; homeModules.common needs homeModules.options
+      # and homeModules.theme beside it. Each carries a key, so a host and a
+      # private flake can both import it and get one copy, not two.
+      nixosModules.common = {
+        key = "ravnix/nixosModules.common";
+        imports = [ (import ./modules/common/nixos.nix { inherit self; }) ];
+      };
+      homeModules.common = {
+        key = "ravnix/homeModules.common";
+        imports = [ ./modules/common ];
+      };
       packages.${system} = tools.packages;
       checks.${system} =
         if clashes != [ ] then
