@@ -46,9 +46,25 @@ new_repo() {
 	fake_nix 0
 }
 
-# Makes the fake nix exit with $1.
+# Makes the fake nix's flake check exit with $1. For the claude-code step it
+# builds a fake claude-code-verify, which logs its arguments to
+# $bin/verify.log and exits with $2 (default 0), and a fake download, and it
+# evaluates the version to 1.2.3. With $3 set to "no-download", the build of
+# the download prints nothing.
 fake_nix() {
-	write_script "$bin/nix" "printf '%s\n' \"\$*\" >>'$bin/nix.log'" "exit $1"
+	local download="echo '$bin/download'"
+	[[ "${3:-}" != no-download ]] || download=":"
+	write_script "$bin/nix" "printf '%s\n' \"\$*\" >>'$bin/nix.log'" \
+		'case "$*" in' \
+		"*'flake check'*) exit $1 ;;" \
+		"*'build'*'.#claude-code-verify'*) echo '$bin/verify' ;;" \
+		"*'build'*'.#claude-code.download'*) $download ;;" \
+		"*'eval'*'.#claude-code.version'*) printf '1.2.3' ;;" \
+		"*) echo \"fake nix: unexpected arguments: \$*\" >&2; exit 64 ;;" \
+		'esac'
+	write_script "$bin/verify/bin/claude-code-verify" \
+		"printf '%s\n' \"\$*\" >'$bin/verify.log'" "exit ${2:-0}"
+	: >"$bin/download"
 }
 
 # Writes $2 into $repo/$1 and stages it.
@@ -78,13 +94,40 @@ the_fast_gate_passes_on_a_clean_repository() {
 	}
 }
 
-the_full_gate_adds_nix_flake_check() {
+the_full_gate_adds_nix_flake_check_and_the_claude_code_check() {
 	new_repo
 	gate
 	expect_status 0
-	expect_out "all 4 steps passed"
+	expect_out "all 5 steps passed"
 	[[ "$(cat "$bin/nix.log")" == *"flake check"* ]] || {
 		echo "  expected nix flake check, the fake nix got: $(cat "$bin/nix.log" 2>/dev/null)"
+		return 1
+	}
+	[[ "$(cat "$bin/verify.log" 2>/dev/null)" == "$bin/download 1.2.3" ]] || {
+		echo "  expected claude-code-verify on the download and its version, it got: $(cat "$bin/verify.log" 2>/dev/null)"
+		return 1
+	}
+}
+
+the_gate_never_lets_nix_write_the_lock_file() {
+	new_repo
+	gate
+	expect_status 0
+	local line
+	while IFS= read -r line; do
+		[[ "$line" == *--no-update-lock-file* ]] || {
+			echo "  nix ran without --no-update-lock-file: $line"
+			return 1
+		}
+	done <"$bin/nix.log"
+}
+
+the_fast_gate_does_not_verify_claude_code() {
+	new_repo
+	gate --fast
+	expect_status 0
+	[[ ! -e "$bin/verify.log" ]] || {
+		echo "  the fast gate ran claude-code-verify"
 		return 1
 	}
 }
@@ -387,6 +430,58 @@ a_failing_flake_check_fails_the_full_gate_with_its_status() {
 	expect_err "flake failed"
 }
 
+# The claude-code step.
+
+a_claude_code_mismatch_fails_the_full_gate() {
+	new_repo
+	fake_nix 0 1
+	gate
+	expect_status 1
+	expect_err "claude-code failed (exit 1)"
+	expect_no_out "steps passed"
+}
+
+an_unreachable_manifest_fails_the_full_gate_and_says_so() {
+	new_repo
+	fake_nix 0 3
+	gate
+	expect_status 3
+	expect_err "release manifest is unreachable"
+	expect_err "Claude Code 1.2.3 is not verified"
+	expect_err "claude-code failed (exit 3)"
+}
+
+a_verifier_that_cannot_run_fails_the_full_gate() {
+	new_repo
+	fake_nix 0 2
+	gate
+	expect_status 2
+	expect_err "claude-code failed (exit 2)"
+}
+
+a_download_nix_does_not_build_fails_the_full_gate() {
+	new_repo
+	fake_nix 0 0 no-download
+	gate
+	expect_status 1
+	expect_err "no download"
+	[[ ! -e "$bin/verify.log" ]] || {
+		echo "  claude-code-verify ran without a download"
+		return 1
+	}
+}
+
+a_failing_flake_check_skips_the_claude_code_check() {
+	new_repo
+	fake_nix 3
+	gate
+	expect_status 3
+	[[ ! -e "$bin/verify.log" ]] || {
+		echo "  claude-code-verify ran after a failed flake check"
+		return 1
+	}
+}
+
 the_full_gate_without_nix_fails_before_any_step() {
 	new_repo
 	rm "$bin/nix"
@@ -416,7 +511,9 @@ a_missing_shellcheck_fails_before_any_step() {
 
 tests=(
 	the_fast_gate_passes_on_a_clean_repository
-	the_full_gate_adds_nix_flake_check
+	the_full_gate_adds_nix_flake_check_and_the_claude_code_check
+	the_gate_never_lets_nix_write_the_lock_file
+	the_fast_gate_does_not_verify_claude_code
 	an_unknown_argument_is_bad_usage
 	the_gate_runs_from_any_directory_of_the_checkout
 	outside_a_git_work_tree_the_gate_fails
@@ -448,6 +545,11 @@ tests=(
 	an_unstaged_script_error_is_checked_too
 	a_sourced_library_is_followed
 	a_failing_flake_check_fails_the_full_gate_with_its_status
+	a_claude_code_mismatch_fails_the_full_gate
+	an_unreachable_manifest_fails_the_full_gate_and_says_so
+	a_verifier_that_cannot_run_fails_the_full_gate
+	a_download_nix_does_not_build_fails_the_full_gate
+	a_failing_flake_check_skips_the_claude_code_check
 	the_full_gate_without_nix_fails_before_any_step
 	a_missing_shellcheck_fails_before_any_step
 )

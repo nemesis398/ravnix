@@ -101,6 +101,15 @@
       };
       toolClashes = lib.attrNames (lib.intersectAttrs tools.checks (discovered // ownChecks));
       # End of the Odin tools.
+
+      # Claude Code: the claude-code input's package with the download it was
+      # made from, which the full gate verifies against Anthropic's release
+      # manifest for the version in this flake's own lock (lib/claude-code.nix,
+      # tools/claude-code-verify). A private flake whose claude-code input
+      # this one follows builds and checks the version of its own lock.
+      claudeCode = import ./lib/claude-code.nix {
+        inherit lib;
+      } inputs.claude-code.packages.${system}.claude-code;
     in
     {
       # The typed ravnix.* options, one module for NixOS and home-manager.
@@ -132,7 +141,11 @@
         key = "ravnix/homeModules.common";
         imports = [ ./modules/common ];
       };
-      packages.${system} = tools.packages;
+      packages.${system} =
+        if tools.packages ? claude-code then
+          throw "tools/claude-code is a tool, and packages.claude-code is Claude Code itself; rename the tool"
+        else
+          tools.packages // { claude-code = claudeCode; };
       checks.${system} =
         if clashes != [ ] then
           throw "tests/: ${toString clashes} is already a check of flake.nix; pick another name"

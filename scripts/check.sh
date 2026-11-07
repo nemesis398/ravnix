@@ -22,8 +22,16 @@
 #   - shellcheck: every tracked shell script, found by its extension (.sh,
 #     .bash) or by its shebang (sh, bash, dash, ksh), hooks included: the
 #     staged copy, and the work-tree copy where it differs.
-# The slow step:
+# The slow steps:
 #   - flake: nix flake check, which builds every check of the flake.
+#   - claude-code: claude-code-verify checks the Claude Code download that
+#     packages.claude-code was made from, for the version in ravnix's own
+#     flake.lock, against Anthropic's release manifest. A private flake whose
+#     claude-code input ravnix's follows checks its own version itself. The
+#     check needs the network, so it runs here and not in the
+#     build sandbox (tools/claude-code-verify/README.md). An unreachable
+#     manifest (exit 3) fails the gate: it is the only check there is, and a
+#     push that bumps Claude Code would otherwise go out unverified.
 #
 # The gate stops at the first failing step and exits with that step's status,
 # and with 0 when every step passed.
@@ -57,7 +65,7 @@ esac
 # The steps, in order. A new check is a function step_NAME below and its name
 # in one of these lists.
 fast_steps=(boundary style shellcheck)
-slow_steps=(flake)
+slow_steps=(flake claude-code)
 steps=("${fast_steps[@]}")
 [[ "$mode" == fast ]] || steps+=("${slow_steps[@]}")
 
@@ -158,9 +166,33 @@ step_shellcheck() {
 	return "$status"
 }
 
+# nix as every slow step runs it: flakes on, and the lock file never written.
+nix_() {
+	nix --extra-experimental-features 'nix-command flakes' "$@" --no-update-lock-file
+}
+
 step_flake() {
-	nix --extra-experimental-features 'nix-command flakes' \
-		flake check --no-update-lock-file --print-build-logs --keep-going
+	nix_ flake check --print-build-logs --keep-going
+}
+
+step_claude-code() {
+	local verify download version status=0
+	verify="$(nix_ build --no-link --print-out-paths .#claude-code-verify)"
+	download="$(nix_ build --no-link --print-out-paths .#claude-code.download)"
+	version="$(nix_ eval --raw .#claude-code.version)"
+	if [[ -z "$download" || ! -f "$download" ]]; then
+		echo "check.sh: nix built no download for .#claude-code.download" >&2
+		return 1
+	fi
+	echo "Claude Code $version, downloaded as $download"
+	"$verify/bin/claude-code-verify" "$download" "$version" || status=$?
+	if ((status == 3)); then
+		printf 'check.sh: %s\n' \
+			"Anthropic's release manifest is unreachable, so Claude Code $version is not verified." \
+			"The gate fails rather than let an unverified binary out; push again once" \
+			"downloads.claude.ai answers." >&2
+	fi
+	return "$status"
 }
 
 for name in "${steps[@]}"; do

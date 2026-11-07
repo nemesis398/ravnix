@@ -40,7 +40,18 @@ new_repo() {
 	git -C "$repo" commit -qm init
 	git -C "$repo" config core.hooksPath .githooks
 	git -C "$repo" config ravnix.denyList "$list"
-	write_script "$bin/nix" "printf '%s\n' \"\$*\" >>'$bin/nix.log'"
+	# The full gate's claude-code step builds the verifier and the download,
+	# reads the version and runs the verifier; this nix answers with ones
+	# that pass, so a test here sees the hooks and nothing of that step.
+	write_script "$bin/nix" "printf '%s\n' \"\$*\" >>'$bin/nix.log'" \
+		'case "$*" in' \
+		"*'build'*'.#claude-code-verify'*) echo '$bin/verify' ;;" \
+		"*'build'*'.#claude-code.download'*) echo '$bin/download' ;;" \
+		"*'eval'*'.#claude-code.version'*) printf '1.2.3' ;;" \
+		'esac'
+	write_script "$bin/verify/bin/claude-code-verify" \
+		"printf '%s\n' \"\$*\" >'$bin/verify.log'" "exit 0"
+	: >"$bin/download"
 }
 
 in_repo() {
@@ -85,6 +96,10 @@ pre_push() {
 expect_full_gate() {
 	[[ "$(cat "$bin/nix.log" 2>/dev/null)" == *"flake check"* ]] || {
 		echo "  expected the full gate (nix flake check) to run"
+		return 1
+	}
+	[[ -f "$bin/verify.log" ]] || {
+		echo "  expected the full gate to verify the Claude Code download"
 		return 1
 	}
 }

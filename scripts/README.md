@@ -6,7 +6,7 @@ of each script.
 
 | Script | Does |
 | --- | --- |
-| `check.sh` | the gate: `--fast` (boundary check, style check, shellcheck) on every commit and stop, the full gate (adds `nix flake check`) before every push |
+| `check.sh` | the gate: `--fast` (boundary check, style check, shellcheck) on every commit and stop, the full gate (adds `nix flake check`, then `claude-code-verify` on the Claude Code download against Anthropic's live release manifest) before every push |
 | `check-public.sh` | the public-boundary check: no deny-list value in any file, file name or link target |
 | `check-style.sh` | the style check: no hex color outside `modules/theme/`, no radius other than 0, nothing translucent (the keyword `transparent` too) but the inside of the lock ring, no transition or animation, no Mermaid init block but the shared one (`docs/mermaid-theme.json`); prints `file:line:rule`. A child that shows its parent uses the role color or `inherit`, never `transparent` |
 | `lib/git-snapshot.sh` | lays out the index or a commit as plain files, for the checks to read what git will commit or push |

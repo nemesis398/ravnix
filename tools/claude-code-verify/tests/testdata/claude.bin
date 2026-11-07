@@ -1,0 +1,3 @@
+This is not Claude Code. It is the fixture that the claude-code-verify tests
+hash in its place: a few lines of text, so that the manifest beside it has
+something small and stable to describe.
