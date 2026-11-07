@@ -2,7 +2,9 @@
 # buildOdinTool refuses before it builds anything, and how the test runner
 # and the callgrind gate end on each case the fixtures in ./fixtures set up.
 # The template tool's own checks show the happy path; this test keeps the
-# failures failing, above all a leak, which odin test alone only warns about.
+# failures failing, above all a leak, which odin test alone only warns about,
+# and it shows that a count does not depend on the CPU glibc sees or on the
+# start of the process.
 { pkgs, lib, ... }:
 let
   odin = import ../../lib/odin.nix { inherit pkgs lib; };
@@ -25,6 +27,24 @@ let
     src = tool;
     benchArgs = [ "input.txt" ];
   };
+  # The same tool, benched on its standard input.
+  fromStdin = odin.buildOdinTool {
+    name = "fixture";
+    src = tool;
+    benchStdin = "input.txt";
+  };
+  # A program whose count is mostly glibc's memmove and memset, and the same
+  # program with more start-up work: four more libraries for the dynamic
+  # loader to load and relocate before main.
+  copier = odin.buildOdinTool {
+    name = "copier";
+    src = fixtures + "/copier";
+  };
+  copierWithLibraries = odin.buildOdinTool {
+    name = "copier";
+    src = fixtures + "/copier";
+    odinFlags = [ "-extra-linker-flags:-Wl,--no-as-needed -lrt -ldl -lutil -lresolv" ];
+  };
 
   evalFailures =
     lib.optional (problemsOf { src = tool; } != [ ])
@@ -37,6 +57,14 @@ let
     ) "expected the checks fixture-bench and fixture-tests, got: ${toString (builtins.attrNames good.checks)}"
     ++ lib.optional (good.name != "fixture") "the result does not carry the tool's name"
     ++ lib.optional (good.package.meta.mainProgram or null != "fixture") "the package's mainProgram is not the tool's name"
+    ++ lib.optional (
+      !(good.checks.fixture-bench.preferLocalBuild or false)
+      || (good.checks.fixture-bench.allowSubstitutes or true)
+    ) "the bench check may come from a remote builder or a cache"
+    ++ lib.optional (
+      !(good.checks.fixture-bench.measure.preferLocalBuild or false)
+      || (good.checks.fixture-bench.measure.allowSubstitutes or true)
+    ) "the measurement may come from a remote builder or a cache"
     ++ expectProblem "no tests directory" "no tests directory" {
       src = tool;
       tests = tool + "/no-such-tests";
@@ -73,6 +101,11 @@ let
     ++ expectProblem "src given as a string" "must be paths" {
       src = toString tool;
     }
+    ++ expectProblem "no src" "no src" { }
+    ++ expectProblem "a misspelt argument" "unknown argument benchArg" {
+      src = tool;
+      benchArg = [ "input.txt" ];
+    }
     ++ expectProblem "a name with capitals and a space" "lowercase" {
       name = "Bad Name";
       src = tool;
@@ -107,15 +140,21 @@ pkgs.runCommand "odin-harness"
       callgrind.measure
       callgrind.compare
       pkgs.jq
+      pkgs.binutils-unwrapped
     ];
     evalFailures = lib.concatStringsSep "\n" evalFailures;
     measured = good.checks.fixture-bench.measure;
+    measuredFromStdin = fromStdin.checks.fixture-bench.measure;
     passing = good.checks.fixture-tests;
     program = "${good.package}/bin/fixture";
+    copier = "${copier.package}/bin/copier";
+    copierWithLibraries = "${copierWithLibraries.package}/bin/copier";
+    valgrind = "${callgrind.valgrind}/bin/valgrind";
     bench = tool + "/bench";
     inherit tool baselines;
     bash = "${pkgs.bash}/bin/bash";
     failing = "${pkgs.coreutils}/bin/false";
+    sleeping = "${pkgs.coreutils}/bin/sleep";
   }
   ''
     export HOME="$TMPDIR"
@@ -146,20 +185,57 @@ pkgs.runCommand "odin-harness"
       sed 's/^/     | /' "log.$n"
       status=1
     }
+    # same NAME A B: the counts A and B are equal.
+    same() {
+      if [ "$2" = "$3" ]; then
+        echo "ok   $1 ($2)"
+      else
+        echo "FAIL $1: $2 against $3"
+        status=1
+      fi
+    }
+    # differ NAME A B: the counts A and B differ.
+    differ() {
+      if [ "$2" != "$3" ]; then
+        echo "ok   $1 ($2 against $3)"
+      else
+        echo "FAIL $1: both $2"
+        status=1
+      fi
+    }
+    # measure OUT [HOST_TUNABLES] PROGRAM: the count callgrind-measure takes
+    # of PROGRAM with no input, starting from HOST_TUNABLES.
+    measure() {
+      CALLGRIND_MEASURE_HOST_TUNABLES="$2" callgrind-measure "$1" "$bench" - "$3" >/dev/null
+      cat "$1/instructions"
+    }
+    # unpinned TUNABLES PROGRAM [TOGGLE]: one callgrind count without the
+    # pin, from main or, with TOGGLE empty, of the whole process.
+    unpinned() {
+      local out toggle=("--toggle-collect=''${3-main}")
+      out="$(mktemp -p "$TMPDIR")"
+      [ -n "''${3-main}" ] || toggle=()
+      env -i GLIBC_TUNABLES="$1" "$valgrind" --tool=callgrind --vgdb=no -q "''${toggle[@]}" \
+        --callgrind-out-file="$out" -- "$2" >/dev/null
+      awk '$1 == "totals:" { print $2 }' "$out"
+    }
 
     # The test runner.
-    expect "passing tests pass" 0 "2 tests passed" odin-tool-tests "$tool" ./tests out.pass
+    expect "passing tests pass" 0 "2 tests passed" odin-tool-tests fixture "$tool" ./tests out.pass
     expect "a leak fails although its assertion holds" fail "Memory failure" \
-      odin-tool-tests "$tool" ./tests-leak out.leak
-    expect "a failed assertion fails" fail "expected 1 + 1 to be 3" odin-tool-tests "$tool" ./tests-fail out.fail
-    expect "a panic fails" fail "panics" odin-tool-tests "$tool" ./tests-panic out.panic
+      odin-tool-tests fixture "$tool" ./tests-leak out.leak
+    expect "a failed assertion fails" fail "expected 1 + 1 to be 3" odin-tool-tests fixture "$tool" ./tests-fail out.fail
+    expect "a panic fails" fail "Index 3 is out of range 0..<3" odin-tool-tests fixture "$tool" ./tests-panic out.panic
     expect "a package without tests fails" fail "no @(test) procedure" \
-      odin-tool-tests "$tool" ./tests-none out.none
+      odin-tool-tests fixture "$tool" ./tests-none out.none
     expect "a test that exits early fails" fail "ended the process" \
-      odin-tool-tests "$tool" ./tests-exit out.exit
-    expect "a missing tests directory fails" fail "odin test" \
-      odin-tool-tests "$tool" ./no-such-tests out.missing
-    expect "the runner wants three arguments" 2 "usage" odin-tool-tests "$tool"
+      odin-tool-tests fixture "$tool" ./tests-exit out.exit
+    expect "a missing tests directory fails" fail "was not found" \
+      odin-tool-tests fixture "$tool" ./no-such-tests out.missing
+    expect "a test that hangs fails at the time limit and names the tool" fail \
+      "fixture: odin test ./tests-sleep did not finish within 10 s" \
+      env ODIN_TOOL_TESTS_TIMEOUT=10 odin-tool-tests fixture "$tool" ./tests-sleep out.sleep
+    expect "the runner wants four arguments" 2 "usage" odin-tool-tests fixture "$tool" ./tests
     expect "the tests check keeps the report" 0 '"total": 2' cat "$passing/report.json"
 
     # The callgrind measurement.
@@ -167,6 +243,8 @@ pkgs.runCommand "odin-harness"
     expect "it writes a baseline to commit" 0 '"instructions": [1-9]' cat "$measured/baseline.json"
     expect "it keeps the top functions" 0 "PROGRAM TOTALS" cat "$measured/annotate.txt"
     expect "it keeps the program's output" 0 "^43$" cat "$measured/stdout"
+    expect "it keeps the glibc pin it ran with" 0 "^glibc.cpu.hwcaps=-AVX,-AVX2," cat "$measured/glibc-tunables"
+    expect "a bench reads its stdin file" 0 "^43$" cat "$measuredFromStdin/stdout"
     expect "a program that fails fails the bench" fail "false exited 1 on run 1" \
       callgrind-measure out.false "$bench" - "$failing"
     expect "a missing bench input fails the bench" fail "cannot read no-such-input.txt" \
@@ -179,7 +257,62 @@ pkgs.runCommand "odin-harness"
       callgrind-measure out.drift "$bench" - "$bash" -c \
       'if [ -e "$1" ]; then i=0; while [ $i -lt 500 ]; do i=$((i + 1)); done; else : >"$1"; fi' \
       drift "$marker"
+    expect "a program that hangs fails at the time limit and names it" fail "sleep did not finish within 5 s on run 1" \
+      env CALLGRIND_MEASURE_TIMEOUT=5 callgrind-measure out.slow "$bench" - "$sleeping" 3600
+    cp "$copier" stripped
+    chmod u+w stripped
+    strip --strip-all stripped
+    expect "a program without a main symbol fails" fail "never ran a function named main" \
+      callgrind-measure out.stripped "$bench" - ./stripped
+    printf '#!/bin/sh\n' >script
+    chmod +x script
+    expect "a program without an ELF interpreter fails" fail "no ELF interpreter" \
+      callgrind-measure out.script "$bench" - ./script
+    expect "a file that is no program fails" fail "is not an executable file" \
+      callgrind-measure out.text "$bench" - "$bench/input.txt"
     expect "the measurement wants four arguments" 2 "usage" callgrind-measure out.usage "$bench"
+
+    # The start of the process is not in the count: four more libraries to
+    # load cost instructions before main, and none after.
+    pin="$(cat "$measured/glibc-tunables")"
+    differ "more start-up work costs instructions in the whole process" \
+      "$(unpinned "$pin" "$copier" "")" "$(unpinned "$pin" "$copierWithLibraries" "")"
+    plain="$(measure out.copier "" "$copier")"
+    same "and none in the count from main" "$plain" "$(measure out.libraries "" "$copierWithLibraries")"
+
+    # The CPU glibc sees is not in the count. Without the pin, another cache
+    # layout changes how the copier's 4 MiB copies run, on any host.
+    other_cache='glibc.cpu.x86_data_cache_size=0x10000:glibc.cpu.x86_shared_cache_size=0x2000000:glibc.cpu.x86_non_temporal_threshold=0x800000'
+    differ "without the pin, another cache layout changes the count" \
+      "$(unpinned "" "$copier")" "$(unpinned "$other_cache" "$copier")"
+    echo "     (without the pin, AVX, AVX2, ERMS and FSRM off: $(unpinned "" "$copier") against $(unpinned 'glibc.cpu.hwcaps=-AVX,-AVX2,-ERMS,-FSRM' "$copier"))"
+    same "with the pin, a host without AVX, AVX2, ERMS and FSRM counts the same" \
+      "$plain" "$(measure out.v2 'glibc.cpu.hwcaps=-AVX,-AVX2,-ERMS,-FSRM' "$copier")"
+    same "with the pin, a host with other preferred bits counts the same" \
+      "$plain" "$(measure out.preferred 'glibc.cpu.hwcaps=-Fast_Unaligned_Copy,-Fast_Unaligned_Load,-Fast_Rep_String,-Prefer_PMINUB_for_stringop' "$copier")"
+    same "with the pin, a host with another cache layout counts the same" \
+      "$plain" "$(measure out.cache "$other_cache" "$copier")"
+
+    # The check that the pin holds, on glibc's own report of its state.
+    help=out.copier/glibc-help diagnostics=out.copier/glibc-diagnostics
+    expect "the pin holds here" 0 "the glibc pin holds" callgrind-measure --check-glibc-state "$help" "$diagnostics"
+    { cat "$diagnostics"; echo "x86.cpu_features.preferred.Prefer_Something_New=0x1"; } >new-bit
+    expect "a preferred bit the pin does not clear fails" fail "add -Prefer_Something_New to hwcapsPin" \
+      callgrind-measure --check-glibc-state "$help" new-bit
+    sed 's/^x86\.cpu_features\.non_temporal_threshold=.*/x86.cpu_features.non_temporal_threshold=0x400000/' \
+      "$diagnostics" >other-threshold
+    expect "a threshold the pin did not set fails" fail "non_temporal_threshold=0x100000, the value the pin sets" \
+      callgrind-measure --check-glibc-state "$help" other-threshold
+    grep -v '^x86\.cpu_features\.preferred\.' "$diagnostics" >no-bits
+    expect "diagnostics without preferred bits fail" fail "no preferred bit" \
+      callgrind-measure --check-glibc-state "$help" no-bits
+    sed 's/^\( *x86-64-v3\)$/\1 (supported, searched)/' "$help" >v3-help
+    expect "a feature above x86-64-v2 left on fails" fail "x86-64-v3" \
+      callgrind-measure --check-glibc-state v3-help "$diagnostics"
+    sed 's/^\( *x86-64-v2\) (supported, searched)$/\1/' "$help" >v1-help
+    expect "a CPU below x86-64-v2 fails" fail "as x86-64-v2" \
+      callgrind-measure --check-glibc-state v1-help "$diagnostics"
+    expect "the check wants two files" 2 "usage" callgrind-measure --check-glibc-state "$help"
 
     # The comparison with the baseline.
     b="$baselines"

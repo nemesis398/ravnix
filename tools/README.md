@@ -17,8 +17,8 @@ with `_` is built and checked under the name without it, but is no
 package: that is `_template`, with the checks `template-tests` and
 `template-bench`. A directory without `default.nix`, a `.nix` file directly
 in `tools/`, a `default.nix` that names its tool differently from its
-directory, and two directories that give one name (`_x` and `x`) are
-evaluation errors.
+directory, a symlink in `tools/`, and two directories that give one name
+(`_x` and `x`) are evaluation errors.
 
 ## Start a tool
 
@@ -47,7 +47,8 @@ an input that exercises the tool; and record its first baseline (below).
 | `meta` | `{ }` | merged into the package's `meta` |
 
 A tool with no tests directory, a tests directory without an `.odin` file,
-no bench directory, or no `.odin` file at the top of `src` is refused when
+no bench directory, no `.odin` file at the top of `src`, or an argument
+that `buildOdinTool` does not know (a misspelt `benchArg`) is refused when
 the flake is evaluated, with the reason.
 
 ## The toolchain
@@ -72,8 +73,10 @@ built with `-o:speed`.
 
 The check also fails when the runner reports no test at all: `odin test`
 exits 0 on a package without a `@(test)` procedure, and when a test ends the
-process (`os.exit`) before the runner reports. The runner's JSON report is
-the check's output, `report.json`.
+process (`os.exit`) before the runner reports. A run that has not finished
+after 600 seconds fails with the tool's name, so a test that hangs cannot
+stall the gate; `ODIN_TOOL_TESTS_TIMEOUT` sets another limit. The runner's
+JSON report is the check's output, `report.json`.
 
 The tests run with the tool directory as their working directory, read-only
 in the build. Load fixtures with `#load("../testdata/x")` or build their path
@@ -92,30 +95,69 @@ nix shell --inputs-from . nixpkgs#odin --command odin test tools/NAME/tests \
 `NAME-bench` runs the package's program under valgrind's callgrind, with
 `benchArgs` and `benchStdin`, in a copy of `bench/` without `baseline.json`
 as its working directory, and in a fixed environment: `HOME`, `PATH`,
-`LC_ALL`, `TZ` and `TMPDIR` set to the same values every time and nothing
-else, so nothing of the build reaches the program. It counts the
-instructions the program executed, and fails when the count is more than
-2 % above `bench/baseline.json`, which holds one positive whole number:
+`LC_ALL`, `TZ`, `TMPDIR` and `GLIBC_TUNABLES` set to the same values every
+time and nothing else, so nothing of the build reaches the program. It
+counts the instructions executed from the program's `main` on, inclusive,
+and fails when the count is more than 2 % above `bench/baseline.json`, which
+holds one positive whole number:
 
 ```json
 {
-  "instructions": 456200
+  "instructions": 271731
 }
 ```
+
+The count starts at `main`, the entry point Odin generates (at `-o:speed`
+the tool's own `main` procedure is inlined into it), so the start of the
+process stays out: the dynamic loader, glibc's own start and its CPU
+detection, about 180 000 instructions that would dilute a regression in a
+small tool. Odin's own start, which `main` runs first (the runtime's setup
+and every `@(init)` procedure), is in the count. A program whose symbol
+table has been stripped has no `main` for callgrind to find, and fails.
+
+### The same count on every host
+
+glibc picks its string and memory functions (`memcpy`, `memset`, `strlen`)
+by the CPU, and valgrind shows glibc one of a few synthetic CPUs, chosen by
+what the host can do. Without a pin, the harness's memcpy-heavy fixture
+counted 4 % less with AVX, AVX2, ERMS and FSRM masked than without, and
+another cache layout alone changed its count almost sevenfold. The bench
+therefore pins glibc (`hwcapsPin` and `cachePin` in `bench/callgrind.nix`):
+it turns off every CPU feature above x86-64-v2, the level the tools are
+built for, clears every preferred bit (glibc 2.44 clears one on `-` and
+ignores `+`, so clearing all of them is the only state every host can
+reach), and fixes the cache sizes and thresholds. With the pin, the fixture
+counts the same under each of those host differences.
+
+Before it measures, the bench asks the program's own glibc, under the pin
+and under valgrind, which x86-64 level it supports and which preferred bits
+and cache values it uses, and fails when that is not the pinned state: a
+host below x86-64-v2, a feature the pin leaves on, or a preferred bit that a
+newer glibc sets and the pin does not clear yet. An incomplete pin then
+fails with the bit to add, instead of a count that differs from another
+host's. The pin makes glibc use its plain SSE2 code, so a count measures
+the tool's work, not what it costs on the fastest CPU.
+
+### What fails, and what does not
 
 The program runs twice, each time in a fresh copy at the same path, and the
 two counts must be equal: a bench that reads the clock, draws a random seed
 or depends on addresses fails with "not deterministic". A program that
-exits with a status other than 0 fails the bench too. When the count falls
-by more than 2 %, the check passes and says so: record the new count, so a
-later rise cannot hide in the gain. When the check fails, its log shows the
-top functions, inclusive; the full `callgrind_annotate` output and the
-`callgrind.out` file for KCachegrind are in the measurement's output.
+exits with a status other than 0 fails the bench, and so does a run that
+has not finished after 600 seconds (`CALLGRIND_MEASURE_TIMEOUT` sets another
+limit). When the check fails, its log shows the top functions, inclusive;
+the full `callgrind_annotate` output and the `callgrind.out` file for
+KCachegrind are in the measurement's output.
 
-The count includes the start of the process, about 180 000 instructions in
-the dynamic loader before the tool runs. Give the bench enough input that
-the tool's own work outweighs it, or a regression in the tool is diluted:
-the template's `main` is 60 % of its count.
+Only a rise fails. A count more than 2 % below the baseline passes, and the
+build log says to record it, but that log appears once: the result is
+cached, and the baseline keeps its slack until a person records the new
+count. A later rise back up to the old baseline then passes. There is no
+ratchet that fails on a gain.
+
+Neither the measurement nor the check is built on a remote builder or taken
+from a cache, since the check of glibc's state holds for the machine it ran
+on.
 
 ### Recording a baseline
 
@@ -138,17 +180,13 @@ records its first baseline the same way.
 
 Findings that are not fixed, so nobody mistakes them for covered.
 
-- A count is valid for one machine and one pin. glibc picks its string and
-  memory functions by CPU (the template runs `__memset_avx2_unaligned_erms`)
-  and reads the CPU's cache layout at start, so a different CPU can give a
-  different count for the same binary; so can a bump of nixpkgs, which moves
-  Odin, glibc and valgrind. The measurement is therefore built on the
-  machine that runs the check, never on a remote builder or taken from a
-  cache. Record the baselines again in the commit that bumps `flake.lock`,
-  and on the machine that runs the gate.
-- The count also depends a little on the working directory and `TMPDIR` the
-  program sees: in the build those are fixed, and outside it the template
-  counted 14 instructions more (0.003 %).
+- The pin is shown complete only for the host differences the harness can
+  stand in for on one machine: CPU features and preferred bits masked
+  through `GLIBC_TUNABLES`, and other cache sizes. The synthetic CPUs that
+  valgrind shows on a host without AVX2 are not measured directly; the
+  check of glibc's state is what catches a difference there.
+- A bump of nixpkgs moves Odin, glibc and valgrind, and with them every
+  count. Record the baselines again in the commit that bumps `flake.lock`.
 - The bench runs with `PATH` set to nothing usable, so a tool that starts
   other programs cannot be benched as it is; such a tool needs a
   `benchPath` argument that does not exist yet.

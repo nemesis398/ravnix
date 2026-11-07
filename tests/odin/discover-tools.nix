@@ -47,6 +47,8 @@ let
     ++ lib.optional (!refused (run "missing-file")) "a tool directory without default.nix was not refused"
     ++ lib.optional (!refused (run "clash")) "x and _x both give the tool x, and the discovery did not refuse it"
     ++ lib.optional (!refused (run "stray")) "y.nix directly in the tools directory is no tool, and the discovery did not refuse it"
+    ++ lib.optional (!refused (run "symlink"))
+      "the symlink beta to the tool alpha is no tool, and the discovery did not refuse it"
     ++ lib.optional (!refused (run "misnamed"))
       "tools/foo/default.nix names its tool bar, and the discovery did not refuse it"
     ++ lib.optional (!refused (run "not-a-tool"))

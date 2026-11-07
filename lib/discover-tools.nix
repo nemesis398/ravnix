@@ -6,9 +6,9 @@
 # package <name> and the checks <name>-tests and <name>-bench of each tool,
 # and both empty when the directory does not exist.
 #
-# A tool directory without default.nix, a .nix file directly in the
-# directory, and two directories that give one name are errors, never a
-# silent skip or override. The names come from the directories, so one
+# A tool directory without default.nix, a .nix file or a symlink directly
+# in the directory, and two directories that give one name are errors,
+# never a silent skip or override. The names come from the directories, so one
 # broken tool fails its own checks and leaves the others' evaluable.
 { lib }:
 dir: args:
@@ -18,6 +18,7 @@ let
   strays = lib.attrNames (
     lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".nix" name) entries
   );
+  links = lib.attrNames (lib.filterAttrs (_: type: type == "symlink") entries);
   withoutFile = lib.filter (d: !builtins.pathExists (dir + "/${d}/default.nix")) dirs;
   nameOf = lib.removePrefix "_";
   names = map nameOf dirs;
@@ -58,6 +59,8 @@ if !builtins.pathExists dir then
   }
 else if strays != [ ] then
   throw "tools/: ${lib.concatStringsSep ", " strays} is no tool; a tool is a directory tools/NAME with a default.nix"
+else if links != [ ] then
+  throw "tools/: ${lib.concatStringsSep ", " links} is a symlink, and no tool; a tool is a directory tools/NAME with a default.nix"
 else if withoutFile != [ ] then
   throw "tools/: ${lib.concatStringsSep ", " withoutFile} has no default.nix; every tool directory needs one (tools/README.md)"
 else if clashes != [ ] then
