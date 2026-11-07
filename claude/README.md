@@ -1,4 +1,4 @@
-# Claude Code: hooks, status line and skill values
+# Claude Code: hooks, status line, skill values and MCP servers
 
 This directory holds the Bash that ravnix runs inside Claude Code: the hooks
 in `hooks/` and the status line in `statusline/`. They came over from an
@@ -7,7 +7,7 @@ earlier setup and stay Bash, behind their tests, until their port to Odin
 
 | Module | Does |
 | --- | --- |
-| `homeModules.claude-code` (`modules/common/claude-code.nix`) | `claude` on PATH, from `packages.claude-code`; the auto-updater off; the settings file writable |
+| `homeModules.claude-code` (`modules/common/claude-code.nix`, `claude-mcp.nix`) | `claude` on PATH, from `packages.claude-code`; the auto-updater off; the settings file writable; the MCP servers in Claude Code's user scope |
 | `homeModules.claude-skills` (`modules/common/claude-skills.nix`) | the skill values file, the hooks and the status line, wired in the settings |
 
 `homeModules.common` imports `homeModules.claude-skills`, which brings
@@ -167,6 +167,79 @@ gaps).
 With `mutableSettings = false` home-manager links the file whole from the
 store. Then the step is off, and ravnix declares its hooks in that file.
 
+## MCP servers
+
+`ravnix.claude.mcpServers` holds the MCP servers Claude Code starts with in
+every project, by name, each the JSON that Claude Code's `mcpServers` holds
+for a server. There are none by default. An activation step,
+`settings/sync-mcp.sh`, puts them into Claude Code's user-scope config,
+`~/.claude.json` (`<configDir>/.claude.json` when the config directory is not
+`~/.claude`, which is where Claude Code keeps the file then).
+
+```nix
+ravnix.claude.mcpServers = {
+  docs = {
+    type = "http";
+    url = "https://mcp.example.org/mcp";
+    headers.Authorization = "Bearer ${DOCS_API_TOKEN}";
+  };
+  browser = {
+    type = "stdio";
+    command = "example-mcp";
+    args = [ "--headless" ];
+  };
+};
+```
+
+**No token enters the store.** A value under `headers` or `env` must be a
+reference to a variable of Claude Code's environment: `${NAME}`, or
+`Bearer ${NAME}` (also `Basic` and `Token`). Anything else is refused at
+evaluation, with a message that names the server, the field and the key and
+never repeats the value, which may be a token pasted by mistake. So is a
+reference with a default (`${NAME:-x}`), which is a place for a token to
+hide. The refusal is in the options, so the private flake's own `me` check
+shows it before any host exists. Claude Code resolves the reference when it
+starts. The value comes into its environment from `ravnix.shell.secretEnv`:
+the `claude` function reads the Bitwarden item with rbw and gives it to that
+one process. A variable that is no secret can go in
+`programs.claude-code.settings.env`, which Claude Code applies before it
+resolves the references.
+
+**What the step keeps.** It changes the `mcpServers` key of the file and
+nothing else, because Claude Code writes the file all the time and keeps its
+history, its account and every project's settings in it. A server you add
+with `claude mcp add --scope user` stays. A server in a project's own list
+(the local scope) is not touched. A declared server replaces a server of the
+same name whole. A server you stop declaring is taken out at the next
+switch, and so are all of them when Claude Code is turned off. If you remove
+a declared server with `claude mcp remove`, the next switch puts it back:
+the declaration wins.
+
+Which servers are ravnix's is told by their names in
+`${XDG_STATE_HOME:-~/.local/state}/ravnix/claude-mcp-servers.json`, written
+by the step. It sits beside the config and not in it, because Claude Code
+owns that file and may drop a marker inside an entry. The step writes it
+before the config with the old names and the new ones, and after it with the
+new ones only, so a run that dies half-way can still take out what it put in.
+
+Like the hook step, it reads a copy, builds the new file beside it, and
+moves it into place only while the file is still that copy; when Claude Code
+wrote in between, it reads again, up to five times, and then fails the
+activation without writing. It leaves a file whose JSON would not change
+byte for byte, makes no file when nothing is declared and nothing was put in
+before, creates a missing one with mode 600, and follows a symlink.
+
+**Why not `programs.claude-code.mcpServers`.** home-manager renders those
+into a plugin of its own. Claude Code then reports them in the scope
+`plugin` as `plugin:hm:NAME`, and their tools are called
+`mcp__plugin_hm_NAME__TOOL` instead of `mcp__NAME__TOOL`, so every
+permission rule and skill that names a server's tools stops matching, and
+`claude mcp remove` cannot take one out (checked with Claude Code 2.1.319).
+A server in `~/.claude.json` is in the user scope, where `claude mcp add
+--scope user` puts it, and keeps its name and its tools. The check
+`claude-mcp` runs the real `claude mcp list` and `claude mcp get` on the
+result and reads the scope from it.
+
 ## Tests
 
 Every `*/tests/*.test.sh` runs with bash and no arguments, and in the
@@ -175,6 +248,10 @@ home from the template's `me.nix` with both modules: the settings, the skill
 values file, each wrapper running its script with no PATH, the activation's
 two settings steps run in order on a file that holds herdr's entry, and
 `claude` itself. `claude-package` checks the package and its download.
+`claude-mcp` checks the MCP servers: the refusal of anything but a
+reference, the step run on a config in which the real `claude mcp add` wrote
+a server first, and `claude mcp list` and `claude mcp get` reading the
+result.
 
 The prune suite runs itself in user and mount namespaces of its own, under
 an unused uid and on a private tmpfs `/tmp`, so `/tmp/claude-<uid>` is the
@@ -195,6 +272,26 @@ refuses them), it fails and says so.
   puts them right; whether Claude Code reads first is untested.
 - A settings link whose target does not exist is followed: the step creates
   the file it names, when there is something to add.
+- The MCP step compares `~/.claude.json` with its copy just before it moves
+  its result into place, and takes no lock, as none is known that
+  Claude Code honors. A write by Claude Code in the moment between that
+  comparison and the move is lost, and Claude Code writes that file more
+  often than it writes the settings.
+- A Claude Code session that outlives a switch may later write the config
+  from an older copy, without the current servers; the next switch puts them
+  right. Whether Claude Code reads the file again before it writes is
+  untested.
+- Only `headers` and `env` are checked for references. A token in a server's
+  `url` (a query string, `user:password@`) or in its `args` (`--api-key X`)
+  is not found, and goes into the store. Put such a value in `headers` or
+  `env`, or let the server read the variable itself.
+- If the state file of the MCP step is lost, the servers that ravnix put in
+  and that were dropped from the declaration afterwards stay until `claude
+  mcp remove`. A state file the step cannot read fails the activation and
+  names the file.
+- A declared name that a server of Claude Code's own has, a `claude mcp add`
+  of the same name, is replaced at the next switch. The step cannot tell the
+  two apart.
 - `prune-claude-tmp` prunes `/tmp/claude-<uid>` and nothing else, and
   `PRUNE_TMP_ROOT` cannot move it. A Claude Code that puts its temporary
   directory elsewhere leaves that one unpruned.

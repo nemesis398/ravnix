@@ -28,6 +28,10 @@
 # a declared key replaces the file's value, whole arrays included, and an
 # undeclared one keeps it.
 #
+# The MCP servers (ravnix.claude.mcpServers) go into ~/.claude.json, Claude
+# Code's own file, through another activation step: claude-mcp.nix says why
+# and how, and claude/README.md what it keeps.
+#
 # Why ravnix's hooks do not go through that merge: declared there, a hook
 # list would replace the file's whole list for its event at every switch,
 # dropping the entries other tools write (herdr's SessionStart entry among
@@ -83,6 +87,9 @@ let
   ) (lib.concatLists (lib.attrValues config.ravnix.claude.hookEntries));
 in
 {
+  # The MCP servers go into ~/.claude.json, a file of Claude Code's own.
+  imports = [ ./claude-mcp.nix ];
+
   options.ravnix.claude.hookEntries = lib.mkOption {
     type = lib.types.attrsOf (lib.types.listOf json.type);
     default = { };

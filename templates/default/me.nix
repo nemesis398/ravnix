@@ -222,6 +222,19 @@
     # which key to set.
     claude.skillValues = { };
 
+    # The MCP servers Claude Code starts with in every project, by name, each
+    # the JSON of one server as Claude Code's mcpServers holds it. A header or
+    # an environment value must be a reference to a variable of Claude Code's
+    # environment (`Bearer ${NAME}` or `${NAME}`), never a value, so that no
+    # token enters the Nix store; shell.secretEnv above puts the variable
+    # there. For example:
+    #   mcpServers.docs = {
+    #     type = "http";
+    #     url = "https://mcp.example.org/mcp";
+    #     headers.Authorization = "Bearer ${DOCS_API_TOKEN}";
+    #   };
+    claude.mcpServers = { };
+
     # The one accent of the desktop: focus and place, never a state. One of
     # "mauve", "lavender", "pink", "flamingo", "rosewater", "teal", "sky" or
     # "sapphire". NixOS and home-manager both take it from here.
