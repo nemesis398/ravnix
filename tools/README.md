@@ -65,10 +65,12 @@ The compiler stays at build time. A binary keeps the paths of the core
 library files it was built from, for the location a panic or a failed
 assertion prints, and each path is a store reference to `odin`, which would
 pull the compiler and its LLVM into every host, about 2.3 GiB. The package
-build overwrites the hash in those paths with `remove-references-to`, which
-leaves the code and the bench count as they were, and it lists the
-toolchain in `disallowedRequisites`, so a package that still reaches the
-compiler fails to build. The package then needs only glibc at run time.
+build overwrites the hash in every reference to `odin` with
+`remove-references-to`, which leaves the code and the bench count as they
+were. Only then does the guard run: the package lists the toolchain in
+`disallowedRequisites`, so a package that still reaches the compiler some
+other way fails to build. At run time the package then needs glibc and
+whatever the tool itself links, nothing more.
 
 ## Tests
 
@@ -230,6 +232,11 @@ Findings that are not fixed, so nobody mistakes them for covered.
   double run turns that into a failure, not a wrong number. A thread made
   without `pthread_create` (a raw `clone`) does not pass through
   `start_thread`, and its work is not counted.
+- The build strips every reference to `odin` before the closure guard
+  runs, so the guard never sees one. A tool that really reads the files of
+  the `odin` package at run time, such as its core library sources, still
+  builds and then fails at run time on a path that no longer exists. Such
+  a tool must not use `buildOdinTool` as it is.
 - The baselines hold only the count, not the Odin, glibc and valgrind
   versions they were taken with; a stale baseline is noticed only through
   the counts.
