@@ -281,9 +281,112 @@ start.sh: running nix (Nix) 2.34.9, harmonia, sshd
 
 The profile still pointed at the same store path, the pin stamp kept the lock's revision, and no `ravnix-next` link was left. `docker compose up -d --no-deps nix-builder` without the override then started the builder on the lock's pin again, with nothing to install.
 
+## Fourth run of 2026-11-07: the control, two resolvers, a checked update
+
+More placeholders: `RESOLVER_2` is `NIX_BUILDER_DNS_2`, `UNUSED` is a LAN address that no device holds, and `PIN` is flake.lock's nixpkgs.
+
+### Rollback
+
+Written down before the deploy. To go back to the project as the third run left it, put the third run's files back into `PROJECT` from its commits, then:
+
+```sh
+docker compose up -d --build           # recreates both services without the control
+docker volume rm nix-builder_control   # the control's tmpfs volume, once neither uses it
+```
+
+The egress rule is not touched by either: the keeper's chains stay in place across the recreate.
+
+### Deployed
+
+The three scripts, the compose file and the `.env` went to `PROJECT` as before (root's, 0644), then `docker compose up -d --build` at 20:05Z. Compose made the volume `nix-builder_control` (`map[device:tmpfs o:size=64k,mode=0755 type:tmpfs]`), recreated both containers, and started the builder once `nix-firewall` was healthy:
+
+```text
+firewall.sh: keeping the rule for br-nix-builder and SUBNET, checked every 10s
+firewall.sh: the rule for br-nix-builder and SUBNET is in place
+firewall.sh: the probe targets answer from the host: NAS_A:CACHE_PORT LAN_PROBE
+start.sh: the egress rule holds: no answer from NAS_A:CACHE_PORT LAN_PROBE, which answer from the host
+start.sh: running nix (Nix) 2.34.9, harmonia, sshd
+```
+
+Inside the builder, `/control/probes` read `ok TIME NAS_A:CACHE_PORT LAN_PROBE`, one second behind the container's clock. The rule was already in place, so the keeper changed nothing.
+
+The first deploy probed `NAS_A:SSH_PORT`, as the third run did. sshd then logged `Connection closed by NAS_A port … [preauth]` 8 times a minute, one for each pass of the keeper and its health check. Harmonia logs nothing for a connection that sends nothing, so the input chain's target became the cache's port on the same address, redeployed at 20:08Z. In the next minute, sshd logged no such line. The two ports behave the same on every path that matters:
+
+| Connect to | from the host | from inside the builder | from a container on Docker's default bridge, outside the rule |
+| --- | --- | --- | --- |
+| `NAS_A:CACHE_PORT` | connected, 4 ms | no answer in 3 s | connected, 4 ms |
+| `NAS_A:SSH_PORT` | connected, 4 ms | no answer in 3 s | connected, 4 ms |
+
+### The keeper stopped: a stale control
+
+`docker compose stop nix-firewall` at 20:10:33Z. The rule stays without its keeper, but the control no longer changes. From the builder's log:
+
+```text
+start.sh: the egress rule failed a probe (1 of 3 in a row): nix-firewall's control is 39s old, more than NIX_BUILDER_CONTROL_MAX_AGE (30s): the keeper no longer checks the targets
+start.sh: the egress rule failed a probe (2 of 3 in a row): nix-firewall's control is 49s old, more than NIX_BUILDER_CONTROL_MAX_AGE (30s): the keeper no longer checks the targets
+start.sh: the egress rule failed a probe (3 of 3 in a row): nix-firewall's control is 59s old, more than NIX_BUILDER_CONTROL_MAX_AGE (30s): the keeper no longer checks the targets
+start.sh: the egress rule no longer holds; stopping the Nix daemon and sshd
+start.sh: a service or the probe of the egress rule exited with status 1; stopping the others so Docker restarts the container
+start.sh: waiting for the egress rule (nix-firewall): nix-firewall's control /control/probes is missing, empty or unreadable
+```
+
+After the restart the control was gone, not old: with both containers stopped for a moment, Docker unmounted the tmpfs volume, and the restarted builder got it empty. That is also what a reboot gives. `start.sh --probe` exited 1. `docker compose start nix-firewall` at 20:12:21Z: the keeper said `the rule for br-nix-builder and SUBNET is in place`, so the rule had stayed while it was stopped, and the builder's gate opened at its next probe, at 20:12:32Z. `start.sh --probe` exited 0.
+
+### A dead probe target
+
+`UNUSED` first, from the host: `ip neigh` lists it as `FAILED`, and a connect to `UNUSED:53` from the host's namespace failed after 3.07 s with `No route to host`. No device answers there.
+
+`NIX_BUILDER_PROBE_LAN=UNUSED:53 docker compose up -d` at 20:13:11Z, an override in the shell that leaves `.env` as it is. The keeper kept the rule and said:
+
+```text
+firewall.sh: the rule for br-nix-builder and SUBNET is in place
+firewall.sh: UNUSED:53 gave no answer from the host, so the builder's probe of it proves nothing; the builder serves no build until it answers
+```
+
+Its health check exited 1 with `the rule for br-nix-builder and SUBNET is in place, but UNUSED:53 gave no answer from the host, so the builder's probe of it proves nothing`, and Compose stopped at 20:15:20Z with `dependency failed to start: container nix-builder-nix-firewall-1 is unhealthy`, leaving the builder `Created`.
+
+`docker start nix-builder`, which is how Docker starts it after a reboot, without Compose's order:
+
+```text
+start.sh: waiting for the egress rule (nix-firewall): UNUSED:53 gave no answer from the host either, so no answer here proves nothing
+```
+
+`/control/probes` read `dark TIME UNUSED:53`. `start.sh --probe` exited 1 with `the egress rule is not confirmed: UNUSED:53 gave no answer from the host either, …`, a connect to port 22 inside the container was refused, so sshd was not running, and the cache answered HTTP 200, as harmonia does not wait for the gate.
+
+The builder's health check failed from its first run, at the sshd part of its command. Docker counts those failures only after the 15-minute `start_period` that the first install needs, so the status read `starting` until then. `docker compose up -d` without the override at 20:17:10Z put the real target back: both containers healthy, and the control `ok TIME NAS_A:CACHE_PORT LAN_PROBE`.
+
+A second hold of the same state showed the status turn. The builder started at 20:20:44Z and was `unhealthy` at 20:36:46Z, after the checks at 20:35:44Z and 20:36:45Z had both exited 1. It had not restarted once: it waited at the gate all along. `nix-firewall` was `unhealthy` throughout. The same `docker compose up -d` at 20:36:46Z made both healthy again, with the control back at `ok`.
+
+### DNS
+
+`HostConfig.Dns` is `["RESOLVER","RESOLVER_2"]`, and the container's `/etc/resolv.conf` says `ExtServers: [RESOLVER RESOLVER_2]`. Without `NIX_BUILDER_DNS_2`, `docker compose config` lists only `RESOLVER`: Compose folds the repeated entry into one. `dig +time=3 +tries=1` from inside the builder:
+
+| Query | Answer |
+| --- | --- |
+| `cache.nixos.org` and `github.com` through `127.0.0.11` | an address each |
+| `cache.nixos.org` straight to `RESOLVER`, to `RESOLVER_2`, and to `RESOLVER_2` over TCP | an address each |
+| `INTERNAL_NAME` and the host's own name through `127.0.0.11` | `NXDOMAIN` |
+| `cache.nixos.org` straight to `LAN_RESOLVER`, `NAS_A`, `GATEWAY` and `127.0.0.1` | `no servers could be reached` |
+
+curl's name lookup for `https://cache.nixos.org/nix-cache-info` took 12 ms, and the request got HTTP 200.
+
+### The tool check
+
+Inside the builder, `check_tools` from the new `start.sh`, against the running profile and the lock's pin, printed `nix 2.34.9, openssh 10.6p1, harmonia 3.3.0` and exited 0. Each of the five tools resolved to the pin's package, and each started: `nix` and `nix-daemon` with `--version`, `sshd` with `-V`, `ssh-keygen` refusing `-?`, and `harmonia-cache` stopping on a configuration file that is not there.
+
+A full update, with `NIX_BUILDER_PROFILES` and `NIX_BUILDER_STATE` pointed at a scratch directory whose `ravnix` was the running profile and whose stamp named an older pin:
+
+```text
+start.sh: installing nix, openssh and harmonia from github:NixOS/nixpkgs/PIN with nix (Nix) 2.34.9
+start.sh: the tools from github:NixOS/nixpkgs/PIN start: nix 2.34.9, openssh 10.6p1, harmonia 3.3.0
+```
+
+It took a second, as the pin's paths were all in the store. The scratch `ravnix` then pointed at the same profile path as before, the stamp held the lock's pin, and no `ravnix-next` link was left. The running profile and its stamp were not touched. What happens when the check fails, with a tool missing, one that does not start, one of another version, one from another package, or a pin that does not evaluate, is shown in the sandbox (`tests/deploy/nix-builder-start.nix`): the old tools and their stamp stay.
+
 ## Still to check
 
 - After the host's next reboot: both ports in `docker inspect nix-builder --format '{{json .NetworkSettings.Ports}}'`, the cache answering from a client, and the egress rule back in place (`docker compose ps` shows `nix-firewall` healthy, and the probes above give the same results). Docker starts both containers by itself after a reboot, in no order; the builder's log should show it waiting at the gate, or passing it, before `running`.
+- After the host's next reboot, the control as well: the volume starts empty, so the builder's log should show `nix-firewall's control /control/probes is missing` at the gate until the keeper's first pass, and `nix-firewall` should log `the probe targets answer from the host` once the router is up.
 - The host's next UGOS update: the rule still in place afterward, or put back by the keeper within its interval.
 - A real lid close or network change on a laptop in the middle of a remote build, and not only a frozen connection (above).
 - A host built from ravnix with both services enabled: `nixos-rebuild build` sends its builds to the builder, and a second host substitutes them.
