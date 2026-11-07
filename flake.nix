@@ -109,10 +109,16 @@
       # The Mocha palette, the roles, the accent option, and the style in the
       # applications; catppuccin/nix comes along, so a user imports one.
       nixosModules.theme = ./modules/theme/nixos.nix;
-      homeModules.theme.imports = [
-        inputs.catppuccin.homeModules.catppuccin
-        ./modules/theme
-      ];
+      # The key keeps one copy when it is imported more than once, as a
+      # shared module of nixosModules.common and by a host: without it each
+      # import loads catppuccin's function module again.
+      homeModules.theme = {
+        key = "ravnix/homeModules.theme";
+        imports = [
+          inputs.catppuccin.homeModules.catppuccin
+          ./modules/theme
+        ];
+      };
       packages.${system} = tools.packages;
       checks.${system} =
         if clashes != [ ] then
