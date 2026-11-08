@@ -72,9 +72,17 @@
 # first GTK and Qt applications, so it turns both on (and the dconf service the
 # GTK settings go through): the Catppuccin GTK theme, Papirus-Dark with folders
 # in the accent, the Catppuccin cursor, and qt6ct with the Fusion style and
-# Catppuccin's palette. tests/desktop/apps.nix asserts all of it. The variables
-# that point Qt at qt6ct (QT_QPA_PLATFORMTHEME) are home-manager session
-# variables; the Sway session has to read them (Task 3.2a).
+# Catppuccin's palette. tests/theme/apps.nix asserts what the theme module sets
+# once the switch is on (the cursor, the accent folders, qt6ct's style and
+# palette); tests/desktop/apps.nix asserts that the switch is on on a host with
+# this module (gtk, qt, the qtct platform theme, the GTK theme, the icon theme in
+# dconf, the dconf service). The variables that point Qt at qt6ct
+# (QT_QPA_PLATFORMTHEME, with QT_PLUGIN_PATH and QML2_IMPORT_PATH) and the
+# cursor's (XCURSOR_THEME, XCURSOR_SIZE) are home-manager session variables, in
+# /etc/profiles/per-user/USER/etc/profile.d/hm-session-vars.sh. They reach
+# systemd units, not what Sway starts, so the Sway session has to source that
+# file whole before it execs Sway (Task 3.2a), and Sway's own cursor needs
+# `seat * xcursor_theme` in its configuration.
 #
 # --- Exceptions to the style (docs/style.md, rule 9) -------------------------
 # These applications cannot be made to follow it, or only partly. None was seen
@@ -106,7 +114,9 @@
 #                     light/dark preference.
 #   nmtui             newt's own color scheme (NEWT_COLORS below maps it onto the
 #                     terminal's palette, so it carries the Catppuccin colors
-#                     but keeps newt's boxes).
+#                     but keeps newt's boxes). Its background is palette slot 0
+#                     (Surface1), not Base. Open for Task 3.7: slang may take a
+#                     `default` color, which would give Text on Base.
 # Themed by catppuccin/nix in the accent: yazi, mpv. Generated from the roles:
 # MangoHud, the Helium theme. wiremix and bluetui use the terminal's palette.
 {
@@ -250,7 +260,9 @@ in
     # nmtui's color scheme, in the colors of the terminal's palette: newt names
     # the 16 ANSI slots, which ghostty maps onto Catppuccin Mocha (the theme
     # module's palette). black is slot 0, Surface1, so the background is that
-    # and not Base: newt cannot ask for the terminal's own background. lightgray
+    # and not Base: newt is given palette slots. slang, which draws it, may know
+    # a `default` color name (root=default,default would then be Text on Base);
+    # that is to be tried on screen in Task 3.7, not guessed here. lightgray
     # is slot 7, Subtext1, the nearest slot to Text (white is slot 15, which is
     # Subtext0, and dimmer); gray is slot 8, Surface2; brightmagenta is slot 13,
     # the accent. Not seen on screen.

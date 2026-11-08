@@ -49,9 +49,9 @@ in
         Give Helium the Widevine library, so that sites with DRM play. Apple
         Music in a web app streams full tracks only under DRM; without the
         library it plays 30-second previews. The library is Google's, unfree
-        and not redistributable: nixpkgs allows it only by name, ravnix allows
-        that name only when you set this, and the built host must not be pushed
-        to a binary cache other people read.
+        and not redistributable: nixpkgs refuses it unless it is allowed, ravnix
+        allows that one name only when you set this, and the built host must not
+        be pushed to a binary cache other people read.
       '';
     };
 
