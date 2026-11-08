@@ -1,9 +1,10 @@
 # The convention every package of ravnix relies on: each packages/NAME/
 # default.nix is the package NAME, a function for callPackage
-# (lib/discover-packages.nix), and flake.nix gives it to packages.<system> and
-# to the overlay as pkgs.ravnix.NAME. This test runs the discovery on the
-# fixture trees in ./fixtures/packages and builds what it finds, then checks
-# that the flake and nixosModules.common wire the real packages/ in.
+# (lib/discover-packages.nix), and each tools/NAME the tool NAME. The flake
+# gives them to packages.<system> and, through lib/ravnix-packages.nix, to the
+# overlay as pkgs.ravnix.NAME. This test runs the discovery and the overlay on
+# the fixture trees in ./fixtures and builds what they find, then checks that
+# the flake and nixosModules.common wire the real packages/ and tools/ in.
 {
   self,
   inputs,
@@ -14,6 +15,8 @@
 }:
 let
   discover = import ../../lib/discover-packages.nix { inherit lib; };
+  discoverTools = import ../../lib/discover-tools.nix { inherit lib; };
+  ravnixPackages = import ../../lib/ravnix-packages.nix { inherit lib; };
   discoverFile = ../../lib/discover-packages.nix;
   fixtures = ./fixtures/packages;
   refusals = import ./helpers/refusals.nix { inherit lib; };
@@ -21,43 +24,50 @@ let
   tree = discover (fixtures + "/tree") { };
   empty = discover (fixtures + "/empty") { };
   missing = discover (fixtures + "/no-such-directory") { };
-  # What flake.nix does with the packages: every one is called with the
-  # overlay's final, and finds the others under ravnix.
-  overlay = final: _: { ravnix = lib.mapAttrs (_: file: final.callPackage file { }) tree; };
-  built = (pkgs.extend overlay).ravnix;
+  # The overlay of the flake, made from the fixture packages and no tools:
+  # every one is called with the overlay's final, and finds the others under
+  # ravnix.
+  fixtureOverlay =
+    (ravnixPackages {
+      packagesDir = fixtures + "/tree";
+      toolsDir = fixtures + "/no-such-directory";
+    }).overlay;
+  built = (pkgs.extend fixtureOverlay).ravnix;
 
-  # The same expression in a fresh nix-instantiate, for the messages.
+  # The same expressions in a fresh nix-instantiate, for the messages.
   expression = tree: taken: ''
     let
       lib = import ${inputs.nixpkgs}/lib;
     in
     builtins.attrNames (import ${discoverFile} { inherit lib; } ${fixtures}/${tree} ${taken})
   '';
+  packagesExpression = packagesDir: toolsDir: ''
+    let
+      lib = import ${inputs.nixpkgs}/lib;
+    in
+    builtins.attrNames
+      (import ${self}/lib/ravnix-packages.nix { inherit lib; } {
+        packagesDir = ${packagesDir};
+        toolsDir = ${toolsDir};
+      }).files
+  '';
 
-  # The flake's real packages/: whatever is in it, the flake gives it out.
+  # The flake's real packages/ and tools/: whatever is in them, the flake
+  # gives it out. Only the names of the tools are read, which needs none of
+  # the arguments that building them does.
   real = lib.attrNames (discover ../../packages { });
+  toolNames = lib.attrNames (discoverTools ../../tools { }).packages;
+  everything = lib.sort lib.lessThan (real ++ toolNames);
   overlaid = pkgs.extend self.overlays.default;
   twice = overlaid.extend self.overlays.default;
+  sameTool = name: overlaid.ravnix.${name}.drvPath == self.packages.${system}.${name}.drvPath;
 
-  me = ../../templates/default/me.nix;
-  base = [
-    self.nixosModules.common
-    me
-    {
-      system.stateVersion = "26.05";
-      warnings = lib.mkForce [ ];
-      boot.loader.grub.enable = false;
-      fileSystems."/" = {
-        device = "none";
-        fsType = "tmpfs";
-      };
-    }
-  ];
+  hostModules = import ./helpers/host-modules.nix { inherit lib; };
   host =
     modules:
     (inputs.nixpkgs.lib.nixosSystem {
       inherit system;
-      modules = base ++ modules;
+      modules = hostModules ++ [ self.nixosModules.common ] ++ modules;
     }).pkgs;
   plain = host [ ];
   applied = host [ { nixpkgs.overlays = [ self.overlays.default ]; } ];
@@ -70,7 +80,8 @@ let
     pkgs':
     builtins.tryEval (
       (inputs.nixpkgs.lib.nixosSystem {
-        modules = base ++ [
+        modules = hostModules ++ [
+          self.nixosModules.common
           "${inputs.nixpkgs}/nixos/modules/misc/nixpkgs/read-only.nix"
           { nixpkgs.pkgs = pkgs'; }
         ];
@@ -96,35 +107,50 @@ let
     ++ lib.optional (
       !lib.all lib.isDerivation (lib.attrValues built)
     ) "a discovered package is no derivation"
-    # The flake wires the real packages/ in, however many there are.
+    # The flake wires the real packages/ and tools/ in, however many there are.
     ++ lib.optional (
-      lib.attrNames overlaid.ravnix != real
-    ) "pkgs.ravnix has ${toString (lib.attrNames overlaid.ravnix)}, packages/ has ${toString real}"
+      toolNames == [ ]
+    ) "tools/ holds no tool, so the check that tools reach pkgs.ravnix would check nothing"
+    ++
+      lib.optional (lib.attrNames overlaid.ravnix != everything)
+        "pkgs.ravnix has ${toString (lib.attrNames overlaid.ravnix)}, packages/ and tools/ have ${toString everything}"
+    ++
+      lib.optional (lib.attrNames twice.ravnix != everything)
+        "the overlay applied twice gives ${toString (lib.attrNames twice.ravnix)}, not ${toString everything}"
     ++ lib.optional (
-      lib.attrNames twice.ravnix != real
-    ) "the overlay applied twice gives ${toString (lib.attrNames twice.ravnix)}, not ${toString real}"
-    ++ lib.optional (
-      !lib.all (name: self.packages.${system} ? ${name}) real
-    ) "packages.${system} lacks a package of packages/"
+      !lib.all (name: self.packages.${system} ? ${name}) (real ++ toolNames)
+    ) "packages.${system} lacks a package of packages/ or a tool"
     ++ lib.optional (!self.packages.${system} ? claude-code) "packages.${system} lost claude-code"
+    # claude-code stays out of pkgs.ravnix: it is the download the gate verifies,
+    # and packages.claude-code is its only route.
+    ++ lib.optional (overlaid.ravnix ? claude-code) "pkgs.ravnix holds claude-code"
     ++ lib.optional (
       !lib.all (name: self.packages.${system}.${name} == overlaid.ravnix.${name}) real
     ) "a package of packages.${system} is not the one of pkgs.ravnix"
+    ++
+      lib.optional (!lib.all sameTool toolNames)
+        "a tool of packages.${system} is not the derivation of the same tool in pkgs.ravnix: ${
+          toString (lib.filter (name: !sameTool name) toolNames)
+        }"
+    ++ lib.optional (
+      !lib.all (name: twice.ravnix.${name}.drvPath == overlaid.ravnix.${name}.drvPath) toolNames
+    ) "applying the overlay twice changed a tool"
     # nixosModules.common brings the overlay, so a host and its home-manager
     # configuration have pkgs.ravnix, and a host that applies it too changes
     # nothing.
     ++ lib.optional (
-      !plain ? ravnix || lib.attrNames plain.ravnix != real
-    ) "a host with nixosModules.common has no pkgs.ravnix of packages/"
+      !plain ? ravnix || lib.attrNames plain.ravnix != everything
+    ) "a host with nixosModules.common has no pkgs.ravnix of packages/ and tools/"
     ++ lib.optional (
-      !applied ? ravnix || lib.attrNames applied.ravnix != real
+      !applied ? ravnix || lib.attrNames applied.ravnix != everything
     ) "a host that applies the overlay again no longer has pkgs.ravnix"
     ++ lib.optional (
       !readOnlyPlain.success || readOnlyPlain.value ? ravnix
     ) "a host with read-only pkgs and nixosModules.common does not evaluate, or invents pkgs.ravnix"
-    ++ lib.optional (
-      !readOnlyOverlaid.success || lib.attrNames readOnlyOverlaid.value.ravnix != real
-    ) "a host with read-only pkgs that has the overlay does not have pkgs.ravnix of packages/";
+    ++
+      lib.optional
+        (!readOnlyOverlaid.success || lib.attrNames readOnlyOverlaid.value.ravnix != everything)
+        "a host with read-only pkgs that has the overlay does not have pkgs.ravnix of packages/ and tools/";
 in
 pkgs.runCommand "flake-packages"
   {
@@ -175,6 +201,20 @@ pkgs.runCommand "flake-packages"
             messages = [
               "packages/: hello would be packages.hello, which is the tool tools/hello"
               "rename the package"
+            ];
+          }
+          {
+            name = "a package named after a tool of this repository";
+            expression = packagesExpression "${fixtures}/real-tool" "${self}/tools";
+            messages = [
+              "packages/: claude-code-verify would be packages.claude-code-verify, which is the tool tools/claude-code-verify"
+            ];
+          }
+          {
+            name = "a tool named claude-code";
+            expression = packagesExpression "${fixtures}/tree" "${./fixtures/tools}";
+            messages = [
+              "tools/claude-code is a tool, and packages.claude-code is Claude Code itself; rename the tool"
             ];
           }
           {

@@ -104,20 +104,14 @@
 
       # Packages, found like tools: every packages/<name>/default.nix is a
       # function for callPackage and becomes the package <name>
-      # (lib/discover-packages.nix; packages/README.md has the rest). A name
-      # that a tool or packages.claude-code already holds is an error. Every
-      # package is built through overlays.default, as pkgs.ravnix.<name>, with
-      # the flake's pkgs for packages.<system> and with the package set of
-      # whoever applies the overlay for the modules, so the two are the same
-      # package and a package that needs another finds it as `ravnix`.
-      packageFiles = import ./lib/discover-packages.nix { inherit lib; } ./packages (
-        lib.mapAttrs (name: _: "the tool tools/${name}") tools.packages
-        // {
-          claude-code = "Claude Code itself";
-        }
-      );
-      ravnixOverlay = final: _prev: {
-        ravnix = lib.mapAttrs (_: file: final.callPackage file { }) packageFiles;
+      # (lib/discover-packages.nix; packages/README.md has the rest). Packages
+      # and tools go under pkgs.ravnix by overlays.default, built with the
+      # package set of whoever applies the overlay (lib/ravnix-packages.nix).
+      # packages.<system> takes its packages from the same overlay, so the
+      # two are the same package.
+      ravnixPackages = import ./lib/ravnix-packages.nix { inherit lib; } {
+        packagesDir = ./packages;
+        toolsDir = ./tools;
       };
       # End of the packages.
 
@@ -170,14 +164,22 @@
       # glue that makes the two hosts one system. Every file and directory of
       # modules/desktop/ and of modules/glue/ is imported by that directory's
       # default.nix, so a module is added without editing this file
-      # (lib/import-dir.nix).
+      # (lib/import-dir.nix). Each brings nixosModules.common, whose
+      # home-manager, options and overlay those modules read; the key keeps a
+      # host that lists both from getting two copies.
       nixosModules.desktop = {
         key = "ravnix/nixosModules.desktop";
-        imports = [ ./modules/desktop ];
+        imports = [
+          self.nixosModules.common
+          ./modules/desktop
+        ];
       };
       nixosModules.glue = {
         key = "ravnix/nixosModules.glue";
-        imports = [ ./modules/glue ];
+        imports = [
+          self.nixosModules.common
+          ./modules/glue
+        ];
       };
       # Claude Code from packages.claude-code, and the skill
       # framework: the skill values, the hooks and the status line
@@ -205,16 +207,16 @@
           ./modules/common/claude-skills.nix
         ];
       };
-      # Every package of packages/ as pkgs.ravnix.<name>, so a module reads
+      # Every package and tool as pkgs.ravnix.<name>, so a module reads
       # pkgs.ravnix.<name> and never needs `self`. nixosModules.common applies
-      # it. It sets the one attribute ravnix, to the same value every time, so
-      # applying it a second time (a host that lists it too) changes nothing.
-      overlays.default = ravnixOverlay;
+      # it, and applying it a second time (a host that lists it too) changes
+      # nothing (lib/ravnix-packages.nix).
+      overlays.default = ravnixPackages.overlay;
       packages.${system} =
         if tools.packages ? claude-code then
           throw "tools/claude-code is a tool, and packages.claude-code is Claude Code itself; rename the tool"
         else
-          tools.packages // (pkgs.extend ravnixOverlay).ravnix // { claude-code = claudeCode; };
+          tools.packages // ravnixPackages.packagesOf pkgs // { claude-code = claudeCode; };
       checks.${system} =
         if clashes != [ ] then
           throw "tests/: ${toString clashes} is already a check of flake.nix; pick another name"

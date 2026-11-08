@@ -13,15 +13,17 @@
 #     home-manager configuration. Each carries a key or is a path, so another
 #     module that adds one of them to the user's home-manager configuration
 #     adds nothing the second time.
-#   - overlays.default, which puts ravnix's own packages (packages/NAME) in
-#     pkgs.ravnix.NAME, for the system's modules and, since home-manager uses
-#     the system's pkgs, for the user's too. A host or a private flake that
-#     lists the overlay as well changes nothing: it sets one attribute, to the
-#     same value each time. A configuration whose pkgs is read-only (a NixOS
-#     VM test node, or nixpkgs.pkgs set by hand) takes no overlays from a
-#     module, and the module leaves it alone; whoever hands over that pkgs
+#   - overlays.default, which puts ravnix's own packages (packages/NAME) and
+#     tools (tools/NAME) in pkgs.ravnix.NAME, for the system's modules and,
+#     since home-manager uses the system's pkgs, for the user's too. A host or
+#     a private flake that lists the overlay as well changes nothing: it sets
+#     one attribute, to the same value each time. A configuration that imports
+#     nixosModules.readOnlyPkgs (nixos/modules/misc/nixpkgs/read-only.nix), as
+#     a NixOS VM test node does when node.pkgs is set, takes no overlays from
+#     a module, and this module leaves it alone; whoever hands over that pkgs
 #     applies the overlay to it (pkgs.extend self.overlays.default), or the
 #     modules that read pkgs.ravnix.NAME fail with "attribute ravnix missing".
+#     A host that sets nixpkgs.pkgs without that module gets the overlay.
 #
 # The user's values reach home-manager from here. me.nix is evaluated once, by
 # NixOS, and every ravnix option that it sets (or that a host module sets) is
@@ -103,10 +105,16 @@ in
     self.nixosModules.theme
   ];
 
-  # Read-only pkgs declares nixpkgs.overlays as an option no module may define
-  # (nixos/modules/misc/nixpkgs/read-only.nix), and has none of the options
-  # that the usual nixpkgs module declares, localSystem among them.
-  nixpkgs.overlays = lib.mkIf (options.nixpkgs ? localSystem) [ self.overlays.default ];
+  # Read-only pkgs declares nixpkgs.overlays as an option that no module may
+  # define, and says so by the file that declares it. The probe asks for that
+  # file and no other, so a rename upstream shows as the error of defining
+  # the option in a VM test (common-shell), not as an overlay that goes
+  # missing.
+  nixpkgs.overlays = lib.mkIf (
+    !lib.any (lib.hasSuffix "/misc/nixpkgs/read-only.nix") (
+      map toString options.nixpkgs.overlays.declarations
+    )
+  ) [ self.overlays.default ];
 
   users.users.${user} = {
     isNormalUser = true;

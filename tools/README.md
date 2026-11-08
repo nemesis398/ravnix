@@ -11,8 +11,9 @@ and the flake finds it: adding a tool never touches `flake.nix`.
 | `NAME/bench/` | the bench input, and `baseline.json` |
 | `NAME/README.md` | what the tool does, and every finding its tests turned up that is not fixed |
 
-Every `tools/NAME/` becomes the package `NAME` and the checks `NAME-tests`
-and `NAME-bench` (`lib/discover-tools.nix`). A directory whose name starts
+Every `tools/NAME/` becomes the package `NAME` (also `pkgs.ravnix.NAME`, for
+modules; `lib/ravnix-packages.nix`) and the checks `NAME-tests` and
+`NAME-bench` (`lib/discover-tools.nix`). A directory whose name starts
 with `_` is built and checked under the name without it, but is no
 package: that is `_template`, with the checks `template-tests` and
 `template-bench`. A directory without `default.nix`, a `.nix` file directly

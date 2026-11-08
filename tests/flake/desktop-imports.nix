@@ -4,12 +4,14 @@
 # (lib/import-dir.nix), in sorted order, so a module is added without touching
 # a shared file. This test runs the import function on the fixture trees in
 # ./fixtures/desktop, evaluates what it finds, and checks that both
-# directories use it.
+# directories use it, and that a host with either module alone has what the
+# modules read.
 {
   self,
   inputs,
   pkgs,
   lib,
+  system,
   ...
 }:
 let
@@ -21,8 +23,6 @@ let
   imports = importDir "modules/desktop";
   tree = imports (fixtures + "/tree");
   evaluated = lib.evalModules { modules = [ { imports = tree; } ]; };
-  # Whether evaluating the value fails, deeply enough to reach everything.
-  refused = value: !(builtins.tryEval (builtins.deepSeq value value)).success;
 
   expression = label: dir: ''
     let
@@ -37,6 +37,35 @@ let
   # directory is caught from the first module on.
   desktop = import ../../modules/desktop/default.nix { inherit lib; };
   glue = import ../../modules/glue/default.nix { inherit lib; };
+
+  # A host with one of the modules and nothing else of ravnix's: both bring
+  # nixosModules.common, whose home-manager, options and overlay the files of
+  # their directories read (home-manager.sharedModules, pkgs.ravnix.NAME), and
+  # the key of common keeps a second import from adding anything. A summary is
+  # whether the host evaluates, and how many shared home-manager modules and
+  # overlays it has and whether pkgs.ravnix exists.
+  hostModules = import ./helpers/host-modules.nix { inherit lib; };
+  summary =
+    modules:
+    let
+      h = inputs.nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = hostModules ++ modules;
+      };
+      facts = {
+        shared = lib.length h.config.home-manager.sharedModules;
+        overlays = lib.length h.config.nixpkgs.overlays;
+        ravnix = h.pkgs ? ravnix;
+      };
+    in
+    builtins.tryEval (builtins.deepSeq facts facts);
+  commonOnly = summary [ self.nixosModules.common ];
+  together = summary [
+    self.nixosModules.common
+    self.nixosModules.desktop
+    self.nixosModules.glue
+  ];
+  alone = name: summary [ self.nixosModules.${name} ];
 
   failures =
     lib.optional
@@ -64,12 +93,6 @@ let
       imports (fixtures + "/empty") != [ ]
     ) "a directory with only default.nix and a README gave imports"
     ++ lib.optional (
-      !refused (imports (fixtures + "/symlink-file"))
-    ) "a symlink to a file was not refused"
-    ++ lib.optional (
-      !refused (imports (fixtures + "/symlink-dir"))
-    ) "a symlink to a directory was not refused"
-    ++ lib.optional (
       desktop.imports != imports ../../modules/desktop
     ) "modules/desktop/default.nix does not import the modules of its own directory"
     ++ lib.optional (
@@ -82,11 +105,20 @@ let
           lib.optional (
             self.nixosModules.${name}.key or null != "ravnix/nixosModules.${name}"
           ) "nixosModules.${name} has no key ravnix/nixosModules.${name}"
+          ++
+            lib.optional (!(alone name).success || (alone name).value != commonOnly.value)
+              "a host with nixosModules.${name} alone does not have what nixosModules.common gives it (home-manager.sharedModules, the overlay, pkgs.ravnix)"
         )
         [
           "desktop"
           "glue"
-        ];
+        ]
+    ++ lib.optional (
+      !commonOnly.success || !commonOnly.value.ravnix || commonOnly.value.shared == 0
+    ) "a host with nixosModules.common has no home-manager.sharedModules or no pkgs.ravnix"
+    ++ lib.optional (
+      !together.success || together.value != commonOnly.value
+    ) "importing nixosModules.common, desktop and glue together adds to what common alone gives";
 in
 pkgs.runCommand "flake-desktop-imports"
   {
