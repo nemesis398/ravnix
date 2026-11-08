@@ -1,7 +1,10 @@
 # The applications of huginn (modules/desktop/apps.nix): every app of the spec's
 # "Apps on huginn" table that this task owns resolves on PATH or as a .desktop
 # file in the profile of huginn; none of the dropped apps is in the system's
-# closure; Flatpak is off; the only unfree packages are the ones the
+# closure; Flatpak is off, its command is not on the system's PATH, and its
+# store path is reached only through xdg-desktop-portal, which nixpkgs always
+# builds against libflatpak (the portal identifies sandboxed apps with it);
+# the only unfree packages are the ones the
 # module names, and Packet Tracer's and Widevine's only for a host that asks
 # for them; the wtype is 0.5 or later; Handy is pinned to the iGPU; MangoHud
 # has no transparent background; and Helium gets its policies.
@@ -514,6 +517,8 @@ pkgs.runCommand "desktop-apps"
     inherit droppedPatterns;
     inherit profile handyLaunch;
     closureStorePaths = "${closure}/store-paths";
+    closureRegistration = "${closure}/registration";
+    systemToplevel = "${config.system.build.toplevel}";
     appLines = lib.concatMapStrings (a: "${appLine a}\n") apps;
     webappFiles = lib.concatStringsSep " " webapps;
     droppedWebappFiles = lib.concatStringsSep " " droppedWebapps;
@@ -598,8 +603,51 @@ pkgs.runCommand "desktop-apps"
       grep -Eq "^$must(-[A-Za-z][A-Za-z0-9_]*)*-[0-9]" closure-names.txt || fail "closure: $must is not in the system's closure"
     done
     for h in $(hits "$closureStorePaths" | tr ' ' '_'); do
+      # Flatpak's library comes with xdg-desktop-portal; the walk below
+      # decides whether anything else brings it.
+      case "$h" in Flatpak_*) continue ;; esac
       fail "closure: dropped app $h is in the system's closure"
     done
+    # The paths reached from $2 in the reference graph $1 (closureInfo's
+    # registration: path, deriver, count, references) without passing
+    # through xdg-desktop-portal itself (its -wlr and -gtk backends are
+    # walked), that are a flatpak package.
+    flatpakElsewhere() {
+      awk -v root="$2" '
+        { line[NR] = $0 }
+        END {
+          i = 1
+          while (i <= NR) {
+            p = line[i]; n = line[i + 2] + 0
+            for (j = 1; j <= n; j++) refs[p] = refs[p] " " line[i + 2 + j]
+            i += 3 + n
+          }
+          q[1] = root; head = 1; tail = 1; seen[root] = 1
+          while (head <= tail) {
+            p = q[head++]
+            if (p ~ /-xdg-desktop-portal-[0-9][^\/]*$/) continue
+            if (p ~ /-flatpak-[0-9][^\/]*$/) { print p; continue }
+            m = split(refs[p], r, " ")
+            for (k = 1; k <= m; k++) if (!(r[k] in seen)) { seen[r[k]] = 1; q[++tail] = r[k] }
+          }
+        }' "$1"
+    }
+    # The walk, tried on a made-up graph first: Flatpak behind the portal is
+    # allowed, Flatpak behind anything else is found.
+    s=/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    printf '%s\n' "$s-top" "" 2 "$s-xdg-desktop-portal-1.22.1" "$s-other-1.0" \
+      "$s-xdg-desktop-portal-1.22.1" "" 1 "$s-flatpak-1.18.4" \
+      "$s-other-1.0" "" 0 \
+      "$s-flatpak-1.18.4" "" 0 > graph-portal
+    [ -z "$(flatpakElsewhere graph-portal "$s-top")" ] || fail "the Flatpak walk flags Flatpak behind xdg-desktop-portal"
+    printf '%s\n' "$s-top" "" 2 "$s-xdg-desktop-portal-1.22.1" "$s-other-1.0" \
+      "$s-xdg-desktop-portal-1.22.1" "" 0 \
+      "$s-other-1.0" "" 1 "$s-flatpak-1.18.4" \
+      "$s-flatpak-1.18.4" "" 0 > graph-other
+    [ -n "$(flatpakElsewhere graph-other "$s-top")" ] || fail "the Flatpak walk misses Flatpak behind another package"
+    elsewhere=$(flatpakElsewhere "$closureRegistration" "$systemToplevel")
+    [ -z "$elsewhere" ] || fail "closure: Flatpak is reached other than through xdg-desktop-portal: $elsewhere"
+    [ ! -e "$systemToplevel/sw/bin/flatpak" ] || fail "closure: the flatpak command is on the system's PATH"
     for w in $droppedWebappFiles; do
       ! grep -q "^$w" closure-names.txt || fail "closure: $w is in the system's closure"
     done
