@@ -92,6 +92,12 @@ def test_a_block_element_covers_the_eighths_its_name_says_and_nothing_else(lab):
                     y = y0 + row * height + int((r + 0.5) * height / 8)
                     got = tuple(right[y, x])
                     assert got == (blue if want[r, c] else base), (char, unicodedata.name(char), r, c, got)
+            # And nothing else: the ink of the line stays inside its cell, so a
+            # rectangle that reaches into the next cell, or the one before,
+            # shows.
+            line = ink[y0 + row * height : y0 + (row + 1) * height]
+            left, _, right_edge, _ = bbox(line)
+            assert x0 <= left and right_edge <= x0 + width, (char, unicodedata.name(char), left, right_edge)
             # Whole pixels also in the sum: the part covered is its eighths, to a pixel on each edge.
             cell = ink[y0 + row * height : y0 + (row + 1) * height, x0 : x0 + width]
             assert abs(cell.sum() - want.mean() * width * height) <= (width + height) / 2, (char, int(cell.sum()))
