@@ -14,12 +14,12 @@
 # and which huginn's user also logs in to muninn with.
 # Every other key is made for this test alone, and the forge accepts each of
 # them too, so that a key used where it must not be shows as a login: a key
-# that is not on the list, the key in two stand-ins for Bitwarden's agent
-# (rbw's socket, which SSH_AUTH_SOCK names, and Bitwarden Desktop's), and
-# muninn's own ~/.ssh/id_ed25519. The stand-ins for Bitwarden run in debug
-# mode, so that every request they get is a line of their log. On muninn,
-# rbw's own agent does not start, so that its stand-in is the only agent at
-# rbw's socket.
+# that is not on the list, the key in two stand-ins for an agent that holds
+# the vault's keys (rbw's agent, at the socket SSH_AUTH_SOCK names, and the
+# Bitwarden desktop app's agent, on its own socket), and muninn's own
+# ~/.ssh/id_ed25519. The two stand-ins run in debug mode, so that every
+# request they get is a line of their log. On muninn, rbw's own agent does
+# not start, so that its stand-in is the only agent at rbw's socket.
 #
 # What it checks:
 #   - huginn's agent holds the listed handles and nothing else, on a socket
@@ -33,9 +33,10 @@
 #   - on muninn, with the forward up, ssh and git to github.com and to the
 #     Forgejo host log in with the listed key through the forwarded socket,
 #     also with `-o IdentityAgent=` given as the brief writes it, and with
-#     a host name in other capitals; neither Bitwarden stand-in gets a
-#     single request, and no other key logs in; the forwarded socket is the
-#     user's alone (mode 600), and another user on muninn cannot use it;
+#     a host name in other capitals; neither stand-in (rbw's agent, the
+#     Bitwarden desktop app's) gets a single request, and no other key logs
+#     in; the forwarded socket is the user's alone (mode 600), and another
+#     user on muninn cannot use it;
 #   - with the forward gone (a socket left behind with no listener, no
 #     socket, a laptop frozen behind a live forward, an agent that is busy
 #     or not running behind a live forward), the same commands fail within
@@ -88,7 +89,8 @@ let
   login = second;
 
   # The keys made for this test: a key that is not on the list, the key in
-  # the stand-ins for Bitwarden's agent, and muninn's own default key.
+  # the two stand-in agents (rbw's and the Bitwarden desktop app's), and
+  # muninn's own default key. The key named "bitwarden" is the vault's.
   keys = pkgs.runCommand "sk-agent-test-keys" { nativeBuildInputs = [ pkgs.openssh ]; } ''
     mkdir "$out"
     for name in extra bitwarden default; do
@@ -295,7 +297,8 @@ pkgs.testers.runNixOSTest {
 
 
     def decoy_requests():
-        """The requests both stand-ins for Bitwarden's agent have had."""
+        """The requests both stand-in agents, rbw's and the Bitwarden desktop
+        app's, have had."""
         muninn.sleep(1)
         out = muninn.succeed(
             "journalctl -o cat --no-pager _SYSTEMD_USER_UNIT=decoy-rbw.service"
@@ -313,7 +316,7 @@ pkgs.testers.runNixOSTest {
 
     def logged_in(before):
         """What the forge logged since before, once it has a login with the
-        listed key in it; and no other key, no stand-in for Bitwarden."""
+        listed key in it; and no other key, no stand-in agent."""
         new = [""]
 
         def accepted(_):
@@ -333,7 +336,7 @@ pkgs.testers.runNixOSTest {
         status, out, _ = on_muninn(cmd)
         assert status == 0, out
         logged_in(before)
-        assert decoy_requests() == decoys, "a stand-in for Bitwarden's agent was asked"
+        assert decoy_requests() == decoys, "a stand-in agent (rbw's or the Bitwarden desktop app's) was asked"
 
 
     def refused(cmd, *needles):
@@ -348,7 +351,7 @@ pkgs.testers.runNixOSTest {
         for needle in needles:
             assert needle in out, (needle, out)
         assert "Connection from" not in forge_log()[len(before):], "muninn connected to the forge"
-        assert decoy_requests() == decoys, "a stand-in for Bitwarden's agent was asked"
+        assert decoy_requests() == decoys, "a stand-in agent (rbw's or the Bitwarden desktop app's) was asked"
         return out
 
 
@@ -376,7 +379,10 @@ pkgs.testers.runNixOSTest {
         STAND_IN_FP = fingerprint("${standIn.pub}")
         OTHER_FPS = [fingerprint(KEYS + "/" + n + ".pub") for n in ("extra", "bitwarden", "default")]
 
-    with subtest("Bitwarden's agent on muninn, stood in for, holds a key the forge takes"):
+    with subtest("rbw's agent and the Bitwarden desktop app's, stood in for, hold a key the forge takes"):
+        # decoy-rbw stands in for rbw's agent, at the socket SSH_AUTH_SOCK
+        # names. decoy-bitwarden stands in for the Bitwarden desktop app's
+        # agent, on its own socket, which nothing in ravnix points at.
         as_user(
             muninn,
             "mkdir -p -m 700 $XDG_RUNTIME_DIR/rbw"
@@ -590,7 +596,7 @@ pkgs.testers.runNixOSTest {
         before = forge_log()
         status, out, _ = on_muninn("ssh git@forge true")
         assert status == 0 and "sk-agent" not in out and "huginn" not in out, out
-        # It took the key of Bitwarden's stand-in, as SSH_AUTH_SOCK says.
+        # It took the key of rbw's stand-in agent, as SSH_AUTH_SOCK says.
         retry(lambda _: bitwarden in forge_log()[len(before):], timeout=datetime.timedelta(seconds=10))
   '';
 }

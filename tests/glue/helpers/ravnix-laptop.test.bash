@@ -102,7 +102,7 @@ test_ssh_ignores_every_configuration_file() {
 	capture "$LAPTOP" true
 	argv
 	# -F makes ssh skip ~/.ssh/config and /etc/ssh/ssh_config, where a Host *
-	# block could hand it the Bitwarden agent, the YubiKey or a ProxyJump.
+	# block could hand it rbw's agent, the YubiKey or a ProxyJump.
 	has_flag -F /dev/null
 }
 
