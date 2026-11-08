@@ -38,6 +38,7 @@ let
     "ravnix.user.signingKey"
     "ravnix.server.sshTarget"
     "ravnix.server.netbirdAddress"
+    "ravnix.vpn.netbird.managementUrl"
     "ravnix.laptop.diskModel"
     "ravnix.laptop.diskSerial"
     "ravnix.secrets.rbwBaseUrl"

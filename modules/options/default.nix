@@ -30,6 +30,7 @@ in
     ./services.nix
     ./nix.nix
     ./laptop.nix
+    ./peripherals.nix
     ./server.nix
     ./secrets.nix
     ./matrix.nix

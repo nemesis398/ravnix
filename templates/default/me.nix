@@ -147,6 +147,42 @@
       ];
     };
 
+    # Printing. Each printer is a CUPS queue that is created once the
+    # printer can be reached: when a network comes up with it on, so a laptop
+    # away from home neither fails nor retries. Name the queue as you like
+    # (letters, digits, `.`, `_` and `-`); `uri` is what `lpinfo -v` shows for
+    # the printer on your network, and `model` defaults to "everywhere", the
+    # driverless protocol every recent printer answers.
+    printing = {
+      printers.office = {
+        uri = "ipp://printer.example.org/ipp/print";
+      };
+      # One of the names above, or null for CUPS's own choice.
+      defaultPrinter = "office";
+    };
+
+    # The VPNs. Secrets stay in Bitwarden: only item names or ids go here,
+    # and rbw reads the value at the moment a command needs it.
+    vpn = {
+      # The NetBird management server your client enrolls with. For NetBird's
+      # cloud that is "https://api.netbird.io:443".
+      netbird.managementUrl = "https://netbird.example.org";
+      # Your NordVPN account, for the `nord` command; null leaves it out.
+      nord = {
+        # Nord's id for the country the servers come from; 81 is Germany.
+        countryId = 81;
+        # The item with the access token `nord setup` uses once, and the name
+        # of the item that gets a copy of the WireGuard key.
+        tokenItem = "NordVPN - access token";
+        keyItem = "NordVPN - NordLynx private key";
+      };
+      # The VPN gateway at home, for the `vpn-home` command; null leaves it out.
+      home = {
+        apiUrl = "http://gateway.example.org:8080";
+        tokenItem = "VPN gateway - switch token";
+      };
+    };
+
     # Where rbw finds your secrets at runtime. Only the server and the
     # account; no secret goes into this flake.
     secrets = {
