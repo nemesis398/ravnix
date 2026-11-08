@@ -37,6 +37,25 @@ that reads `pkgs.ravnix.NAME` fails with "attribute ravnix missing". In a
 `runNixOSTest` defines `node.pkgs` itself, and a plain definition fails with "A
 Nixpkgs pkgs set can not be merged with another pkgs set".
 
+The same pkgs must allow the unfree packages that `nixosModules.desktop`
+installs, because the module cannot set `nixpkgs.config` there (it leaves it
+alone on a read-only pkgs). `lib/unfree.nix` holds the names, and a pkgs built
+by hand takes them as its predicate:
+
+```nix
+import inputs.nixpkgs {
+  inherit system;
+  config.allowUnfreePredicate = (import ./lib/unfree.nix { inherit lib; }).predicate {
+    packetTracer = false; # the values of ravnix.apps.packetTracer and .widevine
+    widevine = false;
+  };
+  overlays = [ self.overlays.default ];
+}
+```
+
+`tests/desktop/vm-node.nix` evaluates such a node and shows what happens
+without each part.
+
 A package that needs another takes `ravnix` and reads it from there, as
 `{ ravnix, ... }: ... ravnix.OTHER`. `packages.x86_64-linux` is built through
 the overlay too, so it is the same package as `pkgs.ravnix.NAME`.
@@ -56,6 +75,26 @@ A tool is built twice: under the overlay with the host's package set as its
 and fail its checks with "attribute ravnix missing". Packages have the
 `ravnix` argument for that; tools have no sibling route.
 
+## Not here, but with a step by hand: Packet Tracer
+
+Cisco Packet Tracer is in nixpkgs (`cisco-packet-tracer_9`), so there is no
+package of ours. Cisco's download needs a login, so no build can fetch the
+`.deb`, and nixpkgs asks the Nix store for it by name and hash. That makes it a
+step for the person who owns the machine that builds the host, and why
+`ravnix.apps.packetTracer` is off unless set:
+
+1. Download "Packet Tracer 9.0.1 for Linux (Ubuntu)" from the Networking
+   Academy (https://www.netacad.com/resources/lab-downloads).
+2. On the machine that builds the host, add it once:
+   `nix-store --add-fixed sha256 CiscoPacketTracer_901_Ubuntu_64bit.deb`. The
+   name must be exactly that; the hash is
+   `sha256-NoPdh+d5iFNyrpo1wabllNEvST5knnxpdAhynBRZR5s=`.
+3. Set `ravnix.apps.packetTracer = true;` in `me.nix`.
+
+Until the file is in the store, a host that asks for it stops at the build with
+a message naming both. `tests/desktop/apps.nix` checks the name and hash against
+nixpkgs, and `modules/desktop/apps.nix` repeats the step in its header.
+
 ## What the flake refuses
 
 Each of these is an evaluation error that names the path, never a silent skip:
@@ -70,11 +109,15 @@ A missing `packages/` directory gives no packages.
 
 ## Findings that are not fixed
 
-- While `modules/glue/` holds no module, `tests/flake/desktop-imports.nix`
-  compares that directory's imports with themselves (`[ ] == [ ]`), so a wrong
-  label string shows only in the message about a symlink. The first module there
-  makes the comparison meaningful. `packages/` and `modules/desktop/` have
-  their first files (`backdrop`), so their comparisons check something now.
+- `modules/glue/default.nix` is compared with its own directory
+  (`tests/flake/desktop-imports.nix`) while that directory holds no module, so
+  the comparison is `[ ] == [ ]` and a wrong label string in it shows only in
+  the message about a symlink. `modules/desktop/` holds modules now, and
+  `packages/` holds packages, so the tests of the real wiring
+  (`tests/flake/packages.nix`) compare names and derivations over real ones.
+  The discovery, its refusals, the overlay and the lookup of a sibling through
+  `ravnix` also run on fixtures, through the same `lib/ravnix-packages.nix` the
+  flake calls.
 - A hidden regular `.x.nix` file in `modules/desktop/` or `modules/glue/` (an
   editor backup, say) is imported like any other `.nix` file. A flake source
   holds only tracked files, so it needs a committed one; a symlink of that
