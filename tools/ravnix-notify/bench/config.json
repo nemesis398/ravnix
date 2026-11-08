@@ -1,0 +1,11 @@
+{
+  "homeserver": "https://matrix.example.org",
+  "rbw": "rbw",
+  "rooms": {
+    "sessions": { "roomId": "!sessions:example.org", "tokenItem": "Matrix - access token (ravnix-sessions)" },
+    "updates": { "roomId": "!updates:example.org", "tokenItem": "Matrix - access token (ravnix-updates)" },
+    "backups": { "roomId": "!backups:example.org", "tokenItem": "Matrix - access token (ravnix-backups)" },
+    "builds": { "roomId": "!builds:example.org", "tokenItem": "Matrix - access token (ravnix-builds)" },
+    "services": { "roomId": null, "tokenItem": "Matrix - access token (ravnix-services)" }
+  }
+}

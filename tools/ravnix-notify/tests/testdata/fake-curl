@@ -1,0 +1,9 @@
+#!/bin/sh
+# The curl of the flow tests: writes one line per run, with its arguments,
+# to curl-calls beside the symlink it was run through, and then does what
+# curl-case.sh says (the real curl, as a rule). The arguments are what a
+# test checks the token is not in; the request itself comes on standard
+# input, which the case passes on.
+printf '%s\n' "$*" >> "${0%/*}/curl-calls"
+# shellcheck source=/dev/null
+. "${0%/*}/curl-case.sh"
