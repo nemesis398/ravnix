@@ -158,7 +158,7 @@ pkgs.testers.runNixOSTest {
     };
 
   nodes.huginn =
-    { ... }:
+    { lib, ... }:
     {
       imports = [
         common
@@ -166,6 +166,9 @@ pkgs.testers.runNixOSTest {
         self.nixosModules.glue
       ];
       ravnix.shape = "laptop";
+      # The template's key for muninn's laptop access would ask for NetBird,
+      # which this test has no use for; laptop access has its own test.
+      ravnix.laptopAccess.publicKey = lib.mkForce null;
       virtualisation = {
         cores = 2;
         memorySize = 1536;
