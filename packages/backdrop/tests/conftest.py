@@ -153,7 +153,8 @@ def distance_to_box(px, py, box):
 # {yellow} and {red} are the "R;G;B" of palette entries. Memory is in the
 # accent, Swap in Yellow and Disk in Red, as fastfetch colors a percentage
 # that is low, high and over the limit; the Palette row is the eight colors of
-# the terminal, and the logo is the NixOS one, in block glyphs, bold.
+# the terminal, of which the wallpaper draws the five that are no state hue, and
+# the logo is the NixOS one, in block glyphs, bold.
 FASTFETCH = HERE / "fastfetch.ansi"
 KERNEL = "6.18.2"  # a value that occurs once, for the tests that change a fact
 FASTFETCH_ROLES = {
@@ -188,20 +189,22 @@ def tinted(img, color, base, least=0.45, slack=14):
 def palette_row_offset(right):
     """How far the Palette row starts from the value column, in glyph advances.
 
-    `right` is the facts area of a wall. The row is eight swatches of three
-    glyphs on one line, and Green, the third, is the leftmost swatch that no
-    other part of the facts has the color of, so the first swatch starts six
-    glyphs before it. The value column starts at the leftmost pixel of Text,
-    antialiased or not, which is where the values of the rows above begin: a
-    line of its own that a failing command prints would be to the left of it.
-    Fails when the swatches are on more than one line, as the block symbol
-    prints the bright eight on a second line that starts under the frame."""
-    green = bbox(where(right, rgb("green")))
-    assert green, "no Palette row"
-    advance = (green[2] - green[0]) / 3
-    assert green[3] - green[1] <= 2.5 * advance, "the Palette swatches are on more than one line"
+    `right` is the facts area of a wall. The wallpaper draws five of the
+    terminal's eight swatches of three glyphs, on one line (the state hues are
+    left out and the rest close up), and Teal, the fourth, is the one swatch
+    that no other part of the facts has the color of, so the first swatch
+    starts nine glyphs before it. The value column starts at the leftmost
+    pixel of Text, antialiased or not, which is where the values of the rows
+    above begin: a line of its own that a failing command prints would be to
+    the left of it. Fails when the swatches are on more than one line, as the
+    block symbol prints the bright eight on a second line that starts under
+    the frame."""
+    teal = bbox(where(right, rgb("teal")))
+    assert teal, "no Palette row"
+    advance = (teal[2] - teal[0]) / 3
+    assert teal[3] - teal[1] <= 2.5 * advance, "the Palette swatches are on more than one line"
     values = bbox(tinted(right, rgb("text"), rgb("base")))
-    return (green[0] - 6 * advance - values[0]) / advance
+    return (teal[0] - 9 * advance - values[0]) / advance
 
 
 def svg(body):

@@ -24,10 +24,10 @@ MARK_RADIUS = 102.5 * S  # the square the marks are drawn in, about its center
 def facts_with_no_surface1(lab):
     # The Palette row of the facts paints the terminal's black swatch in
     # Surface1, which is also the gray of every other tool logo, and these
-    # tests count the gray shapes. The swatch gets the terminal's red instead:
-    # it keeps its place and size, so the clearance from the facts is still
-    # measured against the whole panel.
-    lab.facts_path.write_text(facts_text().replace("\x1b[30m", "\x1b[31m"))
+    # tests count the gray shapes. The swatch gets the terminal's magenta
+    # (Pink) instead: it keeps its place and size, so the clearance from the
+    # facts is still measured against the whole panel.
+    lab.facts_path.write_text(facts_text().replace("\x1b[30m", "\x1b[35m"))
 
 
 def grays(img):

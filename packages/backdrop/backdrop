@@ -16,7 +16,9 @@
 # Blue and Sapphire) top right; and, when the user lists any, their tool logos
 # in Surface grays, spread around the rest. The NixOS logo is fastfetch's own
 # and is made of block glyphs by design: it is drawn as the terminal shows it,
-# not redrawn as a vector. The lock image is Base (or the same
+# not redrawn as a vector. The terminal's Red, Green and Yellow swatches are
+# left out of the Palette row, because warm hues are for warnings and errors
+# only (docs/style.md, rule 4). The lock image is Base (or the same
 # image) and the ravnix mark alone, sized to sit inside swaylock's ring, so
 # nothing about the machine can be read on a locked screen. It never runs
 # fastfetch and never draws a logo.
@@ -118,6 +120,10 @@ FACTS_BYTES, FACTS_LINES, FACTS_COLUMNS, FACTS_SECONDS = 1 << 20, 80, 240, 10
 # How much of a command's stderr is read, of which one line is quoted.
 STDERR_BYTES = 1 << 16
 
+# The terminal's colors that mean a state, which the wallpaper does not draw
+# as swatches: warm hues are for warnings and errors and nothing else.
+STATE_HUES = ("red", "peach", "maroon", "yellow", "green")
+
 # An image that would take more memory than this to decode is not used.
 MAX_IMAGE_PIXELS = 64_000_000
 # The largest output and scale that render() draws.
@@ -146,6 +152,11 @@ def log(message):
 
 def rgb(c, a=1.0):
     return (c[0] / 255, c[1] / 255, c[2] / 255, a)
+
+
+class Ansi(tuple):
+    """A color that came from the terminal's 16, which the Palette row prints
+    as swatches; it equals the plain color."""
 
 
 class Theme:
@@ -177,9 +188,12 @@ class Theme:
         # Green, yellow Yellow, blue Blue, magenta Pink, cyan Teal, white
         # Subtext1; the bright set is Surface2, Red, Green, Yellow, Blue, the
         # accent, Teal, Subtext0.
-        self.ansi16 = [c[n] for n in ("surface1", "red", "green", "yellow", "blue", "pink",
+        # The colors that mean a state and nothing else (docs/style.md, rule 4);
+        # a palette without peach or maroon has no such color to keep out.
+        self.state_hues = {self.parse(n, palette[n]) for n in STATE_HUES if n in palette}
+        self.ansi16 = [Ansi(c[n]) for n in ("surface1", "red", "green", "yellow", "blue", "pink",
                                       "teal", "subtext1", "surface2", "red", "green", "yellow",
-                                      "blue")] + [self.accent, c["teal"], c["subtext0"]]
+                                      "blue")] + [Ansi(self.accent), Ansi(c["teal"]), Ansi(c["subtext0"])]
 
     @staticmethod
     def parse(name, value):
@@ -483,8 +497,12 @@ def parse_ansi(text, theme):
             chunk = chunk.replace("\x1b", "")
             if chunk and col < FACTS_COLUMNS:
                 chunk = chunk[:FACTS_COLUMNS - col]
-                runs.append((col, chunk, color, bold))
-                col += cells(chunk)
+                # A swatch of the terminal's palette in a state hue is left
+                # out, and the ones after it close up.
+                if not (isinstance(color, Ansi) and color in theme.state_hues
+                        and all("\u2580" <= ch <= "\u259f" for ch in chunk)):
+                    runs.append((col, chunk, color, bold))
+                    col += cells(chunk)
             if m is None:
                 break
             pos = m.end()

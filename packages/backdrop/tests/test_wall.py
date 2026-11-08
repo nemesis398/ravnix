@@ -14,6 +14,7 @@ from conftest import (
     palette_row_offset,
     reach,
     rgb,
+    tinted,
     where,
     window,
 )
@@ -115,14 +116,50 @@ def test_no_state_hue_in_the_marks(wall):
 
 def test_the_facts_show_the_usage_states_and_the_palette_row(wall):
     right = facts_area(wall)
-    # Yellow and Red are the 62% and 91% of Swap and Disk and the second and
-    # fourth of the eight swatches; Green and Teal are swatches only.
-    for name in ("yellow", "red", "green", "teal"):
+    # Yellow and Red are the 62% and 91% of Swap and Disk: text, so only the
+    # cores of its strokes are exactly the color. The swatches of the Palette
+    # row are the terminal's colors without its state hues.
+    for name in ("yellow", "red"):
+        assert where(right, rgb(name)).sum() > 0, name
+    for name in ("pink", "teal", "subtext1"):
         assert where(right, rgb(name)).sum() > 100, name
-    # The eight swatches are one line, in the order of the terminal's colors.
-    green, teal = bbox(where(right, rgb("green"))), bbox(where(right, rgb("teal")))
-    assert green[1] == teal[1] and green[3] == teal[3], "the swatches are not on one line"
-    assert green[2] < teal[0]
+    # One line, in the order of the terminal's colors.
+    pink, teal = bbox(where(right, rgb("pink"))), bbox(where(right, rgb("teal")))
+    assert pink[1] == teal[1] and pink[3] == teal[3], "the swatches are not on one line"
+    assert pink[2] <= teal[0]
+
+
+STATE_HUES = ("red", "peach", "maroon", "yellow", "green")
+
+
+def swatch_row(right):
+    """The box of the Teal swatch of the Palette row, the one swatch of the
+    facts that nothing else has the color of."""
+    teal = bbox(where(right, rgb("teal")))
+    assert teal, "no Palette row"
+    return teal
+
+
+def test_the_swatch_row_has_no_state_hue(wall):
+    # Style rule 4: warm hues are for warnings and errors. The Palette row is
+    # decoration, so the swatches that are Red, Yellow or Green are left out;
+    # the percentages of the rows above keep their state colors.
+    right = facts_area(wall)
+    _, y0, _, y1 = swatch_row(right)
+    for hue in STATE_HUES:
+        assert not where(right[y0:y1], rgb(hue)).any(), hue
+
+
+def test_the_swatches_that_stay_keep_their_order_and_close_up(wall):
+    # Black, Blue, Pink, Teal and White of the terminal's eight, side by side
+    # from the value column; Teal is the fourth.
+    right = facts_area(wall)
+    x0, y0, x1, y1 = swatch_row(right)
+    advance = (x1 - x0) / 3
+    first = x0 - 9 * advance
+    middle = (y0 + y1) // 2
+    row = [tuple(right[middle, int(first + (3 * i + 1.5) * advance)]) for i in range(6)]
+    assert row == [rgb(n) for n in ("surface1", "blue", "pink", "teal", "subtext1", "base")], row
 
 
 def test_the_default_wall_is_deterministic(shared, wall):

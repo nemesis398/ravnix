@@ -31,6 +31,13 @@ physical resolution (the lock ring's radius is logical too).
 The NixOS logo is fastfetch's own, made of block glyphs by design, and is drawn
 as the terminal shows it, not redrawn as a vector.
 
+The Palette row of the facts shows the terminal's eight colors on the
+terminal. On the wallpaper the swatches of the terminal's Red, Green and Yellow,
+bright or not, are left out and the rest close up, because warm hues are for
+warnings and errors and nothing else (docs/style.md, rule 4). Only swatches go:
+text in those colors, and blocks in an RGB that fastfetch chose, are state and
+stay.
+
 The ravnix mark is the wordmark `ravnix` in the theme's font, bold, until Task
 12.2 ships the mark. From then on `assets/ravnix-mark.svg` is drawn instead,
 in one color whatever its own fills say, in the square the phyllon mark has. Both
@@ -99,7 +106,8 @@ The facts the tests draw (`tests/fastfetch.ansi`) are a capture of the real
 fastfetch with ravnix's config, the personal values replaced by invented ones
 and the colors by names that `conftest.py` fills in from the theme. The one
 test that runs the real fastfetch also checks that the Palette row starts in
-the value column. `tests/pytest.ini` filters the one deprecation warning of the
+the value column. `test_swatches.py` holds the checks of the swatches that are
+left out. `tests/pytest.ini` filters the one deprecation warning of the
 run: PyGObject itself raises it while it loads its GLib override.
 
 From a checkout:
