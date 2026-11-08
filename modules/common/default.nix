@@ -19,6 +19,7 @@
     ./atuin.nix
     ./starship.nix
     ./nvim.nix
+    ./scripts.nix
   ];
 
   # Outside a host, home-manager is told who it is working for once, here.

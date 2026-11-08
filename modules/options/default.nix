@@ -32,6 +32,7 @@ in
     ./laptop.nix
     ./peripherals.nix
     ./server.nix
+    ./scripts.nix
     ./secrets.nix
     ./matrix.nix
     ./workbench.nix

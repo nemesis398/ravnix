@@ -15,8 +15,8 @@ let
 
   # What a secret must not overwrite, in claude's environment or anywhere: the
   # variables a shell, the dynamic loader or Claude Code read to know where
-  # they are and what to run, and those bash keeps read-only. A name that
-  # starts with BASH or LD_ is one of the families bash and the loader own.
+  # they are and what to run, those bash keeps read-only, and those that
+  # ravnix's own tools read or hand to one another.
   reservedNames = [
     "PATH"
     "HOME"
@@ -42,10 +42,36 @@ let
     "HISTFILE"
     "XDG_RUNTIME_DIR"
     "CLAUDECODE"
+    # What ravnix's own tools (packages/NAME) read from their environment for
+    # themselves and are not part of a family below. A secret under one of
+    # these would change where a tool looks for its notes, its vault or its
+    # state. tests/options/secret-env-reserved.nix reads the sources of
+    # packages/ and fails when a tool reads one that is missing here.
+    "VAULT_DIR"
+    "MACHINE_NOTE"
+    "AI_MEMORY_LINT"
+    "SEARXNG_URL"
+    "SEARX_TIMEOUT"
+    "XDG_CONFIG_HOME"
+    "XDG_STATE_HOME"
+    "TMPDIR"
+    "DBUS_SESSION_BUS_ADDRESS"
   ];
+  # A name that starts with BASH or LD_ is one of the families bash and the
+  # loader own. The others are the families of ravnix's tools: with-secret-env
+  # hands its reason on in WITH_SECRET_ENV_WHY and claude-bg prints its own
+  # CLAUDE_BG_WHY, so a secret exported under either would be printed.
   reservedPrefixes = [
     "BASH"
     "LD_"
+    "RAVNIX_"
+    "WITH_SECRET_ENV_"
+    "CLAUDE_BG_"
+    "CCNA_DECK_"
+    "SAP_DECK_"
+    "AGENT_DOCTOR_"
+    "CLAUDE_TELEMETRY_"
+    "VAULT_CHECK_"
   ];
   reserved = name: lib.elem name reservedNames || lib.any (p: lib.hasPrefix p name) reservedPrefixes;
 in
@@ -60,7 +86,8 @@ in
       description = ''
         Environment variables that `claude` gets from your Bitwarden through
         rbw: the variable's name (capital letters, digits and underscores; not
-        one the shell or the loader reads, such as PATH or BASH_ENV), and the
+        one the shell, the loader or a ravnix tool reads, such as PATH,
+        BASH_ENV or CLAUDE_BG_WHY), and the
         name or id of the Bitwarden item whose password is its value (rbw
         takes either; an id is the safer one, because renaming the item
         never breaks it). When you run `claude` in an interactive bash, a
@@ -105,7 +132,7 @@ in
     }
     {
       assertion = !reserved name;
-      message = "ravnix.shell.secretEnv has the name \"${name}\", which the shell, the loader or Claude Code read themselves (${lib.concatStringsSep ", " reservedNames}, BASH*, LD_*); a secret under that name would break claude's start.";
+      message = "ravnix.shell.secretEnv has the name \"${name}\", which the shell, the loader or Claude Code read themselves (${lib.concatStringsSep ", " (reservedNames ++ map (p: "${p}*") reservedPrefixes)}); a secret under that name would break claude's start.";
     }
   ]) (lib.attrNames cfg.secretEnv);
 }

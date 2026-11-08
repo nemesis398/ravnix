@@ -356,6 +356,70 @@
       tools = [ ];
     };
 
+    # What the small scripts (packages/NAME) need of you, besides what they
+    # read from claude.skillValues above (web.searxngUrl for searx, vault.root
+    # for vault-check, agent-doctor and the Anki deck builders, nextcloud.root
+    # for claude-telemetry). None of them has a default that could pass for a
+    # real value; a script whose value is not set says which one it wants.
+    scripts = {
+      # What vault-check accepts on purpose and the reference it compares
+      # against, one entry per line: `unresolved NOTE NAME` accepts a link
+      # that no note answers, `notes N` is the reference count of notes.
+      # Empty writes no file, and vault-check warns that it is missing.
+      # It lands in the Nix store: note names only, never a secret.
+      vaultCheck.baseline = "";
+      # The note that machine-facts --write, --check and --diff work on: an
+      # absolute path, to a note with the two marker lines
+      # `<!-- machine-facts:begin -->` and `<!-- machine-facts:end -->`.
+      # For example "/home/alice/Notes/Laptop.md".
+      machineFacts.note = null;
+      # The document with your machine-wide working norms, which agent-doctor
+      # takes as the home of the rules stated there. An absolute path.
+      # For example "/home/alice/src/config/docs/working-norms.md".
+      agentDoctor.normsFile = null;
+      claudeTelemetry = {
+        # Whether this host writes the weekly report (Monday 07:00). The
+        # daily rows run on every host that has a telemetry folder
+        # (nextcloud.root in claude.skillValues); the report merges all
+        # hosts' rows and has one writer, so turn it on for one host only.
+        # The value is a default (a lib.mkDefault, written out because this
+        # file is plain data), so in the module of that one host a plain
+        # `ravnix.scripts.claudeTelemetry.report = true;` is enough.
+        report = {
+          _type = "override";
+          priority = 1000;
+          content = false;
+        };
+        # The folders the report scans for Nextcloud conflict files, absolute
+        # paths without a colon. Empty scans the vault (vault.root).
+        conflictRoots = [ ];
+        # Names (no slash) of the folders your Claude Code memory store is in
+        # or was in, so that writes to notes there are counted.
+        memoryDirs = [ ];
+      };
+      # The CCNA deck builder: where your card notes and their diagrams are,
+      # as paths below the vault, and the name of the deck in Anki. Null
+      # leaves ccna-deck unable to build and it says what to set.
+      # For example "Notes/Cards", "attachments/cards" and "My CCNA".
+      ccnaDeck = {
+        notesDir = null;
+        mediaDir = null;
+        deckName = null;
+      };
+      # The SAP deck builder: the folder of the transaction notes, the note
+      # with the shortcut tables (null leaves out those cards), the base that
+      # lists the transactions (only named in a warning) and the deck file it
+      # writes, as paths below the vault.
+      # For example "Notes/Transactions", "Notes/Transactions/Shortcuts.md",
+      # "Notes/Transactions/Transactions.base" and "Decks/transactions.apkg".
+      sapDeck = {
+        notesDir = null;
+        shortcutsNote = null;
+        transactionsBase = null;
+        out = null;
+      };
+    };
+
     # The one accent of the desktop: focus and place, never a state. One of
     # "mauve", "lavender", "pink", "flamingo", "rosewater", "teal", "sky" or
     # "sapphire". NixOS and home-manager both take it from here.

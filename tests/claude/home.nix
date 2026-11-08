@@ -207,6 +207,13 @@ let
           config.home.sessionVariables.RAVNIX_SKILL_VALUES == "/home/alice/.config/ravnix/skill-values.json";
     }
     {
+      name = "the Artifact tool is off for every session (login shell and user manager), and not through the settings, which a launcher cannot undo";
+      ok =
+        config.home.sessionVariables.CLAUDE_CODE_DISABLE_ARTIFACT == "1"
+        && config.systemd.user.sessionVariables.CLAUDE_CODE_DISABLE_ARTIFACT == "1"
+        && !(settings.env ? CLAUDE_CODE_DISABLE_ARTIFACT);
+    }
+    {
       name = "the hooks are wired at their fixed paths, with their timeouts";
       ok =
         ours == {
