@@ -30,9 +30,17 @@
 #     and at about 18 GB while building, on a 27 GB laptop. The step:
 #       1. asks nix for the system it builds for (nix config show system),
 #          as nix flake check takes it;
-#       2. lists the names of checks.SYSTEM with builtins.attrNames, which
+#       2. copies the source once (nix flake prefetch, the work tree's
+#          tracked files), kept from garbage collection by a link in the
+#          gate's work directory, and points every later call at that copy
+#          (path:STORE_PATH#...), so the verdict is about one tree, as nix
+#          flake check's was, even when the work tree changes while the
+#          step runs. A source of type path has no rev or dirtyRev, so
+#          self.rev and its kin are absent in the checks (nothing in
+#          ravnix reads them);
+#       3. lists the names of checks.SYSTEM with builtins.attrNames, which
 #          evaluates no check (tests/flake/check-names.nix keeps it so);
-#       3. checks every other output in one nix eval that reads no check,
+#       4. checks every other output in one nix eval that reads no check,
 #          with scripts/lib/flake-outputs.nix, which holds what is checked
 #          and how: packages.SYSTEM (each a derivation, its drvPath
 #          evaluated), overlays (each a function of final), nixosModules
@@ -41,35 +49,41 @@
 #          nothing else); other systems are omitted, as nix flake check
 #          omits them. Any other output fails the step until that file
 #          checks it, so a new output is never silently unchecked;
-#       4. for each check, in the order of the listing: evaluates its
+#       5. for each check, in the order of the listing: evaluates its
 #          derivation in a nix eval of its own, through
 #          scripts/lib/check-drv.nix, which refuses a check that is no
 #          derivation (nix build alone would pass a path or a string with
 #          store context, nix flake check did not), and then builds that
 #          derivation with nix build DRV^* and --keep-going, which
-#          evaluates nothing again. A check that fails, also one that fails
+#          evaluates nothing again; DRV must be a .drv in the source's
+#          store. A check that fails, also one that fails
 #          to evaluate, stops none of the others. A name no attribute path
 #          on the command line can hold (a double quote, a control
-#          character, the empty name) fails as a check. The installables
-#          are absolute (.#.checks...), so nix does not try packages.SYSTEM
-#          first.
+#          character, the empty name) fails as a check. The attribute
+#          paths are absolute (#.checks...), so nix does not try
+#          packages.SYSTEM first.
 #     Then it names every failed check, and exits with the first failing
 #     status, in the order listing, outputs, checks.
 #
 #     RAVNIX_CHECK_JOBS=N runs N checks' nix processes at once, each line
-#     marked with its check's name; N is a whole number from 1 to 999. The
-#     default, 1, is for the RAM: the largest check's evaluation peaked at
+#     marked with its check's name; N is any whole number from 1 (one too
+#     long for bash's arithmetic counts as more than any number of checks).
+#     The default, 1, is for the RAM: the largest check's evaluation peaked at
 #     4.3 GB (measured on 2026-11-08), so N of them take up to N times that
 #     beside the user's applications, and the step is to stay under 85 % of
 #     the RAM. Nix's own max-jobs and cores still decide the builds inside
 #     a check.
 #
-#     A Ctrl-C or a SIGTERM to the gate's process group ends the step, in
-#     either mode: nix catches SIGINT and exits 1, which bash would take as
-#     handled and go on to the next check, so the step traps it. On its way
-#     out it sends SIGTERM to every nix process it started, waits for them,
-#     and sends SIGKILL to any still running after 10 s, since nix can
-#     ignore SIGTERM for minutes in the middle of an evaluation.
+#     A Ctrl-C or a SIGTERM to the gate's process group ends the step in
+#     every phase and either mode, and the gate says the flake step failed
+#     with 130 or 143. Every nix process of the step runs as a background
+#     job, the system query, the copy, the listing and the outputs check
+#     included, and the step waits for it; so a foreground nix, which
+#     catches SIGINT and exits 1 so that bash goes on as if handled, never
+#     decides it. On its way out the step sends SIGTERM to every nix
+#     process it started and has not reaped, waits for them, and sends
+#     SIGKILL to any still running after 10 s, since nix can ignore
+#     SIGTERM for minutes in the middle of an evaluation.
 #   - claude-code: claude-code-verify checks the Claude Code download that
 #     packages.claude-code was made from, for the version in ravnix's own
 #     flake.lock, against Anthropic's release manifest. A private flake whose
@@ -136,14 +150,17 @@ fi
 # How many checks the flake step builds at once (the header says why 1).
 check_jobs=1
 if [[ "$mode" == full && -n "${RAVNIX_CHECK_JOBS:-}" ]]; then
-	if [[ ! "$RAVNIX_CHECK_JOBS" =~ ^[1-9][0-9]{0,2}$ ]]; then
+	if [[ ! "$RAVNIX_CHECK_JOBS" =~ ^[1-9][0-9]*$ ]]; then
 		printf 'check.sh: %s\n' \
 			"RAVNIX_CHECK_JOBS is $(printf %q "$RAVNIX_CHECK_JOBS"); it is the number of checks the flake step builds at once," \
-			"a whole number from 1, the default, to 999. Each takes up to 4.3 GB of RAM (measured on" \
+			"a whole number of 1, the default, or more. Each takes up to 4.3 GB of RAM (measured on" \
 			"ravnix's largest check), so mind the RAM before you raise it." >&2
 		exit 2
 	fi
-	check_jobs=$RAVNIX_CHECK_JOBS
+	# A number too long for bash's arithmetic is more than any count of
+	# checks, and so is 10^9.
+	check_jobs=1000000000
+	((${#RAVNIX_CHECK_JOBS} > 9)) || check_jobs=$RAVNIX_CHECK_JOBS
 fi
 
 work="$(mktemp -d -p "${TMPDIR:-/tmp}" ravnix-check.XXXXXX)"
@@ -266,17 +283,31 @@ check_attr() {
 # job's pid is nix's and stopping the job stops nix. Its lines are marked
 # [$1] unless $1 is empty, and its stdout goes to the file $2 unless $2 is
 # empty. A script's background jobs ignore SIGINT, so a Ctrl-C reaches the
-# step and not nix: the step stops nix on its way out (stop_nix).
+# step and not nix: the step stops nix on its way out (stop_nix). The flake
+# step runs every nix this way, also the ones it waits for at once
+# (run_nix), so the same stop covers all of them. `nix config show` reads
+# no flake and refuses --no-update-lock-file, so it goes without.
 start_nix() {
-	local mark="$1" to="$2" line
+	local mark="$1" to="$2" line lock=(--no-update-lock-file)
 	shift 2
+	[[ "$1" != config ]] || lock=()
 	(
 		if [[ -n "$mark" ]]; then
 			exec > >(while IFS= read -r line; do printf '[%s] %s\n' "$mark" "$line"; done) 2>&1
 		fi
 		[[ -z "$to" ]] || exec >"$to"
-		exec nix --extra-experimental-features 'nix-command flakes' "$@" --no-update-lock-file
+		exec nix --extra-experimental-features 'nix-command flakes' "$@" "${lock[@]}"
 	) &
+}
+
+# Runs nix_ "${@:2}" as start_nix does and waits for it, with its stdout in
+# the file $1 (or the step's, when $1 is empty). Returns nix's status.
+run_nix() {
+	local to="$1" status=0
+	shift
+	start_nix "" "$to" "$@"
+	wait "$!" || status=$?
+	return "$status"
 }
 
 # How long the nix processes of a stopped flake step get to end on SIGTERM
@@ -310,13 +341,26 @@ stop_nix() {
 	wait -- "$killer" 2>/dev/null || true
 }
 
+# $1 and a newline as a Nix indented string: '' and ${ escaped, the only
+# sequences such a string reads in its text, and the newline after $1, so a
+# ' at its end does not run into the closing ''. For one line that starts
+# with no blank, as nix's JSON does with --no-pretty, so no indentation is
+# stripped.
+nix_indented() {
+	local s="$1"
+	s="${s//\'\'/\'\'\'}"
+	s="${s//\$\{/\'\'\$\{}"
+	printf "''%s\n''" "$s"
+}
+
 # "N things", or "1 thing".
 counted() {
 	if (($1 == 1)); then printf '1 %s' "$2"; else printf '%d %ss' "$1" "$2"; fi
 }
 
 step_flake() {
-	local system listing line i s pid phase drv mark first=0 list_status=0 outputs_status=0
+	local system listing line i s pid phase drv mark source store flake first=0 list_status=0 outputs_status=0
+	local out="$work/flake-step.out"
 	local running=0 next=0
 	local names=() attrs=() results=() failed=()
 	local -A job_check=() job_phase=()
@@ -331,13 +375,32 @@ step_flake() {
 		echo "check.sh: $check_guard is missing, so no check can be told from a non-derivation" >&2
 		return 1
 	fi
-	system="$(nix --extra-experimental-features 'nix-command flakes' config show system)" || return $?
+	run_nix "$out" config show system || return $?
+	system="$(<"$out")"
 	if [[ ! "$system" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]]; then
 		printf 'check.sh: nix names the system it builds for %q, which is no system name\n' "$system" >&2
 		return 1
 	fi
 
-	listing="$(nix_ eval --raw ".#.checks.$system" --apply "$list_checks")" || list_status=$?
+	# One snapshot of the source for the whole step: nix copies the work
+	# tree's tracked files to the store once, here, and every call below
+	# reads that copy, so the verdict is about one tree even when the work
+	# tree changes while the step runs. The link in the gate's work
+	# directory keeps the copy from a garbage collection until the gate
+	# ends. (nix flake metadata would name the path without copying.)
+	run_nix "$out" flake prefetch --json --no-pretty --out-link "$work/source" . || return $?
+	run_nix "$out.path" eval --raw --expr "(builtins.fromJSON $(nix_indented "$(<"$out")")).storePath" || return $?
+	source="$(<"$out.path")"
+	if [[ ! "$source" =~ ^(/[^/[:space:]]+)+$ ]]; then
+		printf 'check.sh: nix names the copy of the source %q, which is no store path\n' "$source" >&2
+		return 1
+	fi
+	store="${source%/*}"
+	flake="path:$source"
+	echo "the source: $source"
+
+	run_nix "$out" eval --raw "$flake#.checks.$system" --apply "$list_checks" || list_status=$?
+	listing="$(<"$out")"
 	if ((list_status == 0)) && [[ -n "$listing" ]]; then
 		while IFS= read -r line; do
 			case "$line" in
@@ -366,7 +429,7 @@ step_flake() {
 		echo "check.sh: $outputs_validator is missing, so the other outputs cannot be checked" >&2
 		outputs_status=1
 	else
-		nix_ eval --raw .#. --apply "outputs: (($(<"$outputs_validator")) \"$system\" outputs).report" ||
+		run_nix "" eval --raw "$flake#." --apply "outputs: (($(<"$outputs_validator")) \"$system\" outputs).report" ||
 			outputs_status=$?
 	fi
 
@@ -390,7 +453,7 @@ step_flake() {
 			else
 				mark="${names[i]}"
 			fi
-			start_nix "$mark" "$work/drv.$i" eval --raw ".#.checks.$system.${attrs[i]}" --apply "$(<"$check_guard")"
+			start_nix "$mark" "$work/drv.$i" eval --raw "$flake#.checks.$system.${attrs[i]}" --apply "$(<"$check_guard")"
 			job_check[$!]=$i
 			job_phase[$!]="eval"
 			running=$((running + 1))
@@ -409,7 +472,7 @@ step_flake() {
 		drv="$(cat -- "$work/drv.$i" 2>/dev/null)" || drv=""
 		if ((s != 0)); then
 			results[i]=$s
-		elif [[ ! "$drv" =~ ^/[^[:space:]]+\.drv$ ]]; then
+		elif [[ "$drv" != "$store"/* || ! "${drv#"$store"/}" =~ ^[^/[:space:]]+\.drv$ ]]; then
 			printf 'check.sh: the evaluation of the check %s printed no derivation: %s\n' "${names[i]}" "$drv" >&2
 			results[i]=1
 		else
@@ -428,6 +491,10 @@ step_flake() {
 		((first != 0)) || first=$outputs_status
 	fi
 	for i in "${!names[@]}"; do
+		if [[ -z "${results[i]:-}" ]]; then
+			printf 'check.sh: the check %s was never built\n' "${names[i]}" >&2
+			results[i]=1
+		fi
 		((results[i] == 0)) && continue
 		failed+=("  ${names[i]} (exit ${results[i]})")
 		((first != 0)) || first=${results[i]}

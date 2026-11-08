@@ -50,8 +50,10 @@ new_repo() {
 	write_script "$bin/nix" "printf '%s\n' \"\$*\" | tr '\n' ' ' >>'$bin/nix.log'; echo >>'$bin/nix.log'" \
 		'case "$*" in' \
 		"*'config show system'*) echo x86_64-linux ;;" \
-		"*' eval '*' .#.checks.x86_64-linux --apply '*) echo 'ok one' ;;" \
-		"*' eval '*' .#.checks.x86_64-linux.\"one\"'*) echo '/nix/store/fake-one.drv' ;;" \
+		"*' flake prefetch '*) echo '{\"storePath\":\"/nix/store/fake-source\"}' ;;" \
+		"*' eval --raw --expr '*) printf /nix/store/fake-source ;;" \
+		"*' eval '*' path:/nix/store/fake-source#.checks.x86_64-linux --apply '*) echo 'ok one' ;;" \
+		"*' eval '*' path:/nix/store/fake-source#.checks.x86_64-linux.\"one\"'*) echo '/nix/store/fake-one.drv' ;;" \
 		"*'build'*'.#claude-code-verify'*) echo '$bin/verify' ;;" \
 		"*'build'*'.#claude-code.download'*) echo '$bin/download' ;;" \
 		"*'eval'*'.#claude-code.version'*) printf '1.2.3' ;;" \

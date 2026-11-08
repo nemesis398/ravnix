@@ -55,10 +55,11 @@ new_repo() {
 }
 
 # Writes the fake nix. It logs each call to $bin/nix.log, one line per call
-# with its newlines made spaces, and answers from files in $bin:
+# with its newlines made spaces. What it answers about the flake comes from
+# the files of a tree: $bin itself, the work tree as it is now, or the
+# snapshot $bin/snap.N that its Nth `flake prefetch` call copied, when the
+# call names that snapshot's source, path:/nix/store/fakeN-source:
 #
-#   system, system.status    what `nix config show system` prints
-#                            (x86_64-linux) and its exit status (0)
 #   names, names.status      what the listing of the checks prints and its
 #                            exit status (0); checks_named writes it
 #   outputs.status           the exit status of the outputs validation (0),
@@ -66,25 +67,40 @@ new_repo() {
 #                            outputs.apply; outputs.err is its stderr
 #   eval.fail                lines "STATUS INSTALLABLE": the evaluation of
 #                            that check's derivation fails with STATUS
-#   eval.weird               lines "INSTALLABLE": that evaluation prints
-#                            "hello" instead of a derivation
-#   build.status             the exit status of every check's build ($1)
+#   eval.weird               lines "INSTALLABLE TEXT": that evaluation
+#                            prints TEXT instead of a derivation
 #   build.fail               lines "STATUS INSTALLABLE": that check's status
+#
+# The other files in $bin, read as they are:
+#
+#   system, system.status    what `nix config show system` prints
+#                            (x86_64-linux) and its exit status (0)
+#   prefetch.status          the exit status of `flake prefetch` (0)
+#   build.status             the exit status of every check's build ($1)
 #   build.barrier            when present, each build waits (10 s at most)
 #                            until as many builds run at once as it says (2)
 #   build.hang               when present, each build runs for 30 s
-#   build.stubborn           when present, a build ignores SIGTERM
+#   build.mutate/            a tree's files, which the first build to start
+#                            copies over those in $bin: an edit of the work
+#                            tree while the gate runs
+#   names.hang, outputs.hang when present, the listing or the outputs
+#                            validation runs for 30 s, its pid in
+#                            names.pid or outputs.pid
+#   stubborn                 when present, a call that runs for 30 s
+#                            ignores SIGTERM
 #   version, no-download     the Claude Code version (1.2.3), and the build
 #                            of the download printing nothing
 #
-# A check's evaluation prints /nix/store/fakePID-check.drv and records the
-# pair in drvs; its build of DRV^* finds the check's installable there, and
-# logs "start N INSTALLABLE", with N the builds running then, and "end
-# INSTALLABLE" to builds.log. Like real nix, it catches SIGINT and SIGTERM,
-# says it was interrupted and exits 1. For the claude-code step it builds a
-# fake claude-code-verify, which logs its arguments to $bin/verify.log and
-# exits with $2 (default 0), and a fake download. With $3 set to
-# "no-download", the build of the download prints nothing.
+# An installable is logged and looked up in the files above with its source
+# written as ".", so .#.checks.x86_64-linux."alpha" stands for alpha of any
+# tree. A check's evaluation prints /nix/store/fakePID-check.drv and records
+# it with the check and its tree in drvs; its build of DRV^* finds them
+# there, and logs "start N INSTALLABLE", with N the builds running then,
+# and "end INSTALLABLE" to builds.log. Like real nix, it catches SIGINT and
+# SIGTERM, says it was interrupted and exits 1. For the claude-code step it
+# builds a fake claude-code-verify, which logs its arguments to
+# $bin/verify.log and exits with $2 (default 0), and a fake download. With
+# $3 set to "no-download", the build of the download prints nothing.
 fake_nix() {
 	mkdir -p "$bin"
 	{
@@ -99,10 +115,31 @@ interrupted() {
 }
 trap interrupted INT TERM
 code() { cat -- "$d/$1" 2>/dev/null || echo 0; }
+# Runs for 30 s, with its pid in $d/$1.pid, ignoring SIGTERM when
+# $d/stubborn says so.
+hang() {
+	[[ ! -e "$d/stubborn" ]] || trap '' TERM
+	echo "$$" >"$d/$1.pid"
+	for _ in $(seq 300); do sleep 0.1; done
+}
+tree="$d"
 inst=""
-for a; do [[ "$a" != .#.checks.* ]] || inst="$a"; done
-# Fails with the status that a line "STATUS INSTALLABLE" of file $1 gives
-# $inst, when it has one.
+for a; do
+	case "$a" in
+	path:*'#'*)
+		src="${a%%#*}"
+		inst=".#${a#*#}"
+		if [[ "$src" =~ ^path:/nix/store/fake([0-9]+)-source$ ]]; then
+			tree="$d/snap.${BASH_REMATCH[1]}"
+		else
+			tree="$d/no-such-source"
+		fi
+		;;
+	.#*) inst="$a" ;;
+	esac
+done
+# Fails with the status that a line "STATUS INSTALLABLE" of file $1 of the
+# tree gives $inst, when it has one.
 fail_from() {
 	local st i
 	while read -r st i; do
@@ -110,49 +147,75 @@ fail_from() {
 			echo "error: $inst failed" >&2
 			exit "$st"
 		fi
-	done < <(cat -- "$d/$1" 2>/dev/null)
+	done < <(cat -- "$tree/$1" 2>/dev/null)
 }
 case "$*" in
 *'config show system'*)
 	cat -- "$d/system" 2>/dev/null || echo x86_64-linux
 	exit "$(code system.status)"
 	;;
-*' eval '*' .#.checks.'*)
+*' flake prefetch --json --no-pretty --out-link '*' . '*)
+	n=$(($(cat -- "$d/snap.count" 2>/dev/null || echo 0) + 1))
+	echo "$n" >"$d/snap.count"
+	mkdir -p "$d/snap.$n"
+	for f in names names.status outputs.status outputs.err eval.fail eval.weird build.fail; do
+		[[ ! -e "$d/$f" ]] || cp -- "$d/$f" "$d/snap.$n/"
+	done
+	printf '{"hash":"sha256-x","locked":{"path":"/nix/store/decoy"},"storePath":"/nix/store/fake%s-source"}\n' "$n"
+	exit "$(code prefetch.status)"
+	;;
+*' eval --raw --expr '*)
+	# The source's store path, read from the JSON in the expression.
+	if [[ "$*" =~ \"storePath\":\"([^\"]*)\" ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		exit 0
+	fi
+	echo "fake nix: no prefetch JSON given" >&2
+	exit 1
+	;;
+*' eval '*'#.checks.'*)
 	if [[ "$inst" != *'"'* ]]; then
 		# The listing.
-		cat -- "$d/names" 2>/dev/null
-		exit "$(code names.status)"
+		[[ ! -e "$d/names.hang" ]] || hang names
+		cat -- "$tree/names" 2>/dev/null
+		st="$(cat -- "$tree/names.status" 2>/dev/null || echo 0)"
+		exit "$st"
 	fi
 	fail_from eval.fail
-	while read -r i; do
-		[[ "$i" != "$inst" ]] || { echo hello; exit 0; }
-	done < <(cat -- "$d/eval.weird" 2>/dev/null)
+	while read -r i text; do
+		[[ "$i" != "$inst" ]] || { echo "$text"; exit 0; }
+	done < <(cat -- "$tree/eval.weird" 2>/dev/null)
 	prev=""
 	for a; do
 		[[ "$prev" != --apply ]] || printf '%s' "$a" >"$d/check.apply"
 		prev="$a"
 	done
 	drv="/nix/store/fake$$-check.drv"
-	printf '%s %s\n' "$drv" "$inst" >>"$d/drvs"
+	printf '%s %s %s\n' "$drv" "$tree" "$inst" >>"$d/drvs"
 	echo "$drv"
 	;;
-*' eval '*' .#. '*)
+*' eval '*'#. '*)
 	prev=""
 	for a; do
 		[[ "$prev" != --apply ]] || printf '%s' "$a" >"$d/outputs.apply"
 		prev="$a"
 	done
-	[[ ! -e "$d/outputs.err" ]] || cat -- "$d/outputs.err" >&2
+	[[ ! -e "$d/outputs.hang" ]] || hang outputs
+	[[ ! -e "$tree/outputs.err" ]] || cat -- "$tree/outputs.err" >&2
 	echo "packages.x86_64-linux: 2 derivations"
-	exit "$(code outputs.status)"
+	st="$(cat -- "$tree/outputs.status" 2>/dev/null || echo 0)"
+	exit "$st"
 	;;
 *' build '*'.drv^*'*)
-	[[ ! -e "$d/build.stubborn" ]] || trap '' TERM
+	[[ ! -e "$d/stubborn" ]] || trap '' TERM
 	drv=""
 	for a; do [[ "$a" != *'.drv^*' ]] || drv="${a%'^*'}"; done
-	while read -r path i; do
-		[[ "$path" != "$drv" ]] || inst="$i"
+	while read -r path t i; do
+		[[ "$path" != "$drv" ]] || { tree="$t"; inst="$i"; }
 	done <"$d/drvs"
+	if mv -- "$d/build.mutate" "$d/mutating" 2>/dev/null; then
+		cp -- "$d/mutating"/* "$d/"
+	fi
 	mkdir -p "$d/running"
 	: >"$d/running/$$"
 	running=("$d"/running/*)
@@ -258,6 +321,17 @@ await_builds() {
 		kill -KILL -- "-$gate_pid" 2>/dev/null || true
 		return 1
 	}
+}
+# Waits (10 s at most) until file $1 exists.
+await_file() {
+	local _
+	for _ in $(seq 100); do
+		[[ ! -s "$1" ]] || return 0
+		sleep 0.1
+	done
+	echo "  $1 never appeared"
+	kill -KILL -- "-$gate_pid" 2>/dev/null || true
+	return 1
 }
 # Waits ($1 tenths of a second at most) for the gate to end, and sets
 # status to its exit status.
@@ -691,13 +765,13 @@ the_flake_step_never_runs_nix_flake_check() {
 	new_repo
 	gate
 	expect_status 0
-	# Only these three subcommands: never flake check, which holds every
-	# check in one evaluator.
+	# Only these subcommands: never flake check, which holds every check in
+	# one evaluator.
 	local line
 	while IFS= read -r line; do
 		line="${line#--extra-experimental-features nix-command flakes }"
 		case "$line" in
-		"config show system" | "eval "* | "build "*) ;;
+		"config show system" | "flake prefetch "* | "eval "* | "build "*) ;;
 		*)
 			echo "  the gate ran another nix command: ${line:0:200}"
 			return 1
@@ -713,17 +787,18 @@ each_check_is_built_in_a_nix_process_of_its_own() {
 	expect_status 0
 	# In the order the listing gives, one installable per process.
 	expect_builds "$(check_of delta)" "$(check_of alpha)"
-	local line evals=0 builds_=0
+	local line rest evals=0 builds_=0
 	while IFS= read -r line; do
 		case "$line" in
-		*" eval --raw .#.checks.x86_64-linux --apply "*) ;;
-		*" eval "*".#.checks."*)
+		*" eval --raw path:/nix/store/fake1-source#.checks.x86_64-linux --apply "*) ;;
+		*" eval "*"#.checks."*)
 			evals=$((evals + 1))
-			[[ "$line" == *" eval --raw .#.checks.x86_64-linux.\""*"\" --apply "*" --no-update-lock-file" ]] || {
+			[[ "$line" == *" eval --raw path:/nix/store/fake1-source#.checks.x86_64-linux.\""*"\" --apply "*" --no-update-lock-file" ]] || {
 				echo "  unexpected evaluation of a check: ${line:0:300}"
 				return 1
 			}
-			[[ "${line#*.#.checks.}" != *".#"* ]] || {
+			rest="${line#*#.checks.}"
+			[[ "${rest%% --apply *}" != *"#"* ]] || {
 				echo "  one nix eval got more than one installable: ${line:0:300}"
 				return 1
 			}
@@ -754,7 +829,7 @@ the_checks_are_listed_by_name_only() {
 	expect_status 0
 	# The listing asks for the names alone, so nix evaluates no check.
 	local listing
-	listing="$(rg -F ' eval --raw .#.checks.x86_64-linux --apply ' "$bin/nix.log")"
+	listing="$(rg -F ' eval --raw path:/nix/store/fake1-source#.checks.x86_64-linux --apply ' "$bin/nix.log")"
 	[[ "$listing" == *"builtins.attrNames"* ]] || {
 		echo "  unexpected listing of the checks: $listing"
 		return 1
@@ -770,8 +845,8 @@ the_listing_comes_before_any_build() {
 	gate
 	expect_status 0
 	local first
-	first="$(rg -n -F '.#.checks.x86_64-linux."' "$bin/nix.log" | head -1 | cut -d: -f1)"
-	[[ "$(sed -n "1,${first}p" "$bin/nix.log")" == *"config show system"*" eval --raw .#.checks.x86_64-linux --apply "* ]] || {
+	first="$(rg -n -F '#.checks.x86_64-linux."' "$bin/nix.log" | head -1 | cut -d: -f1)"
+	[[ "$(sed -n "1,${first}p" "$bin/nix.log")" == *"config show system"*" eval --raw path:/nix/store/fake1-source#.checks.x86_64-linux --apply "* ]] || {
 		echo "  expected the system and the listing before the first build: $(cat "$bin/nix.log")"
 		return 1
 	}
@@ -832,12 +907,21 @@ a_check_is_evaluated_by_the_derivation_guard() {
 
 an_evaluation_that_prints_no_derivation_fails_the_check() {
 	new_repo
-	printf '%s\n' "$(check_of beta)" >"$bin/eval.weird"
+	checks_named alpha beta gamma delta epsilon
+	# No path, a derivation outside the store, a store path that is no
+	# derivation, two lines.
+	printf '%s %s\n' \
+		"$(check_of beta)" hello \
+		"$(check_of gamma)" /tmp/x.drv \
+		"$(check_of delta)" /nix/store/abc-x >"$bin/eval.weird"
 	gate
 	expect_status 1
-	expect_builds "$(check_of alpha)" "$(check_of gamma)"
-	expect_err "hello"
+	expect_builds "$(check_of alpha)" "$(check_of epsilon)"
+	expect_err "printed no derivation: hello"
+	expect_err "printed no derivation: /tmp/x.drv"
 	expect_err "  beta (exit 1)"
+	expect_err "  gamma (exit 1)"
+	expect_err "  delta (exit 1)"
 }
 
 without_the_derivation_guard_the_flake_step_fails() {
@@ -986,6 +1070,119 @@ without_a_validator_the_flake_step_fails() {
 	}
 }
 
+# One snapshot of the source for the whole step.
+
+the_step_checks_the_tree_it_started_with() {
+	new_repo
+	fail_check 1 "$(check_of beta)"
+	# While alpha builds, the work tree is edited: beta passes now, and a
+	# check late is added that fails.
+	mkdir -p "$bin/build.mutate"
+	checks_named alpha beta gamma late
+	mv -- "$bin/names" "$bin/build.mutate/names"
+	checks_named alpha beta gamma
+	printf '1 %s\n' "$(check_of late)" >"$bin/build.mutate/build.fail"
+	gate
+	expect_status 1
+	[[ -e "$bin/mutating" ]] || {
+		echo "  the work tree was never edited during the run"
+		return 1
+	}
+	expect_err "1 of 3 checks failed"
+	expect_err "  beta (exit 1)"
+	expect_builds "$(check_of alpha)" "$(check_of beta)" "$(check_of gamma)"
+}
+
+every_flake_call_of_the_step_reads_one_snapshot() {
+	new_repo
+	gate
+	expect_status 0
+	local line n=0 prefetches=0
+	while IFS= read -r line; do
+		case "$line" in
+		*" flake prefetch --json --no-pretty --out-link "*" . "*) prefetches=$((prefetches + 1)) ;;
+		*" config show system" | *" eval --raw --expr "* | *" build "*".drv^*"*) ;;
+		*"claude-code"*) ;;
+		*)
+			n=$((n + 1))
+			[[ "$line" == *" path:/nix/store/fake1-source#."* ]] || {
+				echo "  a call of the flake step read another source: ${line:0:200}"
+				return 1
+			}
+			;;
+		esac
+	done <"$bin/nix.log"
+	((prefetches == 1 && n == 5)) || {
+		echo "  expected one prefetch and five calls on the snapshot (listing, outputs, three checks), got $prefetches and $n"
+		return 1
+	}
+}
+
+a_source_nix_cannot_snapshot_fails_the_step_before_any_build() {
+	new_repo
+	printf '3\n' >"$bin/prefetch.status"
+	gate
+	expect_status 3
+	expect_builds
+	expect_err "flake failed (exit 3)"
+	[[ ! -e "$bin/outputs.apply" ]] || {
+		echo "  the outputs were checked without a snapshot"
+		return 1
+	}
+}
+
+# A Ctrl-C ends the step in every phase, and the step stops every nix
+# process it started.
+
+an_interrupt_during_the_listing_ends_the_gate() {
+	new_repo
+	: >"$bin/names.hang"
+	local gate_pid
+	start_gate
+	await_file "$bin/names.pid"
+	kill -INT -- "-$gate_pid"
+	await_gate 50
+	expect_status 130
+	# The step ends by its own exit, so the gate names it.
+	expect_err "flake failed (exit 130)"
+	expect_dead "$(cat "$bin/names.pid")"
+	expect_no_out "--> "
+	expect_builds
+}
+
+an_interrupt_during_the_outputs_check_ends_the_gate() {
+	new_repo
+	: >"$bin/outputs.hang"
+	local gate_pid
+	start_gate
+	await_file "$bin/outputs.pid"
+	kill -INT -- "-$gate_pid"
+	await_gate 50
+	expect_status 130
+	# The step ends by its own exit, so the gate names it.
+	expect_err "flake failed (exit 130)"
+	expect_dead "$(cat "$bin/outputs.pid")"
+	expect_no_out "--> "
+	expect_builds
+}
+
+an_outputs_check_that_ignores_sigterm_is_killed() {
+	new_repo
+	: >"$bin/outputs.hang"
+	: >"$bin/stubborn"
+	local gate_pid
+	start_gate
+	await_file "$bin/outputs.pid"
+	kill -INT -- "-$gate_pid"
+	await_gate 150
+	expect_status 130
+	# The step ends by its own exit, so the gate names it.
+	expect_err "flake failed (exit 130)"
+	expect_dead "$(cat "$bin/outputs.pid")"
+	expect_err "SIGKILL"
+	expect_builds
+}
+
 # The checks are built one at a time unless RAVNIX_CHECK_JOBS says 2.
 
 by_default_one_check_builds_at_a_time() {
@@ -1067,6 +1264,8 @@ an_interrupted_gate_stops_the_builds_it_started() {
 	kill -INT -- "-$gate_pid"
 	await_gate 50
 	expect_status 130
+	# The step ends by its own exit, so the gate names it.
+	expect_err "flake failed (exit 130)"
 	expect_dead "${running[@]}"
 	# The two that ran, in either order, and no third.
 	[[ "$(builds | sort | tr '\n' ' ')" == "$(check_of alpha) $(check_of beta) " ]] || {
@@ -1084,6 +1283,8 @@ an_interrupted_gate_stops_in_the_default_mode_too() {
 	kill -INT -- "-$gate_pid"
 	await_gate 50
 	expect_status 130
+	# The step ends by its own exit, so the gate names it.
+	expect_err "flake failed (exit 130)"
 	expect_dead "${running[@]}"
 	# The Ctrl-C ends the gate, not just the check it was building.
 	expect_builds "$(check_of alpha)"
@@ -1106,7 +1307,7 @@ a_terminated_gate_stops_its_builds() {
 a_build_that_ignores_sigterm_is_killed() {
 	new_repo
 	: >"$bin/build.hang"
-	: >"$bin/build.stubborn"
+	: >"$bin/stubborn"
 	local gate_pid running=()
 	start_gate RAVNIX_CHECK_JOBS=2
 	await_builds 2
@@ -1114,8 +1315,26 @@ a_build_that_ignores_sigterm_is_killed() {
 	# 10 s for the builds to stop on SIGTERM, then SIGKILL.
 	await_gate 150
 	expect_status 130
+	# The step ends by its own exit, so the gate names it.
+	expect_err "flake failed (exit 130)"
 	expect_dead "${running[@]}"
 	expect_err "SIGKILL"
+}
+
+any_positive_job_count_is_taken() {
+	new_repo
+	local jobs
+	# More jobs than checks, also more than bash's arithmetic holds.
+	for jobs in 1000 99999999999999999999999; do
+		rm -f -- "$bin/builds.log"
+		capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS="$jobs" scripts/check.sh
+		expect_status 0
+		expect_out "3 checks built"
+		[[ "$(builds | sort | tr '\n' ' ')" == "$(check_of alpha) $(check_of beta) $(check_of gamma) " ]] || {
+			echo "  with RAVNIX_CHECK_JOBS=$jobs, expected all three built: $(builds | tr '\n' ' ')"
+			return 1
+		}
+	done
 }
 
 a_bad_job_count_fails_before_any_step() {
@@ -1428,6 +1647,12 @@ tests=(
 	a_failing_check_does_not_stop_the_others_and_is_named
 	every_failed_check_is_named_and_the_first_status_is_the_steps
 	a_check_that_fails_to_evaluate_counts_as_failed
+	the_step_checks_the_tree_it_started_with
+	every_flake_call_of_the_step_reads_one_snapshot
+	a_source_nix_cannot_snapshot_fails_the_step_before_any_build
+	an_interrupt_during_the_listing_ends_the_gate
+	an_interrupt_during_the_outputs_check_ends_the_gate
+	an_outputs_check_that_ignores_sigterm_is_killed
 	a_check_is_evaluated_by_the_derivation_guard
 	an_evaluation_that_prints_no_derivation_fails_the_check
 	without_the_derivation_guard_the_flake_step_fails
@@ -1449,6 +1674,7 @@ tests=(
 	an_interrupted_gate_stops_in_the_default_mode_too
 	a_terminated_gate_stops_its_builds
 	a_build_that_ignores_sigterm_is_killed
+	any_positive_job_count_is_taken
 	a_bad_job_count_fails_before_any_step
 	a_claude_code_mismatch_fails_the_full_gate
 	an_unreachable_manifest_fails_the_full_gate_and_says_so

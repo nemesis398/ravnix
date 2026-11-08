@@ -29,7 +29,9 @@ evaluates none) cover the Nix side of the flake step.
 `nix flake check` evaluates every check in one evaluator and keeps them all
 alive: 15.6 GB at its peak without building and about 18 GB while building,
 on a 27 GB laptop. The flake step checks the same things in a process per
-check: it lists the names of `checks.SYSTEM`, checks the other outputs with
+check, all of them on one copy of the source that `nix flake prefetch`
+makes at its start, so its verdict is about one tree even when the work
+tree changes during the run: it lists the names of `checks.SYSTEM`, checks the other outputs with
 `lib/flake-outputs.nix`, evaluates each check's derivation with its own
 `nix eval` through `lib/check-drv.nix` (which refuses a check that is no
 derivation, as `nix flake check` did) and builds it with `nix build DRV^*`,
@@ -37,15 +39,16 @@ and then names every check that failed and exits with the first failing
 status. The header of `check.sh` has the details.
 
 `RAVNIX_CHECK_JOBS=N scripts/check.sh` runs N checks at once, each output
-line marked with its check's name; N is a whole number from 1 to 999, and
+line marked with its check's name; N is any whole number from 1, and
 anything else fails the full gate before its first step. The default is 1,
 for the RAM: the largest check's evaluation peaked at 4.3 GB (measured on
 2026-11-08), so N checks at once take up to N times that next to the
 applications you have open, and the gate is to stay under 85 % of the RAM.
 
-A Ctrl-C ends the gate in either mode. The flake step sends SIGTERM to the
-nix processes it started, waits for them, and sends SIGKILL to any still
-running after 10 s.
+A Ctrl-C ends the gate in every phase of the flake step and in either mode.
+The step runs every nix process as a background job, sends SIGTERM to the
+ones still running, waits for them, and sends SIGKILL to any still running
+after 10 s.
 
 ## Verified downloads
 
@@ -101,8 +104,12 @@ Findings that are not fixed, so nobody mistakes them for covered.
   live, and it is no larger than the user account itself, the gate's trust
   boundary: a program that can write the record can edit `check.sh` as well.
 - The full gate builds the flake's checks from the work tree (the tracked
-  files with their work-tree contents), not from exactly the commits being
-  pushed.
+  files with their work-tree contents, copied once when the flake step
+  starts), not from exactly the commits being pushed. The claude-code step
+  reads the work tree again, on its own.
+- The copy is a source of type path, so the checks see no `self.rev`,
+  `self.dirtyRev` or `self.shortRev`; nothing in ravnix reads them. A check
+  that did would see them only under `nix build` by hand.
 - The flake step evaluates the flake once for the listing, once for the other
   outputs and once per check, so it spends more CPU time on evaluation than
   `nix flake check` did; the RAM is what it saves.
