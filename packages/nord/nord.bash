@@ -87,7 +87,11 @@ COUNTRY_ID="${NORD_COUNTRY_ID:-$baked_country_id}"   # Nord's id of the country,
 TOKEN_ITEM="${NORD_TOKEN_ITEM:-$baked_token_item}"
 KEY_ITEM="${NORD_KEY_ITEM:-$baked_key_item}"
 
-notify() { command -v notify-send >/dev/null 2>&1 && notify-send -a "NordVPN" "$@"; }
+# A notification is a courtesy: with no notification daemon (over SSH, say) or
+# no notify-send, the command still did its work and must say so and succeed.
+notify() {
+  if command -v notify-send >/dev/null 2>&1; then notify-send -a "NordVPN" "$@" || true; fi
+}
 die() { echo "nord: $*" >&2; exit 1; }
 
 have_profile() { nmcli -t -f NAME connection show 2>/dev/null | grep -qxF "$CON"; }

@@ -160,6 +160,27 @@ it_nord_down_when_off_does_nothing() {
 	lacks_log nmcli "connection down"
 }
 
+it_nord_down_without_a_notification_daemon_still_says_it_is_off() {
+	fresh
+	profile_with_server
+	fake up
+	fake notify-fails
+	capture "$NORD" down
+	expect_status 0
+	expect_out "nord: off"
+	[[ ! -e "$FAKE_DIR/up" ]]
+}
+
+it_nord_up_without_a_notification_daemon_still_reports() {
+	fresh
+	profile_with_server
+	nord_api
+	fake notify-fails
+	capture "$NORD" up
+	expect_status 0
+	expect_out "nord: on via 192.0.2.10:51820"
+}
+
 it_nord_down_without_a_profile_does_nothing() {
 	fresh
 	capture "$NORD" down
@@ -626,6 +647,8 @@ tests=(
 	it_nord_up_treats_an_unreachable_insights_api_as_unprotected
 	it_nord_up_reports_the_error_of_networkmanager
 	it_nord_down_when_off_does_nothing
+	it_nord_down_without_a_notification_daemon_still_says_it_is_off
+	it_nord_up_without_a_notification_daemon_still_reports
 	it_nord_down_without_a_profile_does_nothing
 	it_nord_down_when_on_takes_the_profile_down
 	it_nord_toggle_goes_both_ways
