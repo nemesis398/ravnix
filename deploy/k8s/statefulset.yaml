@@ -1,0 +1,131 @@
+# Root in this container is root on the node: run it only where that is acceptable.
+# deploy/compose/muninn/docker-compose.yaml says what SYS_ADMIN with AppArmor
+# off adds up to, and the narrower ways (on Kubernetes, `hostUsers: false` and
+# a runtime with user namespaces, none of them tried here).
+#
+# muninn, the ravnix server, as a pod: the image of hosts/server/oci.nix, with
+# systemd as PID 1, and its home on the claim of pvc.yaml. One replica, because
+# there is one muninn. A StatefulSet and not a Deployment, so that a swap
+# stops the old pod before the new one starts: two pods on one
+# ReadWriteOnce claim would either not schedule or share the home.
+#
+# NOT RUN. The compose file in deploy/compose/muninn is the form that was run
+# (tests/workbench/oci.md), and this one asks Kubernetes for the same things
+# in its words. What differs, and has not been tried:
+#   - the cgroup: Kubernetes gives the container a cgroup namespace of its own
+#     on cgroup v2 nodes (the compose file asks for the same). The image's
+#     entrypoint remounts /sys/fs/cgroup writable inside it, as it did under
+#     Docker, and refuses to start unless /proc/self/cgroup says `0::/`. On a
+#     node with cgroup v1 this does not work at all.
+#   - seccomp: the image's Podman settings and the grants here assume the
+#     runtime's default profile, which a kubelet without --seccomp-default
+#     does not apply; the pod asks for it.
+#   - the stop signal: the pod has no field for it in a stable release; the
+#     container runtime reads it from the image (containerd does). If yours
+#     does not, systemd gets SIGTERM, which it ignores as PID 1 in a container,
+#     and the pod is killed after terminationGracePeriodSeconds.
+#   - a restart of the pod makes the container again from the image, as a
+#     swap does; the claim is what stays.
+# To update, set the image to the new tag and apply: the pod is replaced.
+apiVersion: v1
+kind: Service
+metadata:
+  name: muninn
+  labels:
+    app.kubernetes.io/name: muninn
+spec:
+  # Headless: the StatefulSet's name for its one pod. Exposing sshd to
+  # anyone is a Service of your own (a LoadBalancer on an address only your
+  # clients reach, or a NodePort); sshd takes keys only.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: muninn
+  ports:
+    - name: ssh
+      port: 22
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: muninn
+  labels:
+    app.kubernetes.io/name: muninn
+spec:
+  serviceName: muninn
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: muninn
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: muninn
+    spec:
+      hostname: muninn
+      terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      containers:
+        - name: muninn
+          # The tag docker load or skopeo printed; it is the hash of the
+          # image, so a new image is a new tag. Never pulled: the image is
+          # loaded onto the node (skopeo copy, ctr images import), and a tag
+          # that is not there must stop the pod and not fetch a stranger's
+          # image from a registry and run it with the rights below.
+          image: ravnix/muninn:REPLACE_WITH_TAG
+          imagePullPolicy: Never
+          ports:
+            - name: ssh
+              containerPort: 22
+          securityContext:
+            # What compose says in cap_add and security_opt, and why is in
+            # deploy/compose/muninn/docker-compose.yaml.
+            capabilities:
+              add: [SYS_ADMIN]
+            appArmorProfile:
+              type: Unconfined
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          readinessProbe:
+            exec:
+              command:
+                - /run/current-system/sw/bin/systemctl
+                - is-active
+                - --quiet
+                - sshd.service
+            periodSeconds: 30
+            failureThreshold: 3
+          startupProbe:
+            exec:
+              command:
+                - /run/current-system/sw/bin/systemctl
+                - is-active
+                - --quiet
+                - sshd.service
+            periodSeconds: 10
+            failureThreshold: 36
+          volumeMounts:
+            # /home: root's, with the user's home and sshd's host key in it.
+            # A claim is not seeded from the image, and does not need to be:
+            # the system's activation makes the home the user's at every
+            # boot, and sshd-keygen makes its directory.
+            - name: home
+              mountPath: /home
+            - name: run
+              mountPath: /run
+      volumes:
+        - name: home
+          persistentVolumeClaim:
+            claimName: muninn-home
+        # systemd and the activation expect /run to be a tmpfs.
+        - name: run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi

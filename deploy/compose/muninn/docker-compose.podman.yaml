@@ -1,0 +1,38 @@
+# Root in this container is root on the Docker host; this file adds to that.
+# The top of docker-compose.yaml says what it means.
+#
+# What the container needs besides docker-compose.yaml for rootless Podman
+# inside it to run containers. Start muninn with both files:
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.podman.yaml up -d
+#
+# systempaths=unconfined   Docker masks parts of /proc and mounts /proc/sys
+#                          read-only in every container. A nested container
+#                          mounts a /proc of its own, and the kernel refuses
+#                          that while the outer /proc has masked paths
+#                          ("mount proc: Operation not permitted"). Root in
+#                          muninn could already unmask them, because it has
+#                          SYS_ADMIN and no AppArmor (see the top of the
+#                          other file), so this grants no right that root did
+#                          not have. What it changes is for everyone else:
+#                          every process in muninn, the account's agents and
+#                          the containers they run, sees /proc unmasked, and
+#                          /proc/sys read-write for whoever has the
+#                          capability. It is a file of its own because the
+#                          base file does not need it.
+# /dev/net/tun             pasta, which gives a rootless container its
+#                          network, opens it. Without it a container runs
+#                          with `--network host` or `--network none` only.
+#                          (Not tried with it.)
+#
+# Docker's default seccomp profile stays. It blocks keyctl and pivot_root,
+# and the image's containers.conf (hosts/server/oci.nix) makes Podman do
+# without both. Without pivot_root a container that Podman runs can leave its
+# root and reach muninn's file system with the account's rights, so in this
+# form run only images you trust.
+services:
+  muninn:
+    security_opt:
+      - systempaths=unconfined
+    devices:
+      - /dev/net/tun:/dev/net/tun

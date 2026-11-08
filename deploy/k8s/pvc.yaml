@@ -1,0 +1,17 @@
+# /home of muninn, with the user's home in it: the one thing that outlives an
+# image swap (hosts/server/oci.nix says what is in it). ReadWriteOnce, because
+# one pod has it; the size is a start, and Podman's storage in it is what
+# grows.
+# Not applied anywhere yet: deploy/compose/muninn is the form that was run,
+# and tests/workbench/oci.md has the record.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: muninn-home
+  labels:
+    app.kubernetes.io/name: muninn
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 50Gi

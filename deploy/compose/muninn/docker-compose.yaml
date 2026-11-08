@@ -1,0 +1,145 @@
+# Root in this container is root on the Docker host: run it only where that is acceptable.
+#
+# The container gets SYS_ADMIN with Docker's AppArmor profile off (the grants
+# below, and why), in the host's own user namespace. Nothing then locks
+# Docker's read-only /proc/sys and /sys or its masked paths, because the
+# kernel locks mount flags across user namespaces and there is none here: root
+# in muninn can remount or unmount those paths, mount a fresh /proc, and write
+# what the host kernel runs or obeys as the host's root (kernel.core_pattern,
+# sysrq, the other host-wide sysctls). With SYS_ADMIN, Docker's seccomp profile
+# also lets it use bpf and perf_event_open. Whoever becomes root in muninn,
+# by `docker exec`, by a flaw in a program that runs in it, or by a login, can
+# become root on the host. muninn runs agents, a root nix-daemon and setuid
+# wrappers, so guard root in it like the host's root: no password, no sudo for
+# the account, no root login (the image refuses root over ssh by itself, the
+# shape gives the account no password, and wheel needs one), and nobody in the
+# docker group who should not be root on the host.
+#
+# Narrower ways, none of them tried here:
+#   - Rootless Podman with `podman run --systemd=always`: root in the container
+#     is the unprivileged user on the host, so SYS_ADMIN covers the container's
+#     own user namespace and no more. It needs Podman and a user manager of
+#     systemd with cgroup v2 delegated to the user; a host that has Docker only
+#     does not have it. The entrypoint's guard holds there as well.
+#   - Docker with userns-remap in the daemon's configuration: the same, for
+#     every container on the host. It moves them all to a shifted id range,
+#     needs a restart of the daemon, and hides the images, volumes and
+#     containers made before it, so it does not fit a host that serves other
+#     things. (Docker's rootless mode, sysbox, and `hostUsers: false` on
+#     Kubernetes are the same idea.)
+#   - An AppArmor profile derived from docker-default that allows only the
+#     mounts the image's stage 2 and the cgroup remount need, in place of
+#     `apparmor=unconfined`.
+#
+# muninn, the ravnix server, as one container on a host that runs Docker: the
+# image of hosts/server/oci.nix, with systemd as PID 1. It is the container
+# form of the server shape; the Proxmox VM (Task 4.2) is the other. Nothing
+# here updates it: a newer muninn is a newer image, loaded and swapped in
+# (Update below), and /home, which is a volume, outlives the swap.
+#
+# Deploy: build the image from your private flake, the `ociImage` of the
+# configuration that imports nixosModules.server and nixosModules.server-oci
+# (`nix build .#nixosConfigurations.NAME.config.system.build.ociImage`), then
+# on the Docker host
+#
+#   docker load -i result        # prints "Loaded image: ravnix/muninn:TAG"
+#   docker compose up -d
+#
+# with a .env next to this file:
+#
+#   MUNINN_TAG         the tag docker load printed
+#   MUNINN_BIND_ADDRESS  optional: the host address sshd is published on
+#                      (default 127.0.0.1, so nothing is reachable until you
+#                      choose an address that only your clients reach)
+#   MUNINN_SSH_PORT    optional: the host port of sshd (default 2222)
+#   MUNINN_MEM_LIMIT   optional: memory of the whole container (default 8g)
+#   MUNINN_CPUS        optional: CPUs it may use (default 4)
+#
+# The image is never pulled: `pull_policy: never` makes a tag that is not
+# loaded stop the start, and not fetch ravnix/muninn:TAG from a registry
+# whose namespace nobody here controls and run it with the rights above.
+#
+# The first start has no key that may log in. Put the public key into the
+# volume (docker compose exec muninn su - USER, then ~/.ssh/authorized_keys),
+# or into users.users.USER.openssh.authorizedKeys.keys of the private flake
+# before building. sshd takes keys only. The host key is made in the volume
+# on the first start and stays the same through every swap.
+#
+# Update: load the new image, set MUNINN_TAG to its tag, `docker compose up -d`.
+# Compose makes the container again from the new image and keeps the volume.
+# Then remove the old image by its tag (`docker image rm ravnix/muninn:OLD`).
+# herdr's panes do not survive the swap: the container stops, so everything
+# in it does, and herdr resumes its agents when it starts again.
+#
+# What systemd needs from Docker, and why this file asks for it (the run that
+# found it, one step at a time, is in tests/workbench/oci.md):
+#   cap_add SYS_ADMIN    stage 2 of the image bind-mounts /nix/store and the
+#                        activation mounts /run/keys; systemd mounts file
+#                        systems and puts services into namespaces. Without
+#                        it systemd exits at once, status 255.
+#   security_opt         Docker's AppArmor profile refuses every mount, even
+#     apparmor=unconfined with SYS_ADMIN. It is off for this container; the
+#                        default seccomp profile stays, and with SYS_ADMIN it
+#                        allows the mounts.
+#   cgroup private       the container gets a cgroup namespace of its own
+#                        (Docker's default on cgroup v2). Docker mounts its
+#                        cgroup tree read-only, and systemd needs to make
+#                        /init.scope in it: the image's entrypoint remounts it
+#                        writable, and only after it has read
+#                        /proc/self/cgroup as `0::/`, which is what a private
+#                        namespace shows. In any other it refuses to start
+#                        (look for "muninn: /proc/self/cgroup says" in
+#                        docker logs; with restart: unless-stopped that is a
+#                        restart loop until the file is fixed). Not
+#                        `cgroup: host` with a writable /sys/fs/cgroup
+#                        bind-mounted from the host: root in this container
+#                        could then write the cgroups of every container on
+#                        the host.
+#   tmpfs /run           reasoned, not tried without: the system's activation
+#                        puts /run/current-system and more under /run before
+#                        systemd starts, and systemd mounts a tmpfs of its own
+#                        on /run if there is none, which would hide them.
+#                        Docker mounts tmpfs noexec by default; `exec` is the
+#                        safe side, because nothing is known to run from /run
+#                        and a program that does would otherwise fail.
+# What it does not need: privileged, a device, a host path, a network of its
+# own. Rootless Podman inside is the one thing that asks for more, and
+# docker-compose.podman.yaml says what.
+name: muninn
+
+services:
+  muninn:
+    image: ravnix/muninn:${MUNINN_TAG:?set MUNINN_TAG in .env to the tag docker load printed}
+    pull_policy: never
+    hostname: muninn
+    restart: unless-stopped
+    # systemd is PID 1, so there is no init to add.
+    init: false
+    stop_signal: SIGRTMIN+3
+    stop_grace_period: 60s
+    cgroup: private
+    cap_add: [SYS_ADMIN]
+    security_opt:
+      - apparmor=unconfined
+    tmpfs:
+      - /run:exec,mode=755,size=256m
+    ports:
+      - "${MUNINN_BIND_ADDRESS:-127.0.0.1}:${MUNINN_SSH_PORT:-2222}:22"
+    volumes:
+      # /home, which is root's, with the user's home and sshd's host key in it.
+      - home:/home
+    # A server of a NAS serves other things first.
+    cpus: ${MUNINN_CPUS:-4}
+    mem_limit: ${MUNINN_MEM_LIMIT:-8g}
+    memswap_limit: ${MUNINN_MEM_LIMIT:-8g}
+    pids_limit: 4096
+    healthcheck:
+      # systemd answers, and sshd is up.
+      test: ["CMD", "/run/current-system/sw/bin/systemctl", "is-active", "--quiet", "sshd.service"]
+      interval: 60s
+      timeout: 10s
+      retries: 2
+      start_period: 3m
+
+volumes:
+  home:
