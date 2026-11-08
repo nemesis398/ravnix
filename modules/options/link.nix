@@ -1,7 +1,7 @@
 # The link between the hosts (modules/glue/link.nix, tools/ravnix-link): the
 # socket it uses, and the vault's repository on the server, where
-# vault-commit commits. Which end of the link a host is
-# (ravnix.link.role) is the glue's own option.
+# vault-commit commits. Which end of the link a host is comes from its
+# shape (ravnix.shape, modules/options/shape.nix).
 { lib, ... }:
 let
   inherit (lib) mkOption types;
