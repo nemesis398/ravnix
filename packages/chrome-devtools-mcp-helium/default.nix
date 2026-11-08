@@ -14,22 +14,25 @@
 {
   lib,
   writeShellApplication,
-  replaceVars,
   coreutils,
   # The packages of ravnix: chrome-devtools-mcp and helium are two.
   ravnix,
 }:
 writeShellApplication {
   name = "chrome-devtools-mcp-helium";
-  # The wrapper brings the tools it uses (mktemp, rm, mkdir), and finds nothing
-  # else on the caller's PATH.
+  # The wrapper brings the tools it uses (mktemp, rm, mkdir, stat, realpath),
+  # and finds nothing else on the caller's PATH.
   runtimeInputs = [ coreutils ];
-  text = builtins.readFile (
-    replaceVars ./chrome-devtools-mcp-helium.sh {
-      server = lib.getExe ravnix.chrome-devtools-mcp;
-      browser = lib.getExe ravnix.helium;
-    }
-  );
+  # The two store paths replace their placeholders in the source as a string.
+  # replaceVars would build a derivation that evaluation has to read back
+  # (import from derivation): evaluating a host would first build the npm
+  # package and fetch Helium, and could not be done with
+  # allow-import-from-derivation off.
+  text =
+    builtins.replaceStrings
+      [ "@server@" "@browser@" ]
+      [ (lib.getExe ravnix.chrome-devtools-mcp) (lib.getExe ravnix.helium) ]
+      (builtins.readFile ./chrome-devtools-mcp-helium.sh);
   meta = {
     description = "The Chrome DevTools MCP server on a headless Helium, with a fresh profile per launch";
     license = lib.licenses.agpl3Plus;
