@@ -17,7 +17,8 @@ top of `sway.nix` and `waybar.nix`; the options are in `modules/options/desktop.
 (`packages/sway-radial`) as a user service of the Sway session. Its program is
 checked by `tests/desktop/sway-radial.nix` (the pytest suite, in the sandbox),
 its files and unit by `tests/desktop/sway-radial-module.nix`, and the VM stage
-of `desktop-sway` opens the ring and looks at the pixels. The module lists its
+of `desktop-sway` opens the ring, looks at the pixels and clicks an application
+of it (which has to be Sway's child, outside the service). The module lists its
 one style exception in its header: the round ring.
 
 ## Test seams in the scripts

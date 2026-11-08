@@ -1,0 +1,47 @@
+# The menu of the radial launcher in the VM of tests/desktop/sway.nix. All eight
+# sectors are in use, as in ravnix's own menu, so that the ring looks the same
+# to the pixel counts; the north one is an application, the others only have to
+# be valid. The application's .desktop file is written by the test
+# (radial-probe, Exec=sleep 4711): clicking the sector must start it through
+# Sway, outside the service.
+dwell_ms = 500
+
+[[items]]
+dir     = "n"
+label   = "Probe"
+desktop = "radial-probe"
+
+[[items]]
+dir   = "ne"
+label = "Two"
+exec  = "true"
+
+[[items]]
+dir   = "e"
+label = "Three"
+exec  = "true"
+
+[[items]]
+dir   = "se"
+label = "Four"
+exec  = "true"
+
+[[items]]
+dir   = "s"
+label = "Five"
+exec  = "true"
+
+[[items]]
+dir   = "sw"
+label = "Six"
+exec  = "true"
+
+[[items]]
+dir   = "w"
+label = "Seven"
+exec  = "true"
+
+[[items]]
+dir   = "nw"
+label = "Eight"
+exec  = "true"

@@ -904,6 +904,8 @@ let
         # the udev rule has to link it, and the wlroots that starts under
         # WLR_DRM_DEVICES=/dev/dri/primary-gpu has to find it there.
         ravnix.desktop.gpu.primary = "${gpuAddress}";
+        # A menu with an application the test writes, for the click on the ring.
+        ravnix.desktop.radial.menu = lib.mkForce ./fixtures/sway-radial/vm-menu.toml;
         # A variable of home-manager's, to see in a process that Sway starts.
         home-manager.sharedModules = [
           { home.sessionVariables.RAVNIX_TEST_HM_VAR = "from-home-manager"; }

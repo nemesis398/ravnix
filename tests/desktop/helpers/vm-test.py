@@ -298,42 +298,60 @@ wait_for(
     20,
 )
 
-# An app opened from the ring is Sway's child and not the service's. The
-# program's own function runs in a transient unit with the service's Python,
-# library and launcher (read from the running daemon), the way the daemon runs
-# it; if it started the app itself, the app would sit in that unit's cgroup and
-# the unit's end, as a restart of sway-radial.service is, would kill it. Here the
-# app has to be there after the unit is gone, and in no cgroup of the radial
-# units.
-main_pid = as_user("systemctl --user show -p MainPID --value sway-radial.service").strip()
-assert main_pid not in ("", "0"), "sway-radial.service has no main process"
-service_env = dict(
-    line.split("=", 1)
-    for line in machine.succeed(f"tr '\\0' '\\n' < /proc/{main_pid}/environ").splitlines()
-    if "=" in line
-)
-radial_python = machine.succeed(f"readlink -f /proc/{main_pid}/exe").strip()
-radial_lib = service_env["PYTHONPATH"].split(":")[0]
-gtk_launch = service_env["SWAY_RADIAL_GTK_LAUNCH"]
+# ── an app opened from the ring ───────────────────────────────────────────────
+# The menu of the VM (tests/desktop/fixtures/sway-radial/vm-menu.toml) has an
+# application on its north sector: radial-probe, whose Exec is `sleep 4711`. A
+# click on that sector is the whole path: the pointer, the overlay, the daemon's
+# run_item, `swaymsg exec`, gtk-launch. The app has to be Sway's and not the
+# service's: it runs, outside sway-radial.service's cgroup, with the session's
+# PATH and none of the program's wrapper variables, and it is still there after
+# the service has been restarted, which is what every rebuild that changes the
+# unit does.
 as_user(
     "mkdir -p ~/.local/share/applications && printf '%s\\n' '[Desktop Entry]' 'Type=Application' "
     "'Name=Radial probe' 'Exec=sleep 4711' > ~/.local/share/applications/radial-probe.desktop"
 )
-probe = (
-    "from sway_radial.actions import run_item; from sway_radial.model import MenuItem; "
-    "run_item(MenuItem(direction='n', label='Probe', desktop='radial-probe'))"
-)
-assert "SWAYSOCK=" in as_user("systemctl --user show-environment"), "the user manager does not know SWAYSOCK"
-as_user(
-    f"systemd-run --user --wait --collect --unit=radial-probe -E PYTHONPATH={radial_lib} "
-    f"-E PYTHONDONTWRITEBYTECODE=1 -E SWAY_RADIAL_GTK_LAUNCH={gtk_launch} "
-    f"{radial_python} -c {shlex.quote(probe)}"
-)
+
+
+def radial_main_pid():
+    return as_user("systemctl --user show -p MainPID --value sway-radial.service").strip()
+
+
+def environ_of(pid):
+    raw = machine.succeed(f"tr '\\0' '\\n' < /proc/{pid}/environ")
+    return dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
+
+
+daemon_pid = radial_main_pid()
+assert daemon_pid not in ("", "0"), "sway-radial.service has no main process"
+radial_signal()
+wait_for("the ring to click on", lambda: grab("radial-click")[accent] - closed[accent] > 3000, 60)
+rect = swaymsg("-t", "get_outputs")[0]["rect"]
+click_x, click_y = rect["x"] + rect["width"] // 2, rect["y"] + rect["height"] // 2 - 120  # north, between hub and rim
+for command in (("cursor", "set", str(click_x), str(click_y)), ("cursor", "press", "button1"), ("cursor", "release", "button1")):
+    answer = swaymsg("seat", "seat0", *command)
+    assert all(entry.get("success") for entry in answer), (command, answer)
+    machine.sleep(1)
 wait_for("the app of the ring", lambda: machine.execute(f"pgrep -u {USER} -f '/sleep 4711$'")[0] == 0, 30)
 app_pid = machine.succeed(f"pgrep -u {USER} -f '/sleep 4711$'").split()[0]
+
 app_cgroup = machine.succeed(f"cat /proc/{app_pid}/cgroup")
-assert "radial" not in app_cgroup, f"the app of the ring is in the cgroup of a radial unit: {app_cgroup}"
-assert machine.succeed(f"ps -o ppid= -p {app_pid}").strip() != main_pid, "the app is a child of the daemon"
+assert "sway-radial" not in app_cgroup, f"the app of the ring is in the cgroup of the service: {app_cgroup}"
+daemon_cgroup = machine.succeed(f"cat /proc/{daemon_pid}/cgroup")
+assert "sway-radial.service" in daemon_cgroup, f"the daemon is not in its own unit: {daemon_cgroup}"
+app_env = environ_of(app_pid)
+for name in ("GI_TYPELIB_PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "SWAY_RADIAL_GTK_LAUNCH", "SWAY_RADIAL_THEME"):
+    assert name not in app_env, f"the app of the ring has the program's {name}={app_env[name]}"
+assert "/run/wrappers/bin" in app_env.get("PATH", "").split(":"), f"the app of the ring has not the session's PATH: {app_env.get('PATH')}"
+
+as_user("systemctl --user restart sway-radial.service")
+wait_for(
+    "sway-radial to be back",
+    lambda: radial_main_pid() not in ("", "0", daemon_pid) and as_user("systemctl --user is-active sway-radial", check=False)[0] == 0,
+    60,
+)
+assert machine.execute(f"kill -0 {app_pid}")[0] == 0, "the app of the ring did not survive a restart of the service"
+assert machine.succeed(f"tr '\\0' ' ' < /proc/{app_pid}/cmdline").strip().endswith("sleep 4711")
 machine.succeed(f"pkill -u {USER} -f '/sleep 4711$'; rm -f /home/{USER}/.local/share/applications/radial-probe.desktop")
 
 # ── the locked screen ─────────────────────────────────────────────────────────

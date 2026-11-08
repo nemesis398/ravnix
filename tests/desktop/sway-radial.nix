@@ -161,6 +161,14 @@ pkgs.runCommand "desktop-sway-radial"
       -c ${tests}/pyproject.toml --rootdir ${tests} \
       -m 'not hardware and not compositor and not machine' ${tests}/tests
 
+    # The menu of the VM (desktop-sway) is a valid one, so that the VM does not
+    # fall back to ravnix's own menu and click on another sector.
+    SWAY_RADIAL_TEST_MENU=${./fixtures/sway-radial/vm-menu.toml} \
+      pytest -p no:cacheprovider --basetemp="$TMPDIR/pytest-vm-menu" \
+      -c ${tests}/pyproject.toml --rootdir ${tests} \
+      -k 'the_shipped_menu_loads or uses_all_eight_slots or exactly_one_action or fills_its_back_slot' \
+      ${tests}/tests/test_default_menu.py
+
     fail() { echo "FAIL: $*" >&2; exit 1; }
 
     # The installed program starts, through its wrapper, and says its version.

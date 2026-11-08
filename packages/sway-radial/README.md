@@ -170,6 +170,8 @@ against the `.desktop` files of the machine it runs on.
   under a second).
 - `Daemon.run`, the layer surface and the input region need a compositor and
   GTK's main loop, so the sandbox check does not cover them. The VM stage of
-  `desktop-sway` starts the service, opens the ring with `SIGUSR1` and looks at
-  the pixels; the `compositor` tests (`tests/smoke`) read the layer-shell
+  `desktop-sway` starts the service, opens the ring with `SIGUSR1`, looks at
+  the pixels and clicks an application of its own menu with the pointer (the
+  app has to run outside the service's cgroup, with the session's environment,
+  and to survive a restart of the service); the `compositor` tests (`tests/smoke`) read the layer-shell
   configuration back on a live session.
