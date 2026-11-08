@@ -167,8 +167,9 @@
       # (lib/import-dir.nix). Each brings nixosModules.common, whose
       # home-manager, options and overlay those modules read; the key keeps a
       # host that lists both from getting two copies. The import goes one way:
-      # common must never import desktop or glue (or a shape that does), since
-      # a cycle overflows the stack, and keys do not stop it.
+      # common must never import desktop or glue (or a shape that does), and
+      # nothing a shape imports (desktop, glue, workbench) may import a shape,
+      # since a cycle overflows the stack, and keys do not stop it.
       nixosModules.desktop = {
         key = "ravnix/nixosModules.desktop";
         imports = [
@@ -214,8 +215,8 @@
       # the disk layout of hosts/laptop/disko.nix and the boot. A private flake
       # imports it with the hardware module of its laptop, such as the one
       # below. Each carries a key, so a second import adds nothing: the
-      # common module that the shape and the desktop both bring is loaded
-      # once.
+      # common module that the shape, the desktop and the glue all bring is
+      # loaded once.
       nixosModules.laptop = {
         key = "ravnix/nixosModules.laptop";
         imports = [

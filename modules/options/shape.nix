@@ -6,9 +6,9 @@
 # its toolchains, and a server may run Sway in a test.
 #
 # null is a host without a shape, such as a test that imports one module
-# alone. A glue module that needs an end refuses such a host with an
-# assertion that names this option. Two shapes in one host are two
-# definitions of it, which the module system refuses.
+# alone. A host that imports the glue that way is refused, by one assertion
+# that names this option (modules/glue/shape.nix). Two shapes in one host are
+# two definitions of it, which the module system refuses.
 { lib, ... }:
 {
   options.ravnix.shape = lib.mkOption {

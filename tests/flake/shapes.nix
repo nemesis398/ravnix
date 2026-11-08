@@ -5,8 +5,10 @@
 # laptop that also imports the workbench stays a laptop. A host with both
 # shapes, or with a me.nix that sets another shape or null on top of one, is
 # refused, and the refusal is the two definitions of ravnix.shape, each named
-# by its shape's file: the same host with one value forced evaluates. The
-# server, like the laptop, loads the common home module once.
+# by its shape's file: the same host with one value forced evaluates. A host
+# with the glue and no shape has null and is refused once, by name; neither
+# shape fails an assertion. The server, like the laptop, loads the common home
+# module once.
 {
   self,
   inputs,
@@ -97,6 +99,10 @@ let
     (toString ../../hosts/laptop/default.nix)
     (toString ../../hosts/server/default.nix)
   ];
+  # The messages of the assertions a host fails, and the glue's refusal of a
+  # host without a shape (modules/glue/shape.nix).
+  failedOf = s: map (a: a.message) (lib.filter (a: !a.assertion) s.config.assertions);
+  glueRefusal = "ravnix.shape is not set: the glue needs to know which end this host is. Import nixosModules.laptop or nixosModules.server, which set it, instead of nixosModules.glue alone.";
   # How many copies of the common home module a host loads
   # (tests/laptop/shape.nix counts them the same way).
   copies =
@@ -120,6 +126,15 @@ let
     ++ check (evaluates laptop) "the laptop shape with its hardware module does not evaluate"
     ++ check (evaluates server) "the server shape does not evaluate"
     ++ check (shapeOf glueOnly == null) "a host with the glue and no shape has a shape"
+    ++
+      check (failedOf glueOnly == [ glueRefusal ])
+        "a host with the glue and no shape is not refused, by name, once: ${builtins.toJSON (failedOf glueOnly)}"
+    ++ check (
+      failedOf server == [ ]
+    ) "the server fails assertions: ${builtins.toJSON (failedOf server)}"
+    ++ check (
+      failedOf laptop == [ ]
+    ) "the laptop fails assertions: ${builtins.toJSON (failedOf laptop)}"
     ++ check (!(shapeEvaluates both)) "a host with both shapes evaluates ravnix.shape"
     ++ check (
       definedShapes both == [

@@ -1,7 +1,8 @@
 # The typed options of ravnix: every personal value a user sets, in the
 # private flake's me.nix, and the only way such a value reaches a module.
-# ravnix itself sets none of them, and none has a default that could pass
-# for a real value. The same module serves NixOS and home-manager
+# ravnix itself sets none of them, except the internal ones that its own
+# modules set, such as ravnix.shape (./shape.nix), and none has a default
+# that could pass for a real value. The same module serves NixOS and home-manager
 # (nixosModules.options, homeModules.options); templates/default/me.nix
 # lists every option with a comment.
 #
