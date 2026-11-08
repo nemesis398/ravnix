@@ -32,7 +32,11 @@
 #             tests/glue/reconnect.nix runs herdr inside ravnix-terminal,
 #             whose loop hides it. So ravnix-terminal attaches again
 #             whenever herdr ends with another status than 0, until a detach
-#             (prefix+d) ends herdr with 0 and the window closes.
+#             (prefix+d) ends herdr with 0 and the window closes: at once
+#             after a herdr that ran 10 s or more, and otherwise after a
+#             wait that doubles from 1 s to 8 s, clearing the window before
+#             each attempt, so an offline laptop shows one error and does
+#             not try every second (./terminal/ravnix-terminal.bash).
 #             Not mosh: herdr's remote attach is what bridges the laptop's
 #             clipboard and notifications, and mosh would run the UI on the
 #             server, and needs UDP ports open there. Not herdr's saved
@@ -67,9 +71,15 @@
 #             The server's sshd replaces a socket that a dropped connection
 #             left behind (StreamLocalBindUnlink, set by link.nix and
 #             sk-agent.nix), and the connection ends when a forward fails
-#             (ExitOnForwardFailure), so systemd starts it again, every 2 s,
-#             forever: a laptop that is offline or asleep gets its forwards
-#             back as soon as it can reach the server. Until then the socket
+#             (ExitOnForwardFailure). ravnix-connection then connects again,
+#             for as long as the session runs: at once after a connection
+#             that held 10 s or more, and otherwise after a wait that
+#             doubles from 1 s to 8 s, saying each reason once in the
+#             journal rather than once per attempt
+#             (./terminal/ravnix-connection.bash, which says why the loop is
+#             not systemd's). A laptop that was asleep gets its forwards back
+#             as soon as it reaches the server, and one that was offline
+#             within 8 s of the network's return. Until then the socket
 #             on the server is still the one of the dead connection, and a
 #             program that connects to it in those seconds is taken and gets
 #             no answer until the server's sshd ends that session (below,
@@ -203,8 +213,10 @@ in
             Service = {
               Type = "simple";
               ExecStart = lib.getExe connection;
+              # The command connects again by itself; this is for the
+              # command, should it end, as slowly as its own longest wait.
               Restart = "always";
-              RestartSec = 2;
+              RestartSec = 8;
             };
             Install.WantedBy = [ "graphical-session.target" ];
           };

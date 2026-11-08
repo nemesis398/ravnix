@@ -16,7 +16,9 @@
 #
 #   bash tests/glue/helpers/terminal.test.bash
 #
-# It prints PASS or FAIL per test and exits non-zero if any test failed.
+# It prints PASS or FAIL per test and exits non-zero if any test failed. Two
+# tests take about 11 s each: a herdr and a connection that ran a while are
+# real time, measured by the command.
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/tests/lib.sh
@@ -115,6 +117,17 @@ test_terminal_shows_what_herdr_says() {
 	expect_calls herdr 2
 }
 
+test_terminal_fast_failures_back_off_to_a_cap() {
+	fresh
+	local k
+	for k in 1 2 3 4 5 6; do answer herdr "$k" status 1; done
+	capture timeout 60 "$TERMINAL"
+	expect_status 0
+	expect_calls herdr 7
+	expect_sleeps "1 2 4 8 8 8"
+	expect_err "trying again in 8 s"
+}
+
 test_terminal_attaches_again_after_any_other_status() {
 	fresh
 	answer herdr 1 status 2
@@ -126,6 +139,52 @@ test_terminal_attaches_again_after_any_other_status() {
 	expect_calls herdr 5
 	local s
 	for s in 2 127 130 255; do expect_err "herdr ended with $s"; done
+}
+
+test_terminal_clears_the_window_before_each_attempt_after_a_wait() {
+	fresh
+	local k
+	for k in 1 2 3 4; do answer herdr "$k" out "attempt-$k"; done
+	answer herdr 1 status 1
+	answer herdr 2 status 1
+	answer herdr 3 status 1
+	capture timeout 60 "$TERMINAL"
+	expect_status 0
+	expect_sleeps "1 2 4"
+	# One clear after each wait, none before the first attempt: the window
+	# opens on herdr itself, and shows the last attempt only.
+	[[ $out == "attempt-1${clear}attempt-2${clear}attempt-3${clear}attempt-4" ]] || {
+		echo "  the window got: $(printf '%q' "$out")"
+		return 1
+	}
+}
+
+test_terminal_attaches_at_once_after_a_session_and_starts_the_waits_over() {
+	fresh
+	answer herdr 1 status 1
+	answer herdr 2 status 1
+	# A session that ran, then dropped.
+	answer herdr 3 run 11
+	answer herdr 3 status 1
+	answer herdr 4 status 1
+	capture timeout 60 "$TERMINAL"
+	expect_status 0
+	expect_calls herdr 5
+	# 1 and 2 before the session, none after it, then 1 again, not 4.
+	expect_sleeps "1 2 1"
+	expect_err "attaching to the server again"
+}
+
+test_terminal_without_herdr_keeps_trying_and_says_why() {
+	fresh
+	echo 3 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$TERMINAL_NOHERDR"
+	# Ended by the stand-in for sleep, at the third wait: it never stops by
+	# itself, and never closes the window with an error nobody read.
+	expect_status 143
+	expect_sleeps "1 2 4"
+	expect_err "herdr ended with 127"
+	expect_err "No such file or directory"
 }
 
 test_terminal_two_windows_at_once_are_two_attaches() {
@@ -188,8 +247,128 @@ test_connection_refuses_what_is_no_uid() {
 			echo "  for the uid '$bad'"
 			return 1
 		}
-		expect_err "the server gave no uid"
+		expect_err "the server gave no uid" || {
+			echo "  for the uid '$bad'"
+			return 1
+		}
 	done
+}
+
+test_connection_backs_off_quietly_while_the_server_is_away() {
+	fresh
+	local k
+	for k in 1 2 3 4 5 6; do
+		answer ssh "$k" err "ssh: connect to host 198.51.100.20 port 22: Network is unreachable"
+		answer ssh "$k" status 255
+	done
+	echo 6 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$CONNECTION"
+	expect_calls ssh 6
+	expect_sleeps "1 2 4 8 8 8"
+	expect_err_times 1 "Network is unreachable"
+}
+
+test_connection_says_a_new_reason_once() {
+	fresh
+	answer ssh 1 err "ssh: connect to host 198.51.100.20 port 22: Network is unreachable"
+	answer ssh 1 status 255
+	answer ssh 2 err "ssh: connect to host 198.51.100.20 port 22: Network is unreachable"
+	answer ssh 2 status 255
+	answer ssh 3 err $'** WARNING: connection is not using a post-quantum key exchange algorithm.\nHost key verification failed.\r\n'
+	answer ssh 3 status 255
+	answer ssh 4 err "Host key verification failed."
+	answer ssh 4 status 255
+	echo 4 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$CONNECTION"
+	expect_err_times 1 "Network is unreachable"
+	expect_err_times 1 "Host key verification failed."
+	# The last line is the reason, not the warning before it.
+	expect_no_err "post-quantum"
+}
+
+test_connection_quiet_when_a_forward_fails_each_time() {
+	fresh
+	local k
+	for k in 1 3 5; do
+		answer ssh "$k" out 1000
+		answer ssh $((k + 1)) err "Error: remote port forwarding failed for listen path /run/user/1000/sk-agent.sock"
+		answer ssh $((k + 1)) status 255
+	done
+	echo 3 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$CONNECTION"
+	expect_calls ssh 6
+	expect_sleeps "1 2 4"
+	expect_err_times 1 "remote port forwarding failed"
+	expect_err_times 1 "forwarding the sockets"
+}
+
+test_connection_connects_at_once_after_a_drop_and_starts_over() {
+	fresh
+	answer ssh 1 err "ssh: connect to host 198.51.100.20 port 22: Network is unreachable"
+	answer ssh 1 status 255
+	answer ssh 2 out 1000
+	# A connection that ran, then dropped.
+	answer ssh 3 run 11
+	answer ssh 3 err "Timeout, server ravnix-server not responding."
+	answer ssh 3 status 255
+	answer ssh 4 err "ssh: connect to host 198.51.100.20 port 22: Network is unreachable"
+	answer ssh 4 status 255
+	echo 2 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$CONNECTION"
+	expect_calls ssh 4
+	# None after the drop, and 1 again after it, not 2.
+	expect_sleeps "1 1"
+	expect_err "the connection ended after"
+	expect_err "Timeout, server ravnix-server not responding."
+	# Said again after the connection that ran.
+	expect_err_times 2 "Network is unreachable"
+}
+
+test_connection_tries_again_after_any_status() {
+	fresh
+	local k s=(0 1 127)
+	for k in 0 1 2; do
+		answer ssh $((2 * k + 1)) out 1000
+		answer ssh $((2 * k + 2)) status "${s[k]}"
+	done
+	echo 3 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$CONNECTION"
+	expect_status 143
+	expect_calls ssh 6
+	expect_sleeps "1 2 4"
+}
+
+test_connection_without_ssh_keeps_trying_and_says_why_once() {
+	fresh
+	echo 3 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$CONNECTION_NOSSH"
+	expect_status 143
+	expect_sleeps "1 2 4"
+	expect_err_times 1 "No such file or directory"
+}
+
+test_connection_needs_a_runtime_directory() {
+	fresh
+	capture timeout 60 env -u XDG_RUNTIME_DIR "$CONNECTION"
+	[[ $status != 0 && $status != 143 ]] || {
+		echo "  expected a failure of its own, got $status"
+		return 1
+	}
+	expect_err XDG_RUNTIME_DIR
+	expect_calls ssh 0
+}
+
+test_connection_leaves_no_file_behind() {
+	fresh
+	answer ssh 1 out 1000
+	answer ssh 2 status 255
+	echo 2 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$CONNECTION"
+	expect_status 143
+	[[ -z "$(ls -A "$XDG_RUNTIME_DIR")" ]] || {
+		echo "  left in the runtime directory: $(ls -A "$XDG_RUNTIME_DIR")"
+		return 1
+	}
 }
 
 test_connection_passes_each_socket_name_as_one_word() {
@@ -232,10 +411,22 @@ test_connection_two_at_once_keep_apart() {
 tests=(
 	test_terminal_detach_closes_the_window
 	test_terminal_shows_what_herdr_says
+	test_terminal_fast_failures_back_off_to_a_cap
 	test_terminal_attaches_again_after_any_other_status
+	test_terminal_clears_the_window_before_each_attempt_after_a_wait
+	test_terminal_attaches_at_once_after_a_session_and_starts_the_waits_over
+	test_terminal_without_herdr_keeps_trying_and_says_why
 	test_terminal_two_windows_at_once_are_two_attaches
 	test_connection_forwards_both_sockets_on_a_connection_of_its_own
 	test_connection_refuses_what_is_no_uid
+	test_connection_backs_off_quietly_while_the_server_is_away
+	test_connection_says_a_new_reason_once
+	test_connection_quiet_when_a_forward_fails_each_time
+	test_connection_connects_at_once_after_a_drop_and_starts_over
+	test_connection_tries_again_after_any_status
+	test_connection_without_ssh_keeps_trying_and_says_why_once
+	test_connection_needs_a_runtime_directory
+	test_connection_leaves_no_file_behind
 	test_connection_passes_each_socket_name_as_one_word
 	test_connection_two_at_once_keep_apart
 )

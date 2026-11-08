@@ -51,6 +51,7 @@ in
     runtimeInputs = [ pkgs.coreutils ];
     text = fill {
       ssh = word ssh;
+      sleep = word sleep;
       alias = word alias;
       sockets = lib.escapeShellArgs sockets;
     } ./ravnix-connection.bash;
