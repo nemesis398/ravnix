@@ -17,6 +17,8 @@
     ./bash.nix
     ./git.nix
     ./cli.nix
+    ./rbw.nix
+    ./tokens.nix
     ./atuin.nix
     ./starship.nix
     ./nvim.nix

@@ -197,8 +197,10 @@ let
     # which delivers queued requests to the laptop from boot (Task 5.3) and
     # needs none of the optional values; any other unit is one of theirs.
     (lib.optional (
-      lib.filter (u: u != "herdr-server" && u != "ravnix-link-deliver") (unitsOf nothing) != [ ]
-    ) "a host with none of the optional values has units besides herdr and the link: ${toString (unitsOf nothing)}")
+      # rbw's agent is no optional value's: every host runs it
+      # (modules/common/rbw.nix).
+      lib.filter (u: u != "herdr-server" && u != "ravnix-link-deliver" && u != "rbw-agent") (unitsOf nothing) != [ ]
+    ) "a host with none of the optional values has units besides herdr, the link and rbw's agent: ${toString (unitsOf nothing)}")
 
     # Mail accounts.
     (lib.optional (

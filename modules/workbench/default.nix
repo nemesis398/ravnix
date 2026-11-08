@@ -31,6 +31,7 @@ in
     ./matrix.nix
     ./nextcloud-sync.nix
     ./remote-control.nix
+    ./ssh-agent.nix
   ];
 
   # The units below are the server's work, and it does it with nobody logged

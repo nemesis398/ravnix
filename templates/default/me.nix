@@ -111,6 +111,17 @@
       # The addresses a deploy may come from, as the server sees them: the
       # laptop's in your NetBird network. Bare addresses, no names.
       deployFrom = [ "198.51.100.10" ];
+      # The one way from the server to a Proxmox node: a dedicated key, an
+      # SSH key item of your vault, which the server offers to that node
+      # alone; the node runs one command for it (command="...",restrict in
+      # its authorized_keys, which you set up there). For example:
+      #   proxmoxUpdate = {
+      #     alias = "proxmox-update";   # ssh proxmox-update
+      #     hostName = "192.0.2.40";
+      #     user = "root";
+      #     publicKey = "ssh-ed25519 AAAA... update@server";
+      #   };
+      proxmoxUpdate = null;
     };
 
     # How the server reaches the laptop over NetBird to run a command there
@@ -307,8 +318,20 @@
     secrets = {
       # Your Bitwarden or Vaultwarden server.
       rbwBaseUrl = "https://vault.example.org";
-      # The account rbw logs in as.
+      # The account rbw logs in as. Both hosts log in to it and see the
+      # whole vault: on the server, every agent can read every item once
+      # you have run ai-unlock there (modules/common/rbw.nix).
       rbwEmail = "alice@example.org";
+      # HTTPS tokens for git, each for exactly one remote: git gets the
+      # forge's user and the item's password for that URL and no other.
+      # Per host, so set it in the host's own module, not here, if only one
+      # host should push. For example:
+      #   gitTokens = [ {
+      #     url = "https://git.example.org/alice/private.git";
+      #     username = "alice";
+      #     item = "Forge - API token (private, write)";
+      #   } ];
+      gitTokens = [ ];
     };
 
     # The server's terminal programs. Each is unset (null, or no account), and

@@ -71,6 +71,49 @@ in
         Needed as soon as deployKeys holds a key.
       '';
     };
+
+    proxmoxUpdate = mkOption {
+      type = types.nullOr (
+        types.submodule {
+          options = {
+            alias = mkOption {
+              type = types.strMatching "[A-Za-z0-9][A-Za-z0-9._-]*";
+              default = "proxmox-update";
+              description = "The ssh alias on muninn, `ssh <alias>`, that runs the update.";
+            };
+            hostName = mkOption {
+              type = ravnix.address;
+              example = "192.0.2.40";
+              description = "The Proxmox node the update runs on.";
+            };
+            user = mkOption {
+              type = types.strMatching "[a-z_][a-z0-9_-]*";
+              default = "root";
+              description = "The node's user whose authorized_keys holds the key with its forced command.";
+            };
+            publicKey = mkOption {
+              type = ravnix.sshPublicKey;
+              example = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly update@muninn";
+              description = ''
+                The public half of the dedicated key, one line of its .pub
+                file. The private half is an SSH key item of your vault,
+                which rbw's agent serves while it is unlocked.
+              '';
+            };
+          };
+        }
+      );
+      default = null;
+      description = ''
+        The one way from muninn to a Proxmox node: a dedicated key, which
+        muninn's ssh offers to that node alone (`ssh <alias>`, and no other
+        key of the agent). The node takes it only with a forced command,
+        `command="<the update script>",restrict <key>` in that user's
+        authorized_keys, so the key runs the script and nothing else. That
+        line, and the script, are the node's: ravnix does not configure
+        the node. Null: no such block.
+      '';
+    };
   };
 
   config.assertions = [

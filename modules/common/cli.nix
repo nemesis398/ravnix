@@ -13,7 +13,6 @@
   ...
 }:
 let
-  inherit (config.ravnix) secrets;
   inherit (config.ravnix.theme) palette roles;
 
   # "#rrggbb" as the ANSI truecolor parameters fastfetch takes.
@@ -125,17 +124,7 @@ in
       };
     };
 
-    # The vault client behind ai-unlock. The server and the account are the
-    # user's; the pinentry is the terminal one, so that it works over ssh and
-    # in a herdr pane alike. A host can say otherwise.
-    rbw = {
-      enable = true;
-      settings = {
-        email = lib.mkDefault secrets.rbwEmail;
-        base_url = lib.mkDefault secrets.rbwBaseUrl;
-        pinentry = lib.mkDefault pkgs.pinentry-curses;
-      };
-    };
+    # The vault client behind ai-unlock, and its agent, are ./rbw.nix.
 
     # Keys and the logo of the accent; the NixOS logo in Blue and Sapphire,
     # as the style spec has it for the facts on the desktop. A host adds its
