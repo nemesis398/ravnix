@@ -82,8 +82,7 @@ def test_nixos_logo_and_facts_are_top_right(wall):
     right = facts_area(wall)
     blue, sapphire = where(right, rgb("blue")), where(right, rgb("sapphire"))
     assert blue.sum() > 500 and sapphire.sum() > 500
-    # Thin strokes at this size: only their cores are exactly Text.
-    assert where(right, rgb("text")).sum() > 30, "no fact in Text"
+    assert where(right, rgb("text")).sum() > 100, "no fact in Text"
     assert where(right, rgb("mauve")).sum() > 100, "no key in the accent"
     x0, y0, x1, y1 = bbox(not_base(right))
     assert y0 > BAR * S

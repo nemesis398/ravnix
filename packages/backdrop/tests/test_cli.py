@@ -566,7 +566,7 @@ def test_the_real_fastfetch_draws_the_logo_and_the_facts_with_no_network(lab):
     right = img[: H // 2, W // 2 :]
     assert where(right, rgb("blue")).sum() > 500
     assert where(right, rgb("sapphire")).sum() > 500
-    assert where(right, rgb("text")).sum() > 30
+    assert where(right, rgb("text")).sum() > 100
     assert len(proc.stderr.splitlines()) <= 1, proc.stderr
     # The Palette row is one line that starts in the value column, as on the
     # terminal: fastfetch's block symbol prints the bright eight on a second
