@@ -81,6 +81,12 @@ let
     DISABLE_TELEMETRY = "1";
     DISABLE_ERROR_REPORTING = "1";
   };
+  # What the login shell and the user manager get: the switches, and the
+  # Artifact tool off, which stays out of the settings' env (the comment on
+  # config.home.sessionVariables below says why).
+  sessionEnv = switches // {
+    CLAUDE_CODE_DISABLE_ARTIFACT = "1";
+  };
   entries = json.generate "ravnix-claude-hooks.json" config.ravnix.claude.hookEntries;
 
   # The step tells ravnix's hooks by this prefix, so it can only take out
@@ -147,10 +153,11 @@ in
   # to itself, and a launcher can undo neither a value it sets on itself from
   # user settings nor `enableArtifact: false`, which wins over every other
   # source. That is how the launcher was found out on Fedora, where this was
-  # environment.d/80-claude-code.conf. The telemetry switches go to the same
-  # two places as well as to the settings' env.
-  config.home.sessionVariables = switches // { CLAUDE_CODE_DISABLE_ARTIFACT = "1"; };
-  config.systemd.user.sessionVariables = switches // { CLAUDE_CODE_DISABLE_ARTIFACT = "1"; };
+  # environment.d/80-claude-code.conf. The switches above (no autoupdater, no
+  # telemetry, no error reporting) go to the same two places as well as to the
+  # settings' env.
+  config.home.sessionVariables = sessionEnv;
+  config.systemd.user.sessionVariables = sessionEnv;
 
   config.assertions = [
     {
