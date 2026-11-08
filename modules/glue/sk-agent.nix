@@ -76,23 +76,24 @@
 #     IdentitiesOnly lets it offer each one. No ravnix module sets one.
 #   - what the command line overrides: -F, which leaves out ~/.ssh/config and
 #     its Include; -o IdentityAgent= naming rbw's agent, together with
-#     -o IdentitiesOnly=no or an IdentityFile that names the public half of a
-#     vault key (-i, -o IdentityFile=, or a later block's; IdentitiesOnly
-#     yes still lets ssh offer that key), and with -o ProxyCommand=none while
-#     the laptop is away; GIT_SSH_COMMAND, which carries any of those. Alone,
-#     -o IdentityAgent= fails closed: the second block's IdentitiesOnly yes
-#     and its security-key IdentityFiles still apply, so ssh offers no key
-#     that agent holds, and the first block refuses first while the laptop is
-#     away.
+#     -o IdentitiesOnly=no or an IdentityFile for a vault key (its public
+#     half, or its path with the .pub beside it: -o IdentityFile=, a later
+#     block's, or -i naming the .pub; IdentitiesOnly yes still lets ssh offer
+#     that key), and, while the laptop is away, with a ProxyCommand or a -J
+#     of its own (-o ProxyCommand=none will do, -o ProxyJump=none will not);
+#     GIT_SSH_COMMAND, which carries any of those. Alone, -o IdentityAgent=
+#     fails closed: the second block's IdentitiesOnly yes and its
+#     security-key IdentityFiles still apply, so ssh offers no key that agent
+#     holds, and the first block refuses first while the laptop is away.
 #
-# Except for the IdentityFile, each of these reaches the agent of
-# SSH_AUTH_SOCK or, with -o IdentityAgent=, the one it names. On the server
-# SSH_AUTH_SOCK is rbw's: modules/common/rbw.nix puts it into the session
-# variables, which ~/.bashrc reads in every bash shell of the user
-# (modules/common/bash.nix), and into the user manager. rbw's agent serves
-# every SSH key item of the vault without a touch, so if the vault holds a
-# key the git host accepts, such a command logs in without one while the
-# vault is unlocked.
+# Except for the second bullet's IdentityFile on its own, each of these
+# reaches the agent of SSH_AUTH_SOCK or, with -o IdentityAgent=, the one it
+# names. On the server SSH_AUTH_SOCK is rbw's: modules/common/rbw.nix puts
+# it into the session variables, which ~/.bashrc reads in every bash shell
+# of the user (modules/common/bash.nix), and into the user manager. rbw's
+# agent serves every SSH key item of the vault without a touch, so if the
+# vault holds a key the git host accepts, such a command logs in without one
+# while the vault is unlocked.
 # modules/workbench/ssh-agent.nix says so for the server, and so does
 # "The vault and the keys" in modules/workbench/README.md.
 #
