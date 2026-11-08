@@ -32,10 +32,13 @@ let
   note = "Notizen/Über Grüße – Entwurf.md";
   renamed = "Notizen/Neu – Grüße.md";
 
-  # A key of huginn's user for muninn, for this test alone.
+  # huginn's user logs in to muninn with nixpkgs' test key: the server
+  # shape takes the account's keys from the configuration alone, never from
+  # ~/.ssh/authorized_keys, so the public half is needed while the test is
+  # evaluated. The signing key is made for this test alone.
+  snakeoil = import "${pkgs.path}/nixos/tests/ssh-keys.nix" pkgs;
   keys = pkgs.runCommand "link-test-keys" { nativeBuildInputs = [ pkgs.openssh ]; } ''
     mkdir "$out"
-    ssh-keygen -q -t ed25519 -N "" -C link-test -f "$out/id_ed25519"
     ssh-keygen -q -t ed25519 -N "" -C link-sign -f "$out/sign"
   '';
 
@@ -91,6 +94,7 @@ pkgs.testers.runNixOSTest {
       # password, and the driver needs none.
       users.users.root.hashedPasswordFile = lib.mkForce null;
       ravnix.link.vault = lib.mkForce "${home}/vault";
+      users.users.${user}.openssh.authorizedKeys.keys = [ snakeoil.snakeOilEd25519PublicKey ];
       # The agent that signs the vault's commits, as the agent's module
       # gives its socket to the user manager (Task 4.3).
       home-manager.users.${user}.systemd.user.sessionVariables.SSH_AUTH_SOCK = "\${XDG_RUNTIME_DIR}/test-agent.sock";
@@ -127,6 +131,20 @@ pkgs.testers.runNixOSTest {
       };
       # A desktop brings xdg-utils; on the laptop it stays the xdg-open.
       environment.systemPackages = [ pkgs.xdg-utils ];
+      # How huginn's user reaches muninn here, in ~/.ssh/config, which
+      # home-manager writes (and the glue's terminal module too).
+      home-manager.users.${user}.programs.ssh = {
+        enable = true;
+        enableDefaultConfig = false;
+        matchBlocks.muninn = {
+          identityFile = "~/.ssh/id_ed25519";
+          extraOptions = {
+            StrictHostKeyChecking = "no";
+            UserKnownHostsFile = "/dev/null";
+            LogLevel = "ERROR";
+          };
+        };
+      };
     };
 
   testScript = ''
@@ -177,13 +195,7 @@ pkgs.testers.runNixOSTest {
     with subtest("huginn's user reaches muninn over ssh"):
         # The key goes in at run time: a keyFiles option would read it while
         # the test is evaluated.
-        as_user(muninn, "install -D -m 600 ${keys}/id_ed25519.pub ~/.ssh/authorized_keys && chmod 700 ~/.ssh")
-        as_user(
-            huginn,
-            "mkdir -p ~/.ssh && install -m 600 ${keys}/id_ed25519 ~/.ssh/id_ed25519"
-            + " && printf 'Host muninn\\n  IdentityFile ~/.ssh/id_ed25519\\n"
-            + "  StrictHostKeyChecking no\\n  UserKnownHostsFile /dev/null\\n  LogLevel ERROR\\n' >~/.ssh/config",
-        )
+        as_user(huginn, "install -D -m 600 ${snakeoil.snakeOilEd25519PrivateKey} ~/.ssh/id_ed25519")
         as_user(huginn, "ssh muninn true")
 
     with subtest("xdg-open is the link's on muninn and xdg-utils' on huginn"):
