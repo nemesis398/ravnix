@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Waybar GPU-load module — amdgpu gpu_busy_percent (stable PCI path).
+# Emits Waybar JSON with a .warning/.critical class so style.css can colour it.
+set -uo pipefail
+
+ICON="<span color='@accent@'>󰢮</span>"
+
+# amdgpu's PCI address differs per machine (36:00.0 on this laptop's iGPU,
+# 08:00.0 on the retired desktop's RX 6700 XT), so find the amdgpu DRM card by
+# driver name rather than a hardcoded PCI path — deliberately hardware-adaptive.
+BUSY=""
+for c in /sys/class/drm/card[0-9]/device; do
+  [ -r "$c/gpu_busy_percent" ] || continue
+  case "$(cat "$c/uevent" 2>/dev/null)" in
+    *DRIVER=amdgpu*) BUSY="$c/gpu_busy_percent"; break ;;
+  esac
+done
+
+p="$(cat "$BUSY" 2>/dev/null || echo 0)"
+case "$p" in ""|*[!0-9]*) p=0;; esac   # normalise empty/non-numeric reads to 0
+
+class="gpu"
+if   [ "$p" -ge 95 ]; then class="critical"
+elif [ "$p" -ge 80 ]; then class="warning"
+fi
+
+jq -nc --arg t "$ICON ${p}%" --arg c "$class" --argjson p "$p" \
+  '{text:$t, percentage:$p, class:$c, tooltip:("GPU load: " + ($p|tostring) + "%")}'

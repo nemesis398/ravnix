@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Waybar peripherals-battery module — a warning that is invisible until it matters.
+#
+# WHY THIS IS NOT PART OF waybar-battery: that script hunts the SYSTEM battery and
+# deliberately SKIPS scope=Device entries, so an HID peripheral can never be averaged
+# into the BAT0 reading. This script is its exact complement — it looks at
+# scope=Device and nothing else. Neither has to know the other exists.
+#
+# It emits EMPTY text unless some peripheral has fallen to WARN_AT or below, and
+# Waybar hides a module whose text is empty. So the bar is unchanged in the normal
+# case and grows one glyph the moment the Magic Trackpad or the MX Master is about
+# to quit mid-task. Thresholds and class names match waybar-battery on purpose
+# (warning <=30, critical <=15) so style.css needs no new rule: the existing
+# `#custom-battery.warning`/`.critical` colours were extended to cover this id.
+#
+# DEDUPE, and why it is not optional: one physical device can expose several
+# power_supply nodes. The Apple Magic Trackpad presents FOUR HID interfaces and TWO
+# battery nodes (hid-<serial>-battery-144 and -155) that are identical in every
+# value. Without dedupe the tooltip lists the same trackpad twice. Keyed by
+# model_name and reduced to the LOWEST capacity seen, so a duplicate can only ever
+# make the warning fire earlier, never later.
+#
+# MAGIC MOUSE / TRACKPAD ARE READ FROM THE HARDWARE, NOT FROM SYSFS. The kernel's
+# hid_magicmouse driver implements battery reporting only over USB; over Bluetooth it
+# reports the report's STATUS byte as if it were the capacity. Measured 2026-09-04:
+# report 0x90 came back "90 04 64", real capacity 0x64 = 100%, and the kernel said 4%.
+# That is not a rounding error, it is a different field, and it reads alarmingly low on
+# a full battery — exactly the false critical warning this module exists to avoid. So
+# any power_supply whose device is bound to the magicmouse driver is SKIPPED here and
+# supplied instead by magic-trackpad-battery, which reads report 0x90 directly.
+#
+# Peripherals are not required to be present. No peripheral, no battery, no
+# permission to read one: all three exit quietly with empty text.
+set -uo pipefail
+
+WARN_AT=30
+CRIT_AT=15
+
+# Overridable so the warning path can be TESTED against fixture directories.
+# Without this the module can only ever be observed in its hidden state, because
+# nobody is going to drain a trackpad to prove a glyph appears.
+PSDIR="${PSDIR:-/sys/class/power_supply}"
+
+# Overridable for the same reason as PSDIR: so the merge of hardware-read values into
+# the sysfs scan can be tested against fixtures instead of a real trackpad.
+MAGIC_CMD="${MAGIC_CMD:-magic-trackpad-battery}"
+
+declare -A cap_of
+
+for d in "$PSDIR"/*; do
+  [ -d "$d" ] || continue
+  [ "$(cat "$d/type"  2>/dev/null)" = "Battery" ] || continue
+  [ "$(cat "$d/scope" 2>/dev/null)" = "Device"  ] || continue
+  [ "$(cat "$d/present" 2>/dev/null)" = "0" ] && continue
+
+  # Skip anything driven by magicmouse: its sysfs capacity is a different field
+  # (see the header). magic-trackpad-battery supplies these below, from the hardware.
+  if [ -L "$d/device/driver" ] && \
+     [ "$(basename "$(readlink -f "$d/device/driver")")" = "magicmouse" ]; then
+    continue
+  fi
+
+  cap="$(cat "$d/capacity" 2>/dev/null)"
+  case "$cap" in ""|*[!0-9]*) continue;; esac
+  [ "$cap" -gt 100 ] && cap=100
+
+  # A charging peripheral is not a problem, it is the solution. Skip it.
+  case "$(cat "$d/status" 2>/dev/null)" in Charging|Full) continue;; esac
+
+  name="$(cat "$d/model_name" 2>/dev/null)"
+  [ -n "$name" ] || name="$(basename "$d")"
+
+  # Lowest reading wins for a device seen more than once.
+  if [ -z "${cap_of[$name]:-}" ] || [ "$cap" -lt "${cap_of[$name]}" ]; then
+    cap_of[$name]=$cap
+  fi
+done
+
+# ── Magic devices, read from the hardware rather than from sysfs ─────────────
+# Same shape as the loop above: charging devices are skipped, and the lowest reading
+# wins for a name seen more than once. A missing helper, a missing uaccess ACL or a
+# device that does not answer report 0x90 all yield no rows, which is correct: better
+# silent than confidently wrong.
+if command -v "$MAGIC_CMD" >/dev/null 2>&1; then
+  while IFS=$'\t' read -r cap status name; do
+    case "$cap" in ''|*[!0-9]*) continue;; esac
+    [ "$status" = "Charging" ] && continue
+    [ -n "$name" ] || name="Magic device"
+    if [ -z "${cap_of[$name]:-}" ] || [ "$cap" -lt "${cap_of[$name]}" ]; then
+      cap_of[$name]=$cap
+    fi
+  done < <("$MAGIC_CMD" --tsv 2>/dev/null)
+fi
+
+# ── Keep only what is actually low ───────────────────────────────────────────
+lowest=101
+count=0
+tooltip=""
+for name in "${!cap_of[@]}"; do
+  cap=${cap_of[$name]}
+  [ "$cap" -le "$WARN_AT" ] || continue
+  count=$((count + 1))
+  [ "$cap" -lt "$lowest" ] && lowest=$cap
+  # Escape for JSON: backslash first, then quote, or the first pass eats the second.
+  safe=${name//\\/\\\\}
+  safe=${safe//\"/\\\"}
+  tooltip="${tooltip}${safe}: ${cap}%\\n"
+done
+
+# Nothing low → empty text → Waybar hides the module entirely.
+[ "$count" -gt 0 ] || { printf '{"text":""}\n'; exit 0; }
+
+tooltip="${tooltip%\\n}"
+
+# 󰂃 = MDI battery-alert (U+F0083), the neighbour of the 󰂄 charging glyph that
+# waybar-battery already renders, so it comes from a range verified present in
+# JetBrainsMono Nerd Font.
+glyph="󰂃"
+class="warning"
+[ "$lowest" -le "$CRIT_AT" ] && class="critical"
+
+# More than one device low: show the worst and say how many, so the glyph never
+# lies about scope. The tooltip has the breakdown.
+if [ "$count" -gt 1 ]; then
+  text="${glyph} ${lowest}% (${count})"
+else
+  text="${glyph} ${lowest}%"
+fi
+
+printf '{"text":"%s","class":"%s","tooltip":"%s"}\n' "$text" "$class" "$tooltip"

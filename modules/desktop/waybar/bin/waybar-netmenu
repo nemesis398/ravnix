@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Waybar `network` module click handler — a fuzzel "dropdown" that mimics the
+# nm-applet tray menu (which we removed in favour of the dedicated network
+# module). Lists in-range Wi-Fi networks; picking one connects, prompting for a
+# passphrase via fuzzel's --password when the network is secured and unknown.
+# Header rows toggle the radio, toggle NordVPN (once its profile exists), force
+# a rescan, or open the full editor.
+#
+# NO-WIFI FALLBACK: on a host with no Wi-Fi device this falls straight through
+# to nmtui in a floating terminal (a guard kept from when this tree also served
+# a wired desktop). All hardware is discovered via nmcli (no pinned interface),
+# matching the network module's NIC-agnostic design.
+set -uo pipefail
+
+notify() { command -v notify-send >/dev/null 2>&1 && notify-send -a "Network" "$@"; }
+
+# First wifi-type device (empty on wired-only hosts).
+wifi_dev=$(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}')
+if [ -z "$wifi_dev" ]; then
+  exec ghostty-float -e nmtui
+fi
+
+radio=$(nmcli radio wifi 2>/dev/null)
+
+# ── Header actions ───────────────────────────────────────────────────────────
+if [ "$radio" = "enabled" ]; then
+  toggle_label="󰖪  Turn Wi-Fi off"
+else
+  toggle_label="󰖩  Turn Wi-Fi on"
+fi
+rescan_label="󰑓  Rescan"
+editor_label="󱛠  Edit connections…"
+
+# NordVPN row, only once `nord setup` (the `nord` command) has made the profile.
+# The row hands over to `nord toggle`, which also checks that traffic really
+# leaves through Nord and says so in a notification.
+nord_label=""
+if nmcli -t -f NAME connection show 2>/dev/null | grep -qxF nord; then
+  if [ "$(nmcli -g GENERAL.STATE connection show nord 2>/dev/null)" = activated ]; then
+    nord_label="󰖂  NordVPN on (turn off)"
+  else
+    nord_label="󰖂  NordVPN off (turn on)"
+  fi
+fi
+
+# ── Build the network list (only when the radio is on) ───────────────────────
+declare -A SSID_OF SEC_OF
+entries=()
+
+if [ "$radio" = "enabled" ]; then
+  nmcli device wifi rescan 2>/dev/null || true
+  # Terse output escapes ':' inside fields as '\:' — swap to a sentinel before
+  # splitting, then restore, so SSIDs containing ':' survive intact.
+  declare -A seen
+  while IFS= read -r row; do
+    [ -z "$row" ] && continue
+    safe=${row//\\:/$'\x1f'}
+    IFS=: read -r inuse signal sec ssid <<<"$safe"
+    ssid=${ssid//$'\x1f'/:}
+    sec=${sec//$'\x1f'/:}
+    [ -z "$ssid" ] && continue                    # hidden SSID → skip
+    [ -n "${seen[$ssid]:-}" ] && continue         # dedupe multi-AP/band rows
+    seen[$ssid]=1
+    if [ "$inuse" = "*" ]; then mark="󰄬"; else mark=" "; fi
+    if [ -n "$sec" ] && [ "$sec" != "--" ]; then lock="󰌾 "; else lock="  "; fi
+    line=$(printf '%s %3d%%  %s%s' "$mark" "${signal:-0}" "$lock" "$ssid")
+    SSID_OF[$line]=$ssid
+    SEC_OF[$line]=$sec
+    entries+=("$line")
+  done < <(nmcli --terse --fields IN-USE,SIGNAL,SECURITY,SSID device wifi list ifname "$wifi_dev" 2>/dev/null)
+fi
+
+# ── Present the menu ─────────────────────────────────────────────────────────
+choice=$(
+  {
+    printf '%s\n' "$toggle_label"
+    [ -n "$nord_label" ] && printf '%s\n' "$nord_label"
+    [ "$radio" = "enabled" ] && printf '%s\n' "$rescan_label"
+    printf '%s\n' "$editor_label"
+    printf '%s\n' "${entries[@]}"
+  } | fuzzel --dmenu --prompt "  Wi-Fi   " --width 42
+) || exit 0
+[ -z "$choice" ] && exit 0
+
+case "$choice" in
+  "$toggle_label")
+    if [ "$radio" = "enabled" ]; then nmcli radio wifi off; else nmcli radio wifi on; fi
+    exit 0 ;;
+  "$rescan_label")
+    nmcli device wifi rescan 2>/dev/null || true
+    exec "$0" ;;               # reopen with fresh results
+  "$editor_label")
+    exec ghostty-float -e nmtui ;;
+  "$nord_label")
+    [ -n "$nord_label" ] && exec nord toggle
+    exit 0 ;;
+esac
+
+ssid=${SSID_OF[$choice]:-}
+sec=${SEC_OF[$choice]:-}
+[ -z "$ssid" ] && exit 0
+
+# Try connecting with any stored secret first (saved networks reconnect silently).
+if nmcli device wifi connect "$ssid" ifname "$wifi_dev" >/dev/null 2>&1; then
+  notify "Connected to $ssid"
+  exit 0
+fi
+
+# Failed — if the network is secured, prompt for a passphrase and retry.
+if [ -n "$sec" ] && [ "$sec" != "--" ]; then
+  pass=$(: | fuzzel --dmenu --password --prompt "  $ssid   " --lines 0) || exit 0
+  [ -z "$pass" ] && exit 0
+  if out=$(nmcli device wifi connect "$ssid" ifname "$wifi_dev" password "$pass" 2>&1); then
+    notify "Connected to $ssid"
+  else
+    notify "Connection failed" "$out"
+  fi
+else
+  notify "Connection failed" "$ssid"
+fi

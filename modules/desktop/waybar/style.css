@@ -1,0 +1,133 @@
+/* ── Waybar style · Catppuccin Mocha · the accent of ravnix.theme ───────────────
+ * Flat, square, opaque, edge-to-edge — coheres with the borderless / gapless /
+ * opaque Sway. The accent = the active workspace + every module icon (set in the
+ * modules.jsonc format strings) + the clock + every hover marker. Neutral text
+ * everywhere else; the warm palette (peach/red) appears ONLY on warning/critical.
+ *
+ * The colors are not written here: modules/desktop/waybar.nix puts the
+ * @define-color lines below this comment, one per color of the palette and
+ * @accent for the user's accent, so a new accent reaches the stylesheet, the
+ * Pango spans of modules.jsonc and the waybar-* scripts alike.
+ *
+ * FIXED WIDTH: each module gets a min-width sized to its widest value so the
+ * value never shifts the layout (CPU "1%" occupies the same cell as "100%").
+ * The workspace strip, the mode pill and the tray are the deliberate exceptions:
+ * they grow with their item count.
+ *
+ * Shared by config.jsonc (full) and config-focus.jsonc (focus).                    */
+
+@defineColors@
+
+* {
+  min-height: 0;
+  font-family: "@font@";
+  font-size: @fontSize@px;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+window#waybar {
+  background: @mantle;
+  color: @text;
+}
+
+tooltip { background: @mantle; border: 1px solid @surface0; }
+tooltip label { color: @text; }
+
+/* Even padding + a 2 px marker reserved up-front, drawn in the color of what is
+ * behind it (the bar's Mantle), so :hover never shifts content vertically (the
+ * classic border-bottom jump) and nothing is see-through. */
+#custom-battery, #custom-peripherals, #custom-powerdraw, #power-profiles-daemon, #window, #custom-clock,
+#custom-idle-inhibit, #custom-idle-pad,
+#tray, #custom-gpu, #custom-gputemp, #network, #bluetooth, #pulseaudio,
+#cpu, #temperature, #memory {
+  padding: 0 4px;
+  margin: 0;
+  border-bottom: 2px solid @mantle;
+}
+
+/* ── Fixed per-module widths (content centred in the cell) ────────────────────────
+ * min-width is a FLOOR: it only fixes the width if it is >= icon+widest-value, else
+ * the cell grows for the widest value (breaking "1% == 100%"). GTK3 applies it to
+ * the content box; the padding (4 px a side) and the marker come on top. The
+ * values are MEASURED, not copied: the check desktop-sway sets each module's widest
+ * value in the font of the system (JetBrainsMono Nerd Font, @fontSize@px, hinted
+ * metrics, as GTK lays it out) with Pango, and fails when a floor is lower than that
+ * width, so the floors hold on the Waybar and the font of the system.
+ *
+ * Widest values: battery "100%"; peripherals "󰂃 15% (9)"; power draw on AC with the
+ * dGPU active "123W+dGPU"; window the 28 characters of its max-length, in italic;
+ * clock the date view "W36 30. September 2026" (the month is the long variable);
+ * network "↑ 1023.9MB/s ↓ 1023.9MB/s"; volume, CPU, memory, GPU "100%"; the
+ * temperatures "100°C".
+ *
+ * GTK centers modules-center only while neither side cluster reaches the center
+ * line. In the full bar the left cluster does, so the center group is pinned by its
+ * left edge: anything added left of the clock, a wider #window floor, or a title
+ * past the floor pushes the clock right by its own width. Truncating the title to
+ * the floor keeps the clock still. Focus mode, with lighter sides, stays centered
+ * either way. */
+#custom-powerdraw      { min-width: @w.powerdraw@px; }
+#custom-peripherals    { min-width: @w.peripherals@px; }
+#power-profiles-daemon { min-width: @w.profile@px; color: @accent; }
+#window                { min-width: @w.window@px; color: @subtext1; font-style: italic; }
+#custom-clock          { min-width: @w.clock@px; color: @accent; font-weight: bold; }
+#network               { min-width: @w.network@px; }
+#bluetooth             { min-width: @w.bluetooth@px; }
+#pulseaudio            { min-width: @w.volume@px; }
+#custom-battery, #cpu, #memory, #custom-gpu { min-width: @w.percent@px; }
+#temperature, #custom-gputemp { min-width: @w.temperature@px; }
+
+/* Keep-awake toggle (cup) + its invisible right-side width mirror. IDENTICAL
+ * min-width/padding so the centre group [cup · clock · pad] stays symmetric and
+ * the clock is mathematically centred. Muted when idle, accent when inhibiting. */
+#custom-idle-inhibit, #custom-idle-pad { min-width: @w.icon@px; }
+#custom-idle-inhibit           { color: @overlay0; }
+#custom-idle-inhibit.activated { color: @accent; }
+
+/* ── Sway mode (resize, passthrough, game): hidden in "default". An accent pill so a
+ * non-default mode is never missed; "game" is set by sway-game-mode while a game
+ * has focus. A strip of its own: it is one of the three parts of the bar that may
+ * move (with the workspaces and the tray). While shown it widens the left
+ * cluster, so the clock shifts right by its width (see the centering note above). */
+#mode { padding: 0 8px; margin: 0 4px; background: @accent; color: @crust; font-weight: bold; }
+
+/* ── Workspaces: numbers; active = square accent pill ──
+ * The strip grows with its buttons (a workspace above 10 adds one), so it has no
+ * fixed width. The marker space of every button is reserved in Mantle. */
+#workspaces { padding: 0 4px; }
+#workspaces button {
+  min-width: 26px;
+  padding: 0 6px;
+  margin: 0 1px;
+  color: @subtext0;
+  background: @mantle;
+  border-bottom: 2px solid @mantle;
+}
+#workspaces button.empty   { color: @overlay0; }
+#workspaces button.focused { background: @accent; color: @crust; font-weight: bold; border-bottom: 2px solid @accent; }
+#workspaces button.urgent  { background: @red; color: @crust; border-bottom: 2px solid @red; }
+#workspaces button:hover   { background: @surface0; border-bottom: 2px solid @accent; }
+/* keep the active/urgent pill its fill while hovered (out-specifies button:hover) */
+#workspaces button.focused:hover { background: @accent; color: @crust; border-bottom: 2px solid @accent; }
+#workspaces button.urgent:hover  { background: @red;    color: @crust; border-bottom: 2px solid @red; }
+
+/* ── Hover: the Surface0 wash + the 2 px accent marker (space already reserved) ── */
+#custom-battery:hover, #custom-peripherals:hover, #custom-powerdraw:hover, #power-profiles-daemon:hover, #custom-clock:hover,
+#custom-idle-inhibit:hover,
+#network:hover, #bluetooth:hover, #pulseaudio:hover,
+#cpu:hover, #temperature:hover, #memory:hover, #custom-gpu:hover, #custom-gputemp:hover {
+  background: @surface0;
+  border-bottom: 2px solid @accent;
+}
+
+/* ── State colours — warm = warning/critical only ── */
+#cpu.warning, #memory.warning, #custom-gpu.warning, #temperature.warning, #custom-gputemp.warning, #custom-battery.warning, #custom-peripherals.warning  { color: @peach; }
+#cpu.critical, #memory.critical, #custom-gpu.critical, #temperature.critical, #custom-gputemp.critical, #custom-battery.critical, #custom-peripherals.critical { color: @red; }
+#network.disconnected { color: @red; }
+#pulseaudio.muted     { color: @overlay0; }
+
+/* The tray grows with its icons, 16 px each (the third strip that may move). */
+#tray { padding: 0 6px; }
+#tray > .needs-attention { -gtk-icon-effect: highlight; }

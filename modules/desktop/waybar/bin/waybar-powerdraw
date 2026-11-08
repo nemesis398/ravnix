@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Waybar power-draw module.
+#   LAPTOP on battery → WHOLE-SYSTEM draw = battery discharge power (power_now,
+#     or current_now×voltage_now): the true total — CPU + GPU (incl. dGPU) + panel
+#     + USB + everything. The NVIDIA dGPU is NOT polled here (power_now already
+#     covers it, and polling would drain the battery); its status is shown in the
+#     tooltip from the passive runtime_status.
+#   AC (or battery-less host) → sum CPU(RAPL) + iGPU(amdgpu). On AC the battery
+#     reports charge power (not draw), so per-rail sensors are summed.
+#     dGPU: NEVER read. The proprietary driver has no passive power sensor, and
+#     nvidia-smi keeps an awake card awake longer (it runtime-suspends ~20 s
+#     after use, measured). Until 2026-10-03 this script still called it,
+#     rate-limited, whenever the card was already active; that broke the rule
+#     that nothing polls the dGPU. Now an active card only adds a "+dGPU" mark
+#     to the total, and MangoHud shows its watts while gaming.
+#   CPU = Intel/AMD RAPL package energy delta (root-only by default, CVE-2020-8694).
+#   iGPU/GPU = amdgpu power1_average (µW), falling back to power1_input.
+# Auto-detects the system battery (type=Battery, scope!=Device), the amdgpu hwmon
+# by name, and the NVIDIA GPU by its `nvidia` driver binding — deliberately
+# hardware-adaptive (this tree once also served the retired RX6700XT desktop).
+# Emits Waybar JSON.
+set -uo pipefail
+
+RAPL="${RAPL:-/sys/class/powercap/intel-rapl:0}"
+# Overridable like RAPL, so that the battery path can be tested against fixtures.
+PSDIR="${PSDIR:-/sys/class/power_supply}"
+STATE="${XDG_RUNTIME_DIR:-/tmp}/waybar-powerdraw"
+ICON="<span color='@accent@'>󱐋</span>"
+nl=$'\n'
+
+# ── Whole-system draw from the system battery (laptop only, while DISCHARGING) ──
+sys_w=""
+for d in "$PSDIR"/*; do
+  [ "$(cat "$d/type" 2>/dev/null)" = "Battery" ] || continue   # skip AC adapters, USB-PD
+  [ "$(cat "$d/scope" 2>/dev/null)" = "Device" ] && continue   # skip the HID mouse battery
+  if [ "$(cat "$d/status" 2>/dev/null)" = "Discharging" ]; then
+    uw=""
+    if [ -r "$d/power_now" ]; then
+      uw="$(cat "$d/power_now" 2>/dev/null || echo 0)"
+    elif [ -r "$d/current_now" ] && [ -r "$d/voltage_now" ]; then
+      uw="$(awk -v i="$(cat "$d/current_now" 2>/dev/null)" -v v="$(cat "$d/voltage_now" 2>/dev/null)" \
+            'BEGIN { printf "%.0f", i*v/1000000 }')"
+    fi
+    case "${uw:-0}" in ""|*[!0-9]*) uw=0;; esac
+    [ "$uw" -gt 0 ] && sys_w="$(awk -v u="$uw" 'BEGIN { printf "%.0f", u/1000000 }')"
+  fi
+  break
+done
+
+# ── NVIDIA dGPU presence + PM state (BOTH reads are passive — they do NOT wake it) ──
+nv_dev=""
+for l in /sys/bus/pci/drivers/nvidia/0000:*; do
+  [ -e "$l" ] && { nv_dev="$(readlink -f "$l")"; break; }
+done
+nv_rs=""
+[ -n "$nv_dev" ] && nv_rs="$(cat "$nv_dev/power/runtime_status" 2>/dev/null)"
+# amdgpu is labelled "iGPU" when an NVIDIA dGPU is present (as here), else "GPU".
+gpu_label="GPU"; [ -n "$nv_dev" ] && gpu_label="iGPU"
+
+# ── iGPU/GPU watts (amdgpu, µW → W) ──
+gpu_w=""
+gpu_pwr=""
+for h in /sys/class/hwmon/hwmon*; do
+  [ "$(cat "$h/name" 2>/dev/null)" = "amdgpu" ] || continue
+  for n in power1_average power1_input; do
+    [ -r "$h/$n" ] && { gpu_pwr="$h/$n"; break; }
+  done
+  [ -n "$gpu_pwr" ] && break
+done
+if [ -n "$gpu_pwr" ]; then
+  uw="$(cat "$gpu_pwr" 2>/dev/null || echo 0)"
+  gpu_w="$(awk -v u="$uw" 'BEGIN { printf "%.0f", u/1000000 }')"
+fi
+
+# ── CPU watts via RAPL energy delta ──
+cpu_w=""
+if [ -r "$RAPL/energy_uj" ]; then
+  now_e="$(cat "$RAPL/energy_uj" 2>/dev/null || echo 0)"
+  now_t="$(date +%s.%N)"
+  max_e="$(cat "$RAPL/max_energy_range_uj" 2>/dev/null || echo 0)"
+  if [ -r "$STATE" ]; then
+    read -r prev_e prev_t < "$STATE" || true
+    if [ -n "${prev_e:-}" ] && [ -n "${prev_t:-}" ]; then
+      cpu_w="$(awk -v n="$now_e" -v p="$prev_e" -v m="$max_e" -v nt="$now_t" -v pt="$prev_t" \
+        'BEGIN { d=n-p; if (d<0) { if (m>0) d=d+m; else exit }; dt=nt-pt; if (dt>0) printf "%.0f", d/dt/1000000 }')"
+    fi
+  fi
+  printf '%s %s\n' "$now_e" "$now_t" > "$STATE"
+fi
+
+# ── Compose ──
+if [ -n "$sys_w" ]; then
+  # LAPTOP on battery: the whole-system draw. dGPU not polled (protect the battery);
+  # power_now already includes it, and its state is shown from runtime_status.
+  text="$ICON ${sys_w}W"
+  tip="System total (battery draw): ${sys_w} W${nl}"
+  [ -n "$cpu_w" ] && tip="${tip}CPU: ${cpu_w} W${nl}"
+  [ -n "$gpu_w" ] && tip="${tip}${gpu_label}: ${gpu_w} W${nl}"
+  if [ -n "$nv_dev" ]; then
+    if [ "$nv_rs" = "active" ]; then tip="${tip}dGPU: active (included in total)${nl}"
+    else                             tip="${tip}dGPU: suspended (~0 W)${nl}"; fi
+  fi
+  tip="${tip}(whole system: CPU + GPU + panel + USB…)"
+else
+  # AC (plugged in / not discharging): sum CPU + iGPU. An active dGPU is
+  # marked, never read (see the header).
+  total=0; tip=""; dmark=""
+  [ -n "$cpu_w" ]  && { total=$(( total + cpu_w ));  tip="${tip}CPU: ${cpu_w} W${nl}"; }
+  [ -n "$gpu_w" ]  && { total=$(( total + gpu_w ));  tip="${tip}${gpu_label}: ${gpu_w} W${nl}"; }
+  if [ -n "$nv_dev" ]; then
+    if [ "$nv_rs" = "active" ]; then dmark="+dGPU"; tip="${tip}dGPU: active (not measured; MangoHud shows it)${nl}"
+    else                             tip="${tip}dGPU: suspended (~0 W)${nl}"; fi
+  fi
+  [ -z "$cpu_w" ]  &&   tip="${tip}CPU: n/a — RAPL energy_uj is root-only (needs the rapl udev rule)${nl}"
+  if [ -n "${cpu_w}${gpu_w}" ]; then
+    text="$ICON ${total}W${dmark}"
+    tip="${tip}Total: ${total} W${dmark:+ plus the dGPU}"
+  else
+    text="$ICON --"
+    tip="No readable power sensor"
+  fi
+fi
+
+jq -nc --arg t "$text" --arg tip "$tip" '{text:$t, tooltip:$tip, class:"powerdraw"}'

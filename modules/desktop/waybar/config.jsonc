@@ -1,0 +1,40 @@
+{
+  // ── The FULL bar ─────────────────────────────────────────────────────────────
+  // Catppuccin Mocha, flat, square, opaque, edge to edge. Module behaviour is in
+  // the shared modules.jsonc; this file only sets geometry + layout. The focus-mode
+  // variant is config-focus.jsonc (toggled with $mod+Ctrl+space → waybar-mode).
+  // Both bars are 32 px high with a spacing of 2: the bar has the same height in
+  // every mode (docs/style.md), so toggling it never moves a window.
+  "include": ["~/.config/waybar/modules.jsonc"],
+
+  "layer": "top",
+  "position": "top",
+  "height": 32,
+  "spacing": 2,
+
+  "modules-left": [
+    "custom/battery",
+    "custom/peripherals",
+    "custom/powerdraw",
+    "power-profiles-daemon",
+    "sway/workspaces",
+    "sway/mode",
+    "sway/window"
+  ],
+  "modules-center": [
+    "custom/idle-inhibit",
+    "custom/clock",
+    "custom/idle-pad"
+  ],
+  "modules-right": [
+    "tray",
+    "network",
+    "bluetooth",
+    "pulseaudio",
+    "cpu",
+    "temperature#cpu",
+    "memory",
+    "custom/gpu",
+    "custom/gputemp"
+  ]
+}

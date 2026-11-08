@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Waybar battery module — laptop system battery, auto-detected.
+# AUTO-DETECT BY DESIGN: this waybar tree once also served the (now retired)
+# desktop box, which had no battery. Rather than a hostname check, the script scans
+# /sys/class/power_supply for the SYSTEM battery (type=Battery AND scope!=Device)
+# and emits EMPTY text when none exists — Waybar then hides the module entirely.
+# Result: the module tracks BAT0 here and self-hides on battery-less hardware.
+# The scope guard also excludes HID peripheral batteries (a Logitech mouse shows
+# up as type=Battery scope=Device / hidpp_battery_N), so we never average the
+# mouse charge into the laptop reading. Same auto-detect-not-hardcode rule as the
+# waybar-gpu{,temp}/powerdraw helpers. Emits Waybar JSON with a
+# .charging/.warning/.critical class so style.css can colour it.
+set -uo pipefail
+
+# ── Find the system battery (skip HID/peripheral batteries via scope=Device) ──
+# PSDIR is overridable, as in waybar-peripherals, so that the states (charging,
+# warning, critical, a parked charge ceiling) can be tested against fixtures.
+PSDIR="${PSDIR:-/sys/class/power_supply}"
+bat=""
+for d in "$PSDIR"/*; do
+  [ "$(cat "$d/type" 2>/dev/null)" = "Battery" ] || continue
+  [ "$(cat "$d/scope" 2>/dev/null)" = "Device" ] && continue
+  [ -r "$d/capacity" ] || continue
+  bat="$d"; break
+done
+
+# No system battery found → empty text so Waybar hides the module.
+[ -n "$bat" ] || { printf '{"text":""}\n'; exit 0; }
+
+cap="$(cat "$bat/capacity" 2>/dev/null || echo 0)"
+case "$cap" in ""|*[!0-9]*) cap=0;; esac
+[ "$cap" -gt 100 ] && cap=100
+status="$(cat "$bat/status" 2>/dev/null || echo Unknown)"
+
+# ── Icon (MDI battery glyphs, verified present in JetBrainsMono NF) ──
+# Charging → bolt · Full → full · else a 10%-bucketed discharge glyph.
+level_icon() {
+  if   [ "$cap" -ge 95 ]; then echo "󰁹"
+  elif [ "$cap" -ge 85 ]; then echo "󰂂"
+  elif [ "$cap" -ge 75 ]; then echo "󰂁"
+  elif [ "$cap" -ge 65 ]; then echo "󰂀"
+  elif [ "$cap" -ge 55 ]; then echo "󰁿"
+  elif [ "$cap" -ge 45 ]; then echo "󰁾"
+  elif [ "$cap" -ge 35 ]; then echo "󰁽"
+  elif [ "$cap" -ge 25 ]; then echo "󰁼"
+  elif [ "$cap" -ge 15 ]; then echo "󰁻"
+  else                         echo "󰁺"
+  fi
+}
+
+class="battery"
+case "$status" in
+  Charging)
+    glyph="󰂄"; class="charging" ;;
+  Full)
+    glyph="󰁹" ;;
+  Discharging)
+    glyph="$(level_icon)"
+    if   [ "$cap" -le 15 ]; then class="critical"
+    elif [ "$cap" -le 30 ]; then class="warning"
+    fi ;;
+  *)
+    # Not charging (e.g. conservation_mode holding the level) / Unknown: plugged
+    # but idle — show the level glyph, no warning (it isn't draining).
+    glyph="$(level_icon)" ;;
+esac
+
+# Icon tinted Mauve like every other module's leading glyph; the numeric value
+# takes the state colour (peach/red) from style.css via the class above.
+icon="<span color='@accent@'>${glyph}</span>"
+
+# ── Charge ceiling (charge_types; Long_Life == the deprecated conservation_mode) ──
+# Surfaced because a parked cell reports "Not charging" at 97%, which is
+# indistinguishable from a fault until you can see the mode. Absent on hardware
+# without the ideapad extension, and then simply omitted rather than guessed.
+mode=""
+if [ -r "$bat/charge_types" ]; then
+  ctline="$(cat "$bat/charge_types" 2>/dev/null || true)"
+  case "$ctline" in
+    *\[*\]*) mode="${ctline#*[}"; mode="${mode%%]*}" ;;
+  esac
+fi
+
+tip="Battery: ${cap}% — ${status}"
+
+# ── Charge power (power_now in µW, else current_now×voltage_now) ──
+# Only while Charging: on battery custom/powerdraw already shows the draw, and a
+# parked cell takes nothing. This is what goes INTO the cell, not the adapter's
+# rating; the UCSI USB-C supplies report voltage_now 0, so that is unreadable.
+if [ "$status" = "Charging" ]; then
+  uw=""
+  if [ -r "$bat/power_now" ]; then
+    uw="$(cat "$bat/power_now" 2>/dev/null)"
+  elif [ -r "$bat/current_now" ] && [ -r "$bat/voltage_now" ]; then
+    uw="$(awk -v i="$(cat "$bat/current_now" 2>/dev/null)" -v v="$(cat "$bat/voltage_now" 2>/dev/null)" \
+          'BEGIN { printf "%.0f", i*v/1000000 }')"
+  fi
+  case "${uw:-0}" in ""|*[!0-9]*) uw=0;; esac
+  [ "$uw" -gt 0 ] && tip="${tip}
+Charging at $(awk -v u="$uw" 'BEGIN { printf "%.1f", u/1000000 }') W"
+fi
+
+[ -n "$mode" ] && tip="${tip}
+Charge mode: ${mode}  (click to cycle)"
+
+jq -nc --arg t "$icon ${cap}%" --arg cls "$class" \
+       --arg tip "$tip" \
+  '{text:$t, class:$cls, tooltip:$tip}'

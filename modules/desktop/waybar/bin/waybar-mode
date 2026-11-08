@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Cycle Waybar through its three layouts.
+# Bound to $mod+Ctrl+space in the sway config. Flips the runtime mode file and
+# relaunches via waybar-launch (sub-second flicker; Waybar can't hot-swap layouts).
+#
+#   full  -> focus -> none -> full
+#
+#   full   everything
+#   focus  no workspaces, no right cluster (config-focus.jsonc)
+#   none   no bar at all; waybar-launch kills it and starts nothing. This also
+#          takes the SNI tray HOST away, so the tray icons go with it until the
+#          bar is back: the Bitwarden and Nextcloud clients are the current
+#          occupants. They re-register themselves on the way back, so nothing
+#          needs restarting by hand.
+#
+# It was a two-way full<->focus toggle once; `none` was added later, and the
+# mode name `focus` was kept deliberately rather than renamed.
+set -uo pipefail
+
+STATE="${XDG_RUNTIME_DIR:-/tmp}/waybar-mode"
+cur="$(cat "$STATE" 2>/dev/null || echo full)"
+case "$cur" in
+  full)  new=focus ;;
+  focus) new=none  ;;
+  none)  new=full  ;;
+  *)     new=full  ;;
+esac
+printf '%s\n' "$new" > "$STATE"
+
+exec waybar-launch

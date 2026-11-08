@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Waybar clock module.
+#   default view : time   ("Tue 14:32")
+#   toggled view : date   ("23. June W26 2026"   — format: %d. %B W%V %Y, localised)
+# Right-click runs `waybar-clock toggle` (flips view + signals Waybar to refresh now).
+# Left-click (wired in modules.jsonc) opens khal. Hover tooltip = a Nextcloud agenda
+# via khal, or a month `cal` if khal isn't set up yet. Emits Waybar JSON.
+set -uo pipefail
+
+STATE="${XDG_RUNTIME_DIR:-/tmp}/waybar-clock-mode"
+SIG=8 # matches "signal": 8 in modules.jsonc  →  SIGRTMIN+8
+# (Waybar is found by its command line below, not by `-x waybar`: on NixOS its
+# process is called .waybar-wrapped, see waybar-launch.)
+
+if [ "${1:-}" = "toggle" ]; then
+  cur="$(cat "$STATE" 2>/dev/null || echo time)"
+  if [ "$cur" = date ]; then new="time"; else new="date"; fi
+  printf '%s\n' "$new" >"$STATE"
+  pkill -RTMIN+"$SIG" -u "$(id -u)" -f '^waybar( |$)' 2>/dev/null || true
+  exit 0
+fi
+
+mode="$(cat "$STATE" 2>/dev/null || echo time)"
+if [ "$mode" = date ]; then
+  text="$(date +'W%V %d. %B %Y')"
+else
+  text="$(date +'%a %H:%M')"
+fi
+
+# The agenda is cached for 15 minutes (2026-10-03): khal is a Python start-up
+# on every call, and this module runs every 15 s, which made khal about a third
+# of waybar's CPU. A new appointment shows up in the tooltip within 15 min.
+CACHE="${XDG_RUNTIME_DIR:-/tmp}/waybar-clock-agenda"
+if command -v khal >/dev/null 2>&1; then
+  if [ -n "$(find "$CACHE" -mmin -15 2>/dev/null)" ]; then
+    tip="$(cat "$CACHE")"
+  else
+    # Time and title only: a class calendar can put a whole day's agenda into
+    # each description, which took the tooltip to 81 lines.
+    # `khal interactive` on left-click still shows the descriptions.
+    tip="$(khal list --format '{start-end-time-style} {title}{repeat-symbol}' today 14d 2>/dev/null)"
+    printf '%s' "$tip" >"$CACHE"
+  fi
+  [ -z "$tip" ] && tip="$(cal 2>/dev/null)"
+else
+  tip="$(cal 2>/dev/null)"
+fi
+
+# Waybar renders module tooltips as Pango markup, so &/</> in khal event titles
+# ("Lunch & Learn", "R&D") would break parsing and silently blank the tooltip.
+# Escape them (ampersand first; lossless since khal/cal output is plain text).
+# patsub_replacement (on by default since bash 5.2) makes an & in the replacement
+# stand for the matched text, which turned "<" into "<lt;". Off, & is an &.
+shopt -u patsub_replacement 2>/dev/null || true
+tip=${tip//&/&amp;}
+tip=${tip//</&lt;}
+tip=${tip//>/&gt;}
+
+jq -nc --arg t "$text" --arg tip "$tip" '{text:$t, tooltip:$tip, class:"clock"}'

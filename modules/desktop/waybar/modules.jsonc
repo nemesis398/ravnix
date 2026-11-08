@@ -1,0 +1,246 @@
+{
+  // ── Shared module definitions ────────────────────────────────────────────────
+  // Included by BOTH config.jsonc (full bar) and config-focus.jsonc (focus bar),
+  // so module behaviour is defined once. Layout (modules-left/center/right) and
+  // bar geometry live in the two config files.
+  //
+  // ACCENT ICON TINT: GTK CSS can't colour only-the-glyph, so the leading icon of
+  // each module is wrapped in a Pango <span color='@accent@'> here. The color is
+  // not written in this file: modules/desktop/waybar.nix replaces @accent@ with
+  // the accent of ravnix.theme, @red@ and @overlay0@ with the state colors, so a
+  // user's accent reaches the spans exactly as it reaches style.css and the
+  // waybar-* scripts. Accent-bearing keys: network.format-*, bluetooth.format*,
+  // pulseaudio.format*, cpu.format, memory.format, temperature#*.format, plus the
+  // custom/{powerdraw,gpu,clock} scripts.
+
+  // Power-profile switch — talks to the net.hadess.PowerProfiles D-Bus API; a
+  // left-click cycles the profile. Glyph changes per mode (the "power mode switch").
+  // A middle click opens the energy menu: profile, refresh rate (auto = 60 Hz on
+  // power-saver), keep-awake, idle suspend, charge mode and the focus bar on
+  // battery.
+  "power-profiles-daemon": {
+    "format": "{icon}",
+    "on-click-middle": "energy menu",
+    "tooltip-format": "Power profile: {profile}\nDriver: {driver}",
+    "format-icons": {
+      "default": "󰾅",
+      "performance": "󰓅",
+      "balanced": "󰾅",
+      "power-saver": "󰌪",
+    },
+  },
+
+  // Battery — custom script (auto-detected, self-hiding). Scans power_supply for
+  // the system battery (type=Battery, scope!=Device → BAT0, never the HID mouse);
+  // emits empty text on machines with no battery so Waybar hides the module —
+  // hardware-adaptive like waybar-gpu{,temp}. Leftmost module in both bar
+  // layouts. class charging/warning/critical → style.css.
+  // LEFT-CLICK CYCLES THE CHARGE CEILING via charge-mode (signal 10 refreshes
+  // this module the instant it changes). Worth surfacing because "Not charging"
+  // at 97% is indistinguishable from a fault unless you can see that the EC was
+  // told to park the cell; the tooltip names the active mode.
+  "custom/battery": {
+    "exec": "waybar-battery",
+    "return-type": "json",
+    "interval": 30,
+    "tooltip": true,
+    "on-click": "charge-mode cycle",
+    "signal": 10,
+  },
+
+  // Peripheral (HID) batteries — trackpad, mouse, keyboard. The complement of
+  // custom/battery: that one scans for the SYSTEM battery and skips scope=Device,
+  // this one looks at scope=Device only. Emits empty text unless something is at
+  // or below 30%, and Waybar hides an empty module, so the bar is unchanged until
+  // a peripheral is actually about to die. 120s because a mouse does not drop 30%
+  // in a minute and every poll walks sysfs.
+  "custom/peripherals": {
+    "exec": "waybar-peripherals",
+    "return-type": "json",
+    "interval": 120,
+    "tooltip": true,
+  },
+
+  // CPU(RAPL)+GPU(amdgpu) power draw — custom script. Degrades to GPU-only when
+  // RAPL energy_uj is root-locked (the rapl udev rule makes it readable).
+  "custom/powerdraw": {
+    "exec": "waybar-powerdraw",
+    "return-type": "json",
+    "interval": 2,
+    "tooltip": true,
+  },
+
+  // Workspaces 1–10, always shown (persistent). Active = accent pill (styled in CSS).
+  "sway/workspaces": {
+    "all-outputs": true,
+    "format": "{name}",
+    "persistent-workspaces": {
+      "1": [],
+      "2": [],
+      "3": [],
+      "4": [],
+      "5": [],
+      "6": [],
+      "7": [],
+      "8": [],
+      "9": [],
+      "10": [],
+    },
+  },
+
+  // Sway mode (resize, passthrough, game) — shown only while a mode other than
+  // "default" is on; style.css draws it as an accent pill. sway-game-mode sets
+  // "game" while a game has focus.
+  "sway/mode": {
+    "format": "{}",
+    "tooltip": false,
+  },
+
+  // Focused-window title — the ONLY focus indicator (sway has no borders/titlebars
+  // on tiled windows). Truncated to 28 characters, so the module's width is fixed
+  // (style.css gives it a floor above the widest 28 characters in italic).
+  "sway/window": {
+    "format": "{title}",
+    "max-length": 28,
+    "icon": false,
+    "tooltip": false,
+  },
+
+  // Clock — custom: right-click toggles time<->date, left-click opens the calendar
+  // (khal, on the server) in a floating terminal, hover shows an agenda (via khal)
+  // or a month calendar. signal:8 lets the toggle refresh instantly (SIGRTMIN+8).
+  "custom/clock": {
+    "exec": "waybar-clock",
+    "return-type": "json",
+    "interval": 15,
+    "signal": 8,
+    "on-click": "@khalCommand@",
+    "on-click-right": "waybar-clock toggle",
+  },
+
+  // Keep-awake toggle — left-click the cup to stay awake (idle lock/DPMS off);
+  // click again to resume normal idle. Backed by keep-awake, which drives
+  // swayidle directly so the state PERSISTS across Waybar relaunches — the
+  // built-in `idle_inhibitor` module resets to off on every relaunch because it
+  // ties the Wayland inhibitor to the Waybar process. The script emits the cup
+  // glyph (MDI coffee U+F0176 / coffee-off U+F06CA) plus an `activated`/
+  // `deactivated` class (colored in style.css) and the tooltip; on-click toggles;
+  // signal 9 refreshes the icon instantly. Sits directly left of the clock in
+  // BOTH bars (see the config-*.jsonc centre groups).
+  "custom/idle-inhibit": {
+    "exec": "keep-awake status",
+    "return-type": "json",
+    "interval": "once",
+    "signal": 9,
+    "on-click": "keep-awake toggle",
+    "tooltip": true,
+  },
+
+  // Invisible fixed-width pad — mirrors #custom-idle-inhibit's width on the RIGHT
+  // of the clock so the centre group [cup · clock · pad] stays symmetric and the
+  // clock remains mathematically centred (without it the clock drifts right by
+  // half the cup's width). Static, no exec; width matched in style.css.
+  "custom/idle-pad": {
+    "format": " ",
+    "tooltip": false,
+  },
+
+  // The tray hosts no network/bluetooth applet: the dedicated `network` and
+  // `bluetooth` modules below replace them.
+  "tray": {
+    "icon-size": 16,
+    "spacing": 8,
+  },
+
+  // Network — connection icon + up/down throughput. NOT pinned to an interface:
+  // waybar follows the default-route NIC — Wi-Fi or wired, unchanged. format-wifi
+  // is the everyday view.
+  "network": {
+    "interval": 2,
+    "format-ethernet": "<span color='@accent@'>󰈀</span> ↑ {bandwidthUpBytes} ↓ {bandwidthDownBytes}",
+    "format-wifi": "<span color='@accent@'>󰖩</span> ↑ {bandwidthUpBytes} ↓ {bandwidthDownBytes}",
+    "format-linked": "<span color='@accent@'>󰈀</span> {ifname} (no IP)",
+    "format-disconnected": "<span color='@red@'>󰈂</span> down",
+    "tooltip-format-ethernet": "{ifname} · {ipaddr}\n↑ {bandwidthUpBytes}   ↓ {bandwidthDownBytes}",
+    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ifname} · {ipaddr}\n↑ {bandwidthUpBytes}   ↓ {bandwidthDownBytes}",
+    "tooltip-format-disconnected": "Disconnected",
+    "on-click": "waybar-netmenu",
+    "on-click-right": "ghostty-float -e nmtui",
+  },
+
+  "bluetooth": {
+    "format": "<span color='@accent@'>󰂯</span>",
+    "format-off": "<span color='@overlay0@'>󰂲</span>",
+    "format-disabled": "<span color='@overlay0@'>󰂲</span>",
+    "format-connected": "<span color='@accent@'>󰂱</span>",
+    "tooltip-format": "Bluetooth: {status}",
+    "tooltip-format-connected": "{num_connections} connected\n{device_enumerate}",
+    "tooltip-format-enumerate-connected": "{device_alias}",
+    "on-click": "ghostty-float -e bluetui",
+  },
+
+  "pulseaudio": {
+    "format": "<span color='@accent@'>{icon}</span> {volume}%",
+    "format-muted": "<span color='@overlay0@'>󰖁</span> {volume}%",
+    "format-icons": {
+      "headphone": "󰋋",
+      "headset": "󰋎",
+      "default": ["󰕿", "󰖀", "󰕾"],
+    },
+    "scroll-step": 5,
+    "on-click": "ghostty-float -e wiremix",
+    "on-click-right": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+    "tooltip-format": "Volume: {volume}%",
+  },
+
+  "cpu": {
+    "interval": 2,
+    "format": "<span color='@accent@'>󰻠</span> {usage}%",
+    "states": { "warning": 80, "critical": 95 },
+    "on-click": "ghostty -e btop-auto",
+  },
+
+  // CPU temperature — k10temp Tctl. hwmon-path-abs ends in /hwmon (waybar globs
+  // hwmon* inside it and appends input-filename); NOT /hwmon/hwmon2. The path is
+  // the data fabric of a Zen CPU (00:18.3), the same on every AMD laptop. Tctl
+  // carries a fan-control offset so it reads ~10-20C high → thresholds are
+  // deliberately high.
+  "temperature#cpu": {
+    "hwmon-path-abs": "/sys/devices/pci0000:00/0000:00:18.3/hwmon",
+    "input-filename": "temp1_input",
+    "interval": 2,
+    "warning-threshold": 80,
+    "critical-threshold": 95,
+    "format": "<span color='@accent@'>󰔏</span> {temperatureC}°C",
+    "tooltip": true,
+    "on-click": "ghostty -e btop-auto",
+  },
+
+  "memory": {
+    "interval": 5,
+    "format": "<span color='@accent@'>󰍛</span> {percentage}%",
+    "states": { "warning": 80, "critical": 95 },
+    "tooltip-format": "RAM: {used:0.1f}G / {total:0.1f}G",
+    "on-click": "ghostty -e btop-auto",
+  },
+
+  // GPU load % — custom script reading amdgpu gpu_busy_percent (stable PCI path).
+  "custom/gpu": {
+    "exec": "waybar-gpu",
+    "return-type": "json",
+    "interval": 2,
+    "on-click": "ghostty -e btop-auto",
+  },
+
+  // GPU temperature — custom script (amdgpu "edge" temp1_input). Auto-detects the
+  // amdgpu hwmon by driver name (deliberately hardware-adaptive); the built-in
+  // temperature module can't (it needs a machine-specific static hwmon path).
+  // Coloring (.warning ≥80 / .critical ≥90) is driven by the script's class,
+  // matching the CPU-temp thresholds; styled via #custom-gputemp in style.css.
+  "custom/gputemp": {
+    "exec": "waybar-gputemp",
+    "return-type": "json",
+    "interval": 2,
+    "tooltip": true,
+  },
+}
