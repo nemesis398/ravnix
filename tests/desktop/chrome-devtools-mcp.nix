@@ -35,6 +35,8 @@
 #   - a TMPDIR of 40 bytes, the longest the wrapper accepts, works with the real
 #     Helium, and one too long for Chromium's singleton socket, as one under a
 #     deep directory is, is passed over;
+#   - PUPPETEER_DANGEROUS_NO_SANDBOX=true in the caller's environment, which
+#     would start the browser without its sandbox, changes nothing;
 #   - on the server, Helium is only the browser of the wrapper: no helium on
 #     the PATH, no menu entry, no display variable and no compositor.
 #
@@ -233,7 +235,11 @@ pkgs.testers.runNixOSTest {
         runtime = "/run/user/" + uid
         machine.succeed("loginctl enable-linger " + USER)
         machine.wait_for_unit("user@" + uid + ".service")
-        env = "env -u TMPDIR XDG_RUNTIME_DIR=" + runtime + " "
+        # PUPPETEER_DANGEROUS_NO_SANDBOX is what a shell rc written for another
+        # project may export: Puppeteer then starts the browser with
+        # --no-sandbox. The wrapper unsets it, so every probe below runs with
+        # it set and the check of the browser's sandbox sees through it.
+        env = "env -u TMPDIR XDG_RUNTIME_DIR=" + runtime + " PUPPETEER_DANGEROUS_NO_SANDBOX=true CHROME_DEVEL_SANDBOX=/nowhere/chrome-sandbox "
 
         with subtest("the server is in ~/.claude.json as the wrapper, by its store path"):
             entry = json.loads(machine.succeed("jq -c '.mcpServers[\"chrome-devtools\"]' " + HOME + "/.claude.json"))

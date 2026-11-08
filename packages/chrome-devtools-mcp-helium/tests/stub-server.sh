@@ -31,6 +31,8 @@ done
 	printf 'dir:%s\n' "$dir"
 	printf 'tmpdir:%s\n' "${TMPDIR-unset}"
 	printf 'noupdate:%s\n' "${CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS-unset}"
+	printf 'nosandbox:%s\n' "${PUPPETEER_DANGEROUS_NO_SANDBOX-unset}"
+	printf 'sandboxhelper:%s\n' "${CHROME_DEVEL_SANDBOX-unset}"
 	printf 'mode:%s\n' "$(stat -c %a -- "$dir" 2>/dev/null || true)"
 	printf 'launchmode:%s\n' "$(stat -c %a -- "${dir%/*}" 2>/dev/null || true)"
 	printf 'tmpmode:%s\n' "$(stat -c %a -- "${TMPDIR-/nonexistent}" 2>/dev/null || true)"

@@ -7,7 +7,8 @@
 # paths, no npx; a directory of its own for every launch, with a TMPDIR in it)
 # and the edge cases that are cheap to hit: odd arguments and paths, a link or
 # a stuck directory among the old launches, two wrappers at once, every stop
-# signal, a server that is killed, a TMPDIR that is unusable in each way.
+# signal, a server that is killed, a TMPDIR that is unusable in each way, an
+# environment that would switch the browser's sandbox off.
 #
 # The server is a stand-in (stub-server.sh) and so is the browser, because the
 # wrapper only checks that the browser is executable. The check
@@ -625,6 +626,23 @@ a_wrapper_with_no_server_arguments_and_a_closed_stdin_still_works() {
 	[[ ! -e "$launch" ]]
 }
 
+# Puppeteer adds --no-sandbox when this is "true", and a shell rc written for
+# another project may export it. The browser's sandbox is not the caller's to
+# switch off through the environment.
+the_environment_cannot_switch_the_browsers_sandbox_off() {
+	setup
+	run PUPPETEER_DANGEROUS_NO_SANDBOX=true CHROME_DEVEL_SANDBOX=/nowhere/chrome-sandbox -- x
+	expect_status 0
+	[[ "$(logged nosandbox)" == unset ]] || {
+		echo "  PUPPETEER_DANGEROUS_NO_SANDBOX is '$(logged nosandbox)' in the server"
+		return 1
+	}
+	[[ "$(logged sandboxhelper)" == unset ]] || {
+		echo "  CHROME_DEVEL_SANDBOX is '$(logged sandboxhelper)' in the server"
+		return 1
+	}
+}
+
 tests=(
 	the_server_gets_the_browser_the_profile_and_the_privacy_flags
 	every_launch_gets_a_fresh_directory_in_tmpdir_named_for_the_wrapper
@@ -662,5 +680,6 @@ tests=(
 	two_wrappers_at_once_keep_to_their_own_launches
 	a_server_that_is_killed_leaves_nothing_behind_and_its_status_is_passed_on
 	a_wrapper_with_no_server_arguments_and_a_closed_stdin_still_works
+	the_environment_cannot_switch_the_browsers_sandbox_off
 )
 run_tests "${tests[@]}"

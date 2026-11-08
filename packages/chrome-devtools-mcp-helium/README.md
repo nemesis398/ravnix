@@ -77,6 +77,12 @@ directories of wrappers that were killed (their PID is in the name).
   that case has no test.
 - Before the wrapper installs its signal trap, a signal kills it by default and
   the server it just started is orphaned. The window is a few milliseconds.
+- Only two variables are unset to keep the browser's sandbox on
+  (`PUPPETEER_DANGEROUS_NO_SANDBOX` and `CHROME_DEVEL_SANDBOX`): they are the
+  only ones that the code of server 1.12.0 and the bundled Puppeteer read for
+  it. A later version may read more. `--chrome-arg=--no-sandbox` on the command
+  line of the server would still work: the wrapper passes its arguments on, and
+  the entry that ravnix declares has none.
 - uBlock Origin being off is checked in the profile's `Preferences` while the
   server runs (VM test). The server forbids `chrome:` URLs and lists only the
   extensions it installed itself, so nothing can ask the running browser

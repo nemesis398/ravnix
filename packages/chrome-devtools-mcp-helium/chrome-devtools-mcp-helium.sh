@@ -64,6 +64,14 @@
 # is taken in the C locale). It says on stderr why it passes one over.
 # Directories in a place the wrapper passed over this time are not swept.
 #
+# The browser's sandbox is not the caller's to switch off: the bundled
+# Puppeteer adds --no-sandbox when PUPPETEER_DANGEROUS_NO_SANDBOX is "true", as
+# a shell rc written for another project may have it exported, so the wrapper
+# unsets it. CHROME_DEVEL_SANDBOX, which points Chromium at a setuid helper
+# instead of the user-namespace sandbox Helium uses, goes with it. These are
+# the only variables of the server's and Puppeteer's code that bear on the
+# sandbox (checked in 1.12.0 by reading every process.env access).
+#
 # Telemetry: --no-usage-statistics stops Google's usage statistics, and
 # --no-performance-crux keeps trace URLs away from the CrUX API. The server's
 # own check for a newer version (it asks the npm registry in a detached
@@ -121,8 +129,9 @@ if [[ -z $tmp ]]; then
     exit 1
 fi
 
-# Nix decides which version runs.
+# Nix decides which version runs, and the sandbox stays on.
 export CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1
+unset PUPPETEER_DANGEROUS_NO_SANDBOX CHROME_DEVEL_SANDBOX
 
 # Remove the directories of wrappers that are gone. Only ours: stat does not
 # follow a link, so a link someone else made is not taken for ours. kill -0
