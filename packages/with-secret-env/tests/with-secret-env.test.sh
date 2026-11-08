@@ -52,6 +52,18 @@ case $1 in
             "Fourth item") printf 'line1\nline2\n' ;;
             "Empty item") ;;
             "Item=with=equals") printf 'eq-value\n' ;;
+            # Values that start with a dash, as echo or an option parser would
+            # take them for options.
+            "Dash n item") printf '%s\n' '-n' ;;
+            "Dash e item") printf '%s\n' '-e' ;;
+            "Dash dash item") printf '%s\n' '--' ;;
+            "Lone dash item") printf '%s\n' '-' ;;
+            "Dash flag item") printf '%s\n' '--table=/nonexistent -- sh -c id' ;;
+            # Values that hold newlines: one that starts with a newline, one
+            # whose lines look like options, and one with a blank line inside.
+            "Leading newline item") printf '\nlead\n' ;;
+            "Option lines item") printf '%s\n' '-n' '-e' 'end' ;;
+            "Blank line item") printf 'top\n\nbottom\n' ;;
             "Spill item") printf 'rbw-stderr-spill-secret\n' >&2; exit 1 ;;
             *) exit 1 ;;
         esac ;;
@@ -70,6 +82,14 @@ printf '%s' "${SECOND_TOKEN-<unset>}" >"$OUT.second"
 printf '%s' "${THIRD_TOKEN-<unset>}" >"$OUT.third"
 printf '%s' "${FOURTH_TOKEN-<unset>}" >"$OUT.fourth"
 exit "${CHILD_RC:-0}"
+STUB
+
+# dump NAME...: writes the value of each named variable to $OUT.v.NAME, exactly
+# as it is (printf, no echo), or <unset>.
+stub "$SB/bin" dump <<'STUB'
+#!/usr/bin/env bash
+printf '%s\0' "$@" >"$OUT.argv"
+for n in "$@"; do printf '%s' "${!n-<unset>}" >"$OUT.v.$n"; done
 STUB
 
 cat >"$SB/table" <<'TABLE'
@@ -122,6 +142,33 @@ check "the exit status is the command's" '[[ $rc == 7 ]]'
 run -- --table "$SB/table" child --table x
 check "without -- the first word that is no option is the command, and its options are its own" \
     '[[ $rc == 0 && $(child_argv) == "--table|x|" ]]'
+
+# ── values that start with a dash, and values that hold newlines ──────────
+cat >"$SB/dash" <<'TABLE'
+DASH_N_TOKEN=Dash n item
+DASH_E_TOKEN=Dash e item
+DASH_DASH_TOKEN=Dash dash item
+LONE_DASH_TOKEN=Lone dash item
+DASH_FLAG_TOKEN=Dash flag item
+TABLE
+run -- --table "$SB/dash" -- dump DASH_N_TOKEN DASH_E_TOKEN DASH_DASH_TOKEN LONE_DASH_TOKEN DASH_FLAG_TOKEN
+check "values that start with a dash reach the command byte for byte: -n, -e, --, a lone -" \
+    '[[ $rc == 0 && $(<"$SB/out.v.DASH_N_TOKEN") == "-n" && $(<"$SB/out.v.DASH_E_TOKEN") == "-e" && $(<"$SB/out.v.DASH_DASH_TOKEN") == "--" && $(<"$SB/out.v.LONE_DASH_TOKEN") == "-" ]]'
+check "a value that looks like the helper's own option and a command is only a value" \
+    '[[ $(<"$SB/out.v.DASH_FLAG_TOKEN") == "--table=/nonexistent -- sh -c id" && -z $err ]]'
+check "a value with a dash is no argument of the command, and the helper says nothing about it" \
+    '[[ $(child_argv) == "DASH_N_TOKEN|DASH_E_TOKEN|DASH_DASH_TOKEN|LONE_DASH_TOKEN|DASH_FLAG_TOKEN|" && -z $out ]]'
+
+cat >"$SB/lines" <<'TABLE'
+LEAD_NL_TOKEN=Leading newline item
+OPT_LINES_TOKEN=Option lines item
+BLANK_TOKEN=Blank line item
+TABLE
+run -- --table "$SB/lines" -- dump LEAD_NL_TOKEN OPT_LINES_TOKEN BLANK_TOKEN
+check "a value that starts with a newline keeps it, and the lines of the others stay in order" \
+    '[[ $rc == 0 && $(<"$SB/out.v.LEAD_NL_TOKEN") == $'"'"'\nlead'"'"' && $(<"$SB/out.v.OPT_LINES_TOKEN") == $'"'"'-n\n-e\nend'"'"' && $(<"$SB/out.v.BLANK_TOKEN") == $'"'"'top\n\nbottom'"'"' ]]'
+check "a multi-line value is whole in the command's environment, not split into variables" \
+    '[[ -z $err && ! -s $SB/seen ]]'
 
 # A trace of the helper itself must not carry a value.
 env -i HOME="$SB/home" PATH="$SB/bin:$TOOLS" LOG="$SB/log" SEEN="$SB/seen" OUT="$SB/out" \

@@ -52,6 +52,10 @@ case $1 in
             "Plane token") printf 'plane-1\n' ;;
             "Empty item") ;;
             "Item=with=equals") printf 'eq-value\n' ;;
+            # A value that starts with a dash, and one that holds a newline:
+            # compared with the supervisor's environment byte for byte.
+            "Dash token") printf '%s\n' '-n' ;;
+            "Lines token") printf '%s\n' '-e' 'line2' ;;
             *) exit 1 ;;
         esac ;;
     *) exit 0 ;;
@@ -195,6 +199,18 @@ check "an item with an empty value is named and is not a token" \
 
 run CLAUDE_BG_SECRETS="$SB/missing.env" PATH="$SB/nobin" -- x
 check "without claude on the PATH it says so" '[[ $out == *"claude is not installed"* ]]'
+
+printf '%s\n' 'DASH_API_TOKEN=Dash token' 'LINES_API_TOKEN=Lines token' >"$SB/odd"
+rm -rf "$SB/proc"
+proc 100 claude "claude daemon run" ""
+printf '%s\0' 'DASH_API_TOKEN=-n' $'LINES_API_TOKEN=-e\nline2' >"$SB/proc/100/environ"
+run CLAUDE_BG_SECRETS="$SB/odd" -- x
+check "a supervisor holding a token that starts with a dash and one with a newline, byte for byte, is left alone" \
+    '! has "daemon stop" && ! says "lacked" && has "--bg x"'
+printf '%s\0' 'DASH_API_TOKEN=-n' $'LINES_API_TOKEN=-e\nline3' >"$SB/proc/100/environ"
+run CLAUDE_BG_SECRETS="$SB/odd" -- x
+check "a token that differs only after its first newline makes the supervisor stale" \
+    'has "daemon stop --any --keep-workers" && says "lacked LINES_API_TOKEN" && ! says "lacked DASH_API_TOKEN"'
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 ((fail == 0))

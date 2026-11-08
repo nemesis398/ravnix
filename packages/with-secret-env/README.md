@@ -59,7 +59,9 @@ service.
 
 `tests/with-secret-env.test.sh`, the check `bin-with-secret-env`: `rbw` and the
 command are stand-ins. Covers that every secret reaches the command byte for
-byte (spaces, `=`, `$`, a backtick, a quote, a newline), that no `rbw` child
+byte (spaces, `=`, `$`, a backtick, a quote, newlines inside, at the start and
+as a blank line; values that start with a dash: `-n`, `-e`, `--`, a lone `-`
+and one that looks like the helper's own option), that no `rbw` child
 sees one, that no value is on a command line, in the output, in the log or in a
 trace (`bash -x`, `SHELLOPTS=xtrace`), that one failed read sets none, that
 `rbw`'s stderr is not passed on, the empty item, the locked vault (never
@@ -74,3 +76,6 @@ exit status, and the usage errors.
   tools such as `CLAUDE_BG_*` and `WITH_SECRET_ENV_*`).
   `ravnix.shell.secretEnv` refuses them, and the table is the user's own file;
   the helper trusts it.
+- The newlines at the end of a value are dropped: `rbw get` ends its output
+  with one, and the shell's command substitution cannot tell it from the
+  secret's own. A secret that ends in a newline reaches the command without it.

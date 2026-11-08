@@ -49,8 +49,9 @@ sees a token and that one unreadable item sets none, the supervisor
 restarted with its workers kept; look-alike processes are left alone; a failed
 stop is reported), a locked vault and a refused unlock, the secret table (a
 missing one, items read by name, an unreadable item, comments and malformed
-lines, an item name with an equals sign, an empty table, an empty value), and
-a missing `claude`.
+lines, an item name with an equals sign, an empty table, an empty value), a
+token that starts with a dash or holds a newline (compared with the
+supervisor's environment byte for byte), and a missing `claude`.
 
 ## Findings not fixed
 
