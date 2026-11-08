@@ -171,7 +171,13 @@ pkgs.testers.runNixOSTest {
   # The desktop module does not bring a compositor yet (Sway arrives with its
   # own module); the display the test needs is Sway, headless, of the node.
   nodes.desktop = node self.nixosModules.desktop [ pkgs.sway ];
-  nodes.server = node self.nixosModules.server [ ];
+  nodes.server = {
+    imports = [ (node self.nixosModules.server [ ]) ];
+    # The test framework gives root an empty password, for a console login
+    # when the test runs interactively (test-instrumentation.nix); the
+    # server shape refuses a root password, and the driver needs none.
+    users.users.root.hashedPasswordFile = lib.mkForce null;
+  };
 
   testScript = ''
     import json
