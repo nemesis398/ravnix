@@ -154,16 +154,13 @@ let
   sshConfig = c: (hm c).home.file.".ssh/config".source;
   ssh = lib.getExe' pkgs.openssh "ssh";
 in
-pkgs.runCommand "glue-terminal-shapes" { } (
-  if failures != [ ] then
-    ''
-      printf '%s\n' ${lib.escapeShellArgs failures} >&2
-      exit 1
-    ''
-  else
-    ''
-      set -euo pipefail
-      fail() { echo "$*" >&2; exit 1; }
+pkgs.runCommand "glue-terminal-shapes" { }
+  ''
+      # Every check runs, and says what it found: no -e, which stdenv sets.
+      set +e -uo pipefail
+      failed=0
+      fail() { echo "FAIL: $*" >&2; failed=1; }
+      for f in ${lib.escapeShellArgs failures}; do fail "$f"; done
       export HOME=$TMPDIR
       # ssh -G prints what it would use, and connects nowhere. It refuses a
       # file that is neither root's nor the user's, as the store's files are
@@ -187,7 +184,7 @@ pkgs.runCommand "glue-terminal-shapes" { } (
       has() { grep -qxF -- "$2" <<<"$1" || fail "$3: no '$2' in: $1"; }
       hasnt() { ! grep -qxF -- "$2" <<<"$1" || fail "$3: '$2' in: $1"; }
 
-      g=$(effective ${sshConfig h})
+      g=$(effective ${sshConfig h}) || fail "ssh refuses the laptop's configuration: $g"
       has "$g" "hostname ${template.server.netbirdAddress}" "the server's NetBird address"
       has "$g" "user ${user}" "the account"
       has "$g" "identityfile ${template.serverAccess.identityFile}" "the key of its own"
@@ -204,21 +201,21 @@ pkgs.runCommand "glue-terminal-shapes" { } (
       # As herdr --remote runs ssh: its configuration includes the user's
       # first and adds its own keepalive behind it.
       printf 'Include %s\nServerAliveInterval 15\nServerAliveCountMax 4\n' ${sshConfig h} >herdr-config
-      g=$(effective herdr-config)
+      g=$(effective herdr-config) || fail "ssh refuses herdr's configuration: $g"
       has "$g" "serveraliveinterval 1" "herdr's keepalive wins over the block's"
       has "$g" "identityagent none" "herdr's ssh asks an agent"
 
-      g=$(effective ${sshConfig pinned})
+      g=$(effective ${sshConfig pinned}) || fail "ssh refuses the pinned configuration: $g"
       has "$g" "stricthostkeychecking true" "the pinned host key"
       grep -qx 'userknownhostsfile /nix/store/[^ ]*-ravnix-server-known-hosts' <<<"$g" || fail "no pinned known_hosts: $g"
       known=$(sed -n 's/^userknownhostsfile //p' <<<"$g")
       grep -qxF "ravnix-server ${hostKey}" "$known" || fail "the pinned file is not the host key: $(cat "$known")"
 
-      g=$(effective ${sshConfig noKey})
+      g=$(effective ${sshConfig noKey}) || fail "ssh refuses the configuration without a key: $g"
       hasnt "$g" "identityagent none" "without an identity file, the agent is refused"
       hasnt "$g" "identitiesonly yes" "without an identity file, ssh's own keys are refused"
       has "$g" "hostname ${template.server.netbirdAddress}" "the server's address without an identity file"
 
+      [ "$failed" = 0 ] || exit 1
       touch $out
-    ''
-)
+  ''
