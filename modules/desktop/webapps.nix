@@ -1,9 +1,11 @@
 # The web apps: sites that open in a Helium window of their own, without the
 # browser's address bar and tabs, and are found by the launcher and bound to
 # keys like any other application. Claude and Apple Music are public sites;
-# Mealie, Nextcloud, Vaultwarden and Open WebUI are the user's own services, and
-# each gets a launcher only when its address is set (ravnix.apps.webapps.NAME.url
-# in me.nix), so no address of a user is in this repository.
+# Mealie, Nextcloud and Open WebUI are the user's own services, and each gets a
+# launcher only when its address is set (ravnix.apps.webapps.NAME.url in
+# me.nix), so no address of a user is in this repository. The password vault has
+# no web app: the spec drops it, and Bitwarden desktop and the browser extension
+# are its clients (tests/desktop/apps.nix checks that none exists).
 #
 # Each launcher is a file webapp-NAME.desktop in the system profile, so
 # `gtk-launch webapp-NAME` starts it. The window shares the browser's default
@@ -97,22 +99,6 @@ let
         "calendar"
         "deck"
         "talk"
-      ];
-    };
-    vaultwarden = {
-      url = cfg.vaultwarden.url;
-      name = "Vaultwarden";
-      genericName = "Password Vault";
-      comment = "Your web vault (the desktop client is Bitwarden)";
-      icon = "bitwarden";
-      keywords = [
-        "vaultwarden"
-        "bitwarden"
-        "password"
-        "passwort"
-        "passwörter"
-        "vault"
-        "tresor"
       ];
     };
     openwebui = {

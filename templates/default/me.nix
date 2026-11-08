@@ -202,7 +202,6 @@
       webapps = {
         mealie.url = "https://recipes.example.org/";
         nextcloud.url = "https://cloud.example.org/";
-        vaultwarden.url = "https://passwords.example.org/";
         openwebui.url = "https://ai.example.org/";
       };
     };

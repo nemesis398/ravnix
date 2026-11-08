@@ -16,11 +16,11 @@ let
   };
 
   # The web apps whose address is the user's. Claude and Apple Music are on
-  # the public internet and need no option.
+  # the public internet and need no option. There is none for the password
+  # vault: Bitwarden desktop and the browser extension are its clients.
   selfHosted = {
     mealie = "recipes";
     nextcloud = "cloud";
-    vaultwarden = "passwords";
     openwebui = "ai";
   };
 in

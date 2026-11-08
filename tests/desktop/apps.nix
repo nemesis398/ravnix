@@ -182,15 +182,17 @@ let
       ++ map (d: "desktop:${d}") (a.desktops or [ ])
     );
 
-  # The six web apps, by the file name of their launcher.
+  # The five web apps, by the file name of their launcher. The Vaultwarden web
+  # app is on the spec's list of dropped apps: Bitwarden desktop and the browser
+  # extension take its place, so no launcher and no option for it may exist.
   webapps = [
     "webapp-claude"
     "webapp-apple-music"
     "webapp-mealie"
     "webapp-nextcloud"
-    "webapp-vaultwarden"
     "webapp-openwebui"
   ];
+  droppedWebapps = [ "webapp-vaultwarden" ];
 
   # The dropped apps, as the brief lists them. Each is the start of the
   # package name in a store path, followed by a version.
@@ -256,6 +258,12 @@ let
 
   evalFailures =
     lib.optional config.services.flatpak.enable "Flatpak is enabled"
+    ++ lib.optional (
+      host.options.ravnix.apps.webapps ? vaultwarden
+    ) "ravnix.apps.webapps.vaultwarden exists, but the Vaultwarden web app is dropped"
+    ++ lib.optional (lib.any (
+      p: lib.hasPrefix "webapp-vaultwarden" (lib.getName p)
+    ) config.environment.systemPackages) "a webapp-vaultwarden launcher is installed"
     ++ lib.optional (lib.any (p: lib.getName p == "cisco-packet-tracer")
       withoutPacketTracer.config.environment.systemPackages
     ) "Packet Tracer is installed although ravnix.apps.packetTracer is not set"
@@ -399,6 +407,7 @@ pkgs.runCommand "desktop-apps"
     closureStorePaths = "${closure}/store-paths";
     appLines = lib.concatMapStrings (a: "${appLine a}\n") apps;
     webappFiles = lib.concatStringsSep " " webapps;
+    droppedWebappFiles = lib.concatStringsSep " " droppedWebapps;
   }
   ''
     failed=0
@@ -434,6 +443,9 @@ pkgs.runCommand "desktop-apps"
     for w in $webappFiles; do
       [ -e "$profile/share/applications/$w.desktop" ] || fail "webapp: $w.desktop not found"
     done
+    for w in $droppedWebappFiles; do
+      [ ! -e "$profile/share/applications/$w.desktop" ] || fail "webapp: $w.desktop exists, but that web app is dropped"
+    done
 
     # --- the matcher for the dropped apps, tried on made-up store paths first
     # so that a wrong pattern cannot pass by finding nothing
@@ -468,6 +480,9 @@ pkgs.runCommand "desktop-apps"
     done
     for h in $(hits "$closureStorePaths" | tr ' ' '_'); do
       fail "closure: dropped app $h is in the system's closure"
+    done
+    for w in $droppedWebappFiles; do
+      ! grep -q "^$w" closure-names.txt || fail "closure: $w is in the system's closure"
     done
 
     if [ "$failed" = 0 ]; then

@@ -108,7 +108,6 @@ let
     # a query with &, and a percent sign: quoted, and written %%
     mealie = "https://recipes.example.org/?a=1&b=100%25";
     nextcloud = "https://cloud.example.org/";
-    vaultwarden = "https://passwords.example.org/";
     openwebui = "https://ai.example.org/";
   };
   mkHost =
@@ -142,9 +141,8 @@ let
         "webapp-mealie.desktop"
         "webapp-nextcloud.desktop"
         "webapp-openwebui.desktop"
-        "webapp-vaultwarden.desktop"
       ]
-    ) "a host that names all four services has the launchers ${toString (launcherNames full)}"
+    ) "a host that names all three services has the launchers ${toString (launcherNames full)}"
     ++
       lib.optional
         (
@@ -198,11 +196,6 @@ let
       url = urls.nextcloud;
       name = "Nextcloud";
       keywords = "nextcloud;cloud;dateien;files;kalender;calendar;deck;talk";
-    };
-    webapp-vaultwarden = {
-      url = urls.vaultwarden;
-      name = "Vaultwarden";
-      keywords = "vaultwarden;bitwarden;password;passwort;passwörter;vault;tresor";
     };
     webapp-openwebui = {
       url = urls.openwebui;
