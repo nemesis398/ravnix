@@ -172,6 +172,20 @@ let
     ++ expect (!(lib.elem 51820 firewall.allowedUDPPorts)) "51820/udp is open"
     ++ expect (firewall.interfaces.wt0.allowedUDPPorts or [ ] == [ ]) "ports are open on wt0"
     ++ expect (
+      firewall.allowedTCPPortRanges == [ ] && firewall.allowedUDPPortRanges == [ ]
+    ) "port ranges are open"
+    ++ expect (lib.all
+      (
+        i:
+        i.allowedTCPPorts == [ ]
+        && i.allowedUDPPorts == [ ]
+        && i.allowedTCPPortRanges == [ ]
+        && i.allowedUDPPortRanges == [ ]
+      )
+      (lib.attrValues (lib.removeAttrs firewall.interfaces [ "default" ]))
+    ) "ports are open on an interface: ${toString (lib.attrNames firewall.interfaces)}"
+    ++ expect (!(lib.elem "wt0" firewall.trustedInterfaces)) "wt0 is a trusted interface"
+    ++ expect (
       firewall.allowedTCPPorts == [ ]
     ) "TCP ports are open: ${toString firewall.allowedTCPPorts}"
     ++ expect (
