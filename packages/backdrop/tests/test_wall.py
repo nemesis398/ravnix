@@ -7,10 +7,13 @@ from conftest import (
     MARK_REACH,
     RING_INNER,
     S,
+    STATE_HUES,
+    SWATCHES,
     W,
     bbox,
     facts_text,
     not_base,
+    palette_box,
     palette_row_offset,
     reach,
     rgb,
@@ -110,34 +113,25 @@ def test_no_state_hue_in_the_marks(wall):
     # percentages turn Yellow and Red, and the Palette row shows the terminal's
     # eight colors. The marks are the part of the wall that owns no state.
     for part in (wall[window(wall, **CENTER)], corner(wall)):
-        for warm in ("red", "peach", "maroon", "yellow", "green"):
+        for warm in STATE_HUES:
             assert not where(part, rgb(warm)).any()
 
 
 def test_the_facts_show_the_usage_states_and_the_palette_row(wall):
     right = facts_area(wall)
-    # Yellow and Red are the 62% and 91% of Swap and Disk: text, so only the
-    # cores of its strokes are exactly the color. The swatches of the Palette
-    # row are the terminal's colors without its state hues.
-    for name in ("yellow", "red"):
-        assert where(right, rgb(name)).sum() > 0, name
-    for name in ("pink", "teal", "subtext1"):
-        assert where(right, rgb(name)).sum() > 100, name
-    # One line, in the order of the terminal's colors.
-    pink, teal = bbox(where(right, rgb("pink"))), bbox(where(right, rgb("teal")))
-    assert pink[1] == teal[1] and pink[3] == teal[3], "the swatches are not on one line"
-    assert pink[2] <= teal[0]
-
-
-STATE_HUES = ("red", "peach", "maroon", "yellow", "green")
-
-
-def swatch_row(right):
-    """The box of the Teal swatch of the Palette row, the one swatch of the
-    facts that nothing else has the color of."""
-    teal = bbox(where(right, rgb("teal")))
-    assert teal, "no Palette row"
-    return teal
+    # Yellow and Red are the 62% and 91% of Swap and Disk: text on one line
+    # each, Swap above Disk. Counted with their antialiased edges, because only
+    # the cores of thin strokes are exactly the color.
+    yellow = tinted(right, rgb("yellow"), rgb("base"))
+    red = tinted(right, rgb("red"), rgb("base"))
+    assert yellow.sum() > 50 and red.sum() > 50
+    first, last, top, bottom, _ = palette_box(right)
+    (_, ya, _, yb), (_, ra, _, rb) = bbox(yellow), bbox(red)
+    assert yb - ya <= bottom - top and rb - ra <= bottom - top, "a row of swatches, not a line of text"
+    assert yb <= ra, "Swap is not above Disk"
+    # The swatches that stay: one line, in the order of the terminal's colors.
+    for name in SWATCHES:
+        assert where(right[top:bottom, first:last], rgb(name)).sum() > 100, name
 
 
 def test_the_glyph_blocks_meet_without_a_seam(wall):
@@ -146,44 +140,41 @@ def test_the_glyph_blocks_meet_without_a_seam(wall):
     # or a ragged edge, is a pixel that is neither a color nor Base but a blend.
     right = facts_area(wall)
     # The logo is everything left of the frame, whose strokes are the leftmost
-    # accent of the facts.
-    logo = right[:, : bbox(tinted(right, rgb("mauve"), rgb("base"), least=0.3))[0]]
+    # accent of the facts, less the few pixels of their antialiased skirt.
+    logo = right[:, : bbox(tinted(right, rgb("mauve"), rgb("base"), least=0.3))[0] - 3]
     assert logo.shape[1] > 200
     for name in ("blue", "sapphire"):
         blend = tinted(logo, rgb(name), rgb("base"), least=0.05, slack=6) & ~where(logo, rgb(name))
         assert not blend.any(), "%s: %d blended pixels" % (name, blend.sum())
     # The swatches: one solid rectangle each, one line tall, with Base above
     # and below, and on both sides of the row.
-    x0, y0, x1, y1 = swatch_row(right)
-    advance = (x1 - x0) / 3
-    first, last = int(x0 - 9 * advance), int(x0 + 6 * advance)
-    row = right[y0:y1, first - 1 : last + 1]
+    first, last, top, bottom, _ = palette_box(right)
+    row = right[top:bottom, first - 1 : last + 1]
     assert (row == row[len(row) // 2]).all(), "a seam row inside the swatches"
-    assert {tuple(p) for p in row[0]} == {rgb(n) for n in ("base", "surface1", "blue", "pink", "teal", "subtext1")}
-    for edge in (right[y0 - 1], right[y1]):
+    assert {tuple(p) for p in row[0]} == {rgb(n) for n in ("base", *SWATCHES)}
+    for edge in (right[top - 1], right[bottom]):
         assert (edge[first - 1 : last + 1] == rgb("base")).all(), "a ragged edge"
 
 
 def test_the_swatch_row_has_no_state_hue(wall):
-    # Style rule 4: warm hues are for warnings and errors. The Palette row is
-    # decoration, so the swatches that are Red, Yellow or Green are left out;
-    # the percentages of the rows above keep their state colors.
+    # Style rule 4: warm hues are for warnings and errors, and docs/style.md
+    # gives Blue a state too ("busy"). The Palette row is decoration, so its
+    # Red, Green, Yellow and Blue swatches are left out; the percentages of the
+    # rows above keep their state colors, and the logo keeps its Blue.
     right = facts_area(wall)
-    _, y0, _, y1 = swatch_row(right)
+    first, last, top, bottom, _ = palette_box(right)
     for hue in STATE_HUES:
-        assert not where(right[y0:y1], rgb(hue)).any(), hue
+        assert not where(right[top:bottom, first - 1 : last + 1], rgb(hue)).any(), hue
 
 
 def test_the_swatches_that_stay_keep_their_order_and_close_up(wall):
-    # Black, Blue, Pink, Teal and White of the terminal's eight, side by side
-    # from the value column; Teal is the fourth.
+    # Black, Pink, Teal and White of the terminal's eight, side by side from
+    # the value column, then Base.
     right = facts_area(wall)
-    x0, y0, x1, y1 = swatch_row(right)
-    advance = (x1 - x0) / 3
-    first = x0 - 9 * advance
-    middle = (y0 + y1) // 2
-    row = [tuple(right[middle, int(first + (3 * i + 1.5) * advance)]) for i in range(6)]
-    assert row == [rgb(n) for n in ("surface1", "blue", "pink", "teal", "subtext1", "base")], row
+    first, _, top, bottom, advance = palette_box(right)
+    middle = (top + bottom) // 2
+    row = [tuple(right[middle, int(first + (3 * i + 1.5) * advance)]) for i in range(len(SWATCHES) + 1)]
+    assert row == [rgb(n) for n in (*SWATCHES, "base")], row
 
 
 def test_the_default_wall_is_deterministic(shared, wall):

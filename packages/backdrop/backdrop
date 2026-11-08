@@ -18,9 +18,9 @@
 # and is made of block glyphs by design: it is drawn as the terminal shows it,
 # not redrawn as a vector, and its blocks, like the swatches of the Palette
 # row, are rectangles on whole pixels (draw_block) so that they meet without a
-# seam. The terminal's Red, Green and Yellow swatches are left out of that
-# row, because warm hues are for warnings and errors only (docs/style.md,
-# rule 4). The lock image is Base (or the same
+# seam. The terminal's Red, Green, Yellow and Blue swatches are left out of
+# that row, because those hues carry a state (docs/style.md, rule 4 and the
+# State table). The lock image is Base (or the same
 # image) and the ravnix mark alone, sized to sit inside swaylock's ring, so
 # nothing about the machine can be read on a locked screen. It never runs
 # fastfetch and never draws a logo.
@@ -122,9 +122,14 @@ FACTS_BYTES, FACTS_LINES, FACTS_COLUMNS, FACTS_SECONDS = 1 << 20, 80, 240, 10
 # How much of a command's stderr is read, of which one line is quoted.
 STDERR_BYTES = 1 << 16
 
-# The terminal's colors that mean a state, which the wallpaper does not draw
-# as swatches: warm hues are for warnings and errors and nothing else.
-STATE_HUES = ("red", "peach", "maroon", "yellow", "green")
+# The hues that carry a state, which the wallpaper does not draw as swatches of
+# the terminal's palette: docs/style.md gives Red, Maroon, Peach, Yellow, Green
+# and Blue (busy) a state, and warm hues are for warnings and errors only. The
+# logo is Blue by the same spec and keeps it: it is not a swatch.
+STATE_HUES = ("red", "peach", "maroon", "yellow", "green", "blue")
+# What fastfetch's colors module prints a swatch with: block elements for the
+# block symbol, and the circle, square, triangle and diamond for the others.
+SWATCH_SYMBOLS = "\u25cf\u25a0\u25b2\u25c6"
 
 # An image that would take more memory than this to decode is not used.
 MAX_IMAGE_PIXELS = 64_000_000
@@ -500,9 +505,11 @@ def parse_ansi(text, theme):
             if chunk and col < FACTS_COLUMNS:
                 chunk = chunk[:FACTS_COLUMNS - col]
                 # A swatch of the terminal's palette in a state hue is left
-                # out, and the ones after it close up.
-                if not (isinstance(color, Ansi) and color in theme.state_hues
-                        and all("\u2580" <= ch <= "\u259f" for ch in chunk)):
+                # out, and the ones after it close up. The padding a symbol
+                # comes with does not make it text.
+                swatch = chunk.strip()
+                if not (swatch and isinstance(color, Ansi) and color in theme.state_hues
+                        and all("\u2580" <= ch <= "\u259f" or ch in SWATCH_SYMBOLS for ch in swatch)):
                     runs.append((col, chunk, color, bold))
                     col += cells(chunk)
             if m is None:

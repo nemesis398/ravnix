@@ -153,7 +153,7 @@ def distance_to_box(px, py, box):
 # {yellow} and {red} are the "R;G;B" of palette entries. Memory is in the
 # accent, Swap in Yellow and Disk in Red, as fastfetch colors a percentage
 # that is low, high and over the limit; the Palette row is the eight colors of
-# the terminal, of which the wallpaper draws the five that are no state hue, and
+# the terminal, of which the wallpaper draws the four that are no state hue, and
 # the logo is the NixOS one, in block glyphs, bold.
 FASTFETCH = HERE / "fastfetch.ansi"
 KERNEL = "6.18.2"  # a value that occurs once, for the tests that change a fact
@@ -186,25 +186,41 @@ def tinted(img, color, base, least=0.45, slack=14):
     return (t >= least) & (residual <= slack)
 
 
-def palette_row_offset(right):
-    """How far the Palette row starts from the value column, in glyph advances.
+# The hues that carry a state and nothing else (docs/style.md, State; the
+# accent rule lists the same six).
+STATE_HUES = ("red", "peach", "maroon", "yellow", "green", "blue")
 
-    `right` is the facts area of a wall. The wallpaper draws five of the
-    terminal's eight swatches of three glyphs, on one line (the state hues are
-    left out and the rest close up), and Teal, the fourth, is the one swatch
-    that no other part of the facts has the color of, so the first swatch
-    starts nine glyphs before it. The value column starts at the leftmost
-    pixel of Text, antialiased or not, which is where the values of the rows
-    above begin: a line of its own that a failing command prints would be to
-    the left of it. Fails when the swatches are on more than one line, as the
-    block symbol prints the bright eight on a second line that starts under
-    the frame."""
+# The swatches of the Palette row on the wallpaper, from the value column: the
+# terminal's black, magenta, cyan and white. Red, Green, Yellow and Blue are
+# state hues, so they are left out and the rest close up.
+SWATCHES = ("surface1", "pink", "teal", "subtext1")
+
+
+def palette_box(right):
+    """(first, last, top, bottom, advance) of the Palette row in the facts area
+    `right`: the columns from the first swatch to the end of the last, and the
+    rows of the line. Teal is the one swatch that no other part of the facts
+    has the color of, so the first swatch starts as many glyphs before it as the
+    swatches that come first. Fails when the swatches are on more than one
+    line, as the block symbol prints the bright eight on a second line that
+    starts under the frame."""
     teal = bbox(where(right, rgb("teal")))
     assert teal, "no Palette row"
     advance = (teal[2] - teal[0]) / 3
     assert teal[3] - teal[1] <= 2.5 * advance, "the Palette swatches are on more than one line"
+    first = int(teal[0] - 3 * SWATCHES.index("teal") * advance)
+    return first, int(first + 3 * len(SWATCHES) * advance), teal[1], teal[3], advance
+
+
+def palette_row_offset(right):
+    """How far the Palette row starts from the value column, in glyph advances.
+
+    The value column starts at the leftmost pixel of Text, antialiased or not,
+    which is where the values of the rows above begin: a line of its own that a
+    failing command prints would be to the left of it."""
+    first, _, _, _, advance = palette_box(right)
     values = bbox(tinted(right, rgb("text"), rgb("base")))
-    return (teal[0] - 9 * advance - values[0]) / advance
+    return (first - values[0]) / advance
 
 
 def svg(body):

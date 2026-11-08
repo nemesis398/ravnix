@@ -8,7 +8,21 @@ import time
 
 import pytest
 
-from conftest import BACKDROP, H, KERNEL, S, W, facts_text, load_png, palette_row_offset, rgb, where
+from conftest import (
+    BACKDROP,
+    H,
+    KERNEL,
+    S,
+    STATE_HUES,
+    SWATCHES,
+    W,
+    facts_text,
+    load_png,
+    palette_box,
+    palette_row_offset,
+    rgb,
+    where,
+)
 
 
 def hands_to_sway(lab):
@@ -571,7 +585,15 @@ def test_the_real_fastfetch_draws_the_logo_and_the_facts_with_no_network(lab):
     # The Palette row is one line that starts in the value column, as on the
     # terminal: fastfetch's block symbol prints the bright eight on a second
     # line with no jump to that column, and backdrop does not reflow it.
-    assert abs(palette_row_offset(img[: int(0.40 * H), W // 2 :])) < 1.5
+    facts = img[: int(0.40 * H), W // 2 :]
+    assert abs(palette_row_offset(facts)) < 1.5
+    # And it holds the swatches that are no state hue, and none that is: this
+    # is where a change of the colors module's symbol or padding would show.
+    first, last, top, bottom, _ = palette_box(facts)
+    for name in SWATCHES:
+        assert where(facts[top:bottom, first:last], rgb(name)).any(), name
+    for hue in STATE_HUES:
+        assert not where(facts[top:bottom, first - 1 : last + 1], rgb(hue)).any(), hue
 
 
 def test_a_line_that_is_too_wide_shrinks_the_facts_to_fit(lab):
