@@ -10,7 +10,8 @@
 #
 # Two plain keys stand in for the security key's handles (nixpkgs' test keys,
 # whose public halves are known while the test is evaluated): an ed25519
-# key, which the forge accepts, and an ECDSA one, which it does not know.
+# key, which the forge accepts, and an ECDSA one, which it does not know
+# and which huginn's user also logs in to muninn with.
 # Every other key is made for this test alone, and the forge accepts each of
 # them too, so that a key used where it must not be shows as a login: a key
 # that is not on the list, the key in two stand-ins for Bitwarden's agent
@@ -74,12 +75,19 @@ let
     pub = pkgs.writeText "second.pub" "${publicKey}\n";
   };
 
-  # The keys made for this test: huginn's login to muninn, a key that is not
-  # on the list, the key in the stand-ins for Bitwarden's agent, and
-  # muninn's own default key.
+  # huginn's user logs in to muninn with the second stand-in's key: the
+  # server shape takes the account's keys from the configuration alone,
+  # never from ~/.ssh/authorized_keys, so the public half is needed while
+  # the test is evaluated, and nixpkgs' two test keys are the ones known
+  # then. The forge does not know this one, so no login there is ever made
+  # with it.
+  login = second;
+
+  # The keys made for this test: a key that is not on the list, the key in
+  # the stand-ins for Bitwarden's agent, and muninn's own default key.
   keys = pkgs.runCommand "sk-agent-test-keys" { nativeBuildInputs = [ pkgs.openssh ]; } ''
     mkdir "$out"
-    for name in login extra bitwarden default; do
+    for name in extra bitwarden default; do
       ssh-keygen -q -t ed25519 -N "" -C "$name" -f "$out/$name"
     done
   '';
@@ -139,6 +147,7 @@ pkgs.testers.runNixOSTest {
       # when the test runs interactively; the server shape refuses a root
       # password, and the driver needs none.
       users.users.root.hashedPasswordFile = lib.mkForce null;
+      users.users.${user}.openssh.authorizedKeys.keys = [ login.publicKey ];
       # Another account on muninn, which must not reach the forwarded agent.
       users.users.other.isNormalUser = true;
       ravnix.server.remoteControlDir = lib.mkForce null;
@@ -191,7 +200,7 @@ pkgs.testers.runNixOSTest {
     STAND_IN = "${standIn.handle}"
     SECOND = "${second.handle}"
     LISTED = sorted(["${bare standIn.publicKey}", "${bare second.publicKey}"])
-    # How huginn reaches muninn: a key of its own, and no ssh configuration.
+    # How huginn reaches muninn: the login key alone, and no ssh configuration.
     SSH = (
         "ssh -F /dev/null -i ~/.ssh/login -o IdentitiesOnly=yes -o IdentityAgent=none"
         + " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
@@ -344,10 +353,9 @@ pkgs.testers.runNixOSTest {
     with subtest("the keys and the forge"):
         # Keys go in at run time: an option that reads a file would read it
         # while the test is evaluated.
-        as_user(huginn, "install -D -m 600 " + KEYS + "/login ~/.ssh/login")
-        as_user(muninn, "install -D -m 600 " + KEYS + "/login.pub ~/.ssh/authorized_keys && chmod 700 ~/.ssh")
+        as_user(huginn, "install -D -m 600 ${login.private} ~/.ssh/login")
         as_user(huginn, SSH + " muninn true")
-        as_user(muninn, "install -m 600 " + KEYS + "/default ~/.ssh/id_ed25519")
+        as_user(muninn, "install -D -m 600 " + KEYS + "/default ~/.ssh/id_ed25519 && chmod 700 ~/.ssh")
         as_user(muninn, "install -m 600 " + KEYS + "/bitwarden ~/.ssh/bitwarden")
         forge.succeed(
             "install -d -m 700 -o git -g users ~git/.ssh"
