@@ -137,9 +137,6 @@ in
     settings.env = switches;
   };
 
-  config.home.sessionVariables = switches;
-  config.systemd.user.sessionVariables = switches;
-
   # Why the Artifact tool is off: its definition is about 15k tokens, a quarter
   # of every session's fixed baseline, and it rides along into every subagent.
   # It was used once in 30 days, so Claude Code starts without it, and
@@ -150,9 +147,10 @@ in
   # to itself, and a launcher can undo neither a value it sets on itself from
   # user settings nor `enableArtifact: false`, which wins over every other
   # source. That is how the launcher was found out on Fedora, where this was
-  # environment.d/80-claude-code.conf.
-  config.home.sessionVariables.CLAUDE_CODE_DISABLE_ARTIFACT = "1";
-  config.systemd.user.sessionVariables.CLAUDE_CODE_DISABLE_ARTIFACT = "1";
+  # environment.d/80-claude-code.conf. The telemetry switches go to the same
+  # two places as well as to the settings' env.
+  config.home.sessionVariables = switches // { CLAUDE_CODE_DISABLE_ARTIFACT = "1"; };
+  config.systemd.user.sessionVariables = switches // { CLAUDE_CODE_DISABLE_ARTIFACT = "1"; };
 
   config.assertions = [
     {
