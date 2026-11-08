@@ -11,7 +11,8 @@
 #     no agent, the pinned host key or the first one remembered, the
 #     keepalive, no prompt; with herdr's own configuration in front, as
 #     `herdr --remote` runs ssh, the block's keepalive still wins; without
-#     an identity file, ssh's defaults and the agent stay;
+#     an identity file, ssh's defaults and the agent stay; a key whose path
+#     has a space and a % is the file at that path;
 #   - the server's herdr settings are the laptop's and the shell of its
 #     panes, merged key by key, and the shared ones set no shell;
 #   - ghostty writes OSC 52 into the clipboard and does not let a pane read
@@ -57,6 +58,11 @@ let
   h = laptop [ ];
   pinned = laptop [ { ravnix.serverAccess.hostKey = lib.mkForce hostKey; } ];
   noKey = laptop [ { ravnix.serverAccess.identityFile = lib.mkForce null; } ];
+  # A path with a space and a %, which ssh_config splits and expands unless
+  # it is quoted and escaped. /build is the sandbox's home, where the check
+  # puts a key.
+  spacedKey = "/build/my keys/ravnix%server";
+  spaced = laptop [ { ravnix.serverAccess.identityFile = lib.mkForce spacedKey; } ];
   m = server [ ];
   mNoKey = server [ { ravnix.serverAccess.publicKey = lib.mkForce null; } ];
 
@@ -167,14 +173,19 @@ let
   sshConfig = c: (hm c).home.file.".ssh/config".source;
   ssh = lib.getExe' pkgs.openssh "ssh";
 in
-pkgs.runCommand "glue-terminal-shapes" { }
+pkgs.runCommand "glue-terminal-shapes"
+  {
+    nativeBuildInputs = [ pkgs.openssh ];
+  }
   ''
       # Every check runs, and says what it found: no -e, which stdenv sets.
       set +e -uo pipefail
       failed=0
       fail() { echo "FAIL: $*" >&2; failed=1; }
       for f in ${lib.escapeShellArgs failures}; do fail "$f"; done
+      # The sandbox's home is ssh's ~ (the account's home in /etc/passwd).
       export HOME=$TMPDIR
+      [ "$HOME" = /build ] || fail "the sandbox's home is $HOME, not /build, where the key of spacedKey is"
       # ssh -G prints what it would use, and connects nowhere. It refuses a
       # file that is neither root's nor the user's, as the store's files are
       # in the sandbox, so it reads copies, each Include pointed at its copy.
@@ -228,6 +239,18 @@ pkgs.runCommand "glue-terminal-shapes" { }
       hasnt "$g" "identityagent none" "without an identity file, the agent is refused"
       hasnt "$g" "identitiesonly yes" "without an identity file, ssh's own keys are refused"
       has "$g" "hostname ${template.server.netbirdAddress}" "the server's address without an identity file"
+
+      # A key at a path with a space and a %: ssh reads the configuration,
+      # and loads the file at exactly that path (ProxyCommand false: it
+      # loads the keys and connects nowhere).
+      mkdir -p "$(dirname ${lib.escapeShellArg spacedKey})"
+      ssh-keygen -q -t ed25519 -N "" -f ${lib.escapeShellArg spacedKey}
+      g=$(effective ${sshConfig spaced}) || fail "ssh refuses a key path with a space and a %: $g"
+      has "$g" "identityfile /build/my keys/ravnix%%server" "the key path with a space and a %"
+      loaded=$(${ssh} -v -F "$(local_copy ${sshConfig spaced})" -o ProxyCommand=false ravnix-server true 2>&1)
+      # type -1 is a file that is not there; ssh ends its lines with CR LF.
+      grep -qE '^debug1: identity file /build/my keys/ravnix%server type [0-9]+.?$' <<<"$loaded" ||
+        fail "ssh does not load the key at the path with a space and a %: $loaded"
 
       [ "$failed" = 0 ] || exit 1
       touch $out

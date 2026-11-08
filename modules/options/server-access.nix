@@ -8,7 +8,15 @@
 { lib, ... }:
 let
   inherit (lib) mkOption types;
-  ravnix = import ./types.nix { inherit lib; };
+
+  # The private key's path, which goes into ssh_config in quotes, % written
+  # as %%: so a space and a % are fine. Not a $, since ssh expands ${NAME} in
+  # an IdentityFile and has no way to write it literally, and not a quote, a
+  # backslash or a control character, which would end the value or the line,
+  # and with it every ssh the user runs.
+  keyPath = types.strMatching ''/[^"\\$[:cntrl:]]+'' // {
+    description = ''absolute path, as a string, without $, ", \ or a control character'';
+  };
 
   # One line of a .pub file. Not a security key's type (sk-ssh-ed25519@...):
   # the laptop connects again by itself after a drop, a suspend or a new
@@ -23,7 +31,7 @@ in
 {
   options.ravnix.serverAccess = {
     identityFile = mkOption {
-      type = types.nullOr ravnix.absolutePath;
+      type = types.nullOr keyPath;
       default = null;
       example = "/home/alice/.ssh/ravnix-server";
       description = ''
@@ -36,7 +44,9 @@ in
         YubiKey's and not one Bitwarden's agent holds; with it set, the
         connection asks no agent. Null: ssh's own defaults, the agent of
         SSH_AUTH_SOCK (Bitwarden's) and ~/.ssh/id_*, which a reconnect after
-        a suspend may find locked.
+        a suspend may find locked. A space or a % in the path is fine; a $,
+        a double quote, a backslash or a control character is refused, since
+        ssh_config could not hold it.
       '';
     };
 

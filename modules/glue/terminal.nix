@@ -132,7 +132,9 @@ let
         "  HostKeyAlias ${alias}"
       ]
       ++ lib.optionals (cfg.identityFile != null) [
-        "  IdentityFile ${cfg.identityFile}"
+        # Quoted, for a space; % is a token there (the path's type
+        # refuses what quotes cannot hold).
+        "  IdentityFile \"${lib.replaceStrings [ "%" ] [ "%%" ] cfg.identityFile}\""
         "  IdentitiesOnly yes"
         "  IdentityAgent none"
       ]

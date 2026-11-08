@@ -270,6 +270,30 @@ let
     "a deploy address with an octet above 255" = server { deployFrom = [ "192.0.2.256" ]; };
     "a deploy address of three octets" = server { deployFrom = [ "192.0.2" ]; };
     "an empty deploy address" = server { deployFrom = [ "" ]; };
+    # The server key's path goes into ssh_config, quoted: ssh would expand
+    # ${NAME} in it, and a quote, a backslash or a line break would end the
+    # value or the line.
+    "a server key path with \${NAME} in it" = {
+      ravnix.serverAccess.identityFile = "/home/alice/.ssh/\${HOME}/key";
+    };
+    "a server key path with a $" = {
+      ravnix.serverAccess.identityFile = "/home/alice/.ssh/$key";
+    };
+    "a server key path with a double quote" = {
+      ravnix.serverAccess.identityFile = "/home/alice/.ssh/a\"b";
+    };
+    "a server key path with a backslash" = {
+      ravnix.serverAccess.identityFile = "/home/alice/.ssh/a\\b";
+    };
+    "a server key path with a line break" = {
+      ravnix.serverAccess.identityFile = "/home/alice/.ssh/a\nIdentityFile /etc/key";
+    };
+    "a server key path with a tab" = {
+      ravnix.serverAccess.identityFile = "/home/alice/.ssh/a\tb";
+    };
+    "a relative server key path" = {
+      ravnix.serverAccess.identityFile = ".ssh/ravnix-server";
+    };
     "a relative Remote Control directory" = server { remoteControlDir = "src/project"; };
     "a Remote Control directory given as a Nix path" = server { remoteControlDir = ./.; };
   };
@@ -309,6 +333,9 @@ let
         "2001:db8::10"
         "fd00:1234::5"
       ];
+    };
+    "a server key path with a space and a %" = {
+      ravnix.serverAccess.identityFile = "/home/alice/My Keys/ravnix%server";
     };
     "an ssh target with a user" = server { sshTarget = "alice@host"; };
     "an ssh target with an underscore in the user" = server { sshTarget = "nas_admin@192.0.2.20"; };
