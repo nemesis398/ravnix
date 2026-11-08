@@ -683,7 +683,9 @@ def panel_metrics(cr, theme, size):
     layout = panel_layout(cr)
     layout.set_font_description(Pango.FontDescription(f"{theme.font} {size}px"))
     layout.set_text("M", -1)
-    return layout.get_extents()[1].width / Pango.SCALE, round(size * 1.3)
+    # Whole pixels, here and for everything that is laid out from them: the
+    # fit of the panel, the boxes the tool logos keep clear of, and the drawing.
+    return round(layout.get_extents()[1].width / Pango.SCALE), round(size * 1.3)
 
 
 def fit_panel(cr, theme, lines, x, width, size):
@@ -720,7 +722,6 @@ def draw_panel(cr, theme, lines, x, y, size):
     regular = Pango.FontDescription(f"{theme.font} {size}px")
     bold = Pango.FontDescription(f"{theme.font} Bold {size}px")
     advance, line_h = panel_metrics(cr, theme, size)
-    advance = round(advance)
     px, py = round(x), round(y)
 
     def show(text, at, row, color, is_bold):
