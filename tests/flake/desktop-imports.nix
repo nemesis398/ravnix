@@ -102,11 +102,15 @@ let
       lib.concatMap
         (
           name:
+          let
+            # One evaluation of the host per module, not one per use.
+            a = alone name;
+          in
           lib.optional (
             self.nixosModules.${name}.key or null != "ravnix/nixosModules.${name}"
           ) "nixosModules.${name} has no key ravnix/nixosModules.${name}"
           ++
-            lib.optional (!(alone name).success || (alone name).value != commonOnly.value)
+            lib.optional (!a.success || a.value != commonOnly.value)
               "a host with nixosModules.${name} alone does not have what nixosModules.common gives it (home-manager.sharedModules, the overlay, pkgs.ravnix)"
         )
         [

@@ -21,8 +21,10 @@
 #     nixosModules.readOnlyPkgs (nixos/modules/misc/nixpkgs/read-only.nix), as
 #     a NixOS VM test node does when node.pkgs is set, takes no overlays from
 #     a module, and this module leaves it alone; whoever hands over that pkgs
-#     applies the overlay to it (pkgs.extend self.overlays.default), or the
-#     modules that read pkgs.ravnix.NAME fail with "attribute ravnix missing".
+#     applies the overlay to it (in a VM test, node.pkgs = lib.mkForce
+#     (pkgs.extend self.overlays.default); runNixOSTest sets node.pkgs
+#     itself), or the modules that read pkgs.ravnix.NAME fail with "attribute
+#     ravnix missing".
 #     A host that sets nixpkgs.pkgs without that module gets the overlay.
 #
 # The user's values reach home-manager from here. me.nix is evaluated once, by

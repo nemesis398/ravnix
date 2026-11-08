@@ -166,7 +166,9 @@
       # default.nix, so a module is added without editing this file
       # (lib/import-dir.nix). Each brings nixosModules.common, whose
       # home-manager, options and overlay those modules read; the key keeps a
-      # host that lists both from getting two copies.
+      # host that lists both from getting two copies. The import goes one way:
+      # common must never import desktop or glue (or a shape that does), since
+      # a cycle overflows the stack, and keys do not stop it.
       nixosModules.desktop = {
         key = "ravnix/nixosModules.desktop";
         imports = [
@@ -207,16 +209,15 @@
           ./modules/common/claude-skills.nix
         ];
       };
+      packages.${system} =
+        # A tool named claude-code is an error of lib/ravnix-packages.nix, which
+        # packagesOf runs through.
+        tools.packages // ravnixPackages.packagesOf pkgs // { claude-code = claudeCode; };
       # Every package and tool as pkgs.ravnix.<name>, so a module reads
       # pkgs.ravnix.<name> and never needs `self`. nixosModules.common applies
       # it, and applying it a second time (a host that lists it too) changes
       # nothing (lib/ravnix-packages.nix).
       overlays.default = ravnixPackages.overlay;
-      packages.${system} =
-        if tools.packages ? claude-code then
-          throw "tools/claude-code is a tool, and packages.claude-code is Claude Code itself; rename the tool"
-        else
-          tools.packages // ravnixPackages.packagesOf pkgs // { claude-code = claudeCode; };
       checks.${system} =
         if clashes != [ ] then
           throw "tests/: ${toString clashes} is already a check of flake.nix; pick another name"

@@ -30,9 +30,12 @@ stdenvNoCC.mkDerivation {
 
 A configuration whose `pkgs` is read-only, such as a NixOS VM test node,
 takes no overlay from a module, and `nixosModules.common` leaves it alone.
-Whoever hands over that `pkgs` applies the overlay to it
-(`pkgs.extend self.overlays.default`); without it a module that reads
-`pkgs.ravnix.NAME` fails with "attribute ravnix missing".
+Whoever hands over that `pkgs` applies the overlay to it; without it a module
+that reads `pkgs.ravnix.NAME` fails with "attribute ravnix missing". In a
+`pkgs.testers.runNixOSTest` that is
+`node.pkgs = lib.mkForce (pkgs.extend self.overlays.default);` since
+`runNixOSTest` defines `node.pkgs` itself, and a plain definition fails with "A
+Nixpkgs pkgs set can not be merged with another pkgs set".
 
 A package that needs another takes `ravnix` and reads it from there, as
 `{ ravnix, ... }: ... ravnix.OTHER`. `packages.x86_64-linux` is built through
@@ -46,6 +49,12 @@ checks vouch for (`tests/flake/packages.nix` compares the two). Only
 Anthropic's release manifest for the version in `flake.lock`, and a second route
 to it would be one that the verification and the update timer do not control.
 `lib/ravnix-packages.nix` has the rest.
+
+A tool is built twice: under the overlay with the host's package set as its
+`pkgs`, and for `packages.x86_64-linux.NAME` and its own checks with the flake's
+`pkgs`. So a tool must not read `pkgs.ravnix`: it would build under the overlay
+and fail its checks with "attribute ravnix missing". Packages have the
+`ravnix` argument for that; tools have no sibling route.
 
 ## What the flake refuses
 

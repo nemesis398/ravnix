@@ -21,6 +21,11 @@ in `tools/`, a `default.nix` that names its tool differently from its
 directory, a symlink in `tools/`, and two directories that give one name
 (`_x` and `x`) are evaluation errors.
 
+A tool's `default.nix` gets the flake's `pkgs` for its package and checks, and
+the host's package set as `pkgs` under `pkgs.ravnix.NAME`. So it must not read
+`pkgs.ravnix`: that would build for the host and fail the tool's own checks
+(`packages/README.md`).
+
 ## Start a tool
 
 ```sh
