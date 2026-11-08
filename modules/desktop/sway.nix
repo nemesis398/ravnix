@@ -372,11 +372,25 @@ in
       # same flag and its notes call it a red line.
       extraOptions = lib.optional nvidiaDriver "--unsupported-gpu";
       extraSessionCommands = ''
+        # home-manager's session variables (QT_QPA_PLATFORMTHEME, QT_PLUGIN_PATH,
+        # XCURSOR_*, ...) for the processes Sway starts: the launcher and the
+        # keys. systemd units get theirs from environment.d, which these are
+        # not in. greetd runs the session through the user's shell, which has
+        # them only if its profile reads the file (home-manager's bash writes
+        # that line, another shell does not), so the session reads the file
+        # itself; it is guarded against a second reading. A fresh install has
+        # no such file before the first activation.
+        hm_vars="/etc/profiles/per-user/''${USER:-$(id -un)}/etc/profile.d/hm-session-vars.sh"
+        if [ -r "$hm_vars" ]; then
+          . "$hm_vars"
+        fi
+        unset hm_vars
         # Wayland where an application can choose; Qt falls back to X11.
         export QT_QPA_PLATFORM="wayland;xcb"
         export ELECTRON_OZONE_PLATFORM_HINT=auto
         export _JAVA_AWT_WM_NONREPARENTING=1
-        # The cursor of the session, before any home-manager variable is read.
+        # The cursor of the session, the same as home-manager's and the config's
+        # `seat * xcursor_theme`; set here too for a host without the file.
         export XCURSOR_THEME=catppuccin-mocha-${accent}-cursors
         export XCURSOR_SIZE=24
         ${lib.optionalString (cfg.gpu.primary != null) ''
