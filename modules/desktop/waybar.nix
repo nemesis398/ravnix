@@ -28,13 +28,19 @@
 #   Bluetooth             the bluetooth module and bluetui
 #   PipeWire              the volume module and the volume keys (sway.nix)
 #
-# EXCEPTIONS (docs/style.md, rule 9). Three parts of the bar have no fixed
-# width, because their content is a list that grows: the workspace strip (a
+# EXCEPTIONS (docs/style.md, rule 9). Four parts of the bar have no fixed
+# width, or no fixed place. Three are lists that grow: the workspace strip (a
 # workspace above ten adds a button), the mode pill (it is only there while a
-# mode is on) and the tray (16 px per icon). Everything else that changes
-# value has a floor (min-width) as wide as its widest value; see the table in
-# style.css, and tests/desktop/sway.nix, which lays every floor out with GTK
-# and fails when a module's width depends on its value.
+# mode is on) and the tray (16 px per icon). The fourth is custom/peripherals,
+# the battery of a mouse, a keyboard or a trackpad: it is there only while one
+# of them is low or charging, and a bar that kept its cell all day for it would
+# spend 80 px on a blank that shows a few times a month. When it shows it has
+# its floor, so it appears at one fixed width, and the modules after it in the
+# left group (power draw, profile, workspaces) move right by that width, once,
+# as the tray's neighbours do for a new icon. Everything else
+# that changes value has a floor (min-width) as wide as its widest value; see
+# the table in style.css, and tests/desktop/sway.nix, which lays every floor
+# out with GTK and fails when a module's width depends on its value.
 {
   config,
   lib,

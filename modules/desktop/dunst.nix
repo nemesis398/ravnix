@@ -37,13 +37,16 @@
           height = "(0, 300)";
           notification_limit = 20;
           # Inside a notification: 8 px of padding all around, no gap between
-          # stacked ones and a 2 px separator line, square corners, no
+          # stacked ones and a 1 px separator line, square corners, no
           # transparency, a 10 px progress bar between 150 and 300 px wide.
+          # Everything is dunst 1.13.2's compiled default but the separator,
+          # whose default of 2 px is neither a frame nor a marker
+          # (docs/style.md: 1 px frames, 2 px markers, no other widths).
           padding = 8;
           horizontal_padding = 8;
           text_icon_padding = 0;
           gap_size = 0;
-          separator_height = 2;
+          separator_height = 1;
           corner_radius = 0;
           transparency = 0;
           progress_bar_height = 10;
