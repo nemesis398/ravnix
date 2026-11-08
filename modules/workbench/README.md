@@ -191,9 +191,19 @@ is the record.
 - `no_pivot_root` for Podman inside lets a container that Podman runs leave its
   chroot with the account's rights. In the container form run only images you
   trust.
-- The list of the laptop's programs that the closure must not hold is written
-  in four places (`workbench-oci`, `docker-checks.sh`, `workbench-server`,
-  `workbench-optional`). One shared list means a change to the other two tests.
+- The list of the laptop's programs is written in four places
+  (`workbench-oci`, `docker-checks.sh`, `workbench-server`,
+  `workbench-optional`), and the four are not one list. The server carries a
+  headless Helium for the Chrome DevTools MCP server
+  (`modules/common/chrome-devtools-mcp.nix`), so Helium is in the closure of
+  the server system, and the checks of that closure (`workbench-server`, and
+  the closure check of `workbench-oci`) leave it out. The server reaches Helium
+  only by store path, never on a `PATH`, so the lists that look at a `PATH`
+  (`docker-checks.sh`, in a running container) keep it. `workbench-optional`
+  looks at the closure of the Nextcloud client alone, which the MCP server's
+  Helium is not part of, and keeps it too. The rule: Helium is in a list
+  unless the list is a closure that holds the whole server system. One shared
+  list means a change to the other two tests.
 - `docker-checks.sh` is Bash, a record script piped over ssh into a container;
   it adds a key to the volume's `authorized_keys` and removes it again, and it
   refuses to run unless the container belongs to the project
