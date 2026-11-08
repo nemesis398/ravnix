@@ -109,15 +109,6 @@ A missing `packages/` directory gives no packages.
 
 ## Findings that are not fixed
 
-- `modules/glue/default.nix` is compared with its own directory
-  (`tests/flake/desktop-imports.nix`) while that directory holds no module, so
-  the comparison is `[ ] == [ ]` and a wrong label string in it shows only in
-  the message about a symlink. `modules/desktop/` holds modules now, and
-  `packages/` holds packages, so the tests of the real wiring
-  (`tests/flake/packages.nix`) compare names and derivations over real ones.
-  The discovery, its refusals, the overlay and the lookup of a sibling through
-  `ravnix` also run on fixtures, through the same `lib/ravnix-packages.nix` the
-  flake calls.
 - A hidden regular `.x.nix` file in `modules/desktop/` or `modules/glue/` (an
   editor backup, say) is imported like any other `.nix` file. A flake source
   holds only tracked files, so it needs a committed one; a symlink of that

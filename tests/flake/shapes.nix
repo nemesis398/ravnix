@@ -1,7 +1,7 @@
 # The two shapes name themselves and bring the glue: nixosModules.laptop sets
 # ravnix.shape to "laptop" and nixosModules.server to "server", each imports
-# nixosModules.glue (found by its key in the module tree, since the glue's
-# directory may still be empty), and home-manager sees the same shape. A
+# nixosModules.glue (found by its key in the module tree, which names the glue
+# whatever its directory holds), and home-manager sees the same shape. A
 # laptop that also imports the workbench stays a laptop. A host with both
 # shapes, or with a me.nix that sets another shape or null on top of one, is
 # refused, and the refusal is the two definitions of ravnix.shape, each named

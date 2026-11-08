@@ -32,9 +32,8 @@ let
   '';
 
   # modules/desktop/default.nix and modules/glue/default.nix are modules that
-  # import their own directory, whatever is in it. While both directories are
-  # empty this compares two empty lists, so a default.nix that names the wrong
-  # directory is caught from the first module on.
+  # import their own directory, whatever is in it, so a default.nix that names
+  # the wrong directory is caught.
   desktop = import ../../modules/desktop/default.nix { inherit lib; };
   glue = import ../../modules/glue/default.nix { inherit lib; };
 
@@ -42,12 +41,13 @@ let
   # nixosModules.common, whose home-manager, options and overlay the files of
   # their directories read (home-manager.sharedModules, pkgs.ravnix.NAME), and
   # the key of common keeps a second import from adding anything. A summary is
-  # whether the host evaluates, how many copies of the common and theme home
-  # modules it loads (counted by key in home-manager.sharedModules, which gets
-  # one more for each copy of the module that is loaded), how many overlays it
-  # has, and whether pkgs.ravnix exists. The files of the directories add home
-  # modules of their own, so the length of sharedModules says nothing about
-  # copies of common.
+  # whether the host's facts evaluate (never its toplevel, where the glue
+  # refuses a host without a shape), how many copies of the common and theme
+  # home modules it loads (counted by key in home-manager.sharedModules, which
+  # gets one more for each copy of the module that is loaded), how many overlays
+  # it has, and whether pkgs.ravnix exists. The files of the directories add
+  # home modules of their own, so the length of sharedModules says nothing
+  # about copies of common.
   hostModules = import ./helpers/host-modules.nix { inherit lib; };
   summary =
     modules:
