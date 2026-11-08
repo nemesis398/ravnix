@@ -85,8 +85,14 @@ let
     ++ check (
       h.ravnix.desktop.terminal.plain == "env NO_MUX=1 ghostty"
     ) "the second key is not the desktop's local shell: ${h.ravnix.desktop.terminal.plain}"
-    ++ check (infix "herdr --remote ravnix-server" terminalText) "ravnix-terminal does not attach with herdr --remote ravnix-server"
-    ++ check (infix ''if [ "$status" = 0 ]; then'' terminalText) "ravnix-terminal does not stop on a detach"
+    # What the two commands do is tests/glue/terminal-scripts.nix's; here,
+    # that the laptop's are built for the alias and with the real programs.
+    ++ check (
+      infix "alias='ravnix-server'" terminalText && infix "herdr='${lib.getExe pkgs.herdr}'" terminalText
+    ) "ravnix-terminal does not run herdr for ravnix-server"
+    ++ check (
+      infix "alias='ravnix-server'" connectionText && infix "ssh='${lib.getExe' pkgs.openssh "ssh"}'" connectionText
+    ) "ravnix-connection does not run ssh for ravnix-server"
     ++ check (connection != null) "the laptop has no ravnix-connection unit"
     ++ check (
       connection != null && connection.Install.WantedBy == [ "graphical-session.target" ]

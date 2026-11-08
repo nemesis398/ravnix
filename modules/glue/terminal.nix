@@ -105,7 +105,6 @@ let
   cfg = os.ravnix.serverAccess;
   user = os.ravnix.user.username;
   alias = "ravnix-server";
-  ssh = lib.getExe' os.programs.ssh.package "ssh";
 
   sockets = [
     os.ravnix.link.socket
@@ -149,48 +148,15 @@ let
     )
   );
 
-  terminal = pkgs.writeShellApplication {
-    name = "ravnix-terminal";
-    runtimeInputs = [
-      pkgs.herdr
-      os.programs.ssh.package
-    ];
-    text = ''
-      # herdr --remote ends with 1 when the connection drops: attach again.
-      while :; do
-        started=$SECONDS
-        status=0
-        herdr --remote ${alias} || status=$?
-        if [ "$status" = 0 ]; then
-          exit 0
-        fi
-        printf 'ravnix-terminal: herdr ended with %s; attaching to the server again\n' "$status" >&2
-        if (( SECONDS - started < 5 )); then
-          sleep 1
-        fi
-      done
-    '';
-  };
-
-  connection = pkgs.writeShellApplication {
-    name = "ravnix-connection";
-    runtimeInputs = [ pkgs.coreutils ];
-    text = ''
-      # Each connection is its own, never a multiplexed one: a master that
-      # another program started could be gone or stale.
-      own=(-o ControlMaster=no -o ControlPath=none)
-      uid=$(${ssh} "''${own[@]}" ${alias} id -u)
-      if ! [[ $uid =~ ^[0-9]+$ ]]; then
-        printf 'ravnix-connection: the server gave no uid: %s\n' "$uid" >&2
-        exit 1
-      fi
-      forwards=()
-      for name in ${lib.escapeShellArgs sockets}; do
-        forwards+=(-R "/run/user/$uid/$name:$XDG_RUNTIME_DIR/$name")
-      done
-      exec ${ssh} -N "''${own[@]}" -o ExitOnForwardFailure=yes "''${forwards[@]}" ${alias}
-    '';
-  };
+  # The two commands, Bash in ./terminal/ (./terminal/scripts.nix).
+  inherit
+    (import ./terminal/scripts.nix {
+      inherit lib pkgs sockets alias;
+      openssh = os.programs.ssh.package;
+    })
+    terminal
+    connection
+    ;
 in
 {
   config = lib.mkMerge [
