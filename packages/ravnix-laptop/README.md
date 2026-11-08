@@ -72,9 +72,10 @@ one. Built with none of the values it says which to set and exits 78.
   firewall answering with a reset, and a paused laptop.
 - **The key is its own.** `-F /dev/null` ignores `~/.ssh/config` and
   `/etc/ssh/ssh_config`, `IdentitiesOnly` with `IdentityAgent=none` leaves out
-  every agent, so neither the YubiKey nor Bitwarden's agent (which the git
-  hosts use) is ever asked. Nothing is asked of a person either
-  (`BatchMode=yes`): the key has no passphrase.
+  every agent, so neither the YubiKey's agent nor rbw's (the one
+  `SSH_AUTH_SOCK` names, which serves the vault's SSH keys) is ever asked.
+  Nothing is asked of a person either (`BatchMode=yes`): the key has no
+  passphrase.
 - **The laptop is the one it should be.** With `hostKey` set, the key is
   written into a known_hosts file of the store as `huginn KEY` and checked
   strictly (`HostKeyAlias=huginn`, so a new address changes nothing). Without
