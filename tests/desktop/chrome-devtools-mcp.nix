@@ -33,8 +33,9 @@
 #     under seccomp) and talks to the server over a pipe: no remote-debugging
 #     port, and no TCP socket listening;
 #   - a TMPDIR of 40 bytes, the longest the wrapper accepts, works with the real
-#     Helium, and one too long for Chromium's singleton socket, as one under a
-#     deep directory is, is passed over;
+#     Helium when the PID in the name of the launch has 7 digits, the worst
+#     case the 40 was worked out for, and one too long for Chromium's singleton
+#     socket, as one under a deep directory is, is passed over;
 #   - PUPPETEER_DANGEROUS_NO_SANDBOX=true in the caller's environment, which
 #     would start the browser without its sandbox, changes nothing;
 #   - on the server, Helium is only the browser of the wrapper: no helium on
@@ -174,6 +175,7 @@ pkgs.testers.runNixOSTest {
 
   testScript = ''
     import json
+    import re
     import shlex
 
     USER = "${user}"
@@ -384,17 +386,25 @@ pkgs.testers.runNixOSTest {
             assert_clean(machine, "/tmp")
             machine.succeed("rmdir /tmp/tt")
 
-        with subtest("a TMPDIR of 40 bytes, the longest accepted, works with the real browser"):
+        with subtest("a TMPDIR of 40 bytes, the longest accepted, works with the real browser, even with a 7-digit PID"):
+            # The 40 bytes leave room for a PID of 7 digits in the name of the
+            # launch (cdh.PID.XXXXXX/t), as a host that has been up for weeks
+            # has. The VM's PIDs are small, so the next one is set to 1999990.
             edge = "/tmp/" + "e" * 35
             assert len(edge.encode()) == 40, edge
             as_user(machine, "mkdir -p " + edge)
+            if int(machine.succeed("cat /proc/sys/kernel/pid_max")) < 2000000:
+                machine.succeed("echo 4194304 > /proc/sys/kernel/pid_max")
+            machine.succeed("echo 1999989 > /proc/sys/kernel/ns_last_pid")
             account, err = run_probe(
                 machine, "edgetmp",
-                "--first navigate_page",
+                "--first navigate_page --exec " + shlex.quote("ls -d " + edge + "/cdh.*"),
                 env + "TMPDIR=" + edge + " ",
             )
             check_page(account, "TMPDIR of 40 bytes")
             assert "not using" not in err, err
+            name = account["exec"][0]["stdout"].strip()
+            assert re.fullmatch(re.escape(edge) + r"/cdh\.\d{7}\.[A-Za-z0-9]{6}", name), "the PID is not 7 digits: " + name
             assert_clean(machine, edge)
             machine.succeed("rmdir " + edge)
 

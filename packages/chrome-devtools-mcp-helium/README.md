@@ -40,7 +40,8 @@ recognized as gone and not taken for a running launch.
   `XDG_RUNTIME_DIR`, and says on stderr why it passed one over. Measured with
   Helium 0.21.1.1: a `TMPDIR` of 62 bytes starts, one of 63 aborts; the socket is
   46 bytes, `/cdh.PID.XXXXXX/t` is 21 with a 7-digit PID, so 40 leaves a byte to
-  spare. The VM test starts the real Helium with a `TMPDIR` of exactly 40 bytes.
+  spare. The VM test starts the real Helium with a `TMPDIR` of exactly 40 bytes and
+  a 7-digit PID (it sets `/proc/sys/kernel/ns_last_pid` to 1999989 first).
 - A `TMPDIR` of its own for every launch, never the runtime directory. The server
   writes the files its tools make (screenshots, Lighthouse reports, screencasts)
   to `chrome-devtools-mcp-XXXXXX` directories under `os.tmpdir()` and never
