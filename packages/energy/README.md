@@ -30,7 +30,12 @@ None. The settings live in `$XDG_STATE_HOME/energy`, else
 - three `local NAME="...$(...)"` lines are split into a declaration and an
   assignment, for shellcheck's SC2155, which writeShellApplication runs at
   build time; nothing else in the code changed;
-- the header names no person and no path under a home directory.
+- the header names no person and no path under a home directory;
+- `energy set` saves through a temporary file and a rename. With Fedora's
+  plain redirect, two sets of one key at once tore the file (`60` over
+  `auto` left `60\no`, in the first dozen of 200 rounds) and a get during a
+  set read it empty; a torn or empty value reads as none of the three, so
+  `refresh` counted as auto and `idle_suspend` and `focus_bar` as off.
 
 The unit is Fedora's: started by `sway-session.target`, part of and after
 `graphical-session.target`, `Restart=always` after 5 s. It sets no PATH
@@ -42,22 +47,23 @@ then find no setuid sudo for `charge-mode`.
 
 ## Tests
 
-`tests/energy.test.sh`, the check `bin-energy`, 55 cases. A copy of the
+`tests/energy.test.sh`, the check `bin-energy`, 57 cases. A copy of the
 script whose charger file (`ADP0/online`) and `charge-mode` point into the
 sandbox runs against stubs for everything it talks to, so no real setting
-changes: busctl answers for the profile, swaymsg for the outputs, fuzzel picks
-rows by pattern, gdbus plays a list of bus events and waits after each until
-the watcher has acted. Covered: the three keys' defaults, every value and the
-refused ones, the state directory and its fallback; the refresh rate for each
-profile and fixed value, the rounding of 59.95 Hz, eDP-1 or eDP-2, inactive
-panels, no Sway, malformed outputs, no profile daemon; idle suspend on and
-off, on the charger, during a backup, a download or restic, with no or a
-garbled charger file; the watcher's unplug (keep-awake off, the focus bar
-switched on and only then switched back), noise on the bus, a second unplug
-event, starting on battery, dead monitors; every menu row and choice, Escape
-at each level, no fuzzel, no charge-mode; and the package's script and PATH.
-The VM test `hardware-power` sets the tuned profiles through the real menu,
-in an active session, and runs the watcher through charger changes.
+changes: busctl answers for the profile, swaymsg for the outputs, fuzzel
+picks rows by pattern, gdbus plays a list of bus events and waits after each
+until the watcher has acted. Covered: the three keys' defaults, every value
+and the refused ones, the state directory and its fallback, two sets at once
+for 200 rounds, gets during sets; the refresh rate for each profile and fixed
+value, the rounding of 59.95 Hz, eDP-1 or eDP-2, inactive panels, no Sway,
+malformed outputs, no profile daemon; idle suspend on and off, on the
+charger, during a backup, a download or restic, with no or a garbled charger
+file; the watcher's unplug (keep-awake off, the focus bar switched on and
+only then switched back), noise on the bus, a second unplug event, starting
+on battery, dead monitors; every menu row and choice, Escape at each level,
+no fuzzel, no charge-mode; and the package's script and PATH. The VM test
+`hardware-power` sets the tuned profiles through the real menu, in an active
+session, and runs the watcher through charger changes.
 
 ## Findings that are not fixed
 
@@ -76,7 +82,3 @@ Kept as Fedora has them, for the port to Odin (Phase 13):
 - Switching the profile needs an active session (tuned-ppd's polkit rule):
   `energy menu` from an `su` shell or a user unit is refused with
   `Unauthorized`, and the menu exits 1. From the Sway session it works.
-- `energy set` writes the state with a plain redirect, so two sets of one
-  key at the same instant can tear the file, as `charge-mode-apply` could
-  before its fix. A torn value reads as none of the three: `refresh` then
-  counts as auto, `idle_suspend` and `focus_bar` as off.

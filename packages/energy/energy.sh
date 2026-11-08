@@ -49,12 +49,19 @@ declare -A DEFAULT=([refresh]=auto [idle_suspend]=on [focus_bar]=off)
 notify() { command -v notify-send >/dev/null 2>&1 && notify-send -a "Energy" "$@"; }
 
 get() { cat "$STATE_DIR/$1" 2>/dev/null || printf '%s\n' "${DEFAULT[$1]}"; }
+# Saved through a rename, so two sets at once leave one whole value, and a
+# get never reads a file halfway written.
 set_key() {
+  local tmp
   case "$1:$2" in
     refresh:auto|refresh:120|refresh:60|idle_suspend:on|idle_suspend:off|focus_bar:on|focus_bar:off) ;;
     *) echo "energy: '$2' is not a value for '$1'" >&2; return 2 ;;
   esac
-  mkdir -p "$STATE_DIR" && printf '%s\n' "$2" >"$STATE_DIR/$1"
+  mkdir -p "$STATE_DIR" && tmp=$(mktemp "$STATE_DIR/.$1.XXXXXX") || return 1
+  if ! { printf '%s\n' "$2" >"$tmp" && mv -f -- "$tmp" "$STATE_DIR/$1"; }; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 on_battery() { [ "$(cat /sys/class/power_supply/ADP0/online 2>/dev/null)" = 0 ]; }

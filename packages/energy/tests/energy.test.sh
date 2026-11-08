@@ -236,6 +236,62 @@ test_an_empty_state_file_reads_as_empty() {
 	[[ "$out" == "" ]] || { echo "  got '$out'"; return 1; }
 }
 
+# Two sets of one key at once leave one whole value, and nothing else in
+# the state directory. auto and 60 differ in length, so a torn write
+# shows: 60 written over auto is "60\no".
+test_two_sets_at_once_leave_one_value() {
+	fresh
+	local round got
+	for ((round = 1; round <= 200; round++)); do
+		env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" set refresh auto &
+		env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" set refresh 60 &
+		wait
+		got="$(
+			cat "$STATE_HOME/energy/refresh"
+			echo x
+		)"
+		got="${got%x}"
+		[[ "$got" == $'auto\n' || "$got" == $'60\n' ]] || {
+			echo "  round $round saved '$got'"
+			return 1
+		}
+	done
+	got="$(find "$STATE_HOME/energy" -mindepth 1 ! -name refresh)"
+	[[ -z "$got" ]] || {
+		echo "  left in the state directory: $got"
+		return 1
+	}
+}
+
+# A get while a set of the same key runs reads the old value or the new
+# one, never an empty file, as the watcher's and swayidle's reads do.
+test_a_get_during_sets_never_reads_empty() {
+	fresh
+	set_state refresh auto
+	local stop="$scratch/stop-writer" round got bad=""
+	rm -f -- "$stop"
+	(
+		while [[ ! -e "$stop" ]]; do
+			env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" set refresh 60
+			env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" set refresh auto
+		done
+	) &
+	local writer=$!
+	for ((round = 1; round <= 600; round++)); do
+		got="$(env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" get refresh)"
+		if [[ "$got" != auto && "$got" != 60 ]]; then
+			bad="read $round got '$got'"
+			break
+		fi
+	done
+	: >"$stop"
+	wait "$writer" || true
+	[[ -z "$bad" ]] || {
+		echo "  $bad"
+		return 1
+	}
+}
+
 test_set_into_an_unwritable_state_fails() {
 	((EUID != 0)) || return 0
 	fresh
@@ -715,9 +771,9 @@ test_package_path_holds_the_tools() {
 	line="$(grep -m1 '^export PATH=' "$PACKAGE/bin/energy")"
 	path="${line#export PATH=\"}"
 	path="${path%:\$PATH\"}"
-	capture env -i PATH="$path" "$BASH" -c 'command -v awk busctl cat gdbus jq mkdir notify-send pgrep setsid systemctl'
+	capture env -i PATH="$path" "$BASH" -c 'command -v awk busctl cat gdbus jq mkdir mktemp mv notify-send pgrep rm setsid systemctl'
 	expect_status 0
-	expect_lines 10
+	expect_lines 13
 }
 
 tests=(
@@ -727,6 +783,8 @@ tests=(
 	test_set_without_a_value_fails
 	test_get_of_an_unknown_key_dies_unbound
 	test_an_empty_state_file_reads_as_empty
+	test_two_sets_at_once_leave_one_value
+	test_a_get_during_sets_never_reads_empty
 	test_set_into_an_unwritable_state_fails
 	test_state_falls_back_to_home
 	test_auto_on_power_saver_is_60
