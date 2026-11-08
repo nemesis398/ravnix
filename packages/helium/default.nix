@@ -22,7 +22,9 @@
 # With `widevineCdm` set, Helium plays DRM-protected media (Apple Music in a
 # web app streams full tracks only under DRM). Chromium looks for the library
 # through a hint file in the profile, which the wrapper writes at every start;
-# see README.md.
+# see README.md. The wrapper runs under `set -e` and the hint is an
+# optimization, not a precondition: a configuration directory that cannot be
+# written does not stop the browser (`|| true`, tests/desktop/helium.nix).
 {
   lib,
   stdenvNoCC,
@@ -171,7 +173,7 @@ let
   # Where Chromium looks for a Widevine library it did not bundle: a hint file
   # in the profile, naming the directory.
   widevineHint = lib.optionalString (widevineCdm != null) ''
-    --run 'hint="''${XDG_CONFIG_HOME:-$HOME/.config}/net.imput.helium/WidevineCdm"; mkdir -p "$hint" && printf "{\"Path\":\"%s\"}" "${widevineCdm}/share/google/chrome/WidevineCdm" > "$hint/latest-component-updated-widevine-cdm"' \
+    --run 'hint="''${XDG_CONFIG_HOME:-$HOME/.config}/net.imput.helium/WidevineCdm"; { mkdir -p "$hint" && printf "{\"Path\":\"%s\"}" "${widevineCdm}/share/google/chrome/WidevineCdm" > "$hint/latest-component-updated-widevine-cdm"; } 2>/dev/null || true' \
   '';
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
@@ -293,7 +295,13 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     description = "Chromium-based web browser from imputnet, with uBlock Origin built in";
     homepage = "https://helium.computer";
     changelog = "https://github.com/imputnet/helium-linux/releases/tag/${finalAttrs.version}";
-    license = lib.licenses.gpl3Only;
+    # Helium's own code is GPL-3.0; what it takes from ungoogled-chromium is
+    # BSD-3-Clause (helium-linux, License). Chromium's other licenses are not
+    # listed here.
+    license = with lib.licenses; [
+      gpl3Only
+      bsd3
+    ];
     sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
     platforms = [ "x86_64-linux" ];
     mainProgram = "helium";

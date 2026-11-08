@@ -40,7 +40,10 @@ let
 in
 pkgs.runCommand "desktop-helium"
   {
-    nativeBuildInputs = [ pkgs.gnugrep ];
+    nativeBuildInputs = [
+      pkgs.gnugrep
+      pkgs.gnused
+    ];
   }
   ''
     failed=0
@@ -83,6 +86,15 @@ pkgs.runCommand "desktop-helium"
     h=$TMPDIR/config-drm/net.imput.helium/WidevineCdm/latest-component-updated-widevine-cdm
     [ -e "$h" ] || fail "the wrapper wrote no hint file at $h"
     grep -q '"Path":"/nix/store/.*-widevine-cdm-.*/share/google/chrome/WidevineCdm"' "$h" || fail "the hint file names no library: $(cat "$h" 2>/dev/null)"
+
+    # The hint is an optimization, not a precondition: a configuration
+    # directory that cannot be written (read-only, or full) must not stop the
+    # browser from starting. The wrapper runs under `set -e`.
+    mkdir -p "$TMPDIR/ro"; chmod a-w "$TMPDIR/ro"
+    got=$(XDG_CONFIG_HOME=$TMPDIR/ro HOME=$TMPDIR/ro ${withDrm}/bin/helium --version 2>&1 | head -1)
+    [ "$got" = "Helium ${plain.version} (Chromium $(${plain}/bin/helium --version | sed -n 's/.*Chromium \([0-9.]*\))/\1/p'))" ] \
+      || fail "Helium with the library does not start when its configuration directory cannot be written: '$got'"
+    chmod u+w "$TMPDIR/ro"
 
     [ "$failed" = 0 ] && touch $out || exit 1
   ''
