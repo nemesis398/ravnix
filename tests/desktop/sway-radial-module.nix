@@ -27,6 +27,23 @@ let
   homeOf = h: h.config.home-manager.users.${user};
   unitOf = h: (homeOf h).systemd.user.services.sway-radial;
   menuOf = h: toString (homeOf h).xdg.configFile."sway-radial/menu.toml".source;
+  # The file that home-manager links to ~/.config/sway-radial/menu.toml, which is
+  # the file the unit reads: sourceStorePath is what its files.nix links, after
+  # a path of the flake has been copied into the store. Reading it is what fails
+  # in a pure evaluation for a string that names a file outside the store.
+  linkedMenu =
+    h:
+    (homeOf h).lib.file.sourceStorePath (
+      lib.findFirst (f: f.target == ".config/sway-radial/menu.toml") (throw
+        "home-manager links no .config/sway-radial/menu.toml"
+      ) (lib.attrValues (homeOf h).home.file)
+    );
+  # What the host refuses to build, by the option it names.
+  refusals =
+    h:
+    map (a: a.message) (
+      lib.filter (a: !a.assertion && lib.hasInfix "ravnix.desktop.radial.menu" a.message) h.config.assertions
+    );
   inStore = path: lib.hasPrefix "/nix/store/" path;
   hash = builtins.hashFile "sha256";
 
@@ -36,7 +53,12 @@ let
   plain = host [ ];
   themed = host [ { ravnix.theme.accent = lib.mkForce "teal"; } ];
   mine = host [ { ravnix.desktop.radial.menu = lib.mkForce ownMenu; } ];
-  asString = host [ { ravnix.desktop.radial.menu = lib.mkForce "/home/alice/radial/menu.toml"; } ];
+  # A file outside the store, named by a string: a flake evaluates purely and
+  # cannot read it, and home-manager would stop at the copy with a message about
+  # an absolute path.
+  outside = host [ { ravnix.desktop.radial.menu = lib.mkForce "/home/alice/radial/menu.toml"; } ];
+  # A path in the store, named by a string: nothing to copy, so it is fine.
+  inTheStore = host [ { ravnix.desktop.radial.menu = lib.mkForce "${package}/lib/sway-radial/menu.toml"; } ];
   bad =
     value:
     (builtins.tryEval (
@@ -73,10 +95,29 @@ let
     ++ lib.optional (
       inStore (menuOf mine) && !lib.hasSuffix "menu.toml" (menuOf mine)
     ) "the menu lost its name: ${menuOf mine}"
-    # An absolute path as a string stays one: the file is the user's, outside the flake.
+    # The file the unit reads, not an intermediate value: for ravnix's menu it
+    # is the package's file, for a path of the flake (this check is itself
+    # evaluated purely, as a flake output, and ownMenu is such a path) the copy
+    # in the store with the same content, and nothing is refused.
     ++ lib.optional (
-      menuOf asString != "/home/alice/radial/menu.toml"
-    ) "a string menu path changed: ${menuOf asString}"
+      linkedMenu plain != "${package}/lib/sway-radial/menu.toml"
+    ) "the menu the unit reads by default is not the package's: ${linkedMenu plain}"
+    ++ lib.optional (!inStore (linkedMenu mine)) "the menu the unit reads is not in the store: ${linkedMenu mine}"
+    ++ lib.optional (
+      inStore (linkedMenu mine) && builtins.readFile (linkedMenu mine) != builtins.readFile ownMenu
+    ) "the menu the unit reads is not the user's file"
+    ++ lib.optional (refusals mine != [ ]) "a path of the flake is refused: ${toString (refusals mine)}"
+    ++ lib.optional (refusals plain != [ ]) "the default menu is refused: ${toString (refusals plain)}"
+    # A string that names a path in the store is the store's file.
+    ++ lib.optional (
+      linkedMenu inTheStore != "${package}/lib/sway-radial/menu.toml"
+    ) "a store path as a string changed: ${linkedMenu inTheStore}"
+    ++ lib.optional (refusals inTheStore != [ ]) "a store path as a string is refused: ${toString (refusals inTheStore)}"
+    # A string that names a file outside the store is refused by name, before
+    # home-manager reaches for it.
+    ++ lib.optional (
+      lib.length (refusals outside) != 1
+    ) "a menu outside the store is not refused once: ${toString (refusals outside)}"
     ++ lib.optional (bad { menu = "menu.toml"; }) "a relative menu path is accepted"
     ++ lib.optional (bad { menu = 5; }) "a number is accepted as the menu"
     ++ lib.optional (bad { menu = [ ownMenu ]; }) "a list is accepted as the menu"

@@ -46,8 +46,28 @@
 # The layer surface that carries the ring covers the whole output and has
 # nothing drawn on it outside the ring; it has to be clear, or the ring would
 # hide the screen. That is the absence of a surface and not a translucent one.
-{ ... }:
+{ config, lib, ... }:
+let
+  chosen = config.ravnix.desktop.radial.menu;
+in
 {
+  # A path of the flake is copied into the store and a path in the store is
+  # there already. A string that names any other file cannot be read: a flake
+  # evaluates purely, so home-manager's copy of it stops with "access to
+  # absolute path is forbidden", which does not say which option is wrong. (And
+  # an impure evaluation would only copy a snapshot, not link the live file.)
+  assertions = [
+    {
+      assertion = chosen == null || builtins.isPath chosen || lib.hasPrefix "${builtins.storeDir}/" (toString chosen);
+      message = ''
+        ravnix.desktop.radial.menu is ${toString chosen}, a file outside the Nix store named by a string.
+        Set it to a path of your flake instead (./radial/menu.toml) or to a path in the store.
+        A flake evaluates purely and cannot read that file, and a copy would be a snapshot, so a
+        change of the menu is a rebuild.
+      '';
+    }
+  ];
+
   home-manager.sharedModules = [
     (
       {
