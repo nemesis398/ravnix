@@ -245,6 +245,14 @@
         key = "ravnix/nixosModules.server";
         imports = [ (import ./hosts/server { inherit self; }) ];
       };
+      # The server as a virtual machine, imported beside the server shape:
+      # one disk layout and boot for its three images (qcow2 for Proxmox,
+      # VMDK, OVA, from system.build.images), and the home volume as a
+      # second disk (hosts/server/images.nix).
+      nixosModules.server-vm = {
+        key = "ravnix/nixosModules.server-vm";
+        imports = [ ./hosts/server/images.nix ];
+      };
 
       packages.${system} =
         # A tool named claude-code is an error of lib/ravnix-packages.nix, which
