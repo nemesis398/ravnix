@@ -74,14 +74,20 @@
 #   - an IdentityFile from any later block that matches these hosts (a
 #     `Host *` of the user's own): ssh adds every IdentityFile it finds, and
 #     IdentitiesOnly lets it offer each one. No ravnix module sets one.
-#   - what the command line overrides: -F, -o IdentityAgent=, GIT_SSH_COMMAND.
+#   - what the command line overrides: -F, which leaves out ~/.ssh/config and
+#     its Include; -o IdentityAgent= only together with -o IdentitiesOnly=no,
+#     and with -o ProxyCommand=none while the laptop is away (alone it fails
+#     closed: the second block's IdentitiesOnly yes and its security-key
+#     IdentityFiles still apply, and the first block refuses first while the
+#     laptop is away); GIT_SSH_COMMAND, which carries either of those.
 #
-# Except for the IdentityFile, each of these ends at the agent of
-# SSH_AUTH_SOCK (unless the command line names another), which on the server
-# is rbw's: modules/common/rbw.nix sets it in every bash shell of the user,
-# through ~/.bashrc, and in the user manager. That agent serves every SSH key
-# item of the vault without a touch, so if the vault holds a key the git host
-# accepts, such a command logs in without one while the vault is unlocked.
+# Except for the IdentityFile, each of these reaches the agent of
+# SSH_AUTH_SOCK (or the one -o IdentityAgent= names), which on the server is
+# rbw's: modules/common/rbw.nix puts it into the session variables, which
+# ~/.bashrc reads in every bash shell of the user (modules/common/bash.nix),
+# and into the user manager. That agent serves every SSH key item of the
+# vault without a touch, so if the vault holds a key the git host accepts,
+# such a command logs in without one while the vault is unlocked.
 # modules/workbench/ssh-agent.nix says so for the server, and so does
 # "The vault and the keys" in modules/workbench/README.md.
 #
