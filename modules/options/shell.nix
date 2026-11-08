@@ -61,7 +61,9 @@ in
         Environment variables that `claude` gets from your Bitwarden through
         rbw: the variable's name (capital letters, digits and underscores; not
         one the shell or the loader reads, such as PATH or BASH_ENV), and the
-        name of the item whose password is its value. When you run `claude`
+        name or id of the Bitwarden item whose password is its value (rbw
+        takes either; an id is the safer one, because renaming the item
+        never breaks it). When you run `claude`
         in an interactive bash, a function reads the items and starts Claude
         Code with them in its environment, so Claude Code and the programs it
         starts see them and nothing else does. `ai-unlock` unlocks the
