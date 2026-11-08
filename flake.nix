@@ -210,8 +210,8 @@
         ];
       };
 
-      # The laptop shape, huginn: the common module, the desktop, the disk
-      # layout of hosts/laptop/disko.nix and the boot. A private flake
+      # The laptop shape, huginn: the common module, the desktop, the glue,
+      # the disk layout of hosts/laptop/disko.nix and the boot. A private flake
       # imports it with the hardware module of its laptop, such as the one
       # below. Each carries a key, so a second import adds nothing: the
       # common module that the shape and the desktop both bring is loaded
@@ -221,6 +221,7 @@
         imports = [
           (import ./hosts/laptop { inherit self inputs; })
           self.nixosModules.desktop
+          self.nixosModules.glue
         ];
       };
       # The Lenovo IdeaPad Pro 5 16AHP9: the 780M, PRIME offload to the RTX
@@ -236,9 +237,9 @@
         key = "ravnix/nixosModules.workbench";
         imports = [ (import ./modules/workbench { inherit self; }) ];
       };
-      # The server shape, muninn: the common module and the workbench, an ssh
-      # daemon that takes keys only, and Nix with flakes. A private flake adds
-      # how it boots (hosts/server/default.nix).
+      # The server shape, muninn: the common module, the workbench and the
+      # glue, an ssh daemon that takes keys only, and Nix with flakes. A
+      # private flake adds how it boots (hosts/server/default.nix).
       nixosModules.server = {
         key = "ravnix/nixosModules.server";
         imports = [ (import ./hosts/server { inherit self; }) ];

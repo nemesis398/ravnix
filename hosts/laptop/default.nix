@@ -2,10 +2,11 @@
 # The common module (shell, user, home-manager), the disk layout of
 # ./disko.nix, the boot, ./hide-other-disks.nix, which keeps the other
 # internal disks out of udisks, and ./zram.nix, the only swap. flake.nix
-# adds nixosModules.desktop beside this file in nixosModules.laptop. A
-# laptop's hardware is a module of its own under modules/hardware/, which
-# the private flake imports beside this one, so a second model is a new
-# directory there and not a new shape:
+# adds nixosModules.desktop and nixosModules.glue beside this file in
+# nixosModules.laptop; the glue takes its laptop end from ravnix.shape, set
+# here. A laptop's hardware is a module of its own under modules/hardware/,
+# which the private flake imports beside this one, so a second model is a
+# new directory there and not a new shape:
 #
 #   modules = [
 #     ravnix.nixosModules.laptop
@@ -46,6 +47,8 @@ in
     ./hide-other-disks.nix
     ./zram.nix
   ];
+
+  ravnix.shape = "laptop";
 
   # The file systems, the swap on disk (none; zram is the swap) and the
   # initrd's LUKS device come from the layout, by GPT label and mapper name,

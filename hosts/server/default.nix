@@ -1,5 +1,6 @@
 # The server shape, muninn: what every ravnix server is, whatever it runs on.
-# The common module (shell, user, home-manager) and the workbench on top, an
+# The common module (shell, user, home-manager), the workbench and the glue
+# on top (the glue takes its server end from ravnix.shape, set here), an
 # ssh daemon that takes keys only, and Nix with flakes, so the host can build
 # and switch itself. How it boots is the business of its image (a Proxmox VM,
 # an OCI image), which the private flake or Task 4.2 and 4.4 add beside this
@@ -23,7 +24,10 @@
   imports = [
     self.nixosModules.common
     self.nixosModules.workbench
+    self.nixosModules.glue
   ];
+
+  ravnix.shape = "server";
 
   services.openssh = {
     enable = true;
