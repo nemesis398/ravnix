@@ -263,8 +263,10 @@ default_border none
 default_floating_border pixel 1
 font pango:@font@ @fontSize@
 
-# Cursor theme: Catppuccin Mocha in the accent, 24 px.
-seat * xcursor_theme @cursorTheme@ 24
+# Cursor theme and size: home-manager's (home.pointerCursor, from the theme
+# module), the same pair its XCURSOR_THEME and XCURSOR_SIZE carry to the
+# applications.
+seat * xcursor_theme @cursorTheme@ @cursorSize@
 seat * hide_cursor when-typing enable
 # Also hide the cursor after 8s idle (clean empty desktop)
 seat * hide_cursor 8000

@@ -58,7 +58,6 @@ let
   inherit (config.ravnix.theme)
     palette
     roles
-    accent
     font
     fontSize
     ;
@@ -229,9 +228,13 @@ let
     w: "workspace ${toString w.number} output ${lib.concatMapStringsSep " " quote w.outputs}"
   ) cfg.workspaceOutputs;
 
-  swayConfig = fill {
+  # The config, for the cursor home-manager has (home.pointerCursor): the one
+  # source of the theme and the size, which the theme module sets and which
+  # reach the processes as XCURSOR_THEME and XCURSOR_SIZE in hm-session-vars.sh.
+  swayConfig = cursor: fill {
     palette = paletteBlock;
-    cursorTheme = "catppuccin-mocha-${accent}-cursors";
+    cursorTheme = cursor.name;
+    cursorSize = toString cursor.size;
     inherit font;
     fontSize = toString fontSize.terminal;
     terminalMain = cfg.terminal.main;
@@ -280,11 +283,12 @@ let
     {
       fragments,
       xkb,
+      cursor,
     }:
     pkgs.runCommand "sway-config"
       {
         nativeBuildInputs = [ swayPackage ];
-        config = pkgs.writeText "sway-config" swayConfig;
+        config = pkgs.writeText "sway-config" (swayConfig cursor);
       }
       ''
         export HOME=$TMPDIR/home XDG_RUNTIME_DIR=$TMPDIR/run
@@ -389,10 +393,6 @@ in
         export QT_QPA_PLATFORM="wayland;xcb"
         export ELECTRON_OZONE_PLATFORM_HINT=auto
         export _JAVA_AWT_WM_NONREPARENTING=1
-        # The cursor of the session, the same as home-manager's and the config's
-        # `seat * xcursor_theme`; set here too for a host without the file.
-        export XCURSOR_THEME=catppuccin-mocha-${accent}-cursors
-        export XCURSOR_SIZE=24
         ${lib.optionalString (cfg.gpu.primary != null) ''
           # Render on the GPU every connector hangs off. wlroots splits this
           # variable at every colon, so the path must have none, and the
@@ -428,9 +428,9 @@ in
         lxqt.lxqt-policykit
       ]);
 
-    # The accent of the session is a user's choice, so the cursor theme the
-    # config names must be installed with it; gtk-qt.nix does that for the
-    # accent of ravnix.theme.
+    # The cursor theme the config names is home-manager's (home.pointerCursor),
+    # so it is installed with it: gtk-qt.nix sets both, for the accent of
+    # ravnix.theme.
 
     # sway-game-mode holds Sway in mode "game" while a game has focus, so the
     # mouse's side buttons and the gesture keys reach the game. A unit of the
@@ -459,6 +459,11 @@ in
       (
         { config, ... }:
         let
+          cursor =
+            if config.home.pointerCursor == null then
+              throw "modules/desktop/sway.nix: home.pointerCursor is null; the theme module sets it with gtk or qt on, and Sway's cursor is taken from it"
+            else
+              config.home.pointerCursor;
           fragments = lib.mapAttrs (_: f: f.source) (
             lib.filterAttrs (
               name: _: lib.hasPrefix "sway/config.d/" name && lib.hasSuffix ".conf" name
@@ -474,7 +479,7 @@ in
           xdg.configFile = {
             "sway/config" = {
               source = checkedConfig {
-                inherit fragments;
+                inherit fragments cursor;
                 xkb = xkbFiles;
               };
               # Reload a running Sway when the config changed.

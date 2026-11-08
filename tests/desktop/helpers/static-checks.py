@@ -126,6 +126,15 @@ def main():
         for name, hex_ in palette.items():
             expect(re.search(rf"^set \${name} {re.escape(hex_)}$", sway, re.M), label(f"sway/config does not set ${name} to {hex_}"))
         expect(re.search(rf"^set \$accent {re.escape(accent)}$", sway, re.M), label(f"sway/config does not set $accent to {accent}"))
+        # The cursor: home-manager's, which is the one source (its theme and size
+        # reach the processes through hm-session-vars.sh, and Sway's own seat
+        # setting is the same pair).
+        cursor = v["cursor"]
+        expect(
+            re.search(rf"^seat \* xcursor_theme {re.escape(cursor['name'])} {cursor['size']}$", sway, re.M),
+            label(f"sway/config does not take `seat * xcursor_theme` from home.pointerCursor ({cursor['name']} {cursor['size']})"),
+        )
+        expect(cursor["name"] == f"catppuccin-mocha-{variant}-cursors", label(f"home.pointerCursor.name is {cursor['name']}, not the Catppuccin cursor of the accent"))
         expect(re.search(r"^default_floating_border pixel 1$", sway, re.M), label("row Borders: sway/config lacks `default_floating_border pixel 1`"))
         expect(re.search(r"^default_border none$", sway, re.M), label("row Borders: tiled windows have a border"))
         expect(re.search(r"^client\.focused\s+\$accent\s+\$accent\s", sway, re.M), label("row Accent: the focused floating window is not framed in $accent"))
@@ -271,6 +280,16 @@ def main():
             expect(value.isdigit() and 0 <= int(value) <= 15, f"the tuigreet theme names {key} by {value}, not by a palette index")
         expect(pairs.get("border") == "13" and pairs.get("prompt") == "13", "tuigreet's frame and prompt are not the accent (index 13)")
         expect(pairs.get("container") == "0", "tuigreet's screen is not Base (index 0)")
+
+    # A user who changes the cursor in home-manager gets it in Sway's seat too.
+    big = args["bigCursor"]
+    expect(
+        re.search(rf"^seat \* xcursor_theme {re.escape(big['name'])} {big['size']}$", read(big["sway"]), re.M),
+        f"home.pointerCursor is {big['name']} {big['size']}, and sway/config does not follow it",
+    )
+    # The session sets no cursor variable of its own: home-manager's file does.
+    for name, session in (("the default host", args["noGpuSession"]), ("huginn", args["huginn"]["session"])):
+        expect(not re.search(r"^\s*(export\s+)?XCURSOR_\w+=", session, re.M), f"{name}: the session's own commands set XCURSOR_*, a second source next to home-manager's")
 
     # The GPU seam, in the host that sets it.
     gpu = args["gpu"]

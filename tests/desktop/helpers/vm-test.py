@@ -180,12 +180,24 @@ assert "WLR_DRM_DEVICES=/dev/dri/primary-gpu" in sway_env.splitlines(), "Sway di
 # wrapper reads the file itself. Qt finds its platform theme through one of
 # them; another is a variable this test gave home-manager.
 hm_file = f"/etc/profiles/per-user/{USER}/etc/profile.d/hm-session-vars.sh"
-hm_qt = machine.succeed(f"sed -n 's/^export QT_QPA_PLATFORMTHEME=\"\\(.*\\)\"$/\\1/p' {hm_file}").strip()
-assert hm_qt, f"{hm_file} sets no QT_QPA_PLATFORMTHEME"
-swaymsg("exec", 'echo "qt=$QT_QPA_PLATFORMTHEME test=$RAVNIX_TEST_HM_VAR" > /tmp/hm-vars.txt')
+
+
+def hm_var(name):
+    value = machine.succeed(f"sed -n 's/^export {name}=\"\\(.*\\)\"$/\\1/p' {hm_file}").strip()
+    assert value, f"{hm_file} sets no {name}"
+    return value
+
+
+hm_qt = hm_var("QT_QPA_PLATFORMTHEME")
+# The cursor is home-manager's alone (the session sets no XCURSOR_* of its
+# own), and Sway's own seat takes the same theme and size from the same place.
+hm_cursor = f"{hm_var('XCURSOR_THEME')} {hm_var('XCURSOR_SIZE')}"
+machine.succeed(f"grep -qx 'seat \\* xcursor_theme {hm_cursor}' /home/{USER}/.config/sway/config")
+swaymsg("exec", 'echo "qt=$QT_QPA_PLATFORMTHEME cursor=$XCURSOR_THEME $XCURSOR_SIZE test=$RAVNIX_TEST_HM_VAR" > /tmp/hm-vars.txt')
 wait_for("the variables of a process Sway started", lambda: machine.execute("test -s /tmp/hm-vars.txt")[0] == 0, 20)
 seen = machine.succeed("cat /tmp/hm-vars.txt").strip()
-assert seen == f"qt={hm_qt} test=from-home-manager", f"a process started by Sway sees '{seen}', not the variables of home-manager (qt={hm_qt})"
+expected = f"qt={hm_qt} cursor={hm_cursor} test=from-home-manager"
+assert seen == expected, f"a process started by Sway sees '{seen}', not the variables of home-manager ('{expected}')"
 
 # The login shell can bring those variables along by itself (home-manager's
 # bash writes them into the profile), which would hide a wrapper that does not
@@ -195,10 +207,10 @@ bare = machine.succeed("dirname $(readlink -f $(command -v sway))").strip() + "/
 machine.succeed(f"sed -n '/XDG_CURRENT_DESKTOP=/,/_SWAY_WRAPPER_ALREADY_EXECUTED=1/p' {bare} > /tmp/session-commands.sh")
 machine.succeed("test $(wc -l < /tmp/session-commands.sh) -gt 3")
 machine.succeed(
-    "printf '%s\\n' '. /tmp/session-commands.sh' 'echo \"qt=$QT_QPA_PLATFORMTHEME test=$RAVNIX_TEST_HM_VAR\"' > /tmp/probe.sh"
+    "printf '%s\\n' '. /tmp/session-commands.sh' 'echo \"qt=$QT_QPA_PLATFORMTHEME cursor=$XCURSOR_THEME $XCURSOR_SIZE test=$RAVNIX_TEST_HM_VAR\"' > /tmp/probe.sh"
 )
 bare_seen = machine.succeed(f"su {USER} -c 'env -i HOME=/home/{USER} USER={USER} PATH=/run/current-system/sw/bin bash -e /tmp/probe.sh'").strip()
-assert bare_seen == f"qt={hm_qt} test=from-home-manager", f"the Sway wrapper's session commands leave '{bare_seen}' in an empty environment, not the variables of home-manager"
+assert bare_seen == expected, f"the Sway wrapper's session commands leave '{bare_seen}' in an empty environment, not the variables of home-manager ('{expected}')"
 
 # Waybar has been up long enough to have failed on a bad config or stylesheet.
 machine.sleep(5)

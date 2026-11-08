@@ -166,8 +166,23 @@ let
     }
   ];
   badToken = hostOf [ { ravnix.desktop.terminal.main = "two\nlines"; } ];
+  # home-manager's cursor is the one source: a user who changes it there gets the
+  # same theme and size in Sway's `seat * xcursor_theme`.
+  bigCursor = hostOf [
+    {
+      home-manager.sharedModules = [
+        {
+          home.pointerCursor = {
+            size = lib.mkForce 32;
+            name = lib.mkForce "Example-Cursors";
+          };
+        }
+      ];
+    }
+  ];
 
   homeOf = host: host.config.home-manager.users.${user};
+  cursorOf = host: (homeOf host).home.pointerCursor;
   files = host: (homeOf host).xdg.configFile;
   source = host: name: "${(files host).${name}.source}";
   scriptsOf =
@@ -178,6 +193,9 @@ let
       )
     );
   variant = host: {
+    cursor = {
+      inherit (cursorOf host) name size;
+    };
     sway = source host "sway/config";
     swayLaptop = source host "sway/config.d/50-laptop.conf";
     swaynag = source host "swaynag/config";
@@ -216,6 +234,10 @@ let
         udev = gpu.config.services.udev.extraRules;
       };
       noGpuSession = mauve.config.programs.sway.extraSessionCommands;
+      bigCursor = {
+        sway = source bigCursor "sway/config";
+        inherit (cursorOf bigCursor) name size;
+      };
       # huginn: the laptop shape with the 16AHP9 module. Nobody sets
       # ravnix.desktop.gpu.primary; it comes from the PRIME bus id.
       huginn = {
