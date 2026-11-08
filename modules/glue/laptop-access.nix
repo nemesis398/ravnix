@@ -43,8 +43,8 @@
 #
 # The server end is the command and nothing else: no daemon, no unit, no
 # port. It logs in with the key of its own that identityFile names, never
-# with the YubiKey (modules/glue/sk-agent.nix) and never with Bitwarden's
-# agent.
+# with the YubiKey (modules/glue/sk-agent.nix) and never with rbw's agent
+# (modules/common/rbw.nix), which SSH_AUTH_SOCK names.
 #
 # A host without the values does nothing: the laptop without a public key
 # runs no sshd for this, the server without an identity file gets no command.

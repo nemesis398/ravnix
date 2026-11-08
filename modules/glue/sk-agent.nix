@@ -67,13 +67,23 @@
 #
 # What still gets past both blocks, since ssh matches the name it was given
 # and no other:
-#   - the name with a trailing dot (github.com.), and an ssh alias whose
-#     HostName is a listed host (`Host gh` with `HostName github.com`): list
-#     such a name in ravnix.skAgent.hosts too, or do not write one;
+#   - the name with a trailing dot (github.com.), an address of the host,
+#     and an ssh alias whose HostName is a listed host (`Host gh` with
+#     `HostName github.com`): list such a name or address in
+#     ravnix.skAgent.hosts too, or do not write one;
 #   - an IdentityFile from any later block that matches these hosts (a
 #     `Host *` of the user's own): ssh adds every IdentityFile it finds, and
 #     IdentitiesOnly lets it offer each one. No ravnix module sets one.
 #   - what the command line overrides: -F, -o IdentityAgent=, GIT_SSH_COMMAND.
+#
+# Except for the IdentityFile, each of these ends at the agent of
+# SSH_AUTH_SOCK (unless the command line names another), which on the server
+# is rbw's: modules/common/rbw.nix sets it in every bash shell of the user,
+# through ~/.bashrc, and in the user manager. That agent serves every SSH key
+# item of the vault without a touch, so if the vault holds a key the git host
+# accepts, such a command logs in without one while the vault is unlocked.
+# modules/workbench/ssh-agent.nix says so for the server, and so does
+# "The vault and the keys" in modules/workbench/README.md.
 #
 # Left as it is: the rest of ssh's configuration, and every other host. What
 # a signature needs, a touch, is asked for by the key's light alone: the
