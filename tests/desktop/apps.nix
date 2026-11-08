@@ -266,6 +266,31 @@ let
 
   evalFailures =
     lib.optional config.services.flatpak.enable "Flatpak is enabled"
+    # The theme module's GTK and Qt part (modules/theme/gtk-qt.nix) applies
+    # where a host turns gtk and qt on. This module installs the first GTK and
+    # Qt applications (Blanket, Prism Launcher, the Nextcloud client), so it
+    # owns the switch.
+    ++ lib.optional (
+      !hm.gtk.enable
+    ) "home-manager gtk.enable is off: the GTK theme, icons and cursor do not apply"
+    ++ lib.optional (!hm.qt.enable) "home-manager qt.enable is off: the Qt theme does not apply"
+    ++
+      lib.optional (hm.qt.platformTheme.name or null != "qtct")
+        "Qt's platform theme is ${builtins.toJSON (hm.qt.platformTheme.name or null)}, not qtct"
+    ++
+      lib.optional
+        (hm.gtk.theme.name or null != "catppuccin-mocha-${config.ravnix.theme.accent}-standard")
+        "the GTK theme is ${
+          builtins.toJSON (hm.gtk.theme.name or null)
+        }, not Catppuccin Mocha in the accent"
+    ++ lib.optional (
+      hm.dconf.settings."org/gnome/desktop/interface".icon-theme or null != "Papirus-Dark"
+    ) "libadwaita's interface settings do not name the Papirus-Dark icons"
+    # HM's dconf settings reach the user's database only where NixOS runs the
+    # dconf service.
+    ++ lib.optional (
+      !config.programs.dconf.enable
+    ) "programs.dconf is off: the dconf settings of the theme never apply"
     ++ lib.optional (
       host.options.ravnix.apps.webapps ? vaultwarden
     ) "ravnix.apps.webapps.vaultwarden exists, but the Vaultwarden web app is dropped"

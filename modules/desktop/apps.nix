@@ -66,21 +66,44 @@
 # it once, at helium://extensions with developer mode on, "Load unpacked"; the
 # path stays the same, so the choice survives a rebuild.
 #
+# --- GTK and Qt: the switch is here ------------------------------------------
+# The theme module (modules/theme/gtk-qt.nix) styles GTK and Qt where
+# home-manager's gtk.enable and qt.enable are on. This module installs the
+# first GTK and Qt applications, so it turns both on (and the dconf service the
+# GTK settings go through): the Catppuccin GTK theme, Papirus-Dark with folders
+# in the accent, the Catppuccin cursor, and qt6ct with the Fusion style and
+# Catppuccin's palette. tests/desktop/apps.nix asserts all of it. The variables
+# that point Qt at qt6ct (QT_QPA_PLATFORMTHEME) are home-manager session
+# variables; the Sway session has to read them (Task 3.2a).
+#
 # --- Exceptions to the style (docs/style.md, rule 9) -------------------------
-# These applications cannot be made to follow it, or only partly:
+# These applications cannot be made to follow it, or only partly. None was seen
+# on screen yet; Task 3.7 judges them on huginn.
 #   Obsidian          Electron, on purpose: it holds the vault. Its look is the
 #                     vault's own setting (a community theme), which ravnix
 #                     must not write into the synced vault.
+#   Bitwarden         Electron with a theme setting of its own (light, dark or
+#                     system) and no way to load a palette. It follows the
+#                     system's dark preference at best, and keeps its own blue
+#                     and its rounded controls.
 #   OnlyOffice        Qt and CEF with a bundled Qt that has no Wayland plugin:
-#                     it runs through XWayland, and draws its own interface.
+#                     it runs through XWayland, takes no qt6ct palette, and
+#                     draws its own interface.
 #   Steam             draws its own skin; Big Picture and the store follow Valve.
-#   Packet Tracer     a Qt application with its own look.
+#   Packet Tracer     a Qt application with its own look (and its own Qt).
 #   Bazecor           Electron, light/dark/system only. The keyboard's LEDs are
 #                     the part that can follow the palette (dygma-catppuccin-leds).
 #   Handy             a WebKit interface of its own, with a tray icon.
-#   Blanket, LocalSend, Prism Launcher   follow the GTK or Qt theme of the
-#                     desktop module as far as their toolkits allow (Blanket is
-#                     libadwaita, LocalSend is Flutter and draws its own).
+#   Nextcloud client  Qt: the widgets follow the qt6ct palette, but the tray and
+#                     status icons are Nextcloud's own colors and the dialogs
+#                     use its blue; it offers no setting for either.
+#   Blanket           libadwaita: follows the GTK theme's colors, and draws its
+#                     own rounded corners (the same exception as in the theme
+#                     module).
+#   Prism Launcher    Qt: follows the qt6ct palette; the instance icons and the
+#                     news art are the games' own.
+#   LocalSend         Flutter: draws its own interface, follows only the
+#                     light/dark preference.
 #   nmtui             newt's own color scheme (NEWT_COLORS below maps it onto the
 #                     terminal's palette, so it carries the Catppuccin colors
 #                     but keeps newt's boxes).
@@ -182,6 +205,10 @@ in
     "cisco-packet-tracer"
   ]
   ++ lib.optional apps.widevine "widevine-cdm";
+
+  # The dconf service, which home-manager's dconf settings (the GTK theme for
+  # libadwaita, see the header) go through.
+  programs.dconf.enable = lib.mkDefault true;
 
   # No Flatpak at all on NixOS.
   services.flatpak.enable = lib.mkDefault false;
@@ -296,6 +323,10 @@ in
 
   home-manager.sharedModules = [
     {
+      # The theme module's GTK and Qt part applies where these are on.
+      gtk.enable = true;
+      qt.enable = true;
+
       programs.ghostty = {
         enable = true;
         # Each window is its own process, as on Fedora: ghostty-float starts
