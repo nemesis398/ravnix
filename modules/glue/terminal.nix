@@ -26,6 +26,18 @@
 #             off. A dead connection is noticed within 3 to 4 s (ServerAlive),
 #             and BatchMode keeps every prompt out: nobody may be there to
 #             answer.
+#   ~/.ssh/config is home-manager's on the laptop (programs.ssh), so that
+#             the Include above comes first. home-manager replaces no file
+#             it did not write: an existing ~/.ssh/config stops the switch
+#             ("Existing file ... is in the way"), or, where the private
+#             flake sets home-manager.backupFileExtension, is renamed
+#             without a word, and nothing reads the hosts it named from
+#             then on. That matters most for the git hosts: their blocks
+#             say IdentityAgent none and name the security key's handle, and
+#             without them ssh offers those hosts the keys of SSH_AUTH_SOCK,
+#             Bitwarden's agent. Such blocks go into programs.ssh.matchBlocks
+#             of the private flake, before the first switch
+#             (docs/install-from-another-distro.md, the last section).
 #   the main key ($mod+Return; ravnix.desktop.terminal.main, which the Sway
 #             config and its session layout read) opens ghostty running
 #             ravnix-terminal: herdr's own remote attach, `herdr --remote

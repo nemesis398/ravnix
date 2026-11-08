@@ -4,6 +4,8 @@ Ravnix is a NixOS flake, so building it needs Nix. On a machine that still runs 
 
 The install writes no partition, filesystem or boot entry. `/nix` becomes a plain directory on the root filesystem, and the disk layout stays as it was.
 
+The last section is for the move itself: a file of your home that ravnix takes over on the laptop, `~/.ssh/config`.
+
 ## Why upstream Nix and not Determinate Nix
 
 Run without `--prefer-upstream-nix`, the same installer installs Determinate Nix. Determinate's own guide, <https://docs.determinate.systems/guides/telemetry/>, lists what its tools collect: operating system and hardware properties, language and timezone, which features are on, the version, whether you are logged in to FlakeHub, and Sentry crash reports. `DETSYS_IDS_TELEMETRY=disabled` and a null Sentry endpoint turn that off, and they also turn off Determinate's feature rollout.
@@ -148,3 +150,25 @@ ls /etc/bashrc.rpmnew                                # No such file or directory
 ```
 
 The grep path appears in all six shell hooks, the fish one included. If `/etc/bashrc.rpmnew` exists, a `setup` update arrived while the Nix block sat in `/etc/bashrc`. Merge it and remove the block by hand. Last, log out and back in, because the open session still carries the `PATH` and `NIX_*` variables that the hooks set, and run the `lsblk` comparison again.
+
+## Before the laptop's first switch: your `~/.ssh/config`
+
+On the laptop, home-manager writes `~/.ssh/config`. It begins with the block that reaches the server, for the main terminal key and the main connection (`modules/glue/terminal.nix`). home-manager does not replace a file it did not write, so a `~/.ssh/config` that is already in your home, from this distribution or from a backup you restore, gets in the way:
+
+- Without `home-manager.backupFileExtension` in your private flake, the switch stops with `Existing file '/home/<you>/.ssh/config' is in the way`.
+- With it, the switch renames the file to `~/.ssh/config.<extension>` and says nothing. From then on nothing reads it.
+
+Either way, the hosts that file named lose their settings. That matters most for the git hosts. A block that says `IdentityAgent none` and names the security key's handle keeps the agent of `SSH_AUTH_SOCK`, Bitwarden's, away from that host. Without the block, ssh offers the host every key of that agent.
+
+Before the first switch, move each block into your private flake, as `programs.ssh.matchBlocks` of the laptop's home-manager configuration:
+
+```nix
+home-manager.users.alice.programs.ssh.matchBlocks."github.com" = {
+  user = "git";
+  identityFile = "~/.ssh/keys/github-sk";
+  identitiesOnly = true;
+  extraOptions.IdentityAgent = "none";
+};
+```
+
+Record what ssh makes of each host before the switch, with `ssh -G HOST > HOST.before`, and compare it afterward with `ssh -G HOST | diff HOST.before -`. Then remove the old file, or move it out of `~/.ssh`, and switch.

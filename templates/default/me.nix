@@ -151,7 +151,11 @@
     # and the main connection, with a key of its own. Make it on the laptop
     # with `ssh-keygen -t ed25519 -N "" -f <identityFile>`; neither the
     # YubiKey nor Bitwarden's agent is used. Each value can be null, which
-    # leaves that part out.
+    # leaves that part out. The laptop's ~/.ssh/config is then
+    # home-manager's: move the host blocks of an existing one, the git
+    # hosts' above all, into programs.ssh.matchBlocks of your laptop's
+    # home-manager configuration before the first switch
+    # (docs/install-from-another-distro.md in ravnix says how).
     serverAccess = {
       # The private key, a file on the laptop only you can read. An absolute
       # path in a string.
