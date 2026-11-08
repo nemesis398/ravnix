@@ -35,15 +35,18 @@
 # The server end. For the hosts of ravnix.skAgent.hosts, the user's
 # ~/.ssh/config begins with an Include of the configuration below, ahead of
 # every block another module or the user adds there, since ssh takes the
-# first value it finds for each option:
+# first value it finds for each option. Both of its blocks are `Match host`
+# with the same list, which ssh compares without regard to case, as DNS
+# does: a `Host` line would let GitHub.com past the second block while the
+# first one caught it.
 #
 #   - IdentityAgent is the forwarded socket, at /run/user/%i (the path the
 #     forward writes, also where XDG_RUNTIME_DIR is unset), so neither
 #     SSH_AUTH_SOCK nor Bitwarden's agent is asked; IdentitiesOnly and an
 #     IdentityFile for each listed public half make ssh offer those keys
-#     and no other the agent holds, and no key file of the server either;
-#     only publickey authentication is tried, so nothing asks for a
-#     password.
+#     and no other the agent holds, and none of the server's default key
+#     files (~/.ssh/id_*); only publickey authentication is tried, so
+#     nothing asks for a password.
 #   - A Match exec runs sk-agent-check before ssh connects, and only for
 #     those hosts. While the laptop's agent is not there, it says why, naming
 #     the laptop, and the Match sends ssh to a ProxyCommand that exits at
@@ -55,9 +58,22 @@
 #     a socket that a dropped connection left behind, so the check asks the
 #     agent for its keys, with a timeout of 3 s for a laptop that sleeps
 #     behind a forward that is still up. It refuses, each with its own
-#     message: no socket; a socket nobody answers on; no answer in time; an
-#     agent with no key, or a locked one; an agent with none of the listed
-#     keys.
+#     message: no socket; a socket nobody answers on; no answer in time (a
+#     laptop asleep or offline, or an agent busy with another signature:
+#     ssh-agent answers one request at a time, and a security key's
+#     signature holds it until the touch); an agent with no key, or a
+#     locked one; a forward with no agent behind it (sk-agent not running);
+#     an agent with none of the listed keys.
+#
+# What still gets past both blocks, since ssh matches the name it was given
+# and no other:
+#   - the name with a trailing dot (github.com.), and an ssh alias whose
+#     HostName is a listed host (`Host gh` with `HostName github.com`): list
+#     such a name in ravnix.skAgent.hosts too, or do not write one;
+#   - an IdentityFile from any later block that matches these hosts (a
+#     `Host *` of the user's own): ssh adds every IdentityFile it finds, and
+#     IdentitiesOnly lets it offer each one. No ravnix module sets one.
+#   - what the command line overrides: -F, -o IdentityAgent=, GIT_SSH_COMMAND.
 #
 # Left as it is: the rest of ssh's configuration, and every other host. What
 # a signature needs, a touch, is asked for by the key's light alone: the
@@ -167,12 +183,20 @@ let
       [ -e "$sock" ] ||
         refuse "huginn is not connected: there is no agent at $sock. Open the main terminal on huginn, then try again."
 
+      # The keys go to standard output, ssh-add's complaints to standard
+      # error; both are read, since exit 1 is both "no identities" and a
+      # forward with no agent behind it ("error fetching identities").
       rc=0
-      held=$(SSH_AUTH_SOCK=$sock timeout -k 1 3 ssh-add -L 2>/dev/null) || rc=$?
+      held=$(SSH_AUTH_SOCK=$sock timeout -k 1 3 ssh-add -L 2>&1) || rc=$?
       case $rc in
       0) ;;
-      1) refuse "huginn's agent holds no key, or is locked. On huginn, systemctl --user status sk-agent-keys says why." ;;
-      124 | 137) refuse "huginn does not answer at $sock within 3 s: it is asleep, or offline." ;;
+      1)
+        case $held in
+        *"no identities"*) refuse "huginn's agent holds no key, or is locked. On huginn, systemctl --user status sk-agent-keys says why." ;;
+        *) refuse "the forward is up, and no agent answers behind it: sk-agent is not running on huginn. On huginn, systemctl --user status sk-agent says why." ;;
+        esac
+        ;;
+      124 | 137) refuse "huginn does not answer at $sock within 3 s: it is asleep or offline, or its agent is waiting for a touch for another signature." ;;
       *) refuse "huginn is not connected: nothing answers at $sock, the connection that forwarded it is gone. Open the main terminal on huginn, then try again." ;;
       esac
 
@@ -197,7 +221,7 @@ let
         ''Match host ${lib.concatStringsSep "," cfg.hosts} !exec "${lib.getExe check} ${socketOnServer} %h"''
         "  ProxyCommand ${pkgs.coreutils}/bin/false"
         "  LogLevel QUIET"
-        "Host ${lib.concatStringsSep " " cfg.hosts}"
+        "Match host ${lib.concatStringsSep "," cfg.hosts}"
         "  IdentityAgent ${socketOnServer}"
         "  IdentitiesOnly yes"
       ]
@@ -250,6 +274,11 @@ in
               BindsTo = [ "sk-agent.service" ];
               PartOf = [ "sk-agent.service" ];
               After = [ "sk-agent.service" ];
+              # Each new agent needs its keys, however often it starts: a
+              # loader restarted by hand a few times, or an agent started
+              # again after reset-failed, would otherwise hit the loader's
+              # start limit. The agent's own limit bounds how often it runs.
+              StartLimitIntervalSec = 0;
             };
             Service = {
               Type = "oneshot";

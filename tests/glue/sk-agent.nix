@@ -24,16 +24,20 @@
 #     missing, or whose public half is not the listed one, is not loaded and
 #     the loading unit fails naming it, while the agent keeps the others; a
 #     killed agent comes back with its keys, over the socket it left behind,
-#     and so does one that finds a stale socket there; a restart drops a key
-#     that was added by hand;
+#     and so does one that finds a stale socket there; loading the keys
+#     again drops a key that was added by hand, and a locked agent makes the
+#     loading unit fail and say so;
 #   - on muninn, with the forward up, ssh and git to github.com and to the
 #     Forgejo host log in with the listed key through the forwarded socket,
-#     also with `-o IdentityAgent=` given as the brief writes it; neither
-#     Bitwarden stand-in gets a single request, and no other key logs in;
+#     also with `-o IdentityAgent=` given as the brief writes it, and with
+#     a host name in other capitals; neither Bitwarden stand-in gets a
+#     single request, and no other key logs in; the forwarded socket is the
+#     user's alone (mode 600), and another user on muninn cannot use it;
 #   - with the forward gone (a socket left behind with no listener, no
-#     socket, a laptop frozen behind a live forward), the same commands fail
-#     within 5 s, before any connection to the forge, with a message that
-#     names the laptop, and again no other agent or key is tried;
+#     socket, a laptop frozen behind a live forward, an agent that is busy
+#     or not running behind a live forward), the same commands fail within
+#     5 s, before any connection to the forge, with a message that names the
+#     laptop and the reason, and again no other agent or key is tried;
 #   - an agent that holds a key that is not on the list: muninn refuses
 #     while that key is all it holds, and never offers it when the listed
 #     one is there too; an agent that holds no key is refused by name;
@@ -131,6 +135,8 @@ pkgs.testers.runNixOSTest {
         self.nixosModules.server
       ];
       ravnix.shape = "server";
+      # Another account on muninn, which must not reach the forwarded agent.
+      users.users.other.isNormalUser = true;
       ravnix.server.remoteControlDir = lib.mkForce null;
       ravnix.nextcloud = lib.mkForce null;
       networking.hosts.${nodes.forge.networking.primaryIPAddress} = [
@@ -231,6 +237,12 @@ pkgs.testers.runNixOSTest {
 
     def loader_log():
         return huginn.succeed("journalctl -o cat --no-pager _SYSTEMD_USER_UNIT=sk-agent-keys.service")
+
+
+    def loader_logged(*needles):
+        """The loader's journal has each needle; journald may lag behind
+        the unit's state by a moment."""
+        retry(lambda _: all(n in loader_log() for n in needles), timeout=datetime.timedelta(seconds=10))
 
 
     def fingerprint(path):
@@ -367,8 +379,7 @@ pkgs.testers.runNixOSTest {
     with subtest("a missing handle is not loaded, and the loading unit names it"):
         huginn.wait_for_unit("sk-agent.service", user=USER)
         huginn.wait_until_succeeds("systemctl --user -M " + USER + "@ is-failed sk-agent-keys.service")
-        log = loader_log()
-        assert STAND_IN in log and SECOND in log, log
+        loader_logged(STAND_IN, SECOND)
         assert held() == [], held()
 
     with subtest("one handle there: the agent holds it, and the unit names the other"):
@@ -381,12 +392,31 @@ pkgs.testers.runNixOSTest {
         as_user(huginn, "install -m 600 " + KEYS + "/extra " + SECOND)
         state = after_loading(lambda: huginn.systemctl("restart sk-agent-keys.service", user=USER))
         assert state == "failed", state
-        assert "is not the key" in loader_log(), loader_log()
+        loader_logged("is not the key")
         assert held() == ["${bare standIn.publicKey}"], held()
 
     with subtest("both handles there: the agent holds both and nothing else"):
         as_user(huginn, "install -m 600 ${second.private} " + SECOND)
         state = after_loading(lambda: huginn.systemctl("restart sk-agent.service", user=USER))
+        assert state == "active", state
+        assert held() == LISTED, held()
+
+    with subtest("loading the keys again drops a key that was added by hand"):
+        as_user(huginn, "SSH_AUTH_SOCK=" + sock(huginn) + " ssh-add -q " + KEYS + "/extra")
+        assert len(held()) == 3, held()
+        state = after_loading(lambda: huginn.systemctl("restart sk-agent-keys.service", user=USER))
+        assert state == "active", state
+        assert held() == LISTED, held()
+
+    with subtest("a locked agent makes the loading unit fail and say so"):
+        as_user(huginn, "printf '#!/bin/sh\\necho lock-word\\n' >~/askpass && chmod 700 ~/askpass")
+        lock = "SSH_AUTH_SOCK=" + sock(huginn) + " SSH_ASKPASS=$HOME/askpass SSH_ASKPASS_REQUIRE=force ssh-add "
+        as_user(huginn, lock + "-x </dev/null")
+        state = after_loading(lambda: huginn.systemctl("restart sk-agent-keys.service", user=USER))
+        assert state == "failed", state
+        loader_logged("may be locked")
+        as_user(huginn, lock + "-X </dev/null")
+        state = after_loading(lambda: huginn.systemctl("restart sk-agent-keys.service", user=USER))
         assert state == "active", state
         assert held() == LISTED, held()
 
@@ -421,6 +451,14 @@ pkgs.testers.runNixOSTest {
         logs_in("ssh -p 2222 git@" + FORGEJO + " true")
         # As the brief writes the command.
         logs_in("ssh -o IdentityAgent=" + sock(muninn) + " git@" + FORGEJO + " true")
+        # A host name is the same host in other capitals, for DNS and for ssh.
+        logs_in("ssh git@GitHub.COM true")
+        logs_in("ssh -p 2222 git@" + FORGEJO.upper() + " true")
+        # The forwarded socket is the user's alone.
+        owner = muninn.succeed("stat -c '%a %U' " + sock(muninn)).strip()
+        assert owner == "600 " + USER, owner
+        status, out = muninn.execute("su - other -c 'SSH_AUTH_SOCK=" + sock(muninn) + " ssh-add -l' 2>&1")
+        assert status == 2, (status, out)
         as_user(
             muninn,
             "git init -q ~/project && cd ~/project"
@@ -437,6 +475,7 @@ pkgs.testers.runNixOSTest {
         # sshd leaves the socket of a closed forward behind, with nobody on it.
         muninn.succeed("test -S " + sock(muninn))
         refused("ssh git@github.com true", "not connected")
+        refused("ssh git@GitHub.COM true", "not connected")
         refused("ssh -o IdentityAgent=" + sock(muninn) + " git@" + FORGEJO + " true", "not connected")
         refused("git -C ~/project push -q github HEAD:main", "not connected")
         refused("git -C ~/project fetch -q forgejo", "not connected")
@@ -452,6 +491,22 @@ pkgs.testers.runNixOSTest {
         huginn.succeed("kill -STOP " + pid)
         refused("ssh git@" + FORGEJO + " true", "does not answer")
         huginn.succeed("kill -CONT " + pid)
+        logs_in("ssh git@github.com true")
+
+    with subtest("an agent that is busy behind a live forward is refused within 5 s"):
+        # ssh-agent answers one request at a time, and a security key's
+        # signature holds it until the touch: a stopped agent stands in.
+        agent_pid = as_user(huginn, "systemctl --user show -p MainPID --value sk-agent.service").strip()
+        huginn.succeed("kill -STOP " + agent_pid)
+        refused("ssh git@github.com true", "does not answer", "waiting for a touch")
+        huginn.succeed("kill -CONT " + agent_pid)
+        logs_in("ssh git@github.com true")
+
+    with subtest("an agent that is not running behind a live forward is refused by name"):
+        huginn.systemctl("stop sk-agent.service", user=USER)
+        refused("ssh git@github.com true", "not running", "systemctl --user status sk-agent")
+        state = after_loading(lambda: huginn.systemctl("start sk-agent.service", user=USER))
+        assert state == "active", state
         logs_in("ssh git@github.com true")
 
     with subtest("an agent that holds a key not on the list"):

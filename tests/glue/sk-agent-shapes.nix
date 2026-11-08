@@ -107,6 +107,8 @@ let
       "sk-agent does not run ssh-agent in the foreground on %t/sk-agent.sock: ${agentStart}"
     ++ check (lib.elem "sk-agent-keys.service" (lib.toList (agent.Unit.Wants or [ ]))) "sk-agent does not pull in its loader"
     ++ check (lib.elem "sk-agent.service" (lib.toList (loader.Unit.BindsTo or [ ]))) "sk-agent-keys is not bound to sk-agent"
+    ++ check (lib.toList (loader.Unit.StartLimitIntervalSec or [ ]) == [ 0 ])
+      "sk-agent-keys has a start limit, so restarting it by hand, or the agent after reset-failed, can leave the agent without its keys"
     ++ check (lib.elem "default.target" (lib.toList (agent.Install.WantedBy or [ ]))) "sk-agent does not start with the user's session"
     ++ check (!lib.hasInfix "sk-agent" (sshConfig laptop)) "the laptop's ~/.ssh/config has the server's sk-agent configuration"
     ++ check (!(hasAgent server)) "the server shape runs an sk-agent of its own"
@@ -127,7 +129,9 @@ pkgs.runCommand "glue-sk-agent-shapes" { } (
       # What the server's ssh reads, built: the git hosts' block and its guard.
       config=${lib.removePrefix "Include " (firstLine server)}
       grep -qx 'Match host github.com,git.example.org !exec ".*/bin/sk-agent-check /run/user/%i/sk-agent.sock %h"' "$config"
-      grep -qx 'Host github.com git.example.org' "$config"
+      # The identity block matches as the guard does, without regard to case.
+      [ "$(grep -cx 'Match host github.com,git.example.org' "$config")" = 1 ]
+      if grep -q '^Host ' "$config"; then exit 1; fi
       grep -qx '  IdentityAgent /run/user/%i/sk-agent.sock' "$config"
       grep -qx '  IdentitiesOnly yes' "$config"
       [ "$(grep -c '^  IdentityFile /nix/store/' "$config")" = 1 ]
