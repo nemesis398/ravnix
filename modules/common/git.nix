@@ -1,7 +1,8 @@
 # git as the Fedora laptop has it, with the identity from ravnix.user: commits
 # are signed with the user's SSH key, whose private half stays in the user's
-# Bitwarden agent, and diffs go through delta. The checkout of ravnix that
-# ravnix.dev.checkout names gets its git hooks turned on by the activation.
+# Bitwarden vault and is served by rbw's agent (modules/common/rbw.nix), and
+# diffs go through delta. The checkout of ravnix that ravnix.dev.checkout
+# names gets its git hooks turned on by the activation.
 {
   config,
   lib,
