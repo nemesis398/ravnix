@@ -10,6 +10,7 @@ of each script.
 | `check-public.sh` | the public-boundary check: no deny-list value in any file, file name or link target |
 | `check-style.sh` | the style check: no hex color outside `modules/theme/`, no radius other than 0, nothing translucent (the keyword `transparent` too) but the inside of the lock ring, no transition or animation, no Mermaid init block but the shared one (`docs/mermaid-theme.json`); prints `file:line:rule`. A child that shows its parent uses the role color or `inherit`, never `transparent` |
 | `lib/flake-outputs.nix` | what the flake step checks of the outputs other than the checks (packages, overlays, modules, templates), in one evaluation that reads no check; an output it does not know fails the step |
+| `lib/check-drv.nix` | what the flake step evaluates of each check: its derivation, or an error when the check is no derivation |
 | `lib/git-snapshot.sh` | lays out the index or a commit as plain files, for the checks to read what git will commit or push |
 | `hooks/stop-gate.sh` | the Claude Code Stop hook: the fast gate before the agent may stop |
 | `hooks/no-verify-guard.sh` | the Claude Code PreToolUse hook: refuses commands that skip or redirect the git hooks |
@@ -19,8 +20,9 @@ Tests: `tests/*.test.sh` and `hooks/test.sh`, run by the flake check
 `scripts-tests`. `tests/lib.sh` points `XDG_STATE_HOME` into each test
 file's scratch directory, so no test's gate records into your state. The
 flake checks `flake-gate-outputs` (`lib/flake-outputs.nix` on good and bad
-outputs) and `flake-check-names` (the listing of the checks evaluates none)
-cover the Nix side of the flake step.
+outputs), `flake-gate-check-drv` (`lib/check-drv.nix` on a derivation and on
+values that are none) and `flake-check-names` (the listing of the checks
+evaluates none) cover the Nix side of the flake step.
 
 ## The flake step
 
@@ -28,15 +30,22 @@ cover the Nix side of the flake step.
 alive: 15.6 GB at its peak without building and about 18 GB while building,
 on a 27 GB laptop. The flake step checks the same things in a process per
 check: it lists the names of `checks.SYSTEM`, checks the other outputs with
-`lib/flake-outputs.nix`, builds each check with its own `nix build`, and then
-names every check that failed and exits with the first failing status. The
-header of `check.sh` has the details.
+`lib/flake-outputs.nix`, evaluates each check's derivation with its own
+`nix eval` through `lib/check-drv.nix` (which refuses a check that is no
+derivation, as `nix flake check` did) and builds it with `nix build DRV^*`,
+and then names every check that failed and exits with the first failing
+status. The header of `check.sh` has the details.
 
-`RAVNIX_CHECK_JOBS=2 scripts/check.sh` builds two checks at once, each output
-line marked with its check's name. The default is 1: one NixOS system's
-evaluation takes several GB by itself, and two of them next to the
-applications you have open can pass 85 % of the RAM. Any other value fails
-the full gate before its first step.
+`RAVNIX_CHECK_JOBS=N scripts/check.sh` runs N checks at once, each output
+line marked with its check's name; N is a whole number from 1 to 999, and
+anything else fails the full gate before its first step. The default is 1,
+for the RAM: the largest check's evaluation peaked at 4.3 GB (measured on
+2026-11-08), so N checks at once take up to N times that next to the
+applications you have open, and the gate is to stay under 85 % of the RAM.
+
+A Ctrl-C ends the gate in either mode. The flake step sends SIGTERM to the
+nix processes it started, waits for them, and sends SIGKILL to any still
+running after 10 s.
 
 ## Verified downloads
 
@@ -108,12 +117,15 @@ Findings that are not fixed, so nobody mistakes them for covered.
 - An overlay's argument name is read from `builtins.toXML`, the one place the
   Nix language shows it. Like `nix flake check`, the step does not apply the
   overlay.
-- With `RAVNIX_CHECK_JOBS=2`, a build's stderr is merged into stdout, so its
-  lines can be marked with the check's name, and the marking runs beside the
-  build, so a build's last lines can come after the summary.
+- With `RAVNIX_CHECK_JOBS` above 1, a check's stderr is merged into stdout,
+  so its lines can be marked with the check's name, and the marking runs
+  beside nix, so a check's last lines can come after the summary.
 - A gate stopped by a signal to its process group, as Ctrl-C sends, stops the
-  builds it started in the background. A SIGTERM to the gate's own process
-  alone leaves its flake step running, as it did with `nix flake check`.
+  nix processes it started. A SIGTERM to the gate's own process alone, not
+  its group, leaves its flake step running, as it did with `nix flake check`.
+- Between a check's evaluation and its build, its derivation is not a GC
+  root, so a garbage collection in that moment fails the check (falsely, and
+  never falsely passes it); run the gate again.
 - `commit-msg` stops reading at git's exact cut line, because under
   `--verbose` what follows is a diff that git drops. A message given with
   `-m` or `-F` that holds that line keeps the text below it, unchecked by

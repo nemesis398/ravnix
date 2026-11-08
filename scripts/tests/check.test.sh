@@ -45,7 +45,8 @@ new_repo() {
 	git -C "$repo" config ravnix.denyList "$list"
 	mkdir -p "$repo/scripts/lib"
 	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$src/scripts/check-style.sh" "$repo/scripts/"
-	cp -p "$src/scripts/lib/git-snapshot.sh" "$src/scripts/lib/flake-outputs.nix" "$repo/scripts/lib/"
+	cp -p "$src/scripts/lib/git-snapshot.sh" "$src/scripts/lib/flake-outputs.nix" \
+		"$src/scripts/lib/check-drv.nix" "$repo/scripts/lib/"
 	printf 'clean\n' >"$repo/a.md"
 	git -C "$repo" add -A
 	git -C "$repo" commit -qm init
@@ -63,19 +64,27 @@ new_repo() {
 #   outputs.status           the exit status of the outputs validation (0),
 #                            whose --apply expression it saves in
 #                            outputs.apply; outputs.err is its stderr
+#   eval.fail                lines "STATUS INSTALLABLE": the evaluation of
+#                            that check's derivation fails with STATUS
+#   eval.weird               lines "INSTALLABLE": that evaluation prints
+#                            "hello" instead of a derivation
 #   build.status             the exit status of every check's build ($1)
 #   build.fail               lines "STATUS INSTALLABLE": that check's status
 #   build.barrier            when present, each build waits (10 s at most)
-#                            until two builds have run at the same time
+#                            until as many builds run at once as it says (2)
 #   build.hang               when present, each build runs for 30 s
+#   build.stubborn           when present, a build ignores SIGTERM
 #   version, no-download     the Claude Code version (1.2.3), and the build
 #                            of the download printing nothing
 #
-# Each check's build logs "start N INSTALLABLE", with N the builds running
-# then, and "end INSTALLABLE" to builds.log. For the claude-code step it
-# builds a fake claude-code-verify, which logs its arguments to
-# $bin/verify.log and exits with $2 (default 0), and a fake download. With
-# $3 set to "no-download", the build of the download prints nothing.
+# A check's evaluation prints /nix/store/fakePID-check.drv and records the
+# pair in drvs; its build of DRV^* finds the check's installable there, and
+# logs "start N INSTALLABLE", with N the builds running then, and "end
+# INSTALLABLE" to builds.log. Like real nix, it catches SIGINT and SIGTERM,
+# says it was interrupted and exits 1. For the claude-code step it builds a
+# fake claude-code-verify, which logs its arguments to $bin/verify.log and
+# exits with $2 (default 0), and a fake download. With $3 set to
+# "no-download", the build of the download prints nothing.
 fake_nix() {
 	mkdir -p "$bin"
 	{
@@ -84,15 +93,48 @@ fake_nix() {
 d="${0%/*}"
 printf '%s' "$*" | tr '\n' ' ' >>"$d/nix.log"
 echo >>"$d/nix.log"
+interrupted() {
+	echo "error: interrupted by the user" >&2
+	exit 1
+}
+trap interrupted INT TERM
 code() { cat -- "$d/$1" 2>/dev/null || echo 0; }
+inst=""
+for a; do [[ "$a" != .#.checks.* ]] || inst="$a"; done
+# Fails with the status that a line "STATUS INSTALLABLE" of file $1 gives
+# $inst, when it has one.
+fail_from() {
+	local st i
+	while read -r st i; do
+		if [[ "$i" == "$inst" ]]; then
+			echo "error: $inst failed" >&2
+			exit "$st"
+		fi
+	done < <(cat -- "$d/$1" 2>/dev/null)
+}
 case "$*" in
 *'config show system'*)
 	cat -- "$d/system" 2>/dev/null || echo x86_64-linux
 	exit "$(code system.status)"
 	;;
-*' eval '*' .#checks.'*)
-	cat -- "$d/names" 2>/dev/null
-	exit "$(code names.status)"
+*' eval '*' .#.checks.'*)
+	if [[ "$inst" != *'"'* ]]; then
+		# The listing.
+		cat -- "$d/names" 2>/dev/null
+		exit "$(code names.status)"
+	fi
+	fail_from eval.fail
+	while read -r i; do
+		[[ "$i" != "$inst" ]] || { echo hello; exit 0; }
+	done < <(cat -- "$d/eval.weird" 2>/dev/null)
+	prev=""
+	for a; do
+		[[ "$prev" != --apply ]] || printf '%s' "$a" >"$d/check.apply"
+		prev="$a"
+	done
+	drv="/nix/store/fake$$-check.drv"
+	printf '%s %s\n' "$drv" "$inst" >>"$d/drvs"
+	echo "$drv"
 	;;
 *' eval '*' .#. '*)
 	prev=""
@@ -104,13 +146,18 @@ case "$*" in
 	echo "packages.x86_64-linux: 2 derivations"
 	exit "$(code outputs.status)"
 	;;
-*' build '*' .#checks.'*)
-	inst=""
-	for a; do [[ "$a" != .#checks.* ]] || inst="$a"; done
+*' build '*'.drv^*'*)
+	[[ ! -e "$d/build.stubborn" ]] || trap '' TERM
+	drv=""
+	for a; do [[ "$a" != *'.drv^*' ]] || drv="${a%'^*'}"; done
+	while read -r path i; do
+		[[ "$path" != "$drv" ]] || inst="$i"
+	done <"$d/drvs"
 	mkdir -p "$d/running"
 	: >"$d/running/$$"
 	running=("$d"/running/*)
-	((${#running[@]} < 2)) || : >"$d/overlapped"
+	want="$(cat -- "$d/build.barrier" 2>/dev/null)"
+	((${#running[@]} < ${want:-2})) || : >"$d/overlapped"
 	printf 'start %s %s\n' "${#running[@]}" "$inst" >>"$d/builds.log"
 	if [[ -e "$d/build.barrier" ]]; then
 		for _ in $(seq 100); do
@@ -124,12 +171,7 @@ case "$*" in
 	rm -f -- "$d/running/$$"
 	printf 'end %s\n' "$inst" >>"$d/builds.log"
 	echo "building $inst"
-	while read -r st i; do
-		if [[ "$i" == "$inst" ]]; then
-			echo "error: $inst failed" >&2
-			exit "$st"
-		fi
-	done < <(cat -- "$d/build.fail" 2>/dev/null)
+	fail_from build.fail
 	exit "$(code build.status)"
 	;;
 *' build '*'.#claude-code-verify'*) echo "$d/verify" ;;
@@ -160,6 +202,11 @@ checks_named() {
 fail_check() {
 	printf '%s %s\n' "$1" "$2" >>"$bin/build.fail"
 }
+# fail_eval STATUS INSTALLABLE: the evaluation of that check's derivation
+# exits with STATUS.
+fail_eval() {
+	printf '%s %s\n' "$1" "$2" >>"$bin/eval.fail"
+}
 # The installables of the checks' builds, in the order they started.
 builds() {
 	[[ ! -e "$bin/builds.log" ]] || sed -n 's/^start [0-9]* //p' "$bin/builds.log"
@@ -176,7 +223,75 @@ expect_builds() {
 }
 # The installable of the check named $1, a name that needs no encoding.
 check_of() {
-	printf '.#checks.x86_64-linux."%s"' "$1"
+	printf '.#.checks.x86_64-linux."%s"' "$1"
+}
+# Whether process $1 runs: it exists and is no zombie.
+alive() {
+	local stat
+	stat="$(cat -- "/proc/$1/stat" 2>/dev/null)" || return 1
+	stat="${stat##*) }"
+	[[ "${stat%% *}" != Z ]]
+}
+# Starts the full gate in the background, in a process group of its own as
+# a terminal runs it, so a Ctrl-C (SIGINT to the group) reaches all of it;
+# gate_pid is its pid and group. The arguments are more environment.
+start_gate() {
+	set -m
+	(cd "$repo" && exec env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" "$@" scripts/check.sh) \
+		>"$scratch/.out" 2>"$scratch/.err" &
+	gate_pid=$!
+	set +m
+}
+# Waits (10 s at most) until $1 builds run, and sets running to their pids.
+await_builds() {
+	local _
+	running=()
+	for _ in $(seq 100); do
+		running=("$bin"/running/*)
+		[[ ! -e "${running[0]}" ]] || ((${#running[@]} < $1)) || break
+		running=()
+		sleep 0.1
+	done
+	running=("${running[@]##*/}")
+	((${#running[@]} == $1)) || {
+		echo "  expected $1 builds running, there are ${#running[@]}"
+		kill -KILL -- "-$gate_pid" 2>/dev/null || true
+		return 1
+	}
+}
+# Waits ($1 tenths of a second at most) for the gate to end, and sets
+# status to its exit status.
+await_gate() {
+	local _
+	for _ in $(seq "$1"); do
+		alive "$gate_pid" || break
+		sleep 0.1
+	done
+	if alive "$gate_pid"; then
+		kill -KILL -- "-$gate_pid" 2>/dev/null || true
+		wait "$gate_pid" 2>/dev/null || true
+		echo "  the gate was still running; builds: $(builds | tr '\n' ' ')"
+		return 1
+	fi
+	status=0
+	wait "$gate_pid" || status=$?
+	out="$(cat "$scratch/.out")"
+	err="$(cat "$scratch/.err")"
+}
+# expect_dead PID...: none of these processes runs.
+expect_dead() {
+	local pid _ alive_=()
+	for _ in $(seq 50); do
+		alive_=()
+		for pid; do
+			! alive "$pid" || alive_+=("$pid")
+		done
+		((${#alive_[@]} > 0)) || return 0
+		sleep 0.1
+	done
+	kill -KILL "${alive_[@]}" 2>/dev/null || true
+	echo "  the builds ${alive_[*]} kept running after the gate was interrupted"
+	return 1
 }
 
 # Writes $2 into $repo/$1 and stages it.
@@ -598,21 +713,36 @@ each_check_is_built_in_a_nix_process_of_its_own() {
 	expect_status 0
 	# In the order the listing gives, one installable per process.
 	expect_builds "$(check_of delta)" "$(check_of alpha)"
-	local line n=0
+	local line evals=0 builds_=0
 	while IFS= read -r line; do
-		[[ "$line" == *" build "*".#checks."* ]] || continue
-		n=$((n + 1))
-		[[ "$line" == *" build --no-link --print-build-logs --keep-going .#checks.x86_64-linux."*" --no-update-lock-file" ]] || {
-			echo "  unexpected build of a check: $line"
+		case "$line" in
+		*" eval --raw .#.checks.x86_64-linux --apply "*) ;;
+		*" eval "*".#.checks."*)
+			evals=$((evals + 1))
+			[[ "$line" == *" eval --raw .#.checks.x86_64-linux.\""*"\" --apply "*" --no-update-lock-file" ]] || {
+				echo "  unexpected evaluation of a check: ${line:0:300}"
+				return 1
+			}
+			[[ "${line#*.#.checks.}" != *".#"* ]] || {
+				echo "  one nix eval got more than one installable: ${line:0:300}"
+				return 1
+			}
+			;;
+		*" build "*".drv^*"*)
+			builds_=$((builds_ + 1))
+			[[ "$line" == *" build --no-link --print-build-logs --keep-going /nix/store/fake"*"-check.drv^* --no-update-lock-file" ]] || {
+				echo "  unexpected build of a check: $line"
+				return 1
+			}
+			;;
+		*" build "*".#"*"checks"*)
+			echo "  a check was built from its installable, which evaluates it again: $line"
 			return 1
-		}
-		[[ "${line#*.#checks.}" != *".#"* ]] || {
-			echo "  one nix build got more than one installable: $line"
-			return 1
-		}
+			;;
+		esac
 	done <"$bin/nix.log"
-	((n == 2)) || {
-		echo "  expected 2 builds of checks, got $n"
+	((evals == 2 && builds_ == 2)) || {
+		echo "  expected 2 evaluations and 2 builds of checks, got $evals and $builds_"
 		return 1
 	}
 	expect_out "2 checks built"
@@ -624,8 +754,8 @@ the_checks_are_listed_by_name_only() {
 	expect_status 0
 	# The listing asks for the names alone, so nix evaluates no check.
 	local listing
-	listing="$(rg -F ' eval ' "$bin/nix.log" | rg -F '.#checks.')"
-	[[ "$listing" == *" eval --raw .#checks.x86_64-linux --apply "*"builtins.attrNames"* ]] || {
+	listing="$(rg -F ' eval --raw .#.checks.x86_64-linux --apply ' "$bin/nix.log")"
+	[[ "$listing" == *"builtins.attrNames"* ]] || {
 		echo "  unexpected listing of the checks: $listing"
 		return 1
 	}
@@ -640,8 +770,8 @@ the_listing_comes_before_any_build() {
 	gate
 	expect_status 0
 	local first
-	first="$(rg -n -F ' build ' "$bin/nix.log" | head -1 | cut -d: -f1)"
-	[[ "$(sed -n "1,${first}p" "$bin/nix.log")" == *"config show system"*" eval --raw .#checks.x86_64-linux "* ]] || {
+	first="$(rg -n -F '.#.checks.x86_64-linux."' "$bin/nix.log" | head -1 | cut -d: -f1)"
+	[[ "$(sed -n "1,${first}p" "$bin/nix.log")" == *"config show system"*" eval --raw .#.checks.x86_64-linux --apply "* ]] || {
 		echo "  expected the system and the listing before the first build: $(cat "$bin/nix.log")"
 		return 1
 	}
@@ -676,14 +806,47 @@ every_failed_check_is_named_and_the_first_status_is_the_steps() {
 
 a_check_that_fails_to_evaluate_counts_as_failed() {
 	new_repo
-	# A check that throws is still listed, since the listing reads names
-	# only; its build is what evaluates it, and fails.
-	fail_check 1 "$(check_of beta)"
+	# A check that throws, or is no derivation, is still listed, since the
+	# listing reads names only; the evaluation of its derivation fails, and
+	# nothing is built for it.
+	fail_eval 1 "$(check_of beta)"
 	gate
 	expect_status 1
-	expect_builds "$(check_of alpha)" "$(check_of beta)" "$(check_of gamma)"
+	expect_builds "$(check_of alpha)" "$(check_of gamma)"
+	expect_err "error: $(check_of beta) failed"
 	expect_err "  beta (exit 1)"
 	expect_err "flake failed (exit 1)"
+}
+
+a_check_is_evaluated_by_the_derivation_guard() {
+	new_repo
+	gate
+	expect_status 0
+	local want
+	want="$(cat "$src/scripts/lib/check-drv.nix")"
+	[[ "$(cat "$bin/check.apply")" == "$want" ]] || {
+		echo "  expected each check's derivation through scripts/lib/check-drv.nix, got: $(cat "$bin/check.apply")"
+		return 1
+	}
+}
+
+an_evaluation_that_prints_no_derivation_fails_the_check() {
+	new_repo
+	printf '%s\n' "$(check_of beta)" >"$bin/eval.weird"
+	gate
+	expect_status 1
+	expect_builds "$(check_of alpha)" "$(check_of gamma)"
+	expect_err "hello"
+	expect_err "  beta (exit 1)"
+}
+
+without_the_derivation_guard_the_flake_step_fails() {
+	new_repo
+	rm -- "$repo/scripts/lib/check-drv.nix"
+	gate
+	expect_status 1
+	expect_err "check-drv.nix"
+	expect_builds
 }
 
 an_empty_list_of_checks_builds_nothing_and_says_so() {
@@ -843,7 +1006,7 @@ by_default_one_check_builds_at_a_time() {
 two_jobs_build_two_checks_at_a_time_and_never_more() {
 	new_repo
 	checks_named alpha beta gamma delta epsilon
-	: >"$bin/build.barrier"
+	printf '2\n' >"$bin/build.barrier"
 	fail_check 100 "$(check_of gamma)"
 	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS=2 scripts/check.sh
 	expect_status 100
@@ -877,47 +1040,88 @@ two_jobs_report_the_first_failing_check_in_order() {
 	expect_err "2 of 3 checks failed"
 }
 
+three_jobs_build_three_checks_at_a_time_and_never_more() {
+	new_repo
+	checks_named alpha beta gamma delta epsilon zeta
+	printf '3\n' >"$bin/build.barrier"
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS=3 scripts/check.sh
+	expect_status 0
+	[[ -e "$bin/overlapped" ]] || {
+		echo "  no three builds ran at the same time: $(cat "$bin/builds.log")"
+		return 1
+	}
+	! rg -q '^start ([4-9]|[1-9][0-9])' "$bin/builds.log" || {
+		echo "  more than three builds ran at once: $(cat "$bin/builds.log")"
+		return 1
+	}
+	expect_out "6 checks, 3 at a time"
+	expect_out "6 checks built"
+}
+
 an_interrupted_gate_stops_the_builds_it_started() {
 	new_repo
 	: >"$bin/build.hang"
-	local gate pid _ alive=() running=()
-	# The gate in a process group of its own, as a terminal runs it, so a
-	# Ctrl-C reaches all of it. A script's background jobs ignore SIGINT.
-	set -m
-	(cd "$repo" && exec env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS=2 scripts/check.sh) >"$scratch/.out" 2>&1 &
-	gate=$!
-	set +m
-	for _ in $(seq 100); do
-		running=("$bin"/running/*)
-		[[ ! -e "${running[0]}" ]] || ((${#running[@]} < 2)) || break
-		sleep 0.1
-	done
-	((${#running[@]} == 2)) || {
-		echo "  expected two builds running, there are: ${running[*]}"
-		kill -TERM -- "-$gate"
+	local gate_pid running=()
+	start_gate RAVNIX_CHECK_JOBS=2
+	await_builds 2
+	kill -INT -- "-$gate_pid"
+	await_gate 50
+	expect_status 130
+	expect_dead "${running[@]}"
+	# The two that ran, in either order, and no third.
+	[[ "$(builds | sort | tr '\n' ' ')" == "$(check_of alpha) $(check_of beta) " ]] || {
+		echo "  expected alpha and beta built, and nothing after the Ctrl-C: $(builds | tr '\n' ' ')"
 		return 1
 	}
-	kill -INT -- "-$gate"
-	wait "$gate" || true
-	for _ in $(seq 50); do
-		alive=()
-		for pid in "${running[@]##*/}"; do
-			! kill -0 "$pid" 2>/dev/null || alive+=("$pid")
-		done
-		((${#alive[@]} > 0)) || break
-		sleep 0.1
-	done
-	((${#alive[@]} == 0)) || {
-		kill -TERM "${alive[@]}" 2>/dev/null || true
-		echo "  the builds ${alive[*]} kept running after the gate was interrupted"
-		return 1
-	}
+}
+
+an_interrupted_gate_stops_in_the_default_mode_too() {
+	new_repo
+	: >"$bin/build.hang"
+	local gate_pid running=()
+	start_gate
+	await_builds 1
+	kill -INT -- "-$gate_pid"
+	await_gate 50
+	expect_status 130
+	expect_dead "${running[@]}"
+	# The Ctrl-C ends the gate, not just the check it was building.
+	expect_builds "$(check_of alpha)"
+	expect_no_out "==> claude-code"
+}
+
+a_terminated_gate_stops_its_builds() {
+	new_repo
+	: >"$bin/build.hang"
+	local gate_pid running=()
+	start_gate
+	await_builds 1
+	kill -TERM -- "-$gate_pid"
+	await_gate 50
+	expect_status 143
+	expect_dead "${running[@]}"
+	expect_builds "$(check_of alpha)"
+}
+
+a_build_that_ignores_sigterm_is_killed() {
+	new_repo
+	: >"$bin/build.hang"
+	: >"$bin/build.stubborn"
+	local gate_pid running=()
+	start_gate RAVNIX_CHECK_JOBS=2
+	await_builds 2
+	kill -INT -- "-$gate_pid"
+	# 10 s for the builds to stop on SIGTERM, then SIGKILL.
+	await_gate 150
+	expect_status 130
+	expect_dead "${running[@]}"
+	expect_err "SIGKILL"
 }
 
 a_bad_job_count_fails_before_any_step() {
 	new_repo
 	local jobs
-	for jobs in 0 3 -1 ' 1' 1.5 two 01; do
+	for jobs in 0 -1 ' 1' 1.5 two 01 +2 2x; do
 		capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS="$jobs" scripts/check.sh
 		expect_status 2
 		expect_err "RAVNIX_CHECK_JOBS"
@@ -1224,6 +1428,9 @@ tests=(
 	a_failing_check_does_not_stop_the_others_and_is_named
 	every_failed_check_is_named_and_the_first_status_is_the_steps
 	a_check_that_fails_to_evaluate_counts_as_failed
+	a_check_is_evaluated_by_the_derivation_guard
+	an_evaluation_that_prints_no_derivation_fails_the_check
+	without_the_derivation_guard_the_flake_step_fails
 	an_empty_list_of_checks_builds_nothing_and_says_so
 	a_check_name_that_needs_quoting_is_quoted
 	a_check_name_nix_cannot_address_fails_and_the_others_run
@@ -1237,7 +1444,11 @@ tests=(
 	by_default_one_check_builds_at_a_time
 	two_jobs_build_two_checks_at_a_time_and_never_more
 	two_jobs_report_the_first_failing_check_in_order
+	three_jobs_build_three_checks_at_a_time_and_never_more
 	an_interrupted_gate_stops_the_builds_it_started
+	an_interrupted_gate_stops_in_the_default_mode_too
+	a_terminated_gate_stops_its_builds
+	a_build_that_ignores_sigterm_is_killed
 	a_bad_job_count_fails_before_any_step
 	a_claude_code_mismatch_fails_the_full_gate
 	an_unreachable_manifest_fails_the_full_gate_and_says_so

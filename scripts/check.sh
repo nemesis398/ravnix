@@ -41,19 +41,35 @@
 #          nothing else); other systems are omitted, as nix flake check
 #          omits them. Any other output fails the step until that file
 #          checks it, so a new output is never silently unchecked;
-#       4. builds each check in a nix build of its own, in the order of
-#          the listing, with --keep-going inside the build, so a check
-#          that fails, also one that fails to evaluate, stops none of the
-#          others. A name no attribute path on the command line can hold
-#          (a double quote, a control character, the empty name) fails as
-#          a check.
+#       4. for each check, in the order of the listing: evaluates its
+#          derivation in a nix eval of its own, through
+#          scripts/lib/check-drv.nix, which refuses a check that is no
+#          derivation (nix build alone would pass a path or a string with
+#          store context, nix flake check did not), and then builds that
+#          derivation with nix build DRV^* and --keep-going, which
+#          evaluates nothing again. A check that fails, also one that fails
+#          to evaluate, stops none of the others. A name no attribute path
+#          on the command line can hold (a double quote, a control
+#          character, the empty name) fails as a check. The installables
+#          are absolute (.#.checks...), so nix does not try packages.SYSTEM
+#          first.
 #     Then it names every failed check, and exits with the first failing
-#     status, in the order listing, outputs, checks. RAVNIX_CHECK_JOBS=2
-#     builds two checks at once, each line marked with its check's name;
-#     the default, 1, keeps to one, because a NixOS system's evaluation
-#     alone takes several GB, and two of them beside the user's
-#     applications can pass the 85 % of RAM the step is to stay under.
-#     Nix's own max-jobs and cores still decide the builds inside a check.
+#     status, in the order listing, outputs, checks.
+#
+#     RAVNIX_CHECK_JOBS=N runs N checks' nix processes at once, each line
+#     marked with its check's name; N is a whole number from 1 to 999. The
+#     default, 1, is for the RAM: the largest check's evaluation peaked at
+#     4.3 GB (measured on 2026-11-08), so N of them take up to N times that
+#     beside the user's applications, and the step is to stay under 85 % of
+#     the RAM. Nix's own max-jobs and cores still decide the builds inside
+#     a check.
+#
+#     A Ctrl-C or a SIGTERM to the gate's process group ends the step, in
+#     either mode: nix catches SIGINT and exits 1, which bash would take as
+#     handled and go on to the next check, so the step traps it. On its way
+#     out it sends SIGTERM to every nix process it started, waits for them,
+#     and sends SIGKILL to any still running after 10 s, since nix can
+#     ignore SIGTERM for minutes in the middle of an evaluation.
 #   - claude-code: claude-code-verify checks the Claude Code download that
 #     packages.claude-code was made from, for the version in ravnix's own
 #     flake.lock, against Anthropic's release manifest. A private flake whose
@@ -119,15 +135,15 @@ fi
 
 # How many checks the flake step builds at once (the header says why 1).
 check_jobs=1
-if [[ "$mode" == full ]]; then
-	case "${RAVNIX_CHECK_JOBS:-}" in
-	"" | 1) ;;
-	2) check_jobs=2 ;;
-	*)
-		printf 'check.sh: RAVNIX_CHECK_JOBS is %q; it is 1, the default, or 2.\n' "$RAVNIX_CHECK_JOBS" >&2
+if [[ "$mode" == full && -n "${RAVNIX_CHECK_JOBS:-}" ]]; then
+	if [[ ! "$RAVNIX_CHECK_JOBS" =~ ^[1-9][0-9]{0,2}$ ]]; then
+		printf 'check.sh: %s\n' \
+			"RAVNIX_CHECK_JOBS is $(printf %q "$RAVNIX_CHECK_JOBS"); it is the number of checks the flake step builds at once," \
+			"a whole number from 1, the default, to 999. Each takes up to 4.3 GB of RAM (measured on" \
+			"ravnix's largest check), so mind the RAM before you raise it." >&2
 		exit 2
-		;;
-	esac
+	fi
+	check_jobs=$RAVNIX_CHECK_JOBS
 fi
 
 work="$(mktemp -d -p "${TMPDIR:-/tmp}" ravnix-check.XXXXXX)"
@@ -225,6 +241,7 @@ nix_() {
 # shellcheck disable=SC2016 # Nix's ${...}, not the shell's.
 list_checks='checks: builtins.concatStringsSep "" (map (name: if builtins.match "[^\"[:cntrl:]]+" name == null then "bad ${builtins.toJSON name}\n" else "ok ${name}\n") (builtins.attrNames checks))'
 outputs_validator=scripts/lib/flake-outputs.nix
+check_guard=scripts/lib/check-drv.nix
 
 # The attribute path of the check named $1 below checks.SYSTEM: quoted, so
 # a dot is part of the name, and each byte but A-Z a-z 0-9 . _ ~ -
@@ -245,23 +262,52 @@ check_attr() {
 	printf '"%s"' "$out"
 }
 
-# Builds the installable $2 with each line of its output marked [$1], for
-# two builds side by side. Run in the background, it becomes that nix
-# process (exec), so the job's pid is nix's and stopping the job stops the
-# build. The flags are nix_'s.
-build_marked() {
-	local line
-	exec > >(while IFS= read -r line; do printf '[%s] %s\n' "$1" "$line"; done) 2>&1
-	exec nix --extra-experimental-features 'nix-command flakes' \
-		build --no-link --print-build-logs --keep-going "$2" --no-update-lock-file
+# Starts nix_ "${@:3}" in the background as the job itself (exec), so the
+# job's pid is nix's and stopping the job stops nix. Its lines are marked
+# [$1] unless $1 is empty, and its stdout goes to the file $2 unless $2 is
+# empty. A script's background jobs ignore SIGINT, so a Ctrl-C reaches the
+# step and not nix: the step stops nix on its way out (stop_nix).
+start_nix() {
+	local mark="$1" to="$2" line
+	shift 2
+	(
+		if [[ -n "$mark" ]]; then
+			exec > >(while IFS= read -r line; do printf '[%s] %s\n' "$mark" "$line"; done) 2>&1
+		fi
+		[[ -z "$to" ]] || exec >"$to"
+		exec nix --extra-experimental-features 'nix-command flakes' "$@" --no-update-lock-file
+	) &
 }
 
-# The builds running in the background, by pid. A script's background jobs
-# ignore SIGINT, so a Ctrl-C would stop the gate and leave them running:
-# the flake step stops them on its way out.
-declare -A building=()
-stop_builds() {
-	((${#building[@]} == 0)) || kill -TERM -- "${!building[@]}" 2>/dev/null || true
+# How long the nix processes of a stopped flake step get to end on SIGTERM
+# before SIGKILL: nix can ignore SIGTERM for minutes in the middle of an
+# evaluation.
+stop_grace=10
+
+# Stops every nix process the flake step started and has not reaped: all
+# jobs of its shell, so also one started a moment before the signal came
+# and not yet recorded. It waits for them, and kills those still running
+# after stop_grace seconds.
+stop_nix() {
+	local pids=() list killer
+	list="$(jobs -p)"
+	[[ -n "$list" ]] || return 0
+	mapfile -t pids <<<"$list"
+	echo "check.sh: stopping ${#pids[@]} nix process(es) of the flake step" >&2
+	kill -TERM -- "${pids[@]}" 2>/dev/null || true
+	(
+		sleep "$stop_grace"
+		for pid in "${pids[@]}"; do
+			if kill -0 "$pid" 2>/dev/null; then
+				echo "check.sh: nix process $pid ignored SIGTERM for ${stop_grace} s; sending SIGKILL" >&2
+				kill -KILL -- "$pid" 2>/dev/null || true
+			fi
+		done
+	) &
+	killer=$!
+	wait -- "${pids[@]}" 2>/dev/null || true
+	kill -- "$killer" 2>/dev/null || true
+	wait -- "$killer" 2>/dev/null || true
 }
 
 # "N things", or "1 thing".
@@ -270,21 +316,28 @@ counted() {
 }
 
 step_flake() {
-	local system listing line i s pid first=0 list_status=0 outputs_status=0 running=0
+	local system listing line i s pid phase drv mark first=0 list_status=0 outputs_status=0
+	local running=0 next=0
 	local names=() attrs=() results=() failed=()
-	if ((check_jobs > 1)); then
-		trap 'exit 130' INT
-		trap 'exit 143' TERM
-		trap stop_builds EXIT
-	fi
+	local -A job_check=() job_phase=()
 
+	# A Ctrl-C or a SIGTERM ends the step, not just the nix process running
+	# then: nix catches SIGINT and exits 1, which bash takes as handled.
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	trap stop_nix EXIT
+
+	if [[ ! -f "$check_guard" ]]; then
+		echo "check.sh: $check_guard is missing, so no check can be told from a non-derivation" >&2
+		return 1
+	fi
 	system="$(nix --extra-experimental-features 'nix-command flakes' config show system)" || return $?
 	if [[ ! "$system" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]]; then
 		printf 'check.sh: nix names the system it builds for %q, which is no system name\n' "$system" >&2
 		return 1
 	fi
 
-	listing="$(nix_ eval --raw ".#checks.$system" --apply "$list_checks")" || list_status=$?
+	listing="$(nix_ eval --raw ".#.checks.$system" --apply "$list_checks")" || list_status=$?
 	if ((list_status == 0)) && [[ -n "$listing" ]]; then
 		while IFS= read -r line; do
 			case "$line" in
@@ -317,38 +370,56 @@ step_flake() {
 			outputs_status=$?
 	fi
 
-	printf 'checks.%s: %s, %s at a time\n' "$system" "$(counted "${#names[@]}" check)" \
-		"$( ((check_jobs == 1)) && echo one || echo two)"
-	for i in "${!names[@]}"; do
-		if [[ -z "${attrs[i]}" ]]; then
-			printf 'check.sh: no attribute path on the command line can name the check %s\n' "${names[i]}" >&2
-			results[i]=1
-			continue
-		fi
-		if ((check_jobs == 1)); then
-			printf -- '--> %s\n' "${names[i]}"
-			s=0
-			nix_ build --no-link --print-build-logs --keep-going ".#checks.$system.${attrs[i]}" || s=$?
+	# Each check is two nix processes, one after the other: the evaluation
+	# of its derivation through check_guard, which refuses a value that is
+	# no derivation, and the build of that derivation, which evaluates
+	# nothing. At most check_jobs of them run at once.
+	printf 'checks.%s: %s, %d at a time\n' "$system" "$(counted "${#names[@]}" check)" "$check_jobs"
+	while ((next < ${#names[@]} || running > 0)); do
+		while ((running < check_jobs && next < ${#names[@]})); do
+			i=$next
+			next=$((next + 1))
+			if [[ -z "${attrs[i]}" ]]; then
+				printf 'check.sh: no attribute path on the command line can name the check %s\n' "${names[i]}" >&2
+				results[i]=1
+				continue
+			fi
+			mark=""
+			if ((check_jobs == 1)); then
+				printf -- '--> %s\n' "${names[i]}"
+			else
+				mark="${names[i]}"
+			fi
+			start_nix "$mark" "$work/drv.$i" eval --raw ".#.checks.$system.${attrs[i]}" --apply "$(<"$check_guard")"
+			job_check[$!]=$i
+			job_phase[$!]="eval"
+			running=$((running + 1))
+		done
+		((running > 0)) || break
+		s=0
+		wait -n -p pid || s=$?
+		i=${job_check[$pid]}
+		phase=${job_phase[$pid]}
+		unset 'job_check[$pid]' 'job_phase[$pid]'
+		running=$((running - 1))
+		if [[ "$phase" == build ]]; then
 			results[i]=$s
 			continue
 		fi
-		if ((running == check_jobs)); then
-			s=0
-			wait -n -p pid || s=$?
-			results[${building[$pid]}]=$s
-			unset 'building[$pid]'
-			running=$((running - 1))
+		drv="$(cat -- "$work/drv.$i" 2>/dev/null)" || drv=""
+		if ((s != 0)); then
+			results[i]=$s
+		elif [[ ! "$drv" =~ ^/[^[:space:]]+\.drv$ ]]; then
+			printf 'check.sh: the evaluation of the check %s printed no derivation: %s\n' "${names[i]}" "$drv" >&2
+			results[i]=1
+		else
+			mark=""
+			((check_jobs == 1)) || mark="${names[i]}"
+			start_nix "$mark" "" build --no-link --print-build-logs --keep-going "$drv^*"
+			job_check[$!]=$i
+			job_phase[$!]="build"
+			running=$((running + 1))
 		fi
-		build_marked "${names[i]}" ".#checks.$system.${attrs[i]}" &
-		building[$!]=$i
-		running=$((running + 1))
-	done
-	while ((running > 0)); do
-		s=0
-		wait -n -p pid || s=$?
-		results[${building[$pid]}]=$s
-		unset 'building[$pid]'
-		running=$((running - 1))
 	done
 
 	((list_status == 0)) || first=$list_status

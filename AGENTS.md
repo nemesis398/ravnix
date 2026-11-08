@@ -81,7 +81,7 @@ it.
 ```sh
 scripts/check.sh --fast                      # what pre-commit and the Stop hook run
 scripts/check.sh                             # the full gate, as pre-push runs it
-RAVNIX_CHECK_JOBS=2 scripts/check.sh         # two checks at once, when the RAM allows
+RAVNIX_CHECK_JOBS=2 scripts/check.sh         # two checks at once, up to 4.3 GB of RAM each
 nix build .#checks.x86_64-linux.NAME         # one Nix check
 ```
 
