@@ -195,17 +195,19 @@ let
     ) "a host with none of the optional values fails: ${toString (failed nothing)}")
     (lib.optional
       (
-        # A bare server runs herdr's server, the glue's ravnix-link-deliver,
-        # which delivers queued requests to the laptop from boot (Task 5.3),
-        # and rbw's agent and its 12-hour lock (modules/common/rbw.nix): none
-        # of them is an optional value's, and any other unit is one of theirs.
+        # The declared user services and timers of a bare server are herdr's
+        # server, the glue's ravnix-link-deliver, which delivers queued
+        # requests to the laptop from boot (Task 5.3), and rbw's agent
+        # (modules/common/rbw.nix): none of them is an optional value's, and
+        # any other unit is one of theirs. rbw's 12-hour lock is not in the
+        # list, because rbw-relock is a transient unit that systemd-run starts
+        # at an unlock, and unitsOf reads only declared units.
         lib.filter (
           u:
           !lib.elem u [
             "herdr-server"
             "ravnix-link-deliver"
             "rbw-agent"
-            "rbw-relock"
           ]
         ) (unitsOf nothing) != [ ]
       )
