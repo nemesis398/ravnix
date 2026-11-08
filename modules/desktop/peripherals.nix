@@ -10,6 +10,14 @@
 # tag is only honored when it is set before systemd's 73-seat-late.rules runs;
 # services.udev.extraRules writes 99-local.rules, which is too late.
 #
+# This file owns 60-dygma.rules and 60-magic-trackpad.rules, with every line
+# the Fedora laptop's two files hold: the hidraw lines and the evdev lines
+# that sway-radial needs (it reads the pad's gestures from libinput, which
+# skips a device it cannot open and says nothing). NixOS assembles the rules
+# directory by file name, so a second package that ships a rule file of the
+# same name silently replaces one of the two. Nothing else may ship them; the
+# VM test compares the built files line by line.
+#
 # MX Master: the mouse needs no udev rule. logid runs as root, and what it is
 # for is two things only (the file it replaces says so at length):
 #   - the gesture button under the thumb rest becomes F14 (a press) and F15

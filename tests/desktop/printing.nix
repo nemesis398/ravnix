@@ -590,14 +590,30 @@ let
         names = machine.succeed("ls /etc/udev/rules.d").split()
         assert names.index("60-dygma.rules") < names.index("73-seat-late.rules"), names
         assert names.index("60-magic-trackpad.rules") < names.index("73-seat-late.rules"), names
-        dygma = machine.succeed("cat /etc/udev/rules.d/60-dygma.rules")
-        for want in ['ATTRS{idVendor}=="35ef"', 'ATTRS{idVendor}=="1209"', 'ATTRS{idProduct}=="2200"', 'TAG+="uaccess"', 'KERNEL=="hidraw*"']:
-          assert want in dygma, want
-        pad = machine.succeed("cat /etc/udev/rules.d/60-magic-trackpad.rules")
-        for want in ['DRIVERS=="magicmouse"', 'SUBSYSTEM=="input"', '0005:004C:0324', '0003:05AC:0324', 'TAG+="uaccess"']:
-          assert want in pad, want
+        # The rule lines are exactly the ones the Fedora laptop's two files hold
+        # (the comments aside, and its two repeated Dygma lines once): a missing
+        # line, such as the evdev ones sway-radial needs, or an added one fails.
+        def rules(path):
+          lines = machine.succeed("cat " + path).splitlines()
+          return {l.strip() for l in lines if l.strip() and not l.strip().startswith("#")}
+        dygma = rules("/etc/udev/rules.d/60-dygma.rules")
+        assert dygma == {
+          'SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="2200", MODE="0660", TAG+="uaccess"',
+          'SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="2201", MODE="0660", TAG+="uaccess"',
+          'SUBSYSTEMS=="usb", ATTRS{idVendor}=="35ef", MODE="0660", TAG+="uaccess"',
+          'KERNEL=="hidraw*", ATTRS{idVendor}=="35ef", MODE="0660", TAG+="uaccess"',
+        }, dygma
+        pad = rules("/etc/udev/rules.d/60-magic-trackpad.rules")
+        assert pad == {
+          'KERNEL=="hidraw*", SUBSYSTEM=="hidraw", DRIVERS=="magicmouse", MODE="0660", TAG+="uaccess"',
+          'KERNEL=="hidraw*", KERNELS=="0005:004C:0324.*", MODE="0660", TAG+="uaccess"',
+          'KERNEL=="hidraw*", KERNELS=="0003:05AC:0324.*", MODE="0660", TAG+="uaccess"',
+          'SUBSYSTEM=="input", DRIVERS=="magicmouse", MODE="0660", TAG+="uaccess"',
+          'SUBSYSTEM=="input", KERNELS=="0005:004C:0324.*", MODE="0660", TAG+="uaccess"',
+          'SUBSYSTEM=="input", KERNELS=="0003:05AC:0324.*", MODE="0660", TAG+="uaccess"',
+        }, pad
         # Neither grants the input group's reach over every device.
-        assert "GROUP=" not in dygma + pad
+        assert not any("GROUP=" in l for l in dygma | pad)
 
       with subtest("the libinput quirk for the MX Master is where libinput reads it"):
         quirk = machine.succeed("cat /etc/libinput/local-overrides.quirks")
