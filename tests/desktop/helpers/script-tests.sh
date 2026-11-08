@@ -29,8 +29,15 @@ export HOME=$work/home
 # is touched.
 export WAYBAR_MATCH='^ravnix-test-waybar( |$)'
 export SWAYLOCK_MATCH='^ravnix-test-swaylock( |$)'
+# Stand-ins and decoys wait for a signal and have no timer, so a slow run cannot
+# let one expire and read as "was killed". They end when the test kills them,
+# and the exit trap kills any that a failed run left behind.
+# shellcheck disable=SC2046 # the job ids are meant to split
+trap 'kill $(jobs -p) 2>/dev/null; [ -z "${lockers_parent:-}" ] || pkill -P "$lockers_parent" 2>/dev/null' EXIT
 decoy() { # decoy NAME: a process whose command line starts with NAME, sets decoy_pid
-  ( exec -a "$1" python3 -c 'import time; time.sleep(120)' ) &
+  ( exec -a "$1" python3 -c 'import signal
+while True:
+    signal.pause()' ) &
   decoy_pid=$!
 }
 decoy waybar
@@ -267,11 +274,12 @@ tip=$(jq -r .tooltip <<<"$("$clock")")
 # ── Waybar is found by its command line, as NixOS's wrapper names the process
 # .waybar-wrapped: a stand-in called waybar by argv[0] only, like the wrapper's.
 fake_waybar() { # fake_waybar SIGNAL-LOG: starts it, sets fake_pid
-  ( exec -a ravnix-test-waybar python3 -c 'import signal, sys, time
+  ( exec -a ravnix-test-waybar python3 -c 'import signal, sys
 def note(*_):
     open(sys.argv[1], "a").write("x")
 signal.signal(signal.SIGRTMIN + 8, note)
-time.sleep(60)' "$1" ) &
+while True:
+    signal.pause()' "$1" ) &
   fake_pid=$!
   sleep 1
 }
@@ -301,9 +309,10 @@ ok "Waybar is found and signalled by its command line"
 keep=$(script keep-awake)
 handler=$(grep -m1 -o "unlock  *'[^']*'" "$keep" | sed "s/^unlock  *'//; s/'\$//")
 [ -n "$handler" ] || bad "keep-awake has no unlock handler for swayidle"
-( exec -a ravnix-test-swaylock python3 -c 'import signal, sys, time
+( exec -a ravnix-test-swaylock python3 -c 'import signal, sys
 signal.signal(signal.SIGUSR1, lambda *_: sys.exit(0))
-time.sleep(60)' ) &
+while True:
+    signal.pause()' ) &
 fake_pid=$!
 sleep 1
 USER=$(id -un) sh -c "$handler" >/dev/null 2>&1
@@ -314,6 +323,39 @@ if kill -0 "$fake_pid" 2>/dev/null; then
 fi
 wait "$fake_pid" 2>/dev/null
 ok "keep-awake unlock handler"
+
+# The handler as it runs on the laptop: its own pattern, with no SWAYLOCK_MATCH.
+# The pkill it calls is a stand-in that adds -P, so that only the children of one
+# subshell of this test can be reached, never a lock screen of the developer and
+# not the decoys above. A swaylock is signalled; things that only contain the
+# word are not.
+children_only=$work/children-only
+lockers=$work/lockers
+mkdir -p "$children_only" "$lockers"
+(
+  for name in swaylock swaylockd xswaylock; do
+    ( exec -a "$name" python3 -c 'import os, signal, sys
+open(sys.argv[1], "w").write(str(os.getpid()))
+while True:
+    signal.pause()' "$lockers/$name.pid" ) &
+  done
+  wait
+) &
+lockers_parent=$!
+printf '#!/bin/sh\nexec %s -P %s "$@"\n' "$(command -v pkill)" "$lockers_parent" >"$children_only/pkill"
+chmod +x "$children_only/pkill"
+sleep 1
+env -u SWAYLOCK_MATCH USER="$(id -un)" PATH="$children_only:$PATH" sh -c "$handler" >/dev/null 2>&1
+sleep 1
+if kill -0 "$(cat "$lockers/swaylock.pid")" 2>/dev/null; then
+  bad "the default pattern of keep-awake's unlock handler does not match a swaylock: $handler"
+fi
+kill -0 "$(cat "$lockers/swaylockd.pid")" 2>/dev/null || bad "the default pattern of keep-awake's unlock handler matches swaylockd"
+kill -0 "$(cat "$lockers/xswaylock.pid")" 2>/dev/null || bad "the default pattern of keep-awake's unlock handler matches xswaylock"
+pkill -P "$lockers_parent" 2>/dev/null
+kill "$lockers_parent" 2>/dev/null
+wait "$lockers_parent" 2>/dev/null
+ok "keep-awake unlock handler, default pattern"
 
 # ── waybar-mode cycles full, focus, none ─────────────────────────────────────
 mode=$(script waybar-mode)
