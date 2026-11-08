@@ -407,6 +407,10 @@ pkgs.testers.runNixOSTest (
             code, _ = machine.execute("su - " + USER + " -c 'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start vdirsyncer.service'")
             assert code != 0
             assert "locked" in user_journal("vdirsyncer.service")
+            # A feed's first run is quiet: its directory is there before
+            # vdirsyncer looks for it.
+            assert "does not exist" not in user_journal("vdirsyncer.service"), user_journal("vdirsyncer.service")
+            assert "No collection" not in user_journal("vdirsyncer.service"), user_journal("vdirsyncer.service")
             machine.fail("test -e " + HOME + "/.local/share/calendars/personal")
             status = as_user("ls ~/.local/share/vdirsyncer/status 2>/dev/null || true").split()
             assert not [n for n in status if n.startswith(("calendars", "contacts"))], status

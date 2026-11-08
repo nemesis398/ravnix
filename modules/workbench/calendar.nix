@@ -173,13 +173,19 @@ in
 
       sync = pkgs.writeShellApplication {
         name = "ravnix-calendar-sync";
-        runtimeInputs = [ pkgs.vdirsyncer ];
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.vdirsyncer
+        ];
         text = ''
           ${lib.optionalString (feedNames != [ ]) ''
             # A feed that cannot be fetched does not keep the account from
             # syncing; the unit fails at the end if one could not.
             feeds=0
             ${lib.concatMapStrings (name: ''
+              # The directory first, so vdirsyncer does not warn about it on
+              # the first run.
+              mkdir -p -- ${lib.escapeShellArg "${readonly}/${name}"}
               if ! { vdirsyncer discover ${pairOf name} && vdirsyncer sync ${pairOf name}; }; then
                 feeds=1
               fi
