@@ -283,6 +283,14 @@ let
   '';
 
   # The sway config of the system's sway, checked once with every fragment.
+  # gtk-launch starts an app by its .desktop id: the bindings of the config
+  # ($browser and the rest), the login layout through them, and the web apps
+  # (webapps.nix) call it by that bare name, so it is on the PATH. It comes with
+  # GTK 3, whose `out` output has no bin of its own and also installs the demo
+  # launchers and a schema tree, which would put "GTK Demo" in the launcher; so
+  # only this one file is linked. (GTK 4's tool is called gtk4-launch.)
+  gtkLaunch = pkgs.linkFarm "gtk-launch" { "bin/gtk-launch" = lib.getExe' pkgs.gtk3 "gtk-launch"; };
+
   checkedConfig =
     {
       fragments,
@@ -415,6 +423,7 @@ in
     # The tools the config, the bar and the scripts call, on every user's PATH.
     environment.systemPackages =
       lib.attrValues scripts
+      ++ [ gtkLaunch ]
       ++ (with pkgs; [
         cliphist
         kanshi

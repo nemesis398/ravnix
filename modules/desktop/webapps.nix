@@ -8,7 +8,9 @@
 # are its clients (tests/desktop/apps.nix checks that none exists).
 #
 # Each launcher is a file webapp-NAME.desktop in the system profile, so
-# `gtk-launch webapp-NAME` starts it. The window shares the browser's default
+# `gtk-launch webapp-NAME` starts it (gtk-launch is on the PATH: sway.nix
+# installs it, and tests/desktop/apps.nix checks every id the Sway config
+# names). The window shares the browser's default
 # profile, so a login in the browser is a login in the app. The launcher holds
 # no %U or other field code (the launcher drops them, and an app window takes
 # no argument).

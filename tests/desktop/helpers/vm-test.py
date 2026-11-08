@@ -155,14 +155,14 @@ wait_for("sway-session.target", lambda: as_user("systemctl --user is-active sway
 
 # The commands that energy, the keys and the bar call by name resolve for a
 # process Sway starts (swaymsg exec runs them with Sway's own environment).
-swaymsg("exec", "command -v keep-awake waybar-launch waybar-mode ghostty-float sway-volume > /tmp/session-path.txt 2>&1")
+swaymsg("exec", "command -v keep-awake waybar-launch waybar-mode ghostty-float sway-volume gtk-launch > /tmp/session-path.txt 2>&1")
 wait_for(
     "the session's PATH to be asked",
-    lambda: machine.execute("test $(wc -l < /tmp/session-path.txt) -ge 5")[0] == 0,
+    lambda: machine.execute("test $(wc -l < /tmp/session-path.txt) -ge 6")[0] == 0,
     20,
 )
 found = machine.succeed("cat /tmp/session-path.txt")
-for command in ("keep-awake", "waybar-launch", "waybar-mode", "ghostty-float", "sway-volume"):
+for command in ("keep-awake", "waybar-launch", "waybar-mode", "ghostty-float", "sway-volume", "gtk-launch"):
     assert f"/bin/{command}" in found, f"{command} is not on the PATH of the Sway session: {found}"
 
 # The GPU the module names is the one the link points at, and Sway started
@@ -256,6 +256,38 @@ as_user("notify-send -a test 'Desktop test' 'A notification'")
 wait_for("a notification on screen", lambda: as_user("dunstctl count displayed").strip() == "1", 20)
 machine.screenshot("notification")
 as_user("dunstctl close-all")
+
+# ── the login layout is over ───────────────────────────────────────────────────
+# The layout starts the session's apps through gtk-launch (Helium and the music
+# web app among them), which works since gtk-launch is on the PATH. Their
+# windows are not what the next stage looks at: it counts colors on the screen,
+# and a browser page under the ring has the wash and the accent in it and would
+# change the numbers it is compared with. So the layout is waited for, and its
+# windows are closed.
+wait_for("the login layout to be done", lambda: machine.execute(f"pgrep -u {USER} -f sway-session-layout")[0] != 0, 120)
+
+
+def windows():
+    found = []
+
+    def walk(node):
+        if node.get("pid") and node.get("type") in ("con", "floating_con"):
+            found.append(node["id"])
+        for child in node.get("nodes", []) + node.get("floating_nodes", []):
+            walk(child)
+
+    walk(swaymsg("-t", "get_tree"))
+    return found
+
+
+def close_windows():
+    for window in windows():
+        swaymsg(f"[con_id={window}]", "kill")
+    return not windows()
+
+
+wait_for("the windows of the layout to be closed", close_windows, 60)
+machine.execute(f"pkill -u {USER} -f '/share/helium/helium'")
 
 # ── the radial menu ───────────────────────────────────────────────────────────
 # sway-radial is a user service of the session. It reads the trackpad, which the

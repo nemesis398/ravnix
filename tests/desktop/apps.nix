@@ -516,6 +516,9 @@ pkgs.runCommand "desktop-apps"
     );
     inherit droppedPatterns;
     inherit profile handyLaunch;
+    # The Sway config as generated, which the bindings and the login layout
+    # read, and the one place that names the apps by their .desktop id.
+    swayConfig = hm.xdg.configFile."sway/config".source;
     closureStorePaths = "${closure}/store-paths";
     closureRegistration = "${closure}/registration";
     systemToplevel = "${config.system.build.toplevel}";
@@ -549,6 +552,18 @@ pkgs.runCommand "desktop-apps"
         fi
       done
     done < <(printf '%s' "$appLines")
+
+    # --- the apps the Sway config starts by `gtk-launch ID` (the bindings and,
+    # through $browser and the like, the login layout): gtk-launch is on the
+    # session's PATH, and each ID is a .desktop file of the profile. A bare
+    # `gtk-launch` that is not installed, or an id the package does not use
+    # (obsidian's is md.obsidian.Obsidian), is a key that does nothing.
+    [ -x "$profile/bin/gtk-launch" ] || fail "sway: gtk-launch is not on the session's PATH, so the bindings that start an app by its .desktop id do nothing"
+    ids=$(grep -v '^ *#' "$swayConfig" | grep -oE 'gtk-launch +[A-Za-z0-9_.+-]+' | awk '{print $2}' | sort -u)
+    [ "$(printf '%s\n' "$ids" | wc -l)" -ge 9 ] || fail "sway: fewer than nine gtk-launch calls found in the Sway config: $ids"
+    for id in $ids; do
+      [ -e "$profile/share/applications/$id.desktop" ] || fail "sway: gtk-launch $id: there is no $id.desktop in the profile"
+    done
 
     # Handy's launcher pins the iGPU through Mesa's EGL vendor file and RADV's
     # ICD file, and names no GPU by cardN (the numbers can swap between boots).

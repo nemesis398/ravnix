@@ -71,7 +71,9 @@ set $lock loginctl lock-session
 #   routes through swayidle's `lock` handler to swaylock
 
 set $browser       gtk-launch helium
-set $notes         gtk-launch obsidian
+#   nixpkgs' Obsidian installs md.obsidian.Obsidian.desktop (the id of its
+#   Flatpak), not obsidian.desktop; tests/desktop/apps.nix checks every id here.
+set $notes         gtk-launch md.obsidian.Obsidian
 set $office        gtk-launch onlyoffice-desktopeditors
 #   ONLYOFFICE runs on XWayland (app_id XWAYLAND:ONLYOFFICE) and cannot do
 #   otherwise: its bundled Qt ships only the xcb, linuxfb, minimal, offscreen
