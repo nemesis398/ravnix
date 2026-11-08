@@ -21,6 +21,15 @@
 # sets DISABLE_AUTOUPDATER=1 already. The settings' env and the session
 # variables set it too, so a claude started some other way gets it as well.
 #
+# Why telemetry and error reports are off (the maintainer's choice,
+# 2026-11-08, on both hosts): Claude Code would send usage events and crash
+# reports of its own. DISABLE_TELEMETRY and DISABLE_ERROR_REPORTING turn them
+# off, and like the auto-updater's switch they are set wherever Claude Code
+# gets its environment: the settings' env, the shell's session variables,
+# and the user manager's, which the herdr panes and the Remote Control unit
+# start from. ravnix's own claude-telemetry report reads Claude Code's local
+# files and is not affected.
+#
 # Why the settings are mutable: Claude Code writes its own settings file,
 # from /config, the model picker and the permission prompts, and a store
 # link would make every such write fail. With mutableSettings,
@@ -66,6 +75,12 @@ let
     }''${PATH:+:$PATH}
     exec ${lib.getExe pkgs.bash} ${steps}/sync-hooks.sh "$@"
   '';
+  # Off on every host, wherever Claude Code gets its environment.
+  switches = {
+    DISABLE_AUTOUPDATER = "1";
+    DISABLE_TELEMETRY = "1";
+    DISABLE_ERROR_REPORTING = "1";
+  };
   entries = json.generate "ravnix-claude-hooks.json" config.ravnix.claude.hookEntries;
 
   # The step tells ravnix's hooks by this prefix, so it can only take out
@@ -119,10 +134,11 @@ in
     # Upstream's place, and home-manager's default before state version
     # 26.11; set here so the default does not move under a user.
     configDir = lib.mkDefault "${config.home.homeDirectory}/.claude";
-    settings.env.DISABLE_AUTOUPDATER = "1";
+    settings.env = switches;
   };
 
-  config.home.sessionVariables.DISABLE_AUTOUPDATER = "1";
+  config.home.sessionVariables = switches;
+  config.systemd.user.sessionVariables = switches;
 
   # Why the Artifact tool is off: its definition is about 15k tokens, a quarter
   # of every session's fixed baseline, and it rides along into every subagent.

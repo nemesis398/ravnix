@@ -192,17 +192,29 @@ let
       ok = cc.mutableSettings && cc.configDir == "/home/alice/.claude";
     }
     {
-      name = "the settings env turns the auto-updater off and names the skill values";
+      name = "the settings env turns the auto-updater, the telemetry and the error reports off and names the skill values";
       ok =
         settings.env == {
           DISABLE_AUTOUPDATER = "1";
+          DISABLE_TELEMETRY = "1";
+          DISABLE_ERROR_REPORTING = "1";
           RAVNIX_SKILL_VALUES = "/home/alice/.config/ravnix/skill-values.json";
         };
     }
     {
-      name = "so do the session variables";
+      name = "so do the session variables, and the user manager's for the three switches";
       ok =
-        config.home.sessionVariables.DISABLE_AUTOUPDATER == "1"
+        lib.all
+          (
+            v:
+            config.home.sessionVariables.${v} or null == "1"
+            && config.systemd.user.sessionVariables.${v} or null == "1"
+          )
+          [
+            "DISABLE_AUTOUPDATER"
+            "DISABLE_TELEMETRY"
+            "DISABLE_ERROR_REPORTING"
+          ]
         &&
           config.home.sessionVariables.RAVNIX_SKILL_VALUES == "/home/alice/.config/ravnix/skill-values.json";
     }
