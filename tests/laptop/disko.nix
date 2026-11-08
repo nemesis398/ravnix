@@ -3,7 +3,9 @@
 # of hosts/laptop/disko.nix to the path the guard printed, and the other disk
 # comes out bit for bit as it went in. The VM also runs the shape's udev
 # rule, hosts/laptop/hide-other-disks.nix, and udisks: the disk to keep and
-# its partitions are hidden from udisks, the target is not.
+# its partitions are hidden from udisks, and so is an internal SATA disk;
+# the target is not, and neither is a USB disk, not even one that udev
+# takes for ATA, as it does a SATA disk in a USB enclosure.
 #
 # The VM has two NVMe disks of one model, QEMU's, told apart by serial only,
 # as two disks of one series would be. The NVMe driver probes them at the
@@ -24,6 +26,8 @@ let
   model = "QEMU NVMe Ctrl";
   serial = "EXAMPLE0SERIAL";
   keepSerial = "KEEP0SERIAL";
+  sataSerial = "SATA0SERIAL";
+  usbSerial = "USB0SERIAL";
 
   # The shape's own name for the disk, from the model and serial a private
   # flake would set: what the guard has to print.
@@ -67,6 +71,21 @@ pkgs.testers.runNixOSTest {
     ravnix.laptop.diskSerial = lib.mkForce serial;
     services.udisks2.enable = true;
 
+    # A SATA disk in a USB enclosure gets ID_BUS=ata: systemd's
+    # 60-persistent-storage.rules runs ata_id on every non-removable USB
+    # disk, and ata_id says ata whenever the bridge passes ATA commands
+    # through. QEMU's USB disk passes none, so this rule, before the shape's
+    # at 90, gives it the ID_BUS such a bridge would.
+    services.udev.packages = [
+      (pkgs.writeTextFile {
+        name = "laptop-disko-usb-sata-bridge";
+        destination = "/lib/udev/rules.d/85-laptop-disko-usb-sata-bridge.rules";
+        text = ''
+          SUBSYSTEM=="block", KERNEL=="sd*", ENV{ID_BUS}=="usb", ENV{ID_BUS}="ata"
+        '';
+      })
+    ];
+
     virtualisation = {
       memorySize = 2048;
       cores = 2;
@@ -76,6 +95,13 @@ pkgs.testers.runNixOSTest {
         "-device nvme,serial=${keepSerial},drive=keep"
         "-drive if=none,id=target,format=qcow2,file=$TMPDIR/target.qcow2"
         "-device nvme,serial=${serial},drive=target"
+        # A SATA disk on AHCI, as inside a laptop, and a disk on USB.
+        "-device ahci,id=ravnixahci"
+        "-drive if=none,id=sata,format=qcow2,file=$TMPDIR/sata.qcow2"
+        "-device ide-hd,drive=sata,bus=ravnixahci.0,serial=${sataSerial}"
+        "-device qemu-xhci,id=ravnixusb"
+        "-drive if=none,id=usb,format=qcow2,file=$TMPDIR/usb.qcow2"
+        "-device usb-storage,drive=usb,bus=ravnixusb.0,serial=${usbSerial}"
       ];
     };
     environment.systemPackages = [
@@ -91,8 +117,8 @@ pkgs.testers.runNixOSTest {
     import subprocess
     from datetime import timedelta
 
-    for name in ["keep", "target"]:
-        subprocess.run(["${qemuImg}", "create", "-q", "-f", "qcow2", str(machine.state_dir / f"{name}.qcow2"), "3G"], check=True)
+    for name, size in [("keep", "3G"), ("target", "3G"), ("sata", "64M"), ("usb", "64M")]:
+        subprocess.run(["${qemuImg}", "create", "-q", "-f", "qcow2", str(machine.state_dir / f"{name}.qcow2"), size], check=True)
 
     machine.start()
     machine.wait_for_unit("multi-user.target")
@@ -153,6 +179,40 @@ pkgs.testers.runNixOSTest {
             udisks_hint(dev, hidden=True)
         assert not udev_hides("${device}"), "udev hides the target from udisks"
         udisks_hint("${device}", hidden=False)
+
+    with subtest("udisks ignores a SATA disk, and never a USB disk, not even one udev takes for ATA"):
+        disks = {}
+        for line in machine.succeed("lsblk -dnro NAME,TRAN").splitlines():
+            fields = line.split()
+            if len(fields) == 2:
+                disks.setdefault(fields[1], []).append(f"/dev/{fields[0]}")
+        assert len(disks.get("sata", [])) == 1 and len(disks.get("usb", [])) == 1, f"the disks by transport: {disks}"
+        sata, usb = disks["sata"][0], disks["usb"][0]
+        machine.succeed(f"sgdisk --clear --new=1:0:0 {sata}", f"sgdisk --clear --new=1:0:0 {usb}", "udevadm settle")
+
+        def props(dev):
+            return machine.succeed(f"udevadm info --query=property --name={dev}").splitlines()
+
+        for dev in [sata, usb]:
+            marks = [p for p in props(dev) if p.split("=")[0] in ("ID_BUS", "ID_USB_VENDOR_ID", "ID_PATH", "ID_SERIAL_SHORT")]
+            machine.log(f"{dev}: {' '.join(marks)}")
+
+        # Both are ID_BUS=ata to udev; only the USB one carries the marks
+        # of USB, from usb_id and path_id, and its partition takes them over.
+        for dev in [sata, f"{sata}1", usb, f"{usb}1"]:
+            assert "ID_BUS=ata" in props(dev), f"{dev} is not ID_BUS=ata: {props(dev)}"
+        for dev in [sata, f"{sata}1"]:
+            assert not any(p.startswith("ID_USB_") for p in props(dev)), f"{dev} looks like USB: {props(dev)}"
+        for dev in [usb, f"{usb}1"]:
+            assert any(p.startswith("ID_USB_VENDOR_ID=") for p in props(dev)), f"{dev} has no ID_USB_VENDOR_ID: {props(dev)}"
+            assert any(p.startswith("ID_PATH=") and "-usb-" in p for p in props(dev)), f"{dev} has no ID_PATH through USB: {props(dev)}"
+
+        for dev in [sata, f"{sata}1"]:
+            assert udev_hides(dev), f"udev does not hide the SATA disk's {dev} from udisks"
+            udisks_hint(dev, hidden=True)
+        for dev in [usb, f"{usb}1"]:
+            assert not udev_hides(dev), f"udev hides the USB disk's {dev} from udisks"
+            udisks_hint(dev, hidden=False)
 
     with subtest("the guard picks the target by model and serial, whatever its kernel name"):
         status, out, err = guard_on("${serial}")

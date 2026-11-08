@@ -64,7 +64,7 @@ let
   rules = lib.filter (l: l != "" && !lib.hasPrefix "#" l) (lib.splitString "\n" (hide.text or ""));
   hidden = [
     ''ACTION!="remove", SUBSYSTEM=="block", KERNEL=="nvme*", ENV{DEVTYPE}=="disk|partition", ENV{ID_SERIAL_SHORT}!="EXAMPLE0SERIAL", ENV{UDISKS_IGNORE}="1"''
-    ''ACTION!="remove", SUBSYSTEM=="block", KERNEL=="sd*", ENV{ID_BUS}=="ata", ENV{DEVTYPE}=="disk|partition", ENV{ID_SERIAL_SHORT}!="EXAMPLE0SERIAL", ENV{UDISKS_IGNORE}="1"''
+    ''ACTION!="remove", SUBSYSTEM=="block", KERNEL=="sd*", ENV{ID_BUS}=="ata", ENV{ID_USB_VENDOR_ID}!="?*", ENV{ID_PATH}!="*-usb-*", ENV{DEVTYPE}=="disk|partition", ENV{ID_SERIAL_SHORT}!="EXAMPLE0SERIAL", ENV{UDISKS_IGNORE}="1"''
   ];
   # The shape with another serial: udev reads *?[ and | in a match as a
   # pattern, so a serial holding one must not evaluate.

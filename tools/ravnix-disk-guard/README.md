@@ -93,9 +93,10 @@ The guard is one of four layers:
    `hosts/laptop/hide-other-disks.nix` gives each NVMe or SATA disk whose
    serial is not `ravnix.laptop.diskSerial`, and its partitions,
    `UDISKS_IGNORE=1`, so the desktop neither shows nor automounts it, and a
-   file manager cannot format it. A USB disk still mounts. root can still
-   mount the hidden disk by hand; nothing stops that but rule 2 of
-   AGENTS.md.
+   file manager cannot format it. A USB disk still mounts, a SATA disk in
+   a USB enclosure included, which udev calls ATA. The hint is no lock:
+   `udisksctl` and root can still mount the hidden disk, behind polkit's
+   admin password and rule 2 of AGENTS.md.
 
 ## Tests and bench
 
@@ -123,9 +124,11 @@ with a newline, and its absence without a seam, for `--by-id
 `tests/laptop/disko.nix` runs the guard and disko in a VM with two QEMU
 NVMe disks of one model, and checks that the disk to keep comes out of it
 bit for bit unchanged, read with O_DIRECT past the page cache. The same VM
-runs the udev rule and udisks: the disk to keep and its partitions carry
-`UDISKS_IGNORE=1` and udisks' `HintIgnore`, and the target and its LUKS
-partition do not.
+runs the udev rule and udisks: the disk to keep and its partitions, and a
+SATA disk on AHCI and its partition, carry `UDISKS_IGNORE=1` and udisks'
+`HintIgnore`; the target and its LUKS partition do not, and neither do a
+USB disk and its partition that a test rule makes `ID_BUS=ata`, as systemd
+makes a SATA disk behind a USB bridge.
 
 `ravnix-disk-guard-bench` decides on `bench/lsblk.json`, a laptop's list with
 the two NVMe disks, two USB disks, zram and sixteen loop devices, and the
