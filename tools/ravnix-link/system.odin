@@ -478,7 +478,12 @@ Child :: struct {
 // timeout then stops the program with everything it started (a hook,
 // ssh-keygen, a helper). Between fork and exec the child makes system
 // calls only, since the process may have other threads.
-spawn :: proc(argv: []string, env: []string, out_fd, err_fd: linux.Fd) -> (c: Child, why: string) {
+//
+// With die_with_parent, the program gets SIGTERM when the thread that
+// started it ends (PR_SET_PDEATHSIG): a run killed by Ctrl-C or a caller's
+// timeout does not leave its git holding index.lock. git removes its locks
+// on SIGTERM. Not for what should outlive the daemon, such as a browser.
+spawn :: proc(argv: []string, env: []string, out_fd, err_fd: linux.Fd, die_with_parent := false) -> (c: Child, why: string) {
 	path, found := find_program(argv[0])
 	if !found {
 		return {}, fmt.tprintf("%s is not installed, or not on the PATH", argv[0])
@@ -506,6 +511,7 @@ spawn :: proc(argv: []string, env: []string, out_fd, err_fd: linux.Fd) -> (c: Ch
 	if e := linux.pipe2(&report, {.CLOEXEC}); e != .NONE {
 		return {}, fmt.tprintf("cannot make a pipe: %s", errno_text(e))
 	}
+	parent := linux.getpid()
 	pid, fe := linux.fork()
 	if fe != .NONE {
 		linux.close(report[0])
@@ -520,6 +526,15 @@ spawn :: proc(argv: []string, env: []string, out_fd, err_fd: linux.Fd) -> (c: Ch
 		}
 		linux.close(report[0])
 		linux.setpgid(0, 0)
+		if die_with_parent {
+			PR_SET_PDEATHSIG :: 1
+			linux.syscall(linux.SYS_prctl, uintptr(PR_SET_PDEATHSIG), uintptr(linux.Signal.SIGTERM))
+			// The run may have ended before the call: then it is too late
+			// for the signal, and the program does not start.
+			if linux.getppid() != parent {
+				linux.exit_group(127)
+			}
+		}
 		if _, e := linux.dup2(null, 0); e != .NONE {
 			child_fail(report[1], e)
 		}
@@ -579,8 +594,9 @@ stop_child :: proc(c: ^Child) {
 // Where a program's standard output and error go.
 Output :: enum u8 {
 	Capture, // a memory file, read when it has ended (the server's programs)
-	Pipe, // a pipe, read while it runs and closed when it has ended: what it
-	// starts and leaves running gets a closed pipe, not a file that grows
+	Pipe, // a pipe, read while it runs; when it has ended, its read end is
+	// the caller's (Program_Run.pipe), to drain what the program started
+	// and left running writes later
 	Pass, // the descriptor given, such as the daemon's journal
 }
 
@@ -595,6 +611,7 @@ Program_Run :: struct {
 	output:   string, // its standard output and error, the first MAX_OUTPUT bytes
 	why:      string, // why it could not run, or was stopped
 	child:    Child, // while it is running
+	pipe:     linux.Fd, // Pipe: the read end, open, for the caller to drain and close; -1 otherwise
 }
 
 // run_program runs argv with stdin from /dev/null, in env (the process's
@@ -610,9 +627,11 @@ run_program :: proc(
 	allocator := context.allocator,
 	output := Output.Capture,
 	pass: linux.Fd = 2,
+	die_with_parent := false,
 ) -> (
 	r: Program_Run,
 ) {
+	r.pipe = -1
 	out_fd, read_fd_ := pass, linux.Fd(-1)
 	switch output {
 	case .Capture:
@@ -624,14 +643,22 @@ run_program :: proc(
 		out_fd = memfd
 	case .Pipe:
 		p: [2]linux.Fd
-		if e := linux.pipe2(&p, {.CLOEXEC, .NONBLOCK}); e != .NONE {
+		if e := linux.pipe2(&p, {.CLOEXEC}); e != .NONE {
+			r.why = fmt.aprintf("cannot capture the output of %s: %s", argv[0], errno_text(e), allocator = allocator)
+			return
+		}
+		// Only this end does not block: the program's output is a pipe as
+		// any program's is.
+		if e := linux.fcntl_setfl(p[0], linux.F_SETFL, {.NONBLOCK}); e != .NONE {
+			linux.close(p[0])
+			linux.close(p[1])
 			r.why = fmt.aprintf("cannot capture the output of %s: %s", argv[0], errno_text(e), allocator = allocator)
 			return
 		}
 		read_fd_, out_fd = p[0], p[1]
 	case .Pass:
 	}
-	child, why := spawn(argv, env, out_fd, out_fd)
+	child, why := spawn(argv, env, out_fd, out_fd, die_with_parent)
 	if output == .Pipe {
 		// The child holds the write end now; with this one closed, the read
 		// end sees the end of the file once the child and what it started
@@ -641,7 +668,8 @@ run_program :: proc(
 	defer if output == .Capture {
 		linux.close(out_fd)
 	}
-	defer if read_fd_ >= 0 {
+	// A started program's read end goes to the caller.
+	defer if read_fd_ >= 0 && r.pipe < 0 {
 		linux.close(read_fd_)
 	}
 	if why != "" {
@@ -724,6 +752,9 @@ run_program :: proc(
 			}
 			n += got
 		}
+	}
+	if output == .Pipe {
+		r.pipe = read_fd_
 	}
 	r.output = string(buf[:n])
 	return

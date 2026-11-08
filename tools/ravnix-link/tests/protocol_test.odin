@@ -338,6 +338,12 @@ open_takes_web_and_mail_links_and_absolute_paths_and_nothing_else :: proc(t: ^te
 		"Https://example.org/",
 		"MailTo:alice@example.org",
 		"steam://run/1",
+		// A scheme behind a space, or written with its colon encoded, is
+		// still no path and no allowed link.
+		" obsidian://open?vault=v",
+		"\tobsidian://open?vault=v",
+		"obsidian%3A//open?vault=v",
+		"obsidian%3a%2F%2Fopen",
 		"vscode://file/x",
 		"relative/x.pdf",
 		"x.pdf",

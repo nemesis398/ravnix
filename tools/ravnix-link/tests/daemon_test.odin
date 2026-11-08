@@ -2,6 +2,7 @@
 // request and how, and what it does with a line that is not a request.
 package ravnix_link_tests
 
+import "base:runtime"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -207,6 +208,8 @@ the_programs_start_in_a_scope_of_their_own :: proc(t: ^testing.T) {
 	testing.expect_value(t, os.symlink(STUB, join(f, "bin", "systemd-run")), nil)
 	set_case(f, `[ "$n" = systemd-run ] && { while [ "$1" != -- ]; do shift; done; shift; exec "$@"; }` + "\n")
 	f.server.systemd_run = join(f, "bin", "systemd-run")
+	// A socket stands in for the user manager's bus.
+	f.server.user_bus = f.socket
 	start_daemon(f)
 	outcome, _ := link.submit(f.client, open_request(f, "https://example.org/"))
 	testing.expect_value(t, outcome, link.Outcome.Done)
@@ -246,25 +249,81 @@ slice_equal :: proc(a, b: []string) -> bool {
 	return true
 }
 
+// Without the user manager's bus, systemd-run cannot make a scope: the
+// request waits, as for a missing program, and nothing runs.
+@(test)
+without_the_user_bus_a_request_waits :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	testing.expect_value(t, os.symlink(STUB, join(f, "bin", "systemd-run")), nil)
+	f.server.systemd_run = join(f, "bin", "systemd-run")
+	f.server.user_bus = join(f, "no-bus")
+	start_daemon(f)
+	expect_enqueued(f, open_request(f, "https://example.org/"))
+	result, _ := link.flush(f.client)
+	testing.expect_value(t, result.pending, 1)
+	testing.expect_value(t, len(runs(f)), 0)
+	testing.expect(t, contains(stderr_text(f), "bus"), stderr_text(f))
+}
+
 // obsidian may start Obsidian, which keeps the CLI's output open for its
-// whole life. The daemon reads the CLI's output while it runs and stops
+// whole life. The daemon reads the CLI's output while it runs and answers
 // when the CLI has ended, not when the output closes; its Error: line
-// still counts.
+// still counts. What the process left behind writes later goes on to the
+// daemon's journal, so it never writes into a closed pipe, and its output
+// blocks as a program's output does.
 @(test)
 an_obsidian_that_leaves_a_process_on_its_output_is_answered_when_it_ends :: proc(t: ^testing.T) {
 	f := fixture(t)
 	defer fixture_destroy(f)
-	// The process left behind writes to the output a second later; with
-	// the output closed, that write fails and its next line never runs.
-	set_case(f, `[ "$n" = obsidian ] && { sleep 30 & ( sleep 1; echo later && : >"$d/late" ) & echo 'Error: File "Notizen/a.md" not found.'; exit 0; }` + "\n")
+	// The process left behind writes to the output a second later.
+	set_case(f, `[ "$n" = obsidian ] && { sed -n 's/^flags:[[:space:]]*//p' /proc/$$/fdinfo/1 >"$d/flags"; sleep 30 & ( sleep 1; echo later && : >"$d/late" ) & echo 'Error: File "Notizen/a.md" not found.'; exit 0; }` + "\n")
 	start_daemon(f)
 	began := time.tick_now()
 	outcome, message := link.submit(f.client, obsidian_request(f, .Delete, "Notizen/a.md"))
 	testing.expect(t, time.tick_since(began) < 10 * time.Second)
 	testing.expect_value(t, outcome, link.Outcome.Failed)
 	testing.expect(t, contains(message, `Error: File "Notizen/a.md" not found.`), message)
-	time.sleep(2 * time.Second)
-	testing.expect(t, !os.exists(join(f, "bin", "late")), "the process left behind still wrote to the daemon")
+	for _ in 0 ..< 100 {
+		if os.exists(join(f, "bin", "late")) && contains(stderr_text(f), "later") {
+			break
+		}
+		time.sleep(50 * time.Millisecond)
+	}
+	testing.expect(t, os.exists(join(f, "bin", "late")), "the process left behind could not write")
+	testing.expect(t, contains(stderr_text(f), "later"), stderr_text(f))
+	flags, ok := strconv.parse_uint(strings.trim_space(read_file(f, join(f, "bin", "flags"))), 8)
+	testing.expect(t, ok, read_file(f, join(f, "bin", "flags")))
+	testing.expectf(t, flags & 0o4000 == 0, "the CLI's output is non-blocking: flags %o", flags)
+}
+
+Spawner :: struct {
+	child: link.Child,
+	why:   string,
+}
+
+spawner_worker :: proc(s: ^Spawner) {
+	defer runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
+	s.child, s.why = link.spawn({"/bin/sh", "-c", "sleep 60"}, nil, 2, 2, die_with_parent = true)
+}
+
+// A run that dies takes its git with it: git and its hooks would hold
+// index.lock with no time limit. The run here is a thread that ends.
+@(test)
+a_program_started_to_die_with_its_run_ends_with_it :: proc(t: ^testing.T) {
+	s: Spawner
+	th := thread.create_and_start_with_poly_data(&s, spawner_worker, context)
+	thread.join(th)
+	thread.destroy(th)
+	testing.expect_value(t, s.why, "")
+	if s.why == "" {
+		_, signaled, ended := link.wait_child(&s.child, 5000)
+		testing.expect(t, ended, "the program outlived its run")
+		testing.expect(t, signaled)
+		if !ended {
+			link.stop_child(&s.child)
+		}
+	}
 }
 
 // A program that times out is stopped with its process group: what it

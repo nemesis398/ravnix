@@ -52,6 +52,9 @@ Daemon :: struct {
 	seen_order: [dynamic]string,
 	env:        []string,
 	children:   [dynamic]Child,
+	// The read ends of obsidian's output, after the CLI ended: what it
+	// started (Obsidian) may write on, into the journal.
+	drains:     [dynamic]linux.Fd,
 	reader_buf: []u8,
 }
 
@@ -126,6 +129,7 @@ daemon_open :: proc(cfg: Config, allocator := context.allocator) -> (^Daemon, st
 	d.seen = make(map[string]Record, allocator)
 	d.seen_order = make([dynamic]string, allocator)
 	d.children = make([dynamic]Child, allocator)
+	d.drains = make([dynamic]linux.Fd, allocator)
 	d.reader_buf = make([]u8, MAX_LINE, allocator)
 	load_seen(d)
 
@@ -222,7 +226,19 @@ note :: proc(d: ^Daemon, rec: Record) -> string {
 daemon_serve :: proc(d: ^Daemon, stop: ^bool, poll_ms := 1000) {
 	for !sync.atomic_load(stop) {
 		reap(d)
-		if !wait_for(d.listener, {.IN}, poll_ms) {
+		fds := make([dynamic]linux.Poll_Fd, 0, len(d.drains) + 1, context.temp_allocator)
+		append(&fds, linux.Poll_Fd{fd = d.listener, events = {.IN}})
+		for p in d.drains {
+			append(&fds, linux.Poll_Fd{fd = p, events = {.IN}})
+		}
+		n, pe := linux.poll(fds[:], i32(poll_ms))
+		if pe != .NONE || n <= 0 {
+			free_all(context.temp_allocator)
+			continue
+		}
+		drain(d)
+		if fds[0].revents & {.IN} == {} {
+			free_all(context.temp_allocator)
 			continue
 		}
 		addr: linux.Sock_Addr_Un
@@ -233,6 +249,29 @@ daemon_serve :: proc(d: ^Daemon, stop: ^bool, poll_ms := 1000) {
 		serve_connection(d, fd)
 		linux.close(fd)
 		free_all(context.temp_allocator)
+	}
+}
+
+// drain copies what waits in each kept output to the daemon's standard
+// error, the journal, and closes one at its end.
+drain :: proc(d: ^Daemon) {
+	errf := d.cfg.stderr if d.cfg.stderr != nil else os.stderr
+	buf: [4096]u8
+	for i := len(d.drains) - 1; i >= 0; i -= 1 {
+		for {
+			k, e := linux.read(d.drains[i], buf[:])
+			if k > 0 {
+				write_all_fd(linux.Fd(os.fd(errf)), buf[:k])
+				continue
+			}
+			if e == .EAGAIN || e == .EINTR {
+				break
+			}
+			// The end: everything that held the output has let it go.
+			linux.close(d.drains[i])
+			unordered_remove(&d.drains, i)
+			break
+		}
 	}
 }
 
@@ -270,6 +309,7 @@ serve_connection :: proc(d: ^Daemon, fd: linux.Fd) {
 			return
 		}
 		reply := handle(d, line, virtual.arena_allocator(&arena))
+		drain(d)
 		why := send_all(fd, transmute([]u8)encode_reply(reply, virtual.arena_allocator(&arena)), idle)
 		virtual.arena_destroy(&arena)
 		if why != "" {
@@ -369,6 +409,18 @@ handle :: proc(d: ^Daemon, line: string, allocator: runtime.Allocator) -> Reply 
 				error  = fmt.aprintf("%s is not installed on the laptop, so no program can get a scope of its own", d.cfg.systemd_run, allocator = allocator),
 			}
 		}
+		// systemd-run needs the user manager's bus; without it, it would
+		// fail and the request be lost, so the request waits.
+		if bus := d.cfg.user_bus; bus != "" {
+			st: linux.Stat
+			if linux.lstat(cstr(bus), &st) != .NONE || !linux.S_ISSOCK(st.mode) {
+				return Reply {
+					id     = r.id,
+					status = .Retry,
+					error  = fmt.aprintf("the user manager's bus (%s) is not there, so systemd-run cannot give a program a scope", bus, allocator = allocator),
+				}
+			}
+		}
 		scoped := make([dynamic]string, allocator)
 		append(&scoped, d.cfg.systemd_run, "--user", "--scope", "--collect", "--quiet", "--")
 		append(&scoped, ..argv[:])
@@ -383,6 +435,10 @@ handle :: proc(d: ^Daemon, line: string, allocator: runtime.Allocator) -> Reply 
 	ran := run_program(argv[:], timeout, d.env, detach, allocator, output, linux.Fd(os.fd(errf)))
 	if ran.running {
 		append(&d.children, ran.child)
+	}
+	if ran.pipe >= 0 {
+		append(&d.drains, ran.pipe)
+		drain(d)
 	}
 	reply := Reply {
 		id     = r.id,
@@ -448,6 +504,9 @@ daemon_close_keeping_socket :: proc(d: ^Daemon) {
 			linux.close(c.pidfd)
 		}
 	}
+	for p in d.drains {
+		linux.close(p)
+	}
 	for id, rec in d.seen {
 		delete(rec.error, d.allocator)
 		delete(id, d.allocator)
@@ -455,6 +514,7 @@ daemon_close_keeping_socket :: proc(d: ^Daemon) {
 	delete(d.seen)
 	delete(d.seen_order)
 	delete(d.children)
+	delete(d.drains)
 	for kv in d.env {
 		delete(kv, d.allocator)
 	}

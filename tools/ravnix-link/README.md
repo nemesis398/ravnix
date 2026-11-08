@@ -62,8 +62,10 @@ says the request is queued and exits 0.
   them: an `obsidian:` URL reaches the plugins and the URI handlers of the
   vault (`obsidian://new?...&overwrite` writes a note), and a file opens by
   its path. A note, too, opens by its absolute path, with the laptop's
-  default application for its type. The file must be at the same path on
-  the laptop, as the synced folders are; the server does not check.
+  default application for its type (xdg-open's MIME default), which may be
+  Obsidian: a note the server wrote opens there without a click, as it
+  would when the user opened it. The file must be at the same path on the
+  laptop, as the synced folders are; the server does not check.
 - **`notify`.** A summary, an optional body, `--urgency low|normal|critical`
   and `--app NAME`. With `--topic T` (lower case letters, digits and `-`),
   it also runs `ravnix-notify --topic T MESSAGE`, which posts to that topic's
@@ -92,29 +94,42 @@ says the request is queued and exits 0.
   The paths are names, not patterns: `Scan [1].png` is that file alone. At
   most 256 paths, each relative to the vault's root. Git runs with
   `LC_ALL=C`, so its messages can be read. "Nothing to commit" counts as
-  done. A commit that fails, a path git does not know yet included, runs
-  again after 15 s, then twice as long each time up to an hour; 24 hours
-  after its first attempt it fails for good, goes into the list that
-  `status` shows and every command warns of, and the commits after it go
-  ahead. The user's git configuration and the vault's hooks apply.
+  done. The commit takes its paths as the work tree has them when it runs,
+  which may be hours after it was asked for: edits made to them since, by
+  anyone, go in under its message.
+
+  A commit that fails for what another attempt may not have (a lock
+  another git holds, an agent that is not there or locked, a signature
+  that failed, a full disk, a time limit) runs again after 15 s, then twice
+  as long each time up to an hour; 24 hours after its first attempt it
+  fails for good. One that git refuses for what every attempt would have
+  (a path git does not know, an ignored path, a hook that rejects it), with
+  HEAD where it was, fails for good at once. Either way it goes into the
+  list that `status` shows and every command warns of, and what waits
+  behind it goes ahead. The user's git configuration and the vault's hooks
+  apply. git and what it runs get SIGTERM when the `ravnix-link` run that
+  started git ends (Ctrl-C, a caller's time limit), so no git is left
+  holding the index's lock.
 - **`flush`** delivers what waits and says how many still wait; a commit
   that waits for its next attempt runs now. **`deliver`** is the service: it
   delivers when the socket appears, when the queue changes, and on a retry
   after 1 s, then twice as long each time up to a minute. **`status`** lists
   what waits, oldest first, with what a commit waits for, and the commits
-  that failed for good:
+  that failed for good, each request by its ID:
 
   ```
   3 requests wait for the laptop:
-    2026-11-08T12:00:00Z  open https://example.org/
-    2026-11-08T12:00:03Z  obsidian rename path=Notizen/Alt.md name=Neu
-    2026-11-08T12:00:04Z  vault-commit "vault: Neu"
+    2026-11-08T12:00:00Z  0b9a1c2e-4f5d-4a6b-8c7d-9e0f1a2b3c4d  open https://example.org/
+    2026-11-08T12:00:03Z  5d1c7a3e-2b4f-4c6d-8e9f-0a1b2c3d4e5f  obsidian rename path=Notizen/Alt.md name=Neu
+    2026-11-08T12:00:04Z  9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a  vault-commit "vault: Neu"
         attempt 2 failed, again at 2026-11-08T12:01:00Z: error: Couldn't get agent socket
   1 vault commit failed for good (ravnix-link dismiss clears this list):
     2026-11-07T09:00:00Z  vault-commit "vault: Plan": it failed for 24 hours, 30 times; the last time: ...
   ```
 
-  **`dismiss`** empties that list.
+  **`dismiss`** empties that list. **`drop ID`** lets go of a request that
+  waits, by its ID: it is recorded failed, by hand, and what waits behind
+  it goes ahead. An ID that waits for nothing is refused.
 
 ## On the laptop
 
@@ -138,8 +153,12 @@ restart of the daemon's unit does not end the browser or the Obsidian it
 started. The output of xdg-open and notify-send goes to the daemon's
 standard error, the journal (`journalctl --user -u ravnix-link-daemon`),
 and a failure says so. obsidian's goes to a pipe that the daemon reads
-while the CLI runs and closes when it ends, so an Obsidian that the CLI
-started does not write into the daemon for its whole life.
+while the CLI runs; the daemon answers when the CLI has ended, and copies
+what an Obsidian the CLI started writes later on to the journal, until it
+closes the pipe. Only the daemon's end of the pipe is non-blocking.
+systemd-run needs the user manager's bus (`DBUS_SESSION_BUS_ADDRESS`, or
+`$XDG_RUNTIME_DIR/bus`); while that is not there, a request answers
+`retry`.
 
 A program that is not installed (the scope's `systemd-run` included)
 answers `retry`, and the request stays in the queue; 6 hours after it was
@@ -215,7 +234,7 @@ The laptop keeps `seen` (the IDs it has started and their outcomes) and
    queue, until that copy shows the result of each operation before it: a
    renamed or moved note at its new path and not at the old one, a deleted
    note gone. After 15 minutes without it, the commit goes ahead and says
-   so, and a path git does not know yet makes it run again later.
+   so; a path git then does not know fails it for good.
 3. **Once.** The daemon writes a request's ID to `seen` before it runs it,
    and its outcome after. A request delivered again (the server crashed
    between the reply and writing it down, or the connection broke) gets the
@@ -278,20 +297,22 @@ agent there:
 
 ## Tests and bench
 
-`ravnix-link-tests` runs 75 tests. The protocol: every kind round-trips with
+`ravnix-link-tests` runs 81 tests. The protocol: every kind round-trips with
 spaces, umlauts and an en dash in its paths; a 10 MB body, a line of 64 KiB
 and one byte, NUL, control characters, invalid UTF-8, lone surrogates,
 unknown keys and kinds, a key twice, deep nesting, trailing bytes, bad IDs
 and timestamps, paths that leave the vault, and the schemes `open` refuses
 (`obsidian://new?...&overwrite`, `file:///`, `javascript:`, a scheme in
-mixed case). The queue: requests queue while the laptop is away and are
+mixed case, behind a space or with its colon percent-encoded). The queue: requests queue while the laptop is away and are
 delivered once and in order when it is back; eight writers at once tear no
 line; the service and four clients delivering at once run each request,
 commits included, once and in order; a torn last line, a corrupt line, a
 full queue, a crash between delivery and ack with and without a daemon
 restart, the same line twice, a rename then an edit then a commit, a commit
 behind a failed or a waiting Obsidian request, a commit that waits for the
-sync and one that gives up waiting, a path git does not know yet, a commit
+sync and one that gives up waiting, a path git does not know, a hook or an
+ignored path that refuses it at once, a lock, an agent or a signature it is
+tried again for, one recorded retry that had landed, `drop`, a commit
 cut off before and after git ran, nothing to commit, a commit that fails
 and is given up after a day, one that failed after git add had staged a
 removal, the configured vault, a long commit between
@@ -303,8 +324,9 @@ daemon, a live one with another state directory, a stale socket, one a
 forked child still holds for a moment, a file in its place, a socket path
 too long, a program that is missing, fails, hangs, prints `Error:`, or
 still runs (xdg-open), an xdg-open that ends later and is collected, the
-scopes, an obsidian that leaves a process on its output, a timeout that
-stops what the program started, notify-send's arguments, nonsense on the
+scopes, a missing user bus, an obsidian that leaves a process writing on
+its output, a timeout that stops what the program started, a program that
+ends with the run that started it, notify-send's arguments, nonsense on the
 socket, a line too long, a request of the server's. The command line: every
 command and its usage errors, notify-send's options as GOption reads them,
 `--topic` with a room that fails, the environment's defaults, the loop
@@ -352,6 +374,17 @@ Findings that are not fixed, so nobody mistakes them for covered.
 - A commit found `started` counts as done when a commit with its message
   has come since its HEAD, among the newest thousand. Another commit with
   the same message in that span would count, too.
+- Whether git's refusal is for good is read from its words: a lock, an
+  agent, a signature, a full or read-only disk and a time limit are tried
+  again, everything else with HEAD unchanged fails at once. A hook whose
+  message names one of those is tried again, for a day.
+- git gets SIGTERM when its run ends, the hooks it started do not: a hook
+  that ignores git's end can outlive it.
+- An obsidian CLI that hangs is stopped with its process group, so an
+  Obsidian it started in that group goes too.
+- Without the user manager's bus only systemd-run's own check is made
+  before the scope: a bus that is there but does not answer fails the
+  request, with systemd-run's message in the journal.
 - A request that the laptop answers `retry` fails 6 hours after it was
   made, not after the first `retry`: one that waited longer than that for
   the laptop fails at once.

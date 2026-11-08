@@ -62,6 +62,7 @@ Config :: struct {
 	notify_send:        string, // the daemon's, and the real one under the wrapper
 	obsidian:           string,
 	systemd_run:        string, // the daemon starts each program in a scope of its own with it; "" starts them directly
+	user_bus:           string, // the user manager's bus, which systemd-run needs; checked before a scope
 	now:                time.Time, // the clock, for tests; zero is the real one
 	stderr:             ^os.File, // where reports go; nil is the process's own
 	open_wait_ms:       int,
@@ -265,7 +266,7 @@ git_env :: proc() -> []string {
 // git_head is the vault's HEAD, "" in a repository without a commit yet.
 git_head :: proc(cfg: Config, vault: string) -> (head: string, why: string) {
 	git := cfg.git if cfg.git != "" else "git"
-	ran := run_program({git, "-C", vault, "rev-parse", "--verify", "-q", "HEAD"}, or_default(cfg.commit_timeout_ms, DEFAULT_COMMIT_TIMEOUT), git_env(), allocator = context.temp_allocator)
+	ran := run_program({git, "-C", vault, "rev-parse", "--verify", "-q", "HEAD"}, or_default(cfg.commit_timeout_ms, DEFAULT_COMMIT_TIMEOUT), git_env(), allocator = context.temp_allocator, die_with_parent = true)
 	if ran.success {
 		return strings.trim_space(ran.output), ""
 	}
@@ -305,7 +306,7 @@ normal_message :: proc(m: string) -> string {
 committed_since :: proc(cfg: Config, vault, old, head, message: string) -> bool {
 	git := cfg.git if cfg.git != "" else "git"
 	span := head if old == "" else fmt.tprintf("%s..%s", old, head)
-	ran := run_program({git, "-C", vault, "log", "--max-count=1000", "--format=%B%x00", span}, or_default(cfg.commit_timeout_ms, DEFAULT_COMMIT_TIMEOUT), git_env(), allocator = context.temp_allocator)
+	ran := run_program({git, "-C", vault, "log", "--max-count=1000", "--format=%B%x00", span}, or_default(cfg.commit_timeout_ms, DEFAULT_COMMIT_TIMEOUT), git_env(), allocator = context.temp_allocator, die_with_parent = true)
 	if !ran.success {
 		return false
 	}
@@ -322,7 +323,38 @@ committed_since :: proc(cfg: Config, vault, old, head, message: string) -> bool 
 Commit_Result :: enum u8 {
 	Committed,
 	Nothing, // nothing to commit: the paths are as committed already
-	Failed,
+	Failed, // for a reason another attempt may not have: it runs again
+	Refused, // git refused it for a reason another attempt has as well
+}
+
+// transient says whether git's output names a failure that another attempt
+// may not have: a lock another git holds, an agent that is not there or
+// locked, a signature that failed, a full or read-only disk. Anything else
+// git exits non-zero for (a path it does not know, a hook that rejects the
+// commit, an ignored path) comes again on every attempt.
+transient :: proc(output: string) -> bool {
+	o := strings.to_lower(output, context.temp_allocator)
+	for word in ([]string {
+			".lock",
+			"unable to create",
+			"agent",
+			"ssh_auth_sock",
+			"ssh-keygen",
+			"signing",
+			"signature",
+			"to sign",
+			"gpg",
+			"failed to write commit object",
+			"could not open a connection",
+			"no space left",
+			"read-only file system",
+			"resource temporarily unavailable",
+		}) {
+		if strings.contains(o, word) {
+			return true
+		}
+	}
+	return false
 }
 
 // run_git_commit commits the request's paths (or what is staged) in vault.
@@ -354,10 +386,13 @@ run_git_commit :: proc(cfg: Config, vault: string, r: Request) -> (Commit_Result
 		argv := make([dynamic]string, context.temp_allocator)
 		append(&argv, git, "--literal-pathspecs", "-C", vault, "add", "-A", "--")
 		append(&argv, ..present[:])
-		ran := run_program(argv[:], timeout, env, allocator = context.temp_allocator)
+		ran := run_program(argv[:], timeout, env, allocator = context.temp_allocator, die_with_parent = true)
 		if !ran.success {
 			if ran.exited && missing(ran.output) {
-				return .Failed, fmt.tprintf("a path is not in the vault here (yet): %s", first_lines(ran.output, 1))
+				return .Refused, fmt.tprintf("a path is not in the vault: %s", first_lines(ran.output, 1))
+			}
+			if ran.exited && !ran.signaled && !transient(ran.output) {
+				return .Refused, program_failure("git add", ran)
 			}
 			return .Failed, program_failure("git add", ran)
 		}
@@ -368,7 +403,7 @@ run_git_commit :: proc(cfg: Config, vault: string, r: Request) -> (Commit_Result
 		append(&argv, "--")
 		append(&argv, ..r.paths)
 	}
-	ran := run_program(argv[:], timeout, env, allocator = context.temp_allocator)
+	ran := run_program(argv[:], timeout, env, allocator = context.temp_allocator, die_with_parent = true)
 	if ran.success {
 		return .Committed, ""
 	}
@@ -378,8 +413,11 @@ run_git_commit :: proc(cfg: Config, vault: string, r: Request) -> (Commit_Result
 			return .Nothing, ""
 		}
 		if missing(o) {
-			return .Failed, fmt.tprintf("a path is not in the vault here (yet): %s", first_lines(o, 1))
+			return .Refused, fmt.tprintf("a path is not in the vault: %s", first_lines(o, 1))
 		}
+	}
+	if ran.exited && !ran.signaled && !transient(ran.output) {
+		return .Refused, program_failure("git commit", ran)
 	}
 	return .Failed, program_failure("git commit", ran)
 }
@@ -445,7 +483,9 @@ commit_step :: proc(cfg: Config, r: Request, rec: Record, has: bool, expects: ^[
 	head, hwhy := git_head(cfg, vault)
 	attempts := rec.attempts if has else 0
 	since := rec.since if has && rec.since != "" else timestamp(now, context.temp_allocator)
-	if hwhy == "" && has && rec.status == .Started && head != rec.head && committed_since(cfg, vault, rec.head, head, r.message) {
+	// A run cut off, or one that failed or timed out after the ref moved
+	// (a slow hook after the commit): HEAD shows whether it landed.
+	if hwhy == "" && has && (rec.status == .Started || rec.status == .Retry && rec.head != "") && head != rec.head && committed_since(cfg, vault, rec.head, head, r.message) {
 		report(cfg, "%s was committed by a run that stopped before it wrote that down", describe(r))
 		out.done += 1
 		note_outcome(cfg, out, Record{id = r.id, status = .Done})
@@ -470,6 +510,13 @@ commit_step :: proc(cfg: Config, r: Request, rec: Record, has: bool, expects: ^[
 		out.done += 1
 		note_outcome(cfg, out, Record{id = r.id, status = .Done})
 		return true
+	case .Refused:
+		// With HEAD where it was, nothing happened, and nothing will on
+		// another attempt: it fails now, and the vault's stream goes on.
+		if after, awhy := git_head(cfg, vault); awhy == "" && after == head {
+			give_up(cfg, out, r, fmt.tprintf("git refused it, and another attempt would not change that: %s", failure))
+			return true
+		}
 	case .Failed:
 	}
 	first, _ := parse_timestamp(since)
@@ -692,6 +739,40 @@ dismiss :: proc(cfg: Config) -> (n: int, why: string) {
 		return 0, ""
 	}
 	return len(list), replace_file(state_path(cfg, "failed"), "")
+}
+
+// drop lets go of the request id, which waits: it is recorded failed, by
+// hand, and what waits behind it in its stream goes ahead. A request that
+// waits for nothing, or is not in the queue, is refused.
+drop :: proc(cfg: Config, id: string) -> (r: Request, why: string) {
+	if why = ensure_dir(cfg.state); why != "" {
+		return
+	}
+	lock_fd, lwhy := open_state(state_path(cfg, "deliver.lock"), true)
+	if lwhy != "" {
+		return {}, lwhy
+	}
+	defer linux.close(lock_fd)
+	if !lock_within(lock_fd, or_default(cfg.lock_wait_ms, DEFAULT_LOCK_WAIT) * 6) {
+		return {}, "another ravnix-link run is delivering; try again in a moment"
+	}
+	defer lock(lock_fd, {.UN})
+	snap, swhy := read_snapshot(cfg, context.temp_allocator)
+	if swhy != "" {
+		return {}, swhy
+	}
+	for e in pending(snap, context.temp_allocator) {
+		if e.request.id != id {
+			continue
+		}
+		out: Flushed
+		out.outcomes = make(map[string]Record, context.temp_allocator)
+		if w := record(cfg, &out, Record{id = id, status = .Failed, error = "dropped by hand (ravnix-link drop)"}, context.temp_allocator); w != "" {
+			return {}, w
+		}
+		return e.request, ""
+	}
+	return {}, fmt.tprintf("%s waits for nothing: it is not in the queue, or was resolved", id)
 }
 
 // flush delivers what waits, as the header says. It reports on stderr what

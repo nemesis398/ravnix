@@ -33,6 +33,9 @@ On the server (muninn), forwarded to the laptop (huginn), queued while it is awa
   deliver                             deliver whenever the laptop is back (a service)
   status                              list what waits, and the commits that failed
   dismiss                             clear the list of commits that failed
+  drop ID                             let go of a request that waits (its id
+                                      as status shows it): it fails, and what
+                                      waits behind it goes ahead
 
 On the laptop:
   daemon                              carry out what the server sends
@@ -59,6 +62,29 @@ Environment :: struct {
 	home:          string, // HOME
 	cwd:           string, // the working directory
 	daemon_marker: string, // RAVNIX_LINK_DAEMON
+	bus_address:   string, // DBUS_SESSION_BUS_ADDRESS
+}
+
+// user_bus is the socket of the user manager's bus that the address names
+// (its first unix:path=), or $XDG_RUNTIME_DIR/bus without one; "" when it
+// is no file to look for, such as an abstract socket.
+user_bus :: proc(env: Environment, allocator := context.allocator) -> string {
+	if env.bus_address == "" {
+		return strings.concatenate({env.runtime_dir, "/bus"}, allocator) if env.runtime_dir != "" else ""
+	}
+	rest := env.bus_address
+	for entry in strings.split_iterator(&rest, ";") {
+		if !strings.has_prefix(entry, "unix:") {
+			continue
+		}
+		params := entry[len("unix:"):]
+		for kv in strings.split_iterator(&params, ",") {
+			if strings.has_prefix(kv, "path=") {
+				return strings.clone(kv[len("path="):], allocator)
+			}
+		}
+	}
+	return ""
 }
 
 // config_from is the configuration the environment gives, before options.
@@ -66,6 +92,7 @@ config_from :: proc(env: Environment, allocator := context.allocator) -> (cfg: C
 	if env.runtime_dir != "" {
 		cfg.socket = strings.concatenate({env.runtime_dir, "/", SOCKET_NAME}, allocator)
 	}
+	cfg.user_bus = user_bus(env, allocator)
 	switch {
 	case strings.has_prefix(env.state_home, "/"):
 		cfg.state = strings.concatenate({env.state_home, "/ravnix-link"}, allocator)
@@ -147,7 +174,7 @@ run :: proc(args: []string, env: Environment, stdout, stderr: ^os.File) -> int {
 	command, rest := args[i], args[i + 1:]
 
 	switch command {
-	case "open", "notify", "notify-send", "obsidian", "vault-commit", "flush", "deliver", "status", "dismiss", "daemon":
+	case "open", "notify", "notify-send", "obsidian", "vault-commit", "flush", "deliver", "status", "dismiss", "drop", "daemon":
 	case:
 		return usage_error(errf, "unknown command %s", command)
 	}
@@ -162,7 +189,7 @@ run :: proc(args: []string, env: Environment, stdout, stderr: ^os.File) -> int {
 		fmt.fprintf(errf, "ravnix-link: %s\n", env_why)
 		return 1
 	}
-	if command != "daemon" && command != "status" && command != "dismiss" {
+	if command != "daemon" && command != "status" && command != "dismiss" && command != "drop" {
 		// A commit that failed for good is the server's to tell about,
 		// until the user has seen it.
 		if failed, _ := read_failed(cfg, context.temp_allocator); len(failed) > 0 {
@@ -181,6 +208,20 @@ run :: proc(args: []string, env: Environment, stdout, stderr: ^os.File) -> int {
 		return run_obsidian(cfg, rest, errf)
 	case "vault-commit":
 		return run_vault_commit(cfg, rest, errf)
+	case "drop":
+		if len(rest) != 1 {
+			return usage_error(errf, "drop takes one id, as status shows it")
+		}
+		if !is_uuid(rest[0]) {
+			return usage_error(errf, "%q is no request's id", rest[0])
+		}
+		r, why := drop(cfg, rest[0])
+		if why != "" {
+			report(cfg, "%s", why)
+			return 1
+		}
+		fmt.fprintfln(out, "dropped %s", describe(r))
+		return 0
 	case "flush", "deliver", "status", "dismiss", "daemon":
 		if len(rest) > 0 {
 			return usage_error(errf, "%s takes no argument", command)
@@ -636,7 +677,7 @@ run_status :: proc(cfg: Config, out, errf: ^os.File) -> int {
 	}
 	for e in waiting {
 		r := e.request
-		fmt.fprintfln(out, "  %s  %s", r.created, describe(r))
+		fmt.fprintfln(out, "  %s  %s  %s", r.created, r.id, describe(r))
 		if r.kind != .Vault_Commit {
 			continue
 		}
@@ -671,6 +712,7 @@ main :: proc() {
 		state_home    = os.get_env("XDG_STATE_HOME", context.allocator),
 		home          = os.get_env("HOME", context.allocator),
 		daemon_marker = os.get_env(DAEMON_MARKER, context.allocator),
+		bus_address   = os.get_env("DBUS_SESSION_BUS_ADDRESS", context.allocator),
 	}
 	env.cwd, _ = os.get_working_directory(context.allocator)
 	os.exit(run(os.args[1:], env, os.stdout, os.stderr))

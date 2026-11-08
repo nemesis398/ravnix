@@ -271,9 +271,9 @@ a_commit_waits_until_the_vault_here_shows_the_operations_before_it :: proc(t: ^t
 }
 
 // The sync never brings it: after SYNC_WAIT the commit goes ahead, and a
-// path git does not find is a commit tried again later, not a failure.
+// path git does not find then fails it at once: no sync brings it any more.
 @(test)
-a_commit_gives_up_waiting_for_the_sync_and_a_missing_path_is_tried_again :: proc(t: ^testing.T) {
+a_commit_gives_up_waiting_for_the_sync_and_a_missing_path_fails_it :: proc(t: ^testing.T) {
 	f := fixture(t)
 	defer fixture_destroy(f)
 	note(f, "Notizen/alt.md")
@@ -289,12 +289,13 @@ a_commit_gives_up_waiting_for_the_sync_and_a_missing_path_is_tried_again :: proc
 	testing.expect_value(t, len(git_runs(f, "add")), 0)
 	f.client.now = time.time_add(base, link.SYNC_WAIT + time.Minute)
 	result, _ = link.flush(f.client)
-	testing.expect_value(t, result.pending, 1)
+	testing.expect_value(t, result.pending, 0)
+	testing.expect_value(t, result.failed, 1)
 	testing.expect_value(t, len(git_runs(f, "add")), 1)
 	testing.expect(t, contains(stderr_text(f), "does not show obsidian rename"), stderr_text(f))
 	rec, _ := record_of(f, commit.id)
-	testing.expect_value(t, rec.status, link.Record_Status.Retry)
-	testing.expect(t, contains(rec.error, "not in the vault here"), rec.error)
+	testing.expect_value(t, rec.status, link.Record_Status.Failed)
+	testing.expect(t, contains(rec.error, "not in the vault"), rec.error)
 }
 
 // Obsidian operations run before a commit queued after them; a commit with
@@ -655,6 +656,117 @@ esac
 		testing.expect(t, contains(strings.join(commits[0], " ", f.a), "vault: not there"))
 	}
 	testing.expect(t, contains(stderr_text(f), "was committed by a run that stopped"), stderr_text(f))
+}
+
+// A commit git refuses for a reason another attempt cannot change (a path
+// it does not know, a hook that rejects the commit) fails at once, with
+// HEAD where it was: it is listed as failed for good, and the commit queued
+// after it runs.
+@(test)
+a_commit_git_refuses_for_good_fails_at_once_and_the_next_runs :: proc(t: ^testing.T) {
+	Case :: struct {
+		why, stderr: string,
+		code:        int,
+	}
+	cases := []Case {
+		{"a path git does not know", "error: pathspec 'Notizen/gibts-nicht.md' did not match any file(s) known to git", 1},
+		{"a hook that rejects it", "commit-msg: the subject is longer than 72 characters", 1},
+		{"an ignored path", "The following paths are ignored by one of your .gitignore files:\nNotizen/tmp.md", 1},
+	}
+	for c in cases {
+		f := fixture(t)
+		defer fixture_destroy(f)
+		write_file(f, join(f, "bin", "stderr-text"), c.stderr)
+		write_file(f, join(f, "bin", "exit-code"), fmt.aprint(c.code, allocator = f.a))
+		set_case(f, `[ "$n" = git ] && [ "$3" = rev-parse ] && { echo 1111111111111111111111111111111111111111; exit 0; }
+[ "$n" = git ] && [ "$4" = commit ] && [ "$6" = "vault: falsch" ] && { cat "$d/stderr-text" >&2; exit "$(cat "$d/exit-code")"; }
+`)
+		bad := commit_request(f, "vault: falsch")
+		outcome, message := link.submit(f.client, bad)
+		testing.expectf(t, outcome == .Failed, "%s: %v %s", c.why, outcome, message)
+		good := commit_request(f, "vault: richtig")
+		outcome, message = link.submit(f.client, good)
+		testing.expectf(t, outcome == .Done, "%s: the next commit %v %s", c.why, outcome, message)
+		testing.expect_value(t, len(git_runs(f, "commit")), 2)
+		r := cli(f, "status")
+		testing.expectf(t, contains(r.out, `1 vault commit failed for good`) && contains(r.out, `vault-commit "vault: falsch"`), "%s: %s", c.why, r.out)
+	}
+}
+
+// What another attempt can change is tried again: a lock another git
+// holds, an agent that is not there or locked, a signature that failed.
+@(test)
+a_commit_that_fails_for_a_lock_or_the_agent_is_tried_again :: proc(t: ^testing.T) {
+	for stderr in ([]string {
+			"fatal: Unable to create '/v/.git/index.lock': File exists.",
+			"error: Couldn't get agent socket?\nfatal: failed to write commit object",
+			"error: agent refused operation\nfatal: failed to write commit object",
+			"error: gpg failed to sign the data\nfatal: failed to write commit object",
+		}) {
+		f := fixture(t)
+		defer fixture_destroy(f)
+		write_file(f, join(f, "bin", "stderr-text"), stderr)
+		set_case(f, `[ "$n" = git ] && [ "$4" = commit ] && { cat "$d/stderr-text" >&2; exit 128; }` + "\n")
+		outcome, message := link.submit(f.client, commit_request(f, "vault: spaeter"))
+		testing.expectf(t, outcome == .Retrying, "%s: %v %s", stderr, outcome, message)
+	}
+}
+
+// A commit that failed, recorded retry, whose HEAD has since moved to a
+// commit with its message (a hook that outlived the time limit after the
+// ref moved): it is done, and git does not commit again.
+@(test)
+a_commit_recorded_retry_that_landed_is_done :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	set_case(f, `[ "$n" = git ] && case $3 in
+rev-parse) echo 2222222222222222222222222222222222222222; exit 0 ;;
+log) printf 'vault: gelandet\n\n\000'; exit 0 ;;
+esac
+`)
+	c := commit_request(f, "vault: gelandet")
+	expect_enqueued(f, c)
+	write_file(f, join(f, "state", "acked"), link.encode_record(link.Record{id = c.id, status = .Retry, head = "1111111111111111111111111111111111111111", attempts = 1, since = now(f), next = now(f), error = "git commit did not finish"}, f.a))
+	result, _ := link.flush(f.client)
+	testing.expect_value(t, result.done, 1)
+	testing.expect_value(t, len(git_runs(f, "commit")), 0)
+}
+
+// drop ID resolves a waiting request by hand: a commit that waits for its
+// next attempt, with one behind it, which then runs. status names the ids.
+@(test)
+drop_lets_go_of_a_waiting_request :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	set_case(f, `[ "$n" = git ] && [ "$4" = commit ] && [ "$6" = "vault: haengt" ] && { echo "error: Couldn't get agent socket?" >&2; exit 128; }` + "\n")
+	stuck := commit_request(f, "vault: haengt")
+	outcome, _ := link.submit(f.client, stuck)
+	testing.expect_value(t, outcome, link.Outcome.Retrying)
+	behind := commit_request(f, "vault: dahinter")
+	outcome, _ = link.submit(f.client, behind)
+	testing.expect_value(t, outcome, link.Outcome.Queued)
+	r := cli(f, "status")
+	testing.expect(t, contains(r.out, stuck.id), r.out)
+	testing.expect(t, contains(r.out, behind.id), r.out)
+	r = cli(f, "drop", stuck.id)
+	testing.expectf(t, r.code == 0, "%d %s", r.code, r.err)
+	testing.expect(t, contains(r.out, `dropped vault-commit "vault: haengt"`), r.out)
+	rec, _ := record_of(f, stuck.id)
+	testing.expect_value(t, rec.status, link.Record_Status.Failed)
+	testing.expect(t, contains(rec.error, "dropped"), rec.error)
+	link.flush(f.client)
+	rec, _ = record_of(f, behind.id)
+	testing.expect_value(t, rec.status, link.Record_Status.Done)
+	// Once more, or an id that waits for nothing: refused.
+	r = cli(f, "drop", stuck.id)
+	testing.expect_value(t, r.code, 1)
+	testing.expect(t, contains(r.err, "waits for nothing"), r.err)
+	r = cli(f, "drop", "0b9a1c2e-4f5d-4a6b-8c7d-9e0f1a2b3c4d")
+	testing.expect_value(t, r.code, 1)
+	for bad in ([][]string{{"drop"}, {"drop", "a", "b"}, {"drop", "nonsense"}}) {
+		r = cli(f, ..bad)
+		testing.expectf(t, r.code == 64, "%v: %d %s", bad, r.code, r.err)
+	}
 }
 
 // "nothing to commit": the paths are as committed already, which a commit
