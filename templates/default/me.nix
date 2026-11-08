@@ -554,11 +554,12 @@
     # your own menu as a TOML file: a path in your flake, for example
     # ./radial/menu.toml (a rebuild picks up a change), or a store path that
     # comes from a derivation. A string naming a file elsewhere, a store path
-    # typed out (as text or as an unquoted path) and a path outside your flake
-    # are refused. ravnix's own menu (packages/sway-radial/menu.toml) is the
-    # model to copy. Null keeps ravnix's own menu, which holds nothing that
-    # belongs to one machine: a sink name, a display profile or an app of
-    # yours is what a menu of your own is for.
+    # typed out (as text or as an unquoted path), a path outside the store and
+    # a path to a missing file are refused. ravnix's own menu
+    # (packages/sway-radial/menu.toml) is the model to copy. Null keeps
+    # ravnix's own menu, which holds nothing that belongs to one machine: a
+    # sink name, a display profile or an app of yours is what a menu of your
+    # own is for.
     desktop.radial.menu = null;
 
     # What the small scripts (packages/NAME) need of you, besides what they

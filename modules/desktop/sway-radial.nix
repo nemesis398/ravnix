@@ -60,35 +60,40 @@ let
   chosen = config.ravnix.desktop.radial.menu;
 in
 {
-  # What home-manager can link: a path of the flake, or a string or derivation
-  # that Nix knows to be a store path, which is to say one with string context
-  # (it comes from a derivation). Anything else it copies with builtins.path,
-  # and a flake evaluates purely, so that stops with "access to absolute path
-  # is forbidden", which does not say which option is wrong. That covers a
-  # string naming a file outside the store, a store path typed out as text (no
-  # context, so Nix does not know it), a path literal outside the flake, and a
-  # store path typed out as a path literal. The last one is under the store
-  # like a path of the flake, but the flake's source is the one store object
-  # that a path value can name and be read, and its name is "source" (every
-  # fetched or copied flake tree is called that), so that is what a path value
-  # has to start with. (An impure evaluation would only copy a snapshot, not
-  # link the live file.)
+  # What home-manager can link: a path value that this evaluation can read, or
+  # a string or derivation that Nix knows to be a store path, which is to say
+  # one with string context (it comes from a derivation). A path value, and a
+  # string without context, it copies with builtins.path, and a flake
+  # evaluates purely, so the copy of a file the evaluation may not read stops
+  # with "access to absolute path is forbidden", which does not say which
+  # option is wrong. A path value is taken when it is in the store and
+  # builtins.pathExists finds it. That holds for a path of the flake, of one
+  # of its inputs and of a copy that builtins.path made, whatever the name of
+  # the store object, and in pure mode pathExists answers false, without an
+  # error, for a path the evaluation may not read (desktop-sway-radial-module
+  # pins that). Refused are a string naming a file outside the store, a store
+  # path typed out as text (no context, so Nix does not know it) or as a path
+  # literal, a path literal outside the store, and a path to a file that is
+  # not there. (An impure evaluation could read a path outside the store, but
+  # would only copy a snapshot of it, not link the live file.)
   assertions = [
     {
       assertion =
         chosen == null
         || (
           if builtins.isPath chosen then
-            builtins.match "${lib.escapeRegex builtins.storeDir}/[0-9a-z]{32}-source(/.*)?" (toString chosen) != null
+            lib.hasPrefix "${builtins.storeDir}/" (toString chosen) && builtins.pathExists chosen
           else
             builtins.hasContext (toString chosen)
         );
       message = ''
-        ravnix.desktop.radial.menu is ${toString chosen}, which a pure evaluation cannot read.
-        Set it to a path of your flake (./radial/menu.toml) or to a store path that comes from a
-        derivation. A string that names a file outside the store, a store path typed out (as text,
-        or as a path without quotes) and a path outside your flake are refused: a flake evaluates
-        purely, and a copy would be a snapshot, so a change of the menu is a rebuild.
+        ravnix.desktop.radial.menu is ${toString chosen}, which it does not take.
+        Set it to a path that the evaluation can read, such as one of your flake
+        (./radial/menu.toml), or to a store path that comes from a derivation. Refused are a
+        string that names a file outside the store, a store path typed out (as text, or as a path
+        without quotes), a path outside the store and a path to a file that is not there. A flake
+        evaluates purely: home-manager copies only what it may read, and stops at anything else
+        with an error that does not name this option.
       '';
     }
   ];

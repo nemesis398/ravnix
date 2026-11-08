@@ -79,6 +79,32 @@ let
   storeLiteral = host [
     { ravnix.desktop.radial.menu = lib.mkForce /nix/store/00000000000000000000000000000000-menu.toml; }
   ];
+  # The same under a store object called "source", the name of a flake's tree:
+  # the name does not make it a path the evaluation may read. That
+  # builtins.pathExists answers false here, and does not stop the evaluation,
+  # is the evaluator's behavior in pure mode, which this case pins.
+  sourceLiteral = host [
+    {
+      ravnix.desktop.radial.menu = lib.mkForce /nix/store/00000000000000000000000000000000-source/menu.toml;
+    }
+  ];
+  # A path value under a store object of another name: ./menu.toml in a file
+  # imported from a copy called "radial" (builtins.path, as a private flake can
+  # make one), which the evaluation reads like a path of the flake.
+  namedCopy = host [
+    {
+      ravnix.desktop.radial.menu = lib.mkForce (
+        import "${
+          builtins.path {
+            name = "radial";
+            path = ./fixtures/sway-radial;
+          }
+        }/menu-path.nix"
+      );
+    }
+  ];
+  # A path of the flake to a file that is not there, a typo in the name.
+  missing = host [ { ravnix.desktop.radial.menu = lib.mkForce ./fixtures/sway-radial/menu.tom; } ];
   # A derivation, as a module of the user's flake can give one (it has pkgs).
   # Its value is an attribute set, not a string.
   drvMenu = pkgs.writeText "menu.toml" (builtins.readFile ownMenu);
@@ -151,6 +177,25 @@ let
     ++ lib.optional (
       lib.length (refusals storeLiteral) != 1
     ) "a store path typed out as a path literal is not refused once: ${toString (refusals storeLiteral)}"
+    ++ lib.optional (
+      lib.length (refusals sourceLiteral) != 1
+    ) "a store path of a source tree typed out as a path literal is not refused once: ${toString (refusals sourceLiteral)}"
+    ++ lib.optional (
+      lib.length (refusals missing) != 1
+    ) "a path of the flake to a missing file is not refused once: ${toString (refusals missing)}"
+    # A path under a copy of another name is read and linked like a path of
+    # the flake: nothing refused, and the file the unit reads is the user's.
+    ++ lib.optional (
+      refusals namedCopy != [ ]
+    ) "a path under a store copy of another name is refused: ${toString (refusals namedCopy)}"
+    # (that the case is what it says: a path value, under the copy)
+    ++ lib.optional (
+      !builtins.isPath namedCopy.config.ravnix.desktop.radial.menu
+      || !lib.hasSuffix "-radial/menu.toml" (menuOf namedCopy)
+    ) "the case of a store copy does not give a path under the copy: ${menuOf namedCopy}"
+    ++ lib.optional (
+      !inStore (linkedMenu namedCopy) || builtins.readFile (linkedMenu namedCopy) != builtins.readFile ownMenu
+    ) "the menu the unit reads for a path under a store copy is not the user's file: ${linkedMenu namedCopy}"
     # A derivation is linked as it is: nothing to refuse, and the file the unit
     # reads is the derivation's.
     ++ lib.optional (refusals drv != [ ]) "a derivation as the menu is refused: ${toString (refusals drv)}"
