@@ -58,6 +58,11 @@ pkgs.testers.runNixOSTest (
   {
     name = "server-deploy-login-vm";
 
+    # nixosModules.server brings the glue, whose server end reads pkgs.ravnix,
+    # so the nodes' pkgs get the overlay, as modules/common/nixos.nix says for
+    # a VM test.
+    node.pkgs = lib.mkForce (pkgs.extend self.overlays.default);
+
     nodes.muninn =
       { nodes, ... }:
       {
