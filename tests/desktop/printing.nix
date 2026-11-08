@@ -136,6 +136,9 @@ let
           "file:///etc/passwd"
           "ipp://"
           "ipp://x.example.org/\nlpadmin"
+          "ipp://user:pw@printer.example.org/"
+          "ipp://printer.example.org?x@y"
+          "ipp://user@printer.example.org/ipp/print"
         ]
     )
     ++ map (uri: "the printer URI ${builtins.toJSON uri} is refused") (
@@ -155,6 +158,8 @@ let
           "ipp://EXAMPLE%20ET-1%20Series%20(USB)._ipp._tcp.local/"
           "socket://192.0.2.7:9100"
           "usb://Example/Printer?serial=1"
+          "ipp://printer.example.org"
+          "ipp://printer.example.org/p@th"
         ]
     )
     # NetBird: a client that keeps the firewall as Fedora has it.

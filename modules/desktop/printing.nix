@@ -139,7 +139,8 @@ in
           ensure() {
             local name=$1 uri=$2 model=$3 have
             if lpstat -p "$name" >/dev/null 2>&1; then
-              have=$(lpstat -v "$name" | sed -n "s|^device for $name: ||p")
+              # CUPS translates the words around the URI; C keeps them English.
+              have=$(LC_ALL=C lpstat -v "$name" | sed -n "s|^device for $name: ||p")
               if [ "$have" != "$uri" ]; then
                 lpadmin -p "$name" -v "$uri" ||
                   echo "ravnix-printers: could not point $name at $uri" >&2

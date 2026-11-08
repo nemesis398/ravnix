@@ -17,10 +17,14 @@ let
   # for, then the rest with no white space (a space in a printer's name is
   # written %20 in the URI). `dnssd://` and `ipp://NAME._ipp._tcp.local/`
   # name a printer by its DNS-SD service, which survives a change of its
-  # address.
-  printerUri = types.strMatching "(ipp|ipps|dnssd|socket|lpd|http|https|usb)://[^[:space:]]+" // {
-    description = "CUPS device URI (ipp://, ipps://, dnssd://, socket://, lpd://, http(s):// or usb://)";
-  };
+  # address. No `@` is allowed before the first `/` after the scheme, which is
+  # where a user name and password would go: the URI lands in the Nix store and
+  # in the journal, and neither is a place for a credential.
+  printerUri =
+    types.strMatching "(ipp|ipps|dnssd|socket|lpd|http|https|usb)://[^@/[:space:]]+(/[^[:space:]]*)?"
+    // {
+      description = "CUPS device URI without credentials (ipp://, ipps://, dnssd://, socket://, lpd://, http(s):// or usb://)";
+    };
 
   # What the NetBird client takes as its management server: scheme, host and
   # an optional port, with no path.
@@ -38,7 +42,17 @@ let
         description = ''
           Where CUPS reaches the printer: the URI `lpinfo -v` shows for it
           while it is on the network, or `lpstat -v` on a machine that has
-          its queue.
+          its queue. No user name or password: the URI is written into the
+          Nix store and the journal.
+
+          A DNS-SD URI (`dnssd://` or `ipp://NAME._ipp._tcp.local/`) should
+          carry the printer's `?uuid=`, which `lpinfo -v` shows for a printer
+          that announces one: CUPS then refuses an answer from another device.
+          Without it, whatever answers that service name on the network the
+          laptop is on gets a queue made from its attributes, and the queue
+          keeps the driver it was made with. A printer announced by ipp-usb
+          shows no uuid until it is plugged in; `avahi-browse -rt _ipp._tcp`
+          then lists its `UUID=` in the TXT record.
         '';
       };
 
