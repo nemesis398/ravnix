@@ -488,6 +488,24 @@ def test_a_fastfetch_that_never_stops_printing_is_cut_and_killed(lab):
     assert not alive(int(pid.read_text())), "the runaway fastfetch was left running"
 
 
+def test_a_child_that_outlives_fastfetch_and_holds_the_pipe_is_killed(lab):
+    # fastfetch's shell is gone when the time is up, but a background child of
+    # it still has the pipe open, so the read never ends: the child is killed
+    # with the rest of the group, not left running after backdrop is done.
+    pid = lab.work / "child.txt"
+    lab.install_stub("fastfetch", "#!/usr/bin/env bash\nsleep 60 &\necho $! > " + str(pid) + "\nexit 0\n")
+    proc, elapsed, out = render_with_fastfetch(lab)
+    assert proc.returncode == 0, proc.stderr
+    assert elapsed < 20
+    lines = proc.stderr.splitlines()
+    assert len(lines) == 1 and "fastfetch took more than 2 s" in lines[0], lines
+    child = int(pid.read_text())
+    deadline = time.monotonic() + 5
+    while alive(child) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not alive(child), "the child that held the pipe is still running"
+
+
 def test_a_bad_fastfetch_timeout_is_a_line_not_a_crash(lab):
     lab.install_stub("fastfetch", "#!/usr/bin/env bash\nexit 0\n")
     env = {k: v for k, v in lab.env(BACKDROP_FASTFETCH_SECONDS="soon").items() if k != "BACKDROP_FACTS"}

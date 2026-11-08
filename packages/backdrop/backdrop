@@ -524,6 +524,13 @@ def apply_sgr(args, color, bold, theme):
     return color, bold
 
 
+def kill_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def run_group(cmd, seconds, limit):
     # (returncode, stdout, stderr) of cmd, or None when it ran out of time. cmd
     # gets a process group of its own, which is killed with it: fastfetch is
@@ -553,18 +560,22 @@ def run_group(cmd, seconds, limit):
                     buf = got[key.fileobj]
                     buf += data[: caps[key.fileobj] - len(buf)]
                     full = full or len(buf) >= caps[key.fileobj] and key.fileobj is proc.stdout
+        left = max(deadline - time.monotonic(), 0)
         if full:
-            os.killpg(proc.pid, signal.SIGKILL)
+            kill_group(proc)
+            left = max(left, 1)  # it dies at once; a cut is not a timeout
         try:
-            proc.wait(timeout=max(deadline - time.monotonic(), 0))
+            proc.wait(timeout=left)
         except subprocess.TimeoutExpired:
             return None
         return proc.returncode, bytes(got[proc.stdout]), bytes(got[proc.stderr])
     finally:
-        # Out of time, or failed in here: the group is killed. A leader that
-        # was already reaped has no group of its own left to name.
-        if proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGKILL)
+        # Out of time, or failed in here: the group is killed, and this is
+        # before the leader is reaped. While it is not, its pid still names the
+        # group, even when the leader has exited and a child of it keeps the
+        # pipes open. A leader reaped by the wait above has no group to name.
+        if proc.returncode is None:
+            kill_group(proc)
         proc.stdout.close()
         proc.stderr.close()
         proc.wait()
