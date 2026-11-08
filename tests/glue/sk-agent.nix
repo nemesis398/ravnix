@@ -17,7 +17,9 @@
 # that is not on the list, the key in two stand-ins for Bitwarden's agent
 # (rbw's socket, which SSH_AUTH_SOCK names, and Bitwarden Desktop's), and
 # muninn's own ~/.ssh/id_ed25519. The stand-ins for Bitwarden run in debug
-# mode, so that every request they get is a line of their log.
+# mode, so that every request they get is a line of their log. On muninn,
+# rbw's own agent does not start, so that its stand-in is the only agent at
+# rbw's socket.
 #
 # What it checks:
 #   - huginn's agent holds the listed handles and nothing else, on a socket
@@ -148,6 +150,11 @@ pkgs.testers.runNixOSTest {
       # password, and the driver needs none.
       users.users.root.hashedPasswordFile = lib.mkForce null;
       users.users.${user}.openssh.authorizedKeys.keys = [ login.publicKey ];
+      # Keep rbw's agent from starting with the user's manager (Task 4.3, the
+      # server shape brings it). The decoy at rbw's socket stands in for rbw's
+      # agent, which in the VM is locked, has no vault and refuses an added
+      # key, and the decoy cannot bind a socket the real agent already holds.
+      home-manager.users.${user}.systemd.user.services.rbw-agent.Install.WantedBy = lib.mkForce [ ];
       # Another account on muninn, which must not reach the forwarded agent.
       users.users.other.isNormalUser = true;
       ravnix.server.remoteControlDir = lib.mkForce null;
@@ -559,7 +566,11 @@ pkgs.testers.runNixOSTest {
         before = forge_log()
         out = as_user(huginn, SSH + " muninn 'echo SOCK=$SSH_AUTH_SOCK; ssh git@github.com true && echo in' 2>&1")
         lines = out.splitlines()
-        assert "SOCK=" in lines and "in" in lines, out
+        # The session has no forward of its own: its SSH_AUTH_SOCK is rbw's
+        # socket, which the common module sets in every login shell (Task 4.3),
+        # and ssh still takes the first session's forward.
+        rbw_sock = "SOCK=/run/user/" + uid(muninn) + "/rbw/ssh-agent-socket"
+        assert rbw_sock in lines and "in" in lines, out
         logged_in(before)
         # The first one still works once the second has gone.
         logs_in("ssh git@" + FORGEJO + " true")
