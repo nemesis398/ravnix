@@ -582,6 +582,12 @@ pkgs.testers.runNixOSTest (
             assert user_ctl("show -p NRestarts --value claude-remote-control.service").strip() == "0"
             assert as_user("cat ~/.claude.json").strip() == "not json"
             machine.fail("test -e " + HOME + "/remote-control.log")
+            # The activation step that puts ravnix's MCP servers into this file
+            # (ravnixClaudeMcp) refuses a file that is not one JSON document,
+            # on purpose, and fails the home-manager unit with it. The switch
+            # below runs that step, so a valid file goes back now; an empty
+            # object is no first run, and Remote Control stays skipped.
+            as_user("echo '{}' > ~/.claude.json")
 
         with subtest("a switch leaves herdr's server and its panes running"):
             # The workspace made above is still open, the server's process is
@@ -591,6 +597,11 @@ pkgs.testers.runNixOSTest (
             assert before.isdigit() and int(before) > 1, before
             machine.succeed("/run/current-system/specialisation/probe/bin/switch-to-configuration test")
             machine.wait_for_unit("home-manager-" + USER + ".service")
+            # What the switch ran on the state the earlier subtests left (the
+            # MCP and the hooks steps of Claude Code's module) took it: the
+            # files are still the JSON they were.
+            assert isinstance(json.loads(as_user("cat ~/.claude.json")), dict)
+            assert isinstance(json.loads(as_user("cat ~/.claude/settings.json")), dict)
             machine.wait_until_succeeds("grep -q '^RestartSec=3$' " + HOME + "/.config/systemd/user/herdr-server.service", timeout=60)
             after = user_ctl("show -p MainPID --value herdr-server.service").strip()
             assert after == before, "the switch restarted herdr's server: " + before + " -> " + after
