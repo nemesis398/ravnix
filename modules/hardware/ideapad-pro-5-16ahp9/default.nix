@@ -1,7 +1,8 @@
 # The Lenovo IdeaPad Pro 5 16AHP9 with the Ryzen 7 8845HS (Hawk Point): its
-# Radeon 780M drives the panel and the desktop, and its RTX 4050 renders only what is
-# started through `prime-run`, and is powered off (D3cold) the rest of the
-# time. The private flake imports this beside nixosModules.laptop.
+# Radeon 780M drives the panel and the desktop, and its RTX 4050 renders
+# only what is started through `prime-run`, and is powered off (D3cold) the
+# rest of the time. The private flake imports this beside
+# nixosModules.laptop.
 # Task 3.4 adds the power, battery, panel and NVIDIA suspend modules of this
 # directory.
 #
