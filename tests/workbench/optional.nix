@@ -368,15 +368,22 @@ pkgs.runCommand "workbench-optional" { } (''
   # pairs are named, so the feed is not synced a second time after the guard.
   at() { grep -n -F -e "$2" "$1" | head -n 1 | cut -d: -f1 || true; }
   guard=$(at "$vs" 'exit 75')
-  feed=$(at "$vs" 'vdirsyncer discover feed_class && vdirsyncer sync feed_class')
+  feedMkdir=$(at "$vs" 'mkdir -p -- /home/')
+  feedDiscover=$(at "$vs" 'vdirsyncer discover feed_class')
+  feedSync=$(at "$vs" 'vdirsyncer sync feed_class')
   accountDiscover=$(at "$vs" 'vdirsyncer discover calendars')
   accountSync=$(at "$vs" 'vdirsyncer sync calendars')
-  if [ -z "$guard" ] || [ -z "$feed" ] || [ -z "$accountDiscover" ] || [ -z "$accountSync" ]; then
-    fail "the calendar sync lacks a step (guard '$guard', feed '$feed', account discover '$accountDiscover', account sync '$accountSync')"
+  if [ -z "$guard" ] || [ -z "$feedMkdir" ] || [ -z "$feedDiscover" ] || [ -z "$feedSync" ] || [ -z "$accountDiscover" ] || [ -z "$accountSync" ]; then
+    fail "the calendar sync lacks a step (guard '$guard', feed directory '$feedMkdir', feed discover '$feedDiscover', feed sync '$feedSync', account discover '$accountDiscover', account sync '$accountSync')"
   else
-    [ "$feed" -lt "$guard" ] || fail "the feed is not copied before the vault guard"
+    [ "$feedMkdir" -lt "$feedDiscover" ] && [ "$feedDiscover" -lt "$feedSync" ] && [ "$feedSync" -lt "$guard" ] ||
+      fail "the feed is not set up and copied, in that order, before the vault guard"
     [ "$guard" -lt "$accountDiscover" ] && [ "$accountDiscover" -lt "$accountSync" ] ||
       fail "the account is synced before the vault guard"
+    # Making the feed's directory is inside the feed's failure guard: where
+    # it fails, the feed is counted as failed and the account still syncs.
+    [ "$(sed -n "$((feedMkdir - 1))p" "$vs")" = "if ! {" ] ||
+      fail "the feed's directory is made outside the guard that keeps a feed from stopping the account sync"
   fi
   ! grep -q -E '^vdirsyncer (discover|metasync|sync)$' "$vs" ||
     fail "the calendar sync runs vdirsyncer for every pair, feeds again after the guard"

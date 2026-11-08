@@ -121,6 +121,21 @@ let
     END:VCALENDAR
   '';
 
+  # An event added to the server after the first sync.
+  lateEvent = pkgs.writeText "late.ics" ''
+    BEGIN:VCALENDAR
+    VERSION:2.0
+    PRODID:-//ravnix//workbench-server//EN
+    BEGIN:VEVENT
+    UID:workbench-server-2@example.org
+    DTSTAMP:20300101T000000Z
+    DTSTART:20300617T090000Z
+    DTEND:20300617T093000Z
+    SUMMARY:Late event of the workbench
+    END:VEVENT
+    END:VCALENDAR
+  '';
+
   event = pkgs.writeText "standup.ics" ''
     BEGIN:VCALENDAR
     VERSION:2.0
@@ -442,6 +457,29 @@ pkgs.testers.runNixOSTest (
             assert "Standup of the workbench" in listed, listed
             listed = as_user("khal list 2030-06-16 1d")
             assert "Lesson of the class feed" in listed, listed
+
+        with subtest("a feed that cannot be set up fails the unit but does not keep the account from syncing"):
+            # The feed's directory cannot be made: its parent is a file. The
+            # account is on its own, and an event added to the server since the
+            # last run must still arrive.
+            # (The copy is moved aside and put back, so vdirsyncer does not see
+            # the feed's items disappear.)
+            as_user("cd ~/.local/share && mv calendars-readonly calendars-readonly.aside && touch calendars-readonly")
+            machine.succeed(
+                "curl -sf -X PUT -u ${me.ravnix.calendar.user}:x -H 'Content-Type: text/calendar' "
+                "--data-binary @${lateEvent} " + base + "/personal/late.ics"
+            )
+            code, _ = machine.execute("su - " + USER + " -c 'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start vdirsyncer.service'")
+            assert code != 0, "the unit says it succeeded with a feed it could not set up"
+            # Read from the files: khal itself refuses to start while the
+            # feed's directory is missing.
+            late = as_user("cat ~/.local/share/calendars/personal/*.ics")
+            assert "Late event of the workbench" in late, late
+            # Put right, the feed comes back on the next run.
+            as_user("cd ~/.local/share && rm -f calendars-readonly && mv calendars-readonly.aside calendars-readonly")
+            user_ctl("start vdirsyncer.service")
+            assert "Late event of the workbench" in as_user("khal list 2030-06-17 1d")
+            assert "Lesson of the class feed" in as_user("khal list 2030-06-16 1d")
 
         with subtest("iamb and aerc have their accounts"):
             iamb = as_user("cat ~/.config/iamb/config.toml")

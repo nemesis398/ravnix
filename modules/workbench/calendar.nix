@@ -179,14 +179,17 @@ in
         ];
         text = ''
           ${lib.optionalString (feedNames != [ ]) ''
-            # A feed that cannot be fetched does not keep the account from
-            # syncing; the unit fails at the end if one could not.
+            # A feed that cannot be set up or fetched does not keep the account
+            # from syncing; the unit fails at the end if one could not. Its
+            # directory comes first, so vdirsyncer does not warn about it on
+            # the first run; making it is part of the same guard.
             feeds=0
             ${lib.concatMapStrings (name: ''
-              # The directory first, so vdirsyncer does not warn about it on
-              # the first run.
-              mkdir -p -- ${lib.escapeShellArg "${readonly}/${name}"}
-              if ! { vdirsyncer discover ${pairOf name} && vdirsyncer sync ${pairOf name}; }; then
+              if ! {
+                mkdir -p -- ${lib.escapeShellArg "${readonly}/${name}"} &&
+                  vdirsyncer discover ${pairOf name} &&
+                  vdirsyncer sync ${pairOf name}
+              }; then
                 feeds=1
               fi
             '') feedNames}
