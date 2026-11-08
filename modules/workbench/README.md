@@ -26,10 +26,13 @@ choice. rbw's agent runs on both hosts the same way (`modules/common/rbw.nix`):
   unlocked and is your SSH agent: `SSH_AUTH_SOCK` is
   `$XDG_RUNTIME_DIR/rbw/ssh-agent-socket` in the shell and in the user manager,
   so a commit signs from a terminal, from Claude Code and from a user unit.
-- **It locks 12 hours after each unlock**, whatever used it in between:
-  `rbw-relock.timer` is armed when you unlock, and `rbw-relock.service` then
-  runs `rbw lock` and says so in its journal (`journalctl --user -u
-  rbw-relock`). rbw's own `lock_timeout` (an hour) would never run out here,
+- **It locks 12 hours after each unlock**, by the clock, whatever used it in
+  between: unlocking arms `rbw-relock.timer` for that moment (a calendar
+  timer, so a suspend does not stretch it), and `rbw-relock.service` then runs
+  `rbw lock` and says so in its journal (`journalctl --user -u rbw-relock`). If
+  arming or locking fails, the journal says that too, and the unit fails. The
+  cap guards against forgetting, not against an agent: any process of yours
+  can stop the timer. rbw's own `lock_timeout` (an hour) would never run out here,
   because every read and every signature starts it again and the Nextcloud sync
   reads every five minutes. After the 12 hours the syncs stop with status 75
   and say the vault is locked, and nothing signs, until the next `ai-unlock`.
@@ -82,7 +85,7 @@ login (`users.users.<user>.linger`).
 | `vdirsyncer.timer` | the feeds, then discover, metasync and sync of calendars and contacts, every quarter hour | yes, except for the feeds |
 | `claude-remote-control.service` | Remote Control, as the development VM before it had it | no |
 | `rbw-agent.service` | rbw's agent and the SSH agent, locked from boot until `ai-unlock` | it is the vault |
-| `rbw-relock.timer` | locks the vault 12 hours after each unlock; armed by the unlock, not at boot | it locks it |
+| `rbw-relock.timer` | locks the vault 12 hours after each unlock, by the clock; made by the unlock, not at boot | it locks it |
 
 ## Steps by hand
 

@@ -22,8 +22,10 @@
 # asks for the master password only in a terminal. While the vault is
 # locked, ssh and commit signing from a graphical program fail at once with
 # no window to type into; run ai-unlock in a terminal, and again 12 hours
-# later, when it locks itself. The git hosts of ravnix.laptop.gitKeys take
-# the security key and no agent at all (modules/desktop/git-hosts.nix).
+# later by the clock, when it locks itself. The git hosts of
+# ravnix.laptop.gitKeys take the security key over ssh and no agent at all,
+# one touch for ten minutes (modules/desktop/git-hosts.nix); an HTTPS remote
+# of GitHub takes gh's token instead.
 # Every login shell points SSH_AUTH_SOCK at rbw's agent, so one forwarded
 # into it with `ssh -A` is not used.
 { self, inputs }:

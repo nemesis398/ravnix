@@ -36,8 +36,9 @@
 # which rbw's agent cannot serve (it signs with Ed25519 and RSA keys only).
 # This file asserts what the configuration shows: deployFrom names none of
 # the server's own addresses, its NetBird address or a loopback address in
-# any spelling, from which the agent's keys would come, and the Proxmox
-# update key, which is in the vault, is no deploy key. It cannot see the
+# any spelling (the IPv4-compatible and IPv4-mapped ones too), from which
+# the agent's keys would come, and the Proxmox update key, which is in the
+# vault, is no deploy key. It cannot see the
 # server's LAN address, which no ravnix option holds: keep it out of
 # deployFrom too.
 { config, lib, ... }:
@@ -47,10 +48,29 @@ let
   update = cfg.proxmoxUpdate;
   blob = line: lib.elemAt (lib.splitString " " line) 1;
   # A loopback address in any spelling sshd's from= would match: 127.0.0.0/8
-  # and ::1, with or without zeros (0::1, 0:0:0:0:0:0:0:1, 0000:...:0001).
+  # and ::1, with or without zeros (0::1, 0:0:0:0:0:0:0:1, 0000:...:0001),
+  # in the IPv4-compatible spelling (::0.0.0.1), and 127.0.0.0/8 mapped into
+  # IPv6 (::ffff:127.0.0.1). Lowercased first.
+  zeros = "(0{0,4}:){1,7}:?(0{0,4}:)*";
   loopback =
-    a: lib.hasPrefix "127." a || builtins.match "(0{0,4}:){1,7}:?(0{0,4}:)*0{0,3}1" a != null;
-  own = lib.filter (a: a == cfg.netbirdAddress || loopback a) cfg.deployFrom;
+    a:
+    let
+      l = lib.toLower a;
+    in
+    lib.hasPrefix "127." l
+    || builtins.match "${zeros}0{0,3}1" l != null
+    || builtins.match "${zeros}0{1,3}[.]0{1,3}[.]0{1,3}[.]0{0,2}1" l != null
+    || builtins.match "${zeros}ffff:127[.].*" l != null;
+  # The NetBird address as itself or mapped into IPv6.
+  netbird =
+    a:
+    let
+      l = lib.toLower a;
+      mapped = builtins.match "${zeros}ffff:(.*)" l;
+    in
+    l == lib.toLower cfg.netbirdAddress
+    || (mapped != null && lib.last mapped == lib.toLower cfg.netbirdAddress);
+  own = lib.filter (a: netbird a || loopback a) cfg.deployFrom;
 in
 {
   assertions = [

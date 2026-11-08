@@ -122,15 +122,14 @@ let
         h.systemd.user.sessionVariables.${var} or null == "1"
       ) "${name}: the user manager lacks ${var}=1"
     ) telemetry
-    # The vault locks 12 h after an unlock at the latest: the guard arms the
-    # timer when a person unlocks, and the timer does not start at boot.
+    # The vault locks 12 h after an unlock at the latest, by the wall clock:
+    # the guard sets a realtime deadline when a person unlocks
+    # (tests/workbench/rbw.nix), and no monotonic timer counts awake time
+    # only, which a suspended laptop would stretch.
+    ++ check (h.ravnix.rbw.lockAfter == "12h") "${name}: the cap is not 12 hours"
     ++ check (
-      (h.systemd.user.timers.rbw-relock.Timer.OnActiveSec or null) == "12h"
-      && !(h.systemd.user.timers.rbw-relock ? Install)
-    ) "${name}: no rbw-relock timer 12 h after an unlock, or one that starts by itself"
-    ++ check (lib.hasInfix "rbw-relock" (
-      toString (h.systemd.user.services.rbw-relock.Service.ExecStart or "")
-    )) "${name}: no rbw-relock service"
+      !(h.systemd.user.timers ? rbw-relock)
+    ) "${name}: rbw-relock is a declared timer, which counts from its start and pauses in a suspend"
     ++ check (!s.config.services.gnome.gcr-ssh-agent.enable) "${name}: GCR's SSH agent is on"
     # Without tokens, no helper of ravnix's is in git's configuration.
     ++ check (
@@ -215,6 +214,40 @@ let
         );
       };
       says = "1.14";
+    };
+    "a deploy from loopback in the IPv4-compatible spelling" = {
+      s = server {
+        ravnix.server.deployKeys = lib.mkForce [ proxmox.publicKey ];
+        ravnix.server.deployFrom = lib.mkForce [ "::0.0.0.1" ];
+      };
+      says = "the server's own";
+    };
+    "a deploy from loopback in the full IPv4-compatible spelling" = {
+      s = server {
+        ravnix.server.deployKeys = lib.mkForce [ proxmox.publicKey ];
+        ravnix.server.deployFrom = lib.mkForce [ "0:0:0:0:0:0:0.0.0.1" ];
+      };
+      says = "the server's own";
+    };
+    "a deploy from loopback mapped into IPv6" = {
+      s = server {
+        ravnix.server.deployKeys = lib.mkForce [ proxmox.publicKey ];
+        ravnix.server.deployFrom = lib.mkForce [ "::ffff:127.0.0.1" ];
+      };
+      says = "the server's own";
+    };
+    "a deploy from the NetBird address mapped into IPv6" = {
+      s = server {
+        ravnix.server.deployKeys = lib.mkForce [ proxmox.publicKey ];
+        ravnix.server.deployFrom = lib.mkForce [ "::FFFF:198.51.100.20" ];
+      };
+      says = "the server's own";
+    };
+    "a pinentry set past the guard, which loses the 12-hour cap" = {
+      s = server {
+        home-manager.users.${user}.programs.rbw.settings.pinentry = lib.mkForce pkgs.pinentry-curses;
+      };
+      says = "guard";
     };
     "the Proxmox update key as a deploy key" = {
       s = server {

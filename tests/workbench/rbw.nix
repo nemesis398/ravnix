@@ -397,15 +397,24 @@ pkgs.testers.runNixOSTest {
         # The agent reads its config at its start.
         as_user("systemctl --user restart rbw-agent.service")
 
-    with subtest("an unlock arms the 12-hour lock, which locks the vault and says so"):
-        as_user("systemctl --user stop rbw-relock.timer")
+    with subtest("an unlock arms the 12-hour lock by the wall clock, which locks the vault and says so"):
+        as_user("systemctl --user stop rbw-relock.timer", False)
         # A request the guard refuses arms nothing.
         ssh_add_fails_fast()
         assert as_user("systemctl --user is-active rbw-relock.timer", False)[1].strip() == "inactive"
         on_terminal("ai-unlock")
         assert as_user("systemctl --user is-active rbw-relock.timer").strip() == "active"
-        timer = as_user("systemctl --user cat rbw-relock.timer")
-        assert "OnActiveSec=12h" in timer, timer
+        # A realtime deadline 12 hours from now, which a suspend does not
+        # stretch: a calendar timer, not a monotonic one.
+        timer = as_user("systemctl --user show rbw-relock.timer -p TimersCalendar -p TimersMonotonic -p NextElapseUSecRealtime")
+        props = dict(l.split("=", 1) for l in timer.splitlines() if "=" in l)
+        assert props.get("TimersMonotonic", "") == "" and props.get("TimersCalendar", "") != "", timer
+        due = int(as_user("date -d \"$(systemctl --user show rbw-relock.timer -p NextElapseUSecRealtime --value)\" +%s").strip())
+        now = int(machine.succeed("date +%s").strip())
+        assert abs(due - now - 12 * 3600) < 180, (due - now, timer)
+        # A second unlock moves the deadline and leaves one timer.
+        on_terminal("rbw lock; ai-unlock")
+        assert len(as_user("systemctl --user list-timers --all --no-legend 'rbw-relock*'").splitlines()) == 1
         # The 12 hours, as if they had passed.
         as_user("systemctl --user start rbw-relock.service")
         assert as_user("rbw unlocked", False)[0] != 0

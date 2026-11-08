@@ -111,10 +111,14 @@
       # The addresses a deploy may come from, as the server sees them: the
       # laptop's in your NetBird network. Bare addresses, no names.
       deployFrom = [ "198.51.100.10" ];
-      # The one way from the server to a Proxmox node: a dedicated key, an
-      # SSH key item of your vault, which the server offers to that node
-      # alone; the node runs one command for it (command="...",restrict in
-      # its authorized_keys, which you set up there). For example:
+      # The way the server's tools are meant to reach a Proxmox node: a
+      # dedicated key, an SSH key item of your vault, which the server
+      # offers to that node alone; the node runs one command for it
+      # (command="...",restrict in its authorized_keys, which you set up
+      # there). Not the only way: the server's agent serves every SSH key of
+      # the vault, a node's root key too, so an agent there can log in to a
+      # node as root while the vault is unlocked, wherever the network lets
+      # it (an accepted gap; see the workbench README). For example:
       #   proxmoxUpdate = {
       #     alias = "proxmox-update";   # ssh proxmox-update
       #     hostName = "192.0.2.40";
@@ -174,11 +178,14 @@
     laptop = {
       # The git hosts and, for each, the security key's handle files
       # (ssh-keygen -t ed25519-sk) that log in there. ssh on the laptop uses
-      # them alone for these hosts and asks no agent, so a push takes a
-      # touch; the vault's agent keeps every other host. Host names in
-      # lowercase.
+      # them alone for these hosts and asks no agent, so a push over ssh
+      # takes a touch, which then holds for ten minutes; the vault's agent
+      # keeps every other host. An HTTPS remote of GitHub takes gh's token
+      # instead and no key. Host names in lowercase.
       gitKeys = {
         "github.com" = [ "/home/alice/.ssh/keys/github-sk" ];
+        # GitHub's ssh on port 443, the same service under another name.
+        "ssh.github.com" = [ "/home/alice/.ssh/keys/github-sk" ];
         "git.example.org" = [ "/home/alice/.ssh/keys/forge-sk" ];
       };
       # The one disk the installer may write, by model and serial as

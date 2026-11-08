@@ -22,10 +22,20 @@
 # five minutes, that timeout alone would never lock it (tests/workbench/
 # rbw.nix shows a read renewing it). So there is a cap, the maintainer's
 # choice (2026-11-08): each unlock arms rbw-relock.timer, and 12 hours
-# later (ravnix.rbw.lockAfter) rbw-relock.service runs `rbw lock`, whatever
+# later by the clock, a suspend of the laptop included (ravnix.rbw.
+# lockAfter; a calendar timer for that moment, since a monotonic one pauses
+# while the machine sleeps), rbw-relock.service runs `rbw lock`, whatever
 # used the vault in between, and says so in its journal. From then on the
 # syncs stop with status 75 and say the vault is locked, and nothing signs,
-# until the next ai-unlock.
+# until the next ai-unlock. A failure to arm the timer, or to lock, is
+# logged in the agent's or rbw-relock's journal, and the latter fails.
+#
+# The cap is cooperative: it bounds forgetting, not an adversary. Any
+# process of the user can stop the timer or mask the service, and one that
+# wants the vault can copy it within the 12 hours anyway. It also needs the
+# guard as rbw's pinentry: a host that sets programs.rbw.settings.pinentry
+# itself, instead of ravnix.rbw.pinentry, would lose it, and an assertion
+# refuses that.
 #
 # The agent runs as a user unit, rbw-agent, from the start of the user's
 # manager (at boot on the server, which lingers): locked, with its sockets
@@ -98,6 +108,26 @@ let
         esac
       done
 
+      ${lib.optionalString (cfg.lockAfter != null) ''
+        # The cap, by the clock: a calendar timer for the moment lockAfter
+        # from now, in place of the one an earlier unlock set. A failure is
+        # said in the agent's journal and does not stop the unlock.
+        arm() {
+          local when
+          if ! when=$(date -d "+${toString seconds} seconds" '+%Y-%m-%d %H:%M:%S'); then
+            echo "ravnix-pinentry: could not arm the ${toString cfg.lockAfter} lock (date failed); the vault stays unlocked until rbw's lock_timeout runs out or rbw lock" >&2
+            return 0
+          fi
+          ${pkgs.systemd}/bin/systemctl --user stop rbw-relock.timer rbw-relock.service 2>/dev/null || true
+          ${pkgs.systemd}/bin/systemctl --user reset-failed rbw-relock.timer rbw-relock.service 2>/dev/null || true
+          if ! ${pkgs.systemd}/bin/systemd-run --user --quiet --unit=rbw-relock \
+            --description="Lock the vault ${toString cfg.lockAfter} after it was unlocked" \
+            --on-calendar="$when" --timer-property=AccuracySec=1min \
+            --property=Type=oneshot -- ${relock}; then
+            echo "ravnix-pinentry: could not arm the ${toString cfg.lockAfter} lock (systemd-run failed); the vault stays unlocked until rbw's lock_timeout runs out or rbw lock" >&2
+          fi
+        }
+      ''}
       waiting() {
         local p exe
         [[ -n $tty ]] || return 1
@@ -114,11 +144,11 @@ let
 
       if waiting; then
         # A person is unlocking: arm the cap, which locks again after
-        # ravnix.rbw.lockAfter whatever uses the vault in between.
+        # ravnix.rbw.lockAfter whatever uses the vault in between. Its
+        # output goes to stderr, the agent's journal: standard output is
+        # the pinentry protocol rbw reads.
         ${
-          lib.optionalString (cfg.lockAfter != null) ''
-            ${pkgs.systemd}/bin/systemctl --user restart rbw-relock.timer 2>/dev/null || true
-          ''
+          lib.optionalString (cfg.lockAfter != null) "arm >&2\n"
         }exec ${lib.getExe cfg.pinentry} "''${args[@]}"
       fi
 
@@ -165,13 +195,31 @@ let
 
   # The cap: lock, and say why, and what stops until the next unlock.
   relock = pkgs.writeShellScript "rbw-relock" ''
-    if ${rbw}/bin/rbw unlocked >/dev/null 2>&1; then
-      ${rbw}/bin/rbw lock
+    if ! ${rbw}/bin/rbw unlocked >/dev/null 2>&1; then
+      echo "rbw-relock: the vault was locked already (${toString cfg.lockAfter} after the last unlock); run ai-unlock to use it"
+      exit 0
+    fi
+    if ${rbw}/bin/rbw lock && ! ${rbw}/bin/rbw unlocked >/dev/null 2>&1; then
       echo "rbw-relock: locked the vault ${toString cfg.lockAfter} after it was unlocked; the syncs and signing stop until the next ai-unlock"
     else
-      echo "rbw-relock: the vault was locked already (${toString cfg.lockAfter} after the last unlock); run ai-unlock to use it"
+      echo "rbw-relock: could not lock the vault ${toString cfg.lockAfter} after it was unlocked; it is still unlocked" >&2
+      exit 1
     fi
   '';
+
+  # lockAfter in seconds, for date.
+  seconds =
+    let
+      m = builtins.match "([0-9]+)(s|min|h|d)" cfg.lockAfter;
+      n = lib.toInt (lib.elemAt m 0);
+      unit = {
+        s = 1;
+        min = 60;
+        h = 3600;
+        d = 86400;
+      };
+    in
+    n * unit.${lib.elemAt m 1};
 
   # What rbw runs when no agent answers: the unit.
   starter = pkgs.writeShellScript "rbw-agent-start" ''
@@ -188,7 +236,8 @@ in
     example = "8h";
     description = ''
       How long after an unlock rbw-relock.timer locks the vault, however
-      much it was used in between (a time span as systemd writes it). rbw's
+      much it was used in between, by the clock, a suspend included (s,
+      min, h or d after a number). rbw's
       own lock_timeout counts from the last request and never runs out
       while a timer reads the vault. Null: no cap.
     '';
@@ -218,28 +267,16 @@ in
 
     assertions = [
       {
+        assertion = cfg.lockAfter == null || config.programs.rbw.settings.pinentry == lib.getExe guard;
+        message = "programs.rbw.settings.pinentry is not ravnix's guard (ravnix-pinentry), so a locked agent would prompt on a stale terminal and the ${toString cfg.lockAfter} lock would never be armed. Set ravnix.rbw.pinentry to choose the pinentry behind the guard.";
+      }
+      {
         assertion = lib.versionAtLeast (config.programs.rbw.package.version or "0") "1.14";
         message = "programs.rbw.package is rbw ${
           config.programs.rbw.package.version or "of no known version"
         }; rbw's agent serves SSH keys from 1.14 on, and ravnix's SSH agent is that one.";
       }
     ];
-
-    systemd.user.timers.rbw-relock = lib.mkIf (cfg.lockAfter != null) {
-      Unit.Description = "Lock the vault ${cfg.lockAfter} after it was unlocked";
-      # Armed by an unlock (the guard), never at boot: no Install section.
-      Timer = {
-        OnActiveSec = cfg.lockAfter;
-        AccuracySec = "1min";
-      };
-    };
-    systemd.user.services.rbw-relock = lib.mkIf (cfg.lockAfter != null) {
-      Unit.Description = "Lock the vault, ${cfg.lockAfter} after it was unlocked";
-      Service = {
-        Type = "oneshot";
-        ExecStart = "${relock}";
-      };
-    };
 
     systemd.user.services.rbw-agent = {
       Unit.Description = "rbw's agent: the vault's key while it is unlocked, and the SSH agent";

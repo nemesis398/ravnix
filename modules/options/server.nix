@@ -105,13 +105,18 @@ in
       );
       default = null;
       description = ''
-        The one way from muninn to a Proxmox node: a dedicated key, which
-        muninn's ssh offers to that node alone (`ssh <alias>`, and no other
-        key of the agent). The node takes it only with a forced command,
-        `command="<the update script>",restrict <key>` in that user's
-        authorized_keys, so the key runs the script and nothing else. That
-        line, and the script, are the node's: ravnix does not configure
-        the node. Null: no such block.
+        The way muninn's tools are meant to reach a Proxmox node: a
+        dedicated key, which muninn's ssh offers to that node alone (`ssh
+        <alias>`, and no other key of the agent). The node takes it only
+        with a forced command, `command="<the update script>",restrict
+        <key>` in that user's authorized_keys, so this key runs the script
+        and nothing else. It is not the only way: rbw's agent on muninn
+        serves every SSH key of the vault, the nodes' root keys among them,
+        so while the vault is unlocked any agent there can log in to a node
+        as root wherever the network lets muninn reach it. That is an
+        accepted known gap (modules/workbench/ssh-agent.nix, the workbench
+        README). The node's line and the script are the node's own: ravnix
+        does not configure the node. Null: no such block.
       '';
     };
   };
