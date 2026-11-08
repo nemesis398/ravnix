@@ -109,6 +109,14 @@ let
       "a.b" = feed "http://calendar.example.org/b.ics";
     };
   };
+  # A feed x makes the storages feed_x_local and feed_x_remote, and a feed
+  # x-local makes the pair feed_x_local: one name for two things.
+  suffixFeeds = host {
+    ravnix.calendar.feeds = lib.mkForce {
+      "x" = feed "http://calendar.example.org/x.ics";
+      "x-local" = feed "http://calendar.example.org/y.ics";
+    };
+  };
   alone = host { ravnix.mail = lib.mkForce { only = mail "only"; }; };
   badName = host { ravnix.mail = lib.mkForce { "two words" = mail "x"; }; };
   starttls = host {
@@ -289,6 +297,9 @@ let
     (lib.optional (
       !lib.any (lib.hasInfix "the same name in vdirsyncer") (failed alikeFeeds)
     ) "two feeds that vdirsyncer would see under one name are accepted")
+    (lib.optional (
+      !lib.any (lib.hasInfix "feed_x_local") (failed suffixFeeds)
+    ) "a feed x-local beside x, whose pair and storage share a name, is accepted")
     (lib.optional (
       failed dottedFeed != [ ]
     ) "a feed with a dot and a dash in its name is refused: ${toString (failed dottedFeed)}")

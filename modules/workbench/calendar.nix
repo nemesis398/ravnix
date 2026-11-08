@@ -27,7 +27,9 @@
 # vdirsyncer takes only letters, digits and _ in the name of a pair or a
 # storage, and a feed's name may have a dot and a dash as well (it is a
 # directory and a khal calendar), so the pair is named with those spelled _.
-# Two feeds that would end up under one name are refused by an assertion.
+# Two feeds that would end up under one name are refused by an assertion;
+# that counts the pair and its two storages (feed_x_local, feed_x_remote), so
+# a feed x-local beside a feed x is refused too.
 #
 # Style (docs/style.md, rule 9, an exception): khal draws with the terminal's
 # 16 ANSI colors, which the terminal sets to Catppuccin Mocha; its dates and
@@ -37,19 +39,37 @@ let
   os = config;
   user = os.ravnix.user.username;
   calendar = os.ravnix.calendar;
-  # A feed's name as vdirsyncer can have it in a section name.
+  # A feed's name as vdirsyncer can have it in a section name, and the
+  # sections the feed makes: its pair and the two storages of it.
   spelled = name: lib.replaceStrings [ "." "-" ] [ "_" "_" ] name;
-  # The feeds that vdirsyncer would see under one name.
-  alike = lib.filterAttrs (_: names: lib.length names > 1) (
-    lib.groupBy spelled (lib.optionals (calendar != null) (lib.attrNames calendar.feeds))
+  pairOf = name: "feed_${spelled name}";
+  sectionsOf = name: [
+    (pairOf name)
+    "${pairOf name}_local"
+    "${pairOf name}_remote"
+  ];
+  # The section names that two feeds would both make, with the feeds. In
+  # vdirsyncer a pair and a storage cannot share a name either.
+  clashes = lib.filterAttrs (_: names: lib.length names > 1) (
+    lib.mapAttrs (_: lib.unique) (
+      lib.zipAttrs (
+        lib.concatMap (name: map (section: { ${section} = name; }) (sectionsOf name)) (
+          lib.optionals (calendar != null) (lib.attrNames calendar.feeds)
+        )
+      )
+    )
   );
 in
 {
   assertions = [
     {
-      assertion = alike == { };
-      message = "ravnix.calendar.feeds has names that are the same name in vdirsyncer (it takes only letters, digits and _, so . and - count as _): ${
-        lib.concatStringsSep "; " (lib.mapAttrsToList (_: names: lib.concatStringsSep ", " names) alike)
+      assertion = clashes == { };
+      message = "ravnix.calendar.feeds has names that are the same name in vdirsyncer (it takes only letters, digits and _, so . and - count as _, and a feed makes feed_<name>, feed_<name>_local and feed_<name>_remote): ${
+        lib.concatStringsSep "; " (
+          lib.mapAttrsToList (
+            section: names: "${lib.concatStringsSep " and " names} both make ${section}"
+          ) clashes
+        )
       }.";
     }
   ];
@@ -100,7 +120,6 @@ in
       ];
 
       feedNames = lib.attrNames calendar.feeds;
-      pairOf = name: "feed_${spelled name}";
       accountPairs = lib.concatStringsSep " " (
         [ "calendars" ] ++ lib.optional (calendar.carddavUrl != null) "contacts"
       );
