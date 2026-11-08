@@ -17,9 +17,9 @@
 # settings in it, and Claude Code writes it all the time. The step
 # (claude/settings/sync-mcp.sh) changes the mcpServers key only: it puts
 # ravnix's servers in, takes out the ones it put in before and no longer
-# declares, and keeps every other server and key. It writes with
-# compare-and-swap, as the hook step does for settings.json
-# (claude-code.nix).
+# declares, and keeps every other server and key. It writes under Claude
+# Code's own lock and with compare-and-swap, as the hook step does for
+# settings.json (claude/settings/cas.sh, shared by the two).
 #
 # Which servers are ravnix's: the step records their names in
 # <stateHome>/ravnix/claude-mcp-servers.json. Claude Code may drop a marker
@@ -43,6 +43,20 @@ let
   home = config.home.homeDirectory;
   claudeJson = if cfg.configDir == "${home}/.claude" then "${home}/.claude.json" else "${cfg.configDir}/.claude.json";
   stateFile = "${config.xdg.stateHome}/ravnix/claude-mcp-servers.json";
+  # Where Claude Code 2.1.319 still reads its config instead, when that old
+  # file is not empty (the step says so).
+  legacyFile = "${cfg.configDir}/.config.json";
+  # The activation steps and cas.sh, which they source from beside them, and
+  # nothing else of claude/settings (not the tests). claude-code.nix builds
+  # the same tree.
+  steps = lib.fileset.toSource {
+    root = ../../claude/settings;
+    fileset = lib.fileset.unions [
+      ../../claude/settings/cas.sh
+      ../../claude/settings/sync-hooks.sh
+      ../../claude/settings/sync-mcp.sh
+    ];
+  };
   servers = json.generate "ravnix-claude-mcp-servers.json" (
     lib.optionalAttrs cfg.enable config.ravnix.claude.mcpServers
   );
@@ -54,7 +68,7 @@ let
         pkgs.jq
       ]
     }''${PATH:+:$PATH}
-    exec ${lib.getExe pkgs.bash} ${../../claude/settings/sync-mcp.sh} "$@"
+    exec ${lib.getExe pkgs.bash} ${steps}/sync-mcp.sh "$@"
   '';
 in
 {
@@ -64,7 +78,7 @@ in
     if [[ -v DRY_RUN ]]; then
       echo ${lib.escapeShellArg "Would put ravnix's MCP servers into ${claudeJson}"}
     else
-      ${sync} ${lib.escapeShellArg claudeJson} ${lib.escapeShellArg stateFile} ${servers} ${builtins.storeDir}
+      ${sync} ${lib.escapeShellArg claudeJson} ${lib.escapeShellArg stateFile} ${servers} ${builtins.storeDir} ${lib.escapeShellArg legacyFile}
     fi
   '';
 }

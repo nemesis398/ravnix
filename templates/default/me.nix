@@ -231,8 +231,10 @@
     #   mcpServers.docs = {
     #     type = "http";
     #     url = "https://mcp.example.org/mcp";
-    #     headers.Authorization = "Bearer ${DOCS_API_TOKEN}";
+    #     headers.Authorization = "Bearer \${DOCS_API_TOKEN}";
     #   };
+    # In a Nix string the reference is written \${NAME} (or ''${NAME} inside
+    # ''...''): a bare ${NAME} is Nix's own interpolation and fails.
     claude.mcpServers = { };
 
     # The one accent of the desktop: focus and place, never a state. One of

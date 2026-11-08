@@ -146,6 +146,12 @@ let
         && elsewhere.config.home.sessionVariables.CLAUDE_CONFIG_DIR == "/home/alice/.config/claude";
     }
     {
+      name = "the step names the old .config.json of the config directory, which Claude Code may read instead";
+      ok =
+        lib.hasInfix "/home/alice/.claude/.config.json" (stepOf home).data
+        && lib.hasInfix "/home/alice/.config/claude/.config.json" (stepOf elsewhere).data;
+    }
+    {
       name = "the step is there with no servers declared, to take out the ones it put in before";
       ok = nothing.config.home.activation ? ravnixClaudeMcp;
     }
@@ -325,14 +331,24 @@ pkgs.runCommand "claude-mcp"
           on' "$activate"
       done
     }
-    # switch <activation>: runs the MCP step of that home on $config.
+    # rest: every key of the config but mcpServers, sorted. Claude Code keeps
+    # its history, account and projects there; a switch must not touch them.
+    rest() { jq -S 'del(.mcpServers)' "$config" 2>/dev/null; }
+    # switch <activation>: runs the MCP step of that home on $config, and
+    # reports whether any other key changed.
     switch() {
-      local script
+      local script before after rc
       script=$(steps "$1" ravnixClaudeMcp)
       [ -n "$script" ] || return 1
       script=''${script//\/home\/alice\/.claude.json/$config}
       script=''${script//\/home\/alice\/.local\/state\/ravnix\/claude-mcp-servers.json/$statefile}
+      before=$(rest)
       ${lib.getExe pkgs.bash} -eu -o pipefail -c "$script"
+      rc=$?
+      after=$(rest)
+      [ "$before" = "$after" ]
+      check "  (a switch changes no key but mcpServers)" $?
+      return $rc
     }
     # claude <arguments>: the real one, with a home of its own.
     claude() {
@@ -347,6 +363,8 @@ pkgs.runCommand "claude-mcp"
     added=$(claude mcp add --scope user --transport http added https://added.example.test/mcp 2>&1)
     [ "$(names)" = added ]
     check "claude mcp add --scope user writes ~/.claude.json mcpServers ($added)" $?
+    [ "$(rest | jq length)" -gt 3 ]
+    check "and keys besides mcpServers, so that the comparison after each switch has something to lose ($(rest | jq length) keys)" $?
 
     switch ${activation}
     rc=$?
@@ -415,6 +433,19 @@ pkgs.runCommand "claude-mcp"
     switch ${offActivation}
     [ "$(names)" = "added later" ]
     check "with Claude Code off the next switch takes ravnix's servers out and keeps the others" $?
+
+    # The lock the step takes is the one Claude Code takes: a directory
+    # beside the file. If a bump of Claude Code changes that, this fails.
+    mkdir "$config.lock"
+    claude mcp add --scope user --transport http held https://held.example.test/mcp >held.out 2>&1 &
+    pid=$!
+    sleep 2
+    kill -0 "$pid" 2>/dev/null && [ "$(names)" = "added later" ]
+    check "claude mcp add waits while $(basename "$config").lock is held, and writes nothing" $?
+    rmdir "$config.lock"
+    wait "$pid"
+    [ "$(names)" = "added held later" ] && [ ! -e "$config.lock" ]
+    check "and writes once the lock is released, and leaves no lock" $?
 
     # Nothing declared and nothing put in before: no file, no state.
     rm -f "$config" "$statefile"

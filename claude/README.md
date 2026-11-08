@@ -156,13 +156,15 @@ switch. An assertion refuses any other hook at evaluation, and the step
 refuses it too. Declare it in `programs.claude-code.settings.hooks`, or link
 its command under `~/.claude/ravnix/`.
 
-Claude Code writes the file at any time, without a lock. The step reads a
-copy, and moves its result into place only while the file is still that
-copy; when another write came in between, it reads the file again, up to
-five times, and then fails the activation without writing. So a write by
-Claude Code that lands before the step's last comparison is kept; one in
-the moment between that comparison and the move can still be lost (Known
-gaps).
+Claude Code writes the file at any time. The step shares its way of
+changing such a file with the MCP step (`settings/cas.sh`, described under
+"MCP servers"): it takes a lock beside the file, `settings.json.lock`, reads
+exactly one JSON document, and moves its result into place only while the
+file is still the copy it read; when another write came in between, it reads
+the file again, up to five times, and then fails the activation without
+writing. So a write by Claude Code that lands before the step's last
+comparison is kept; one in the moment between that comparison and the move
+can still be lost (Known gaps).
 
 With `mutableSettings = false` home-manager links the file whole from the
 store. Then the step is off, and ravnix declares its hooks in that file.
@@ -181,7 +183,7 @@ ravnix.claude.mcpServers = {
   docs = {
     type = "http";
     url = "https://mcp.example.org/mcp";
-    headers.Authorization = "Bearer ${DOCS_API_TOKEN}";
+    headers.Authorization = "Bearer \${DOCS_API_TOKEN}";
   };
   browser = {
     type = "stdio";
@@ -190,6 +192,10 @@ ravnix.claude.mcpServers = {
   };
 };
 ```
+
+In a Nix string the reference is written `\${NAME}` (or `''${NAME}` inside
+`''...''`), because a bare `${NAME}` is Nix's own interpolation and fails
+with "undefined variable".
 
 **No token enters the store.** A value under `headers` or `env` must be a
 reference to a variable of Claude Code's environment: `${NAME}`, or
@@ -222,12 +228,26 @@ owns that file and may drop a marker inside an entry. The step writes it
 before the config with the old names and the new ones, and after it with the
 new ones only, so a run that dies half-way can still take out what it put in.
 
-Like the hook step, it reads a copy, builds the new file beside it, and
-moves it into place only while the file is still that copy; when Claude Code
-wrote in between, it reads again, up to five times, and then fails the
-activation without writing. It leaves a file whose JSON would not change
-byte for byte, makes no file when nothing is declared and nothing was put in
-before, creates a missing one with mode 600, and follows a symlink.
+**How it writes** (`settings/cas.sh`, which the hook step uses too). Claude
+Code saves `~/.claude.json` under a lock, a directory `~/.claude.json.lock`
+made with `mkdir`, and reads the file again under it before it applies its
+change (checked with Claude Code 2.1.319: a key added to the file while a
+`claude mcp add` waited for the lock was still there afterwards). The step
+takes the same lock, on the path as given and not through a link, before it
+reads, and keeps it until the new file is in place. While a fresh lock stands
+(under 10 s old) it waits, 0.2 s and doubling up to 4 s, about 20 s in all,
+and then fails the activation without writing; a stale lock is taken over.
+It also compares a copy: it builds the new file beside the old one and moves
+it into place only while the file is still byte for byte the copy it read;
+otherwise it reads again, up to five times with a growing pause, and then
+fails without writing. That is the guard against a writer that takes no lock.
+The config must be exactly one JSON document (a zero-byte file counts as
+`{}`; whitespace alone, or two documents, fail the step), and so must the
+state file. The step leaves a file whose JSON would not change byte for byte,
+makes no file when nothing is declared and nothing was put in before, creates
+a missing one with mode 600, keeps an existing one's mode, and follows a
+symlink. On a link into the Nix store, or when Claude Code may read another
+file (see Known gaps), it says so on stderr.
 
 **Why not `programs.claude-code.mcpServers`.** home-manager renders those
 into a plugin of its own. Claude Code then reports them in the scope
@@ -250,8 +270,9 @@ two settings steps run in order on a file that holds herdr's entry, and
 `claude` itself. `claude-package` checks the package and its download.
 `claude-mcp` checks the MCP servers: the refusal of anything but a
 reference, the step run on a config in which the real `claude mcp add` wrote
-a server first, and `claude mcp list` and `claude mcp get` reading the
-result.
+a server first (and no other key changing in any switch), `claude mcp list`
+and `claude mcp get` reading the result, and the real `claude mcp add`
+waiting for the lock that the step takes.
 
 The prune suite runs itself in user and mount namespaces of its own, under
 an unused uid and on a private tmpfs `/tmp`, so `/tmp/claude-<uid>` is the
@@ -262,36 +283,56 @@ refuses them), it fails and says so.
 
 ## Known gaps
 
-- The settings step compares the file with its copy just before it moves
-  its result into place. A write by Claude Code in the moment between that
-  comparison and the move is lost. home-manager's own merge, which runs just
-  before the step, has the same moment.
-- A session that outlives a switch may later write an older copy of the
-  settings back, without ravnix's current hooks or with stale ones, if
-  Claude Code does not read the file again before it writes. The next switch
-  puts them right; whether Claude Code reads first is untested.
+- Both settings steps (`cas.sh`) take a lock beside the file and compare a
+  copy before the move. Two programs that take a stale lock in the same
+  moment can both hold it, and a writer that takes no lock and writes in the
+  moment between the last comparison and the move is lost. Claude Code takes
+  the lock for `~/.claude.json`; nothing is known to take one for
+  `settings.json`, so the hook step rests on the comparison there.
+  home-manager's own merge into `settings.json`, which runs just before the
+  hook step, has the same moment.
+- A session that outlives a switch may later write an older copy of
+  `settings.json` back, without ravnix's current hooks or with stale ones,
+  if Claude Code does not read the file again before it writes. The next
+  switch puts them right; whether Claude Code reads first is untested for
+  that file. For `~/.claude.json` it does read again under its lock.
+- A step that finds the lock held fails the activation after about 20 s,
+  with nothing written. Run the switch again.
 - A settings link whose target does not exist is followed: the step creates
   the file it names, when there is something to add.
-- The MCP step compares `~/.claude.json` with its copy just before it moves
-  its result into place, and takes no lock, as none is known that
-  Claude Code honors. A write by Claude Code in the moment between that
-  comparison and the move is lost, and Claude Code writes that file more
-  often than it writes the settings.
-- A Claude Code session that outlives a switch may later write the config
-  from an older copy, without the current servers; the next switch puts them
-  right. Whether Claude Code reads the file again before it writes is
-  untested.
-- Only `headers` and `env` are checked for references. A token in a server's
-  `url` (a query string, `user:password@`) or in its `args` (`--api-key X`)
-  is not found, and goes into the store. Put such a value in `headers` or
-  `env`, or let the server read the variable itself.
+- Only `headers` and `env` are checked for references. Every other field is
+  not: a token in a server's `url` (a query string, `user:password@`), its
+  `args` (`--api-key X`), its `command` or its `headersHelper` is not found,
+  and goes into the store. Put such a value in `headers` or `env`, or let
+  the server read the variable itself. Two more places leak: when a string
+  such as a header is defined twice with different values (in `me.nix` and a
+  host), the module system's own conflict error prints both values before
+  any assertion runs; and the refusal repeats server names and header or
+  environment keys, which is harmless unless a token is pasted as a key.
+- Claude Code may not read the file the MCP step writes. Version 2.1.319 reads
+  an old `<configDir>/.config.json` instead of `.claude.json` when that
+  file exists and is not empty (or is writable and `.claude.json` does not
+  exist yet), and `.claude-custom-oauth.json` when
+  `CLAUDE_CODE_CUSTOM_OAUTH_URL` is set. The step writes `.claude.json` all
+  the same; it warns on stderr for the first when it sees the old file, and
+  for the second when the variable is set in the environment of the switch.
+  A config that is a link into the store is left alone with a message.
+- A lone surrogate in `~/.claude.json` blocks every switch. jq refuses
+  `"\ud83d"` (a string cut inside an emoji), which `JSON.stringify` writes
+  for such a string, so the step fails with jq's message until the file is
+  repaired. It fails closed and writes nothing. The same holds for
+  `settings.json` and the hook step.
 - If the state file of the MCP step is lost, the servers that ravnix put in
   and that were dropped from the declaration afterwards stay until `claude
   mcp remove`. A state file the step cannot read fails the activation and
-  names the file.
-- A declared name that a server of Claude Code's own has, a `claude mcp add`
-  of the same name, is replaced at the next switch. The step cannot tell the
-  two apart.
+  names the file, and is left as it was.
+- Which servers are ravnix's is told by name alone, so ownership is lossy.
+  A server of Claude Code's own that a declaration replaces (the same name,
+  added by `claude mcp add`) is not restored when the declaration is
+  dropped: it is deleted. A state file restored from a backup deletes a
+  later hand-added server whose name it lists. A run that fails after it
+  wrote the state, on a held lock say, leaves names in the state that were
+  never put in.
 - `prune-claude-tmp` prunes `/tmp/claude-<uid>` and nothing else, and
   `PRUNE_TMP_ROOT` cannot move it. A Claude Code that puts its temporary
   directory elsewhere leaves that one unpruned.

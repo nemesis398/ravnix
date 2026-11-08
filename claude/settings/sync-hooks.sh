@@ -26,20 +26,18 @@
 # not be told as ravnix's at the next run, and would be added once more at
 # every switch, so the step refuses it and changes nothing.
 #
-# The file: a missing or empty one counts as {}, and a missing one is made
+# The file: a missing or zero-byte one counts as {}, and a missing one is made
 # only when there is something to add, with mode 600. An existing one keeps
 # its mode. A symlink is followed and the file it names updated, unless that
 # file is in the store, where home-manager owns it whole (immutable
 # settings), and then it is left alone. Settings it cannot read (broken
-# JSON, no object, hooks that are no object) fail the step and stay as they
-# were.
+# JSON, no document or two, no object, hooks that are no object) fail the
+# step and stay as they were.
 #
-# Claude Code writes the file too, at any time and without a lock. So the
-# step reads a copy, builds the new file beside it, and moves it into place
-# only while the file is still byte for byte the copy it read; when it is
-# not, the step reads it again, up to five times, and then fails without
-# writing. A file the move cannot replace, a mount point, is written in
-# place. What is left is the moment between that last comparison and the
+# Claude Code writes the file too, at any time. How the step changes it
+# without losing such a write (a lock beside the file, a copy it compares
+# before the move, exactly one JSON document) is cas.sh, which it shares with
+# sync-mcp.sh. What is left is the moment between the last comparison and the
 # move (README, Known gaps).
 #
 # Tests: tests/sync-hooks.test.sh, run with bash and no arguments.
@@ -53,6 +51,9 @@ fail() {
     exit 1
 }
 
+# shellcheck source=claude/settings/cas.sh
+. "${BASH_SOURCE[0]%/*}/cas.sh"
+
 # shellcheck disable=SC2016  # the $ are jq's
 mine='def mine: type == "object" and ((.command? // "") | tostring | ltrimstr("'"'"'") | startswith($prefix));'
 
@@ -65,21 +66,11 @@ jq -e --arg prefix "$prefix" "$mine"'
     "$entries" >/dev/null 2>&1 ||
     fail "$entries holds something other than ravnix's own command hooks under $prefix"
 
-target=$file
-if [[ -L $file ]]; then
-    target=$(readlink -f -- "$file") || fail "the symlink names nothing"
-    [[ $target != "$store"/* ]] || exit 0
-fi
+cas_resolve "$file" "$store" || exit 0
 
-if [[ ! -e $target ]] && [[ $(jq 'length' "$entries") == 0 ]]; then
+if [[ ! -e $cas_target ]] && [[ $(jq 'length' "$entries") == 0 ]]; then
     exit 0
 fi
-
-dir=${target%/*}
-mkdir -p -- "$dir" || fail "cannot make $dir"
-copy=$(mktemp "$target.ravnix.XXXXXX") || fail "cannot write beside it"
-tmp=$(mktemp "$target.ravnix.XXXXXX") || { rm -f -- "$copy"; fail "cannot write beside it"; }
-trap 'rm -f -- "$copy" "$tmp" "$tmp.err"' EXIT
 
 # shellcheck disable=SC2016
 filter="$mine"'
@@ -95,44 +86,4 @@ if type != "object" then error("the settings are no JSON object") else . end
    | with_entries(select(.value != []))) as $hooks
 | if $hooks == {} then del(.hooks) else .hooks = $hooks end'
 
-for _ in 1 2 3 4 5; do
-    # The copy this try reads, with the file's mode; none when it is missing.
-    had=""
-    if [[ -e $target ]]; then
-        cp -p -- "$target" "$copy" || fail "cannot read it"
-        had=1
-    fi
-
-    if [[ -n $had && -s $copy ]]; then
-        jq --arg prefix "$prefix" --slurpfile ours "$entries" "$filter" "$copy" >"$tmp" 2>"$tmp.err"
-    else
-        jq -n --arg prefix "$prefix" --slurpfile ours "$entries" "{} | $filter" >"$tmp" 2>"$tmp.err"
-    fi
-    status=$?
-    why=$(<"$tmp.err")
-    [[ $status == 0 ]] || fail "${why:-jq failed}"
-
-    if [[ -n $had ]]; then
-        # Unchanged as JSON: the file stays as it is, byte for byte. With
-        # Claude Code off no merge reformats it first, and nothing here
-        # should either.
-        jq -e -n --slurpfile new "$tmp" --slurpfile old "$copy" \
-            '$new == $old or ($old == [] and $new == [{}])' >/dev/null 2>&1 && exit 0
-        chmod --reference="$copy" -- "$tmp" || fail "cannot keep its mode"
-        if [[ ! -f $target ]] || ! cmp -s -- "$copy" "$target"; then
-            continue
-        fi
-    else
-        chmod 600 -- "$tmp" || fail "cannot set its mode"
-        [[ ! -e $target && ! -L $target ]] || continue
-    fi
-
-    # rename(2) fails with EBUSY when the file is a mount point, as a file
-    # bind-mounted by impermanence is; then it is written in place, as
-    # home-manager's own merge does.
-    mv -fT -- "$tmp" "$target" 2>/dev/null || cat -- "$tmp" >"$target" ||
-        fail "cannot write the new file"
-    exit 0
-done
-
-fail "it changed during each of five tries, written at the same time by another program, such as a running Claude Code; it stays as that program left it"
+cas_apply "$file" "$filter" --arg prefix "$prefix" --slurpfile ours "$entries"

@@ -36,6 +36,11 @@ trap 'rm -rf -- "$ROOT"' EXIT
 STORE=$ROOT/store
 mkdir -p "$STORE"
 
+# The waits of the lock and of the tries, short: the defaults add up to
+# about 20 s (cas.sh).
+export RAVNIX_CAS_LOCK_DELAYS="0.02 0.02 0.02"
+export RAVNIX_CAS_TRY_DELAYS="0.01 0.01 0.01 0.01"
+
 # ravnix's servers as the module renders them: a bearer token and a plain
 # value, both as references; the store holds nothing else.
 OURS='{
@@ -78,7 +83,7 @@ setup() {
 
 # sync [file]: runs the script. Sets RC and ERR.
 sync() {
-    "$BASH" "$SYNC" "${1:-$F}" "$T" "$S" "$STORE" 2>"$D/err"
+    "$BASH" "$SYNC" "${1:-$F}" "$T" "$S" "$STORE" "${LEGACY-}" 2>"$D/err"
     RC=$?
     ERR=$(<"$D/err")
 }
@@ -96,7 +101,7 @@ check() {
 # named that file on stderr, and left the config and no temporary file.
 refused() {
     if [[ $RC -ne 0 && $ERR == *"$2"* ]] && cmp -s "$F" "$D/before" && [[ -z $(find "$D" -name '.claude.json.*' -print -quit) ]]; then ok
-    else bad "expected a failure that names $2 and leaves the config and no temporary file behind"; fi
+    else bad "expected a failure that names $2 and leaves the config, no temporary file and no lock behind"; fi
 }
 
 # q <jq filter>: the filter's result on the config file, compact.
@@ -232,8 +237,9 @@ setup none
 printf '{"model": "x"}\n' >"$STORE/claude.json"; chmod 444 "$STORE/claude.json"
 ln -s "$STORE/claude.json" "$F"
 sync
-CASE="a link into the store is left alone, and so is the state"
-check '[[ -L $F && $(cat "$STORE/claude.json") == "{\"model\": \"x\"}" && ! -e $T ]]'
+CASE="a link into the store is left alone, and so is the state, and the step says so on stderr"
+if [[ $RC -eq 0 && $ERR == *"$F"*"store"* && -L $F && $(cat "$STORE/claude.json") == "{\"model\": \"x\"}" && ! -e $T && ! -e $F.lock ]]; then ok
+else bad "expected exit 0 with a message that names the link and the store, and nothing written"; fi
 
 setup '{"model": "x"}'
 mkdir "$D/bin"
@@ -258,22 +264,25 @@ sync
 CASE="and so do thousands of servers, which no command line could hold"
 check '[[ $(q ".mcpServers | length") == 3000 && $(state | "$JQ_BIN" "length") == 3000 ]]'
 
-for bad_json in '{"model": ' '[1,2]' '"text"' '{"mcpServers": [1]}' '{"mcpServers": "none"}'; do
+for bad_json in '{"model": ' '[1,2]' '"text"' '{"mcpServers": [1]}' '{"mcpServers": "none"}' $'\n  \n' '{"model": 1}{"other": 2}' $'{"model": 1}\n{"other": 2}\n'; do
     setup "$bad_json"
     cp "$F" "$D/before"
     sync
-    CASE="a config it cannot read ($bad_json) fails the step, names the file, and stays as it was"
+    CASE="a config that is not one JSON document ($(printf '%s' "$bad_json" | tr '\n' ' ')) fails the step, names the file, and stays as it was"
     refused "$F" "$F"
 done
 
 echo "the state file"
 
-for bad_state in '{"alpha": 1}' '[1]' '"alpha"' '["alpha",' ; do
+for bad_state in '{"alpha": 1}' '[1]' '"alpha"' '["alpha",' $'\n \n' '["alpha"]["beta"]' $'["alpha"]\n["beta"]'; do
     setup '{"model": "x"}' "$OURS" "$bad_state"
     cp "$F" "$D/before"
     sync
-    CASE="a state file it cannot read ($bad_state) fails the step, names the state file, and leaves the config"
+    CASE="a state file that is not one list of names ($(printf '%s' "$bad_state" | tr '\n' ' ')) fails the step, names it, and leaves the config"
+    cp "$T" "$D/state-before"
     refused "$F" "$T"
+    CASE="and the state file itself stays as it was, not wiped by the failure"
+    if cmp -s "$T" "$D/state-before"; then ok; else bad "the state file changed"; fi
 done
 
 setup '{"model": "x"}' "$OURS" ''
@@ -351,6 +360,114 @@ fake_writer 1
 PATH="$D/bin:$PATH" "$BASH" "$SYNC" "$F" "$T" "$S" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
 CASE="a file made by another writer after a missing one was read is kept too"
 check '[[ $(servers | tr "\n" " ") == "alpha beta claude-1 " ]]'
+
+echo "the lock Claude Code takes"
+
+# Claude Code saves ~/.claude.json under a lock of proper-lockfile: a
+# directory made with mkdir beside the file, ".lock" added, stale after 10 s.
+# The step takes the same one, on the path as given (not through a link).
+# stray: lists what the step left in a case directory besides its inputs.
+stray() { find "$D" \( -name '.claude.json.*' -o -name 'real.json.*' -o -name '*.lock' \) -print -quit; }
+
+setup '{"model": "x"}'
+sync
+CASE="after a run that wrote there is no lock and no temporary file"
+check '[[ -z $(stray) && $(servers | tr "\n" " ") == "alpha beta " ]]'
+
+setup '{"model": "x"}' "$OURS"
+cp "$F" "$D/before"
+sync
+sync
+CASE="and none after a run that had nothing to change"
+check '[[ -z $(stray) ]]'
+
+setup '{"model": ' 
+cp "$F" "$D/before"
+sync
+CASE="and none after a run that failed on the file"
+if [[ $RC -ne 0 && -z $(stray) ]]; then ok; else bad "expected a failure with no lock or temporary file left"; fi
+
+setup '{"model": "x"}'
+mkdir "$D/bin"
+# The rename onto the config reports whether the lock was there.
+printf '#!%s\ncase "$*" in *"%s") [ -d "%s.lock" ] && echo held >"%s/held" ;; esac\nexec %s "$@"\n' "$BASH" "$F" "$F" "$D" "$(type -P mv)" >"$D/bin/mv"; chmod +x "$D/bin/mv"
+PATH="$D/bin:$PATH" "$BASH" "$SYNC" "$F" "$T" "$S" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
+CASE="the lock is held when the file is moved into place, and gone after"
+check '[[ $(cat "$D/held") == held && ! -e $F.lock ]]'
+
+setup '{"model": "x"}'
+mkdir "$F.lock"
+cp "$F" "$D/before"
+sync
+CASE="a lock that is fresh and never released: the step waits, fails without writing, names the lock, and leaves it"
+if [[ $RC -ne 0 && $ERR == *"$F.lock"* && -d $F.lock ]] && cmp -s "$F" "$D/before" && [[ -z $(find "$D" -name '.claude.json.*' -not -name '*.lock' -print -quit) ]]; then ok
+else bad "expected a failure that names the lock, with the config as it was, the other writer's lock left and no temporary file"; fi
+
+setup '{"model": "x"}'
+export RAVNIX_CAS_LOCK_DELAYS="0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1"
+( mkdir "$F.lock" && sleep 0.4 && rmdir "$F.lock" ) &
+holder=$!
+sleep 0.1
+sync
+wait "$holder"
+export RAVNIX_CAS_LOCK_DELAYS="0.02 0.02 0.02"
+CASE="a lock that is released while the step waits: the step goes on and writes"
+check '[[ $(servers | tr "\n" " ") == "alpha beta " && -z $(stray) ]]'
+
+setup '{"model": "x"}'
+mkdir "$F.lock"; touch -d '1 minute ago' "$F.lock"
+sync
+CASE="a stale lock (older than 10 s) is taken over, and removed after"
+check '[[ $(servers | tr "\n" " ") == "alpha beta " && -z $(stray) ]]'
+
+setup '{"model": "x"}'
+mv "$F" "$D/real.json"; ln -s real.json "$F"
+mkdir "$F.lock"
+cp "$D/real.json" "$D/before"
+sync
+CASE="the lock sits beside the path as given, not the file a link names: a held one beside the link blocks the step"
+if [[ $RC -ne 0 && $ERR == *"$F.lock"* ]] && cmp -s "$D/real.json" "$D/before"; then ok
+else bad "expected a failure that names $F.lock and leaves the file the link names"; fi
+rmdir "$F.lock"
+sync
+CASE="and with it released the step writes through the link, with no lock beside the target"
+check '[[ $("$JQ_BIN" -r ".mcpServers | keys | length" "$D/real.json") == 2 && -z $(stray) ]]'
+
+setup '{"model": "x"}'
+fake_writer 99
+export RAVNIX_CAS_TRY_DELAYS="0.05 0.05 0.05 0.05"
+start=$(date +%s%N)
+PATH="$D/bin:$PATH" "$BASH" "$SYNC" "$F" "$T" "$S" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
+elapsed=$(( ($(date +%s%N) - start) / 1000000 ))
+export RAVNIX_CAS_TRY_DELAYS="0.01 0.01 0.01 0.01"
+CASE="the tries wait a little longer after each miss (four waits of 50 ms: at least 150 ms, took ${elapsed} ms), and no lock is left after the failure"
+if [[ $RC -ne 0 && $elapsed -ge 150 && ! -e $F.lock ]]; then ok; else bad "expected a failure after at least 150 ms with no lock left"; fi
+
+echo "what it says about a config Claude Code may not read"
+
+setup '{"model": "x"}'
+mkdir -p "$D/home/.claude"; printf '{"mcpServers": {}}\n' >"$D/home/.claude/.config.json"
+LEGACY=$D/home/.claude/.config.json sync
+CASE="a legacy .config.json that is not empty: a warning that names it, and the config is still updated"
+if [[ $RC -eq 0 && $ERR == *".config.json"* && $(servers | tr "\n" " ") == "alpha beta " ]]; then ok
+else bad "expected exit 0, a message that names the legacy file, and the servers in the config"; fi
+
+setup '{"model": "x"}'
+: >"$D/home/.config.json"; chmod 444 "$D/home/.config.json"
+LEGACY=$D/home/.config.json sync
+CASE="an empty read-only legacy file: nothing to say, Claude Code ignores it"
+check '[[ $(servers | tr "\n" " ") == "alpha beta " ]]'
+
+setup '{"model": "x"}'
+LEGACY=$D/home/none.json sync
+CASE="no legacy file, no warning"
+check '[[ $(servers | tr "\n" " ") == "alpha beta " ]]'
+
+setup '{"model": "x"}'
+CLAUDE_CODE_CUSTOM_OAUTH_URL=https://oauth.example.test sync
+CASE="CLAUDE_CODE_CUSTOM_OAUTH_URL set: a warning, because Claude Code then reads .claude-custom-oauth.json instead"
+if [[ $RC -eq 0 && $ERR == *"custom-oauth"* && $(servers | tr "\n" " ") == "alpha beta " ]]; then ok
+else bad "expected exit 0 and a message that names .claude-custom-oauth.json"; fi
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

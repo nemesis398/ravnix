@@ -36,6 +36,11 @@ P=/home/alice/.claude/ravnix/
 STORE=$ROOT/store
 mkdir -p "$STORE"
 
+# The waits of the lock and of the tries, short: the defaults add up to
+# about 20 s (cas.sh).
+export RAVNIX_CAS_LOCK_DELAYS="0.02 0.02 0.02"
+export RAVNIX_CAS_TRY_DELAYS="0.01 0.01 0.01 0.01"
+
 # ravnix's entries as the module renders them now.
 OURS='{
   "SessionStart": [{"hooks": [
@@ -219,11 +224,11 @@ sync
 CASE="a file far above the 128 KiB of one argument works"
 check '[[ $(q ".permissions.allow | length") == 20000 && $(commands SessionStart | wc -l) == 2 ]]'
 
-for bad_json in '{"model": ' '[1,2]' '"text"' '{"hooks": [1]}' '{"hooks": "none"}'; do
+for bad_json in '{"model": ' '[1,2]' '"text"' '{"hooks": [1]}' '{"hooks": "none"}' $'\n  \n' '{"model": 1}{"b": 2}' $'{"model": 1}\n{"b": 2}\n'; do
     setup "$bad_json"
     cp "$F" "$D/before"
     sync
-    CASE="settings it cannot read ($bad_json) fail the step, name the file, and stay as they were"
+    CASE="settings it cannot read, or that are not one JSON document ($(printf '%s' "$bad_json" | tr '\n' ' ')), fail the step, name the file, and stay as they were"
     if [[ $RC -ne 0 && $ERR == *"$F"* ]] && cmp -s "$F" "$D/before" && [[ -z $(find "$D" -name 'settings.json.*' -print -quit) ]]; then ok
     else bad "expected a failure that names the file and leaves it and no temporary file behind"; fi
 done
@@ -294,6 +299,30 @@ fake_writer 1
 PATH="$D/bin:$PATH" "$BASH" "$SYNC" "$F" "$P" "$E" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
 CASE="a file made by another writer after a missing one was read is kept too"
 check '[[ $(q .permissions.allow) == "[\"Bash(new-1)\"]" && $(commands SessionStart | wc -l) == 2 ]]'
+
+echo "the lock beside the file"
+
+# The same lock as Claude Code takes on its own config, a directory made with
+# mkdir beside the file (cas.sh); it is taken here too, for every file the
+# step writes.
+setup '{"model": "opus"}'
+sync
+CASE="after a run that wrote there is no lock left"
+check '[[ ! -e $F.lock && $(commands SessionStart | wc -l) == 2 ]]'
+
+setup '{"model": "opus"}'
+mkdir "$F.lock"
+cp "$F" "$D/before"
+sync
+CASE="a lock that is fresh and never released: the step waits, fails without writing, names the lock, and leaves it"
+if [[ $RC -ne 0 && $ERR == *"$F.lock"* && -d $F.lock ]] && cmp -s "$F" "$D/before" && [[ -z $(find "$D" -name 'settings.json.*' -not -name '*.lock' -print -quit) ]]; then ok
+else bad "expected a failure that names the lock, with the settings as they were and the other writer's lock left"; fi
+
+setup '{"model": "opus"}'
+mkdir "$F.lock"; touch -d '1 minute ago' "$F.lock"
+sync
+CASE="a stale lock is taken over, and removed after"
+check '[[ ! -e $F.lock && $(commands SessionStart | wc -l) == 2 ]]'
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

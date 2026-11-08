@@ -54,6 +54,16 @@ let
   cfg = config.programs.claude-code;
   json = pkgs.formats.json { };
   settingsFile = "${cfg.configDir}/settings.json";
+  # The activation steps and cas.sh, which they source from beside them, and
+  # nothing else of claude/settings (not the tests).
+  steps = lib.fileset.toSource {
+    root = ../../claude/settings;
+    fileset = lib.fileset.unions [
+      ../../claude/settings/cas.sh
+      ../../claude/settings/sync-hooks.sh
+      ../../claude/settings/sync-mcp.sh
+    ];
+  };
   sync = pkgs.writeShellScript "ravnix-claude-hooks-sync" ''
     export PATH=${
       lib.makeBinPath [
@@ -62,7 +72,7 @@ let
         pkgs.jq
       ]
     }''${PATH:+:$PATH}
-    exec ${lib.getExe pkgs.bash} ${../../claude/settings/sync-hooks.sh} "$@"
+    exec ${lib.getExe pkgs.bash} ${steps}/sync-hooks.sh "$@"
   '';
   entries = json.generate "ravnix-claude-hooks.json" config.ravnix.claude.hookEntries;
 

@@ -2,13 +2,14 @@
 # sync-mcp.sh: puts ravnix's MCP servers into Claude Code's user-scope
 # config, an activation step of homeModules.claude-code (claude/README.md).
 #
-#   sync-mcp.sh CONFIG STATE SERVERS [STORE]
+#   sync-mcp.sh CONFIG STATE SERVERS [STORE [LEGACY]]
 #
 # CONFIG is Claude Code's own config file (~/.claude.json, or
 # <configDir>/.claude.json when the config directory is not ~/.claude),
 # STATE the file where this step records which servers it put in, SERVERS a
 # JSON object of ravnix's servers by name, each the JSON object that Claude
-# Code's mcpServers holds, and STORE the Nix store (default /nix/store).
+# Code's mcpServers holds, STORE the Nix store (default /nix/store), and
+# LEGACY the path of the old <configDir>/.config.json (none: not checked).
 #
 # Why not home-manager's programs.claude-code.mcpServers: it renders the
 # servers into a plugin of its own, which Claude Code reports in the scope
@@ -46,49 +47,77 @@
 # written. A config it cannot read (broken JSON, no object, an mcpServers
 # that is no object) fails the step and stays as it was.
 #
-# Claude Code writes CONFIG too, often and without a lock. So the step reads
-# a copy, builds the new file beside it, and moves it into place only while
-# CONFIG is still byte for byte the copy it read; when it is not, the step
-# reads it again, up to five times, and then fails without writing. A file
-# the move cannot replace, a mount point, is written in place. What is left
-# is the moment between that last comparison and the move (README, Known
-# gaps).
+# Claude Code writes CONFIG too, often. How the step changes it without
+# losing such a write is cas.sh, which it shares with sync-hooks.sh: Claude
+# Code saves CONFIG under a lock (a directory CONFIG.lock, made with mkdir),
+# re-reading the file under it, so the step takes the same lock, on CONFIG as
+# given, and keeps it until the new file is in place; it also compares a copy
+# before the move, for writers that take no lock. The config must be exactly
+# one JSON document. What is left is two programs that take a stale lock in
+# the same moment, and a writer that takes no lock and writes between the
+# step's last comparison and its move (README, Known gaps).
 #
 # STATE is written around that: before CONFIG with the old names and the new
 # ones, so that a run that dies half-way still knows every server it may
-# have put in, and after it with the new ones only.
+# have put in, and after it with the new ones only. It must be exactly one
+# JSON list of names as well, or the step fails and leaves it as it was.
+#
+# Two places where Claude Code may not read CONFIG at all, and the step says
+# so on stderr (it still writes CONFIG): with LEGACY, an old
+# <configDir>/.config.json, which Claude Code 2.1.319 reads instead of CONFIG
+# when it is not empty, or when it is writable and CONFIG does not exist yet;
+# and with CLAUDE_CODE_CUSTOM_OAUTH_URL set, when it reads
+# .claude-custom-oauth.json instead. A CONFIG that is a link into the store is
+# left alone with a message as well.
 #
 # Tests: tests/sync-mcp.test.sh, run with bash and no arguments.
 
 set -u
 
-file=$1 state=$2 servers=$3 store=${4:-/nix/store}
+file=$1 state=$2 servers=$3 store=${4:-/nix/store} legacy=${5:-}
 
 fail() {
     printf 'ravnix: cannot put the MCP servers into %s: %s\n' "$file" "$1" >&2
     exit 1
 }
 
-jq -e 'type == "object" and all(.[]; type == "object")' "$servers" >/dev/null 2>&1 ||
-    fail "$servers holds something other than a JSON object of servers"
+warn() {
+    printf 'ravnix: %s\n' "$1" >&2
+}
 
-# The names recorded by the last run, as a sorted JSON list. An empty or
-# missing file records none.
+# shellcheck source=claude/settings/cas.sh
+. "${BASH_SOURCE[0]%/*}/cas.sh"
+
+jq -es 'length == 1 and (.[0] | type == "object" and all(.[]; type == "object"))' "$servers" >/dev/null 2>&1 ||
+    fail "$servers holds something other than one JSON object of servers"
+
+# names_in FILE: the names in a state file, sorted, as a compact JSON list.
+# Fails unless the file is exactly one JSON list of strings.
+# shellcheck disable=SC2016  # the $ are jq's
+names_in() {
+    jq -sec 'if length == 1 and (.[0] | type == "array" and all(.[]; type == "string"))
+        then .[0] | unique else error("no list of names") end' "$1" 2>/dev/null
+}
+
+# The names recorded by the last run. An empty (zero-byte) or missing file
+# records none.
 prev='[]'
 if [[ -s $state ]]; then
-    # shellcheck disable=SC2016  # the $ are jq's
-    prev=$(jq -ec 'if type == "array" and all(.[]; type == "string") then unique else error("no list of names") end' "$state" 2>/dev/null) ||
-        fail "$state is not a JSON list of server names; delete it to start over, and the servers ravnix put in earlier stay until claude mcp remove"
+    prev=$(names_in "$state") ||
+        fail "$state is not one JSON list of server names; delete it to start over, and the servers ravnix put in earlier stay until claude mcp remove"
 fi
 names=$(jq -c 'keys' "$servers") || fail "cannot read $servers"
 # shellcheck disable=SC2016
-union=$(jq -cn --argjson a "$prev" --argjson b "$names" '$a + $b | unique')
+union=$(jq -cn --argjson a "$prev" --argjson b "$names" '$a + $b | unique') ||
+    fail "cannot join the names in $state with those in $servers"
 
 # write_state <JSON list>: the state file with these names, unless it holds
 # them already. None is made for an empty list.
 write_state() {
     local want=$1 cur='' stmp
-    if [[ -s $state ]]; then cur=$(jq -c 'unique' "$state"); fi
+    if [[ -s $state ]]; then
+        cur=$(names_in "$state") || fail "$state is not one JSON list of server names"
+    fi
     [[ $cur == "$want" ]] && return 0
     [[ $want == '[]' && ! -e $state ]] && return 0
     mkdir -p -- "${state%/*}" || fail "cannot make ${state%/*}"
@@ -99,25 +128,28 @@ write_state() {
     fi
 }
 
-target=$file
-if [[ -L $file ]]; then
-    target=$(readlink -f -- "$file") || fail "the symlink names nothing"
-    [[ $target != "$store"/* ]] || exit 0
+if ! cas_resolve "$file" "$store"; then
+    warn "not putting the MCP servers into $file: it is a link into the Nix store ($cas_target), which cannot be written"
+    exit 0
 fi
 
-if [[ ! -e $target && $names == '[]' ]]; then
+if [[ ! -e $cas_target && $names == '[]' ]]; then
     write_state "$names"
     exit 0
 fi
 
+# Where Claude Code may read something else (see the header).
+if [[ -n $legacy && -f $legacy ]]; then
+    if [[ -s $legacy ]] || { (( 0$(stat -c %a -- "$legacy") & 0222 )) && [[ ! -e $cas_target ]]; }; then
+        warn "Claude Code reads $legacy instead of $file while that old file stays as it is, so the MCP servers put into $file may not show; move its content into $file or remove it"
+    fi
+fi
+if [[ -n ${CLAUDE_CODE_CUSTOM_OAUTH_URL-} ]]; then
+    warn "CLAUDE_CODE_CUSTOM_OAUTH_URL is set, and then Claude Code reads ${file%.json}-custom-oauth.json instead of $file, so the MCP servers put into $file may not show"
+fi
+
 # Before the file, so that no server in it is ever missing from the state.
 if [[ $union != "$prev" ]]; then write_state "$union"; fi
-
-dir=${target%/*}
-mkdir -p -- "$dir" || fail "cannot make $dir"
-copy=$(mktemp "$target.ravnix.XXXXXX") || fail "cannot write beside it"
-tmp=$(mktemp "$target.ravnix.XXXXXX") || { rm -f -- "$copy"; fail "cannot write beside it"; }
-trap 'rm -f -- "$copy" "$tmp" "$tmp.err"' EXIT
 
 # $ours[0] is the declared servers, $prev the names this step wrote last.
 # Position stays where it was for a server that is replaced, and a new one
@@ -132,49 +164,6 @@ if type != "object" then error("the config is no JSON object") else . end
 | ($old | with_entries(select(.key | IN($drop[]) | not)) + $ours[0]) as $new
 | if $new == {} and has("mcpServers") == false then . else .mcpServers = $new end'
 
-finished=
-for _ in 1 2 3 4 5; do
-    # The copy this try reads, with the file's mode; none when it is missing.
-    had=""
-    if [[ -e $target ]]; then
-        cp -p -- "$target" "$copy" || fail "cannot read it"
-        had=1
-    fi
-
-    if [[ -n $had && -s $copy ]]; then
-        jq --argjson prev "$prev" --slurpfile ours "$servers" "$filter" "$copy" >"$tmp" 2>"$tmp.err"
-    else
-        jq -n --argjson prev "$prev" --slurpfile ours "$servers" "{} | $filter" >"$tmp" 2>"$tmp.err"
-    fi
-    status=$?
-    why=$(<"$tmp.err")
-    [[ $status == 0 ]] || fail "${why:-jq failed}"
-
-    if [[ -n $had ]]; then
-        # Unchanged as JSON: the file stays as it is, byte for byte.
-        if jq -e -n --slurpfile new "$tmp" --slurpfile old "$copy" \
-            '$new == $old or ($old == [] and $new == [{}])' >/dev/null 2>&1; then
-            finished=1
-            break
-        fi
-        chmod --reference="$copy" -- "$tmp" || fail "cannot keep its mode"
-        if [[ ! -f $target ]] || ! cmp -s -- "$copy" "$target"; then
-            continue
-        fi
-    else
-        chmod 600 -- "$tmp" || fail "cannot set its mode"
-        [[ ! -e $target && ! -L $target ]] || continue
-    fi
-
-    # rename(2) fails with EBUSY when the file is a mount point; then it is
-    # written in place, as home-manager's own merge does.
-    mv -fT -- "$tmp" "$target" 2>/dev/null || cat -- "$tmp" >"$target" ||
-        fail "cannot write the new file"
-    finished=1
-    break
-done
-
-[[ -n $finished ]] ||
-    fail "it changed during each of five tries, written at the same time by another program, such as a running Claude Code; it stays as that program left it"
+cas_apply "$file" "$filter" --argjson prev "$prev" --slurpfile ours "$servers"
 
 write_state "$names"
