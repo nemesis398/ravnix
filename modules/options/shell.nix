@@ -72,6 +72,9 @@ let
     "AGENT_DOCTOR_"
     "CLAUDE_TELEMETRY_"
     "VAULT_CHECK_"
+    # The browser the Chrome DevTools MCP wrapper runs, and where it puts its
+    # launch (CHROME_DEVTOOLS_HELIUM, CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP).
+    "CHROME_DEVTOOLS_HELIUM"
   ];
   reserved = name: lib.elem name reservedNames || lib.any (p: lib.hasPrefix p name) reservedPrefixes;
 in
