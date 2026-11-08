@@ -533,6 +533,11 @@ let
   vm = pkgs.testers.runNixOSTest {
     name = "desktop-sway";
 
+    # The test framework fixes the node's package set, so the overlay that
+    # gives modules/desktop pkgs.ravnix (the backdrop module reads it) has to
+    # be applied to that set here, as tests/desktop/printing.nix does.
+    node.pkgs = lib.mkForce (pkgs.extend self.overlays.default);
+
     nodes.machine =
       { ... }:
       {
