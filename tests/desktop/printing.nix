@@ -435,17 +435,23 @@ let
       with subtest("a printer that is not there neither fails the unit nor stops the others"):
         machine.fail("lpstat -p away")
         machine.fail("lpstat -p nobody")
-        assert machine.succeed("systemctl show -p Result --value ravnix-printers").strip() == "success"
+        # NetworkManager's dispatcher starts the unit again whenever an interface
+        # comes up, and while a run is in progress systemd clears the time of
+        # the last exit, so the run time is read only once the unit is idle.
+        machine.wait_until_succeeds("systemctl show -p ActiveState --value ravnix-printers | grep -Eqx 'inactive|failed'", timeout=120)
+        unit = dict(
+          line.split("=", 1)
+          for line in machine.succeed("systemctl show -p ActiveState -p Result -p ExecMainStartTimestampMonotonic -p ExecMainExitTimestampMonotonic ravnix-printers").split()
+        )
+        assert unit["ActiveState"] == "inactive" and unit["Result"] == "success", unit
         machine.succeed("systemctl is-active cups.socket")
         journal = machine.succeed("journalctl -u ravnix-printers --no-pager")
         assert "away" in journal and "nobody" in journal and "could not" in journal, journal
         # The boot waited for the unit, so how long it ran is how long a boot
         # away from home is held up: the DNS-SD name is given up on in seconds.
-        ran = machine.succeed("systemctl show -p ExecMainStartTimestampMonotonic -p ExecMainExitTimestampMonotonic ravnix-printers").split()
-        stamps = dict(item.split("=") for item in ran)
-        seconds = (int(stamps["ExecMainExitTimestampMonotonic"]) - int(stamps["ExecMainStartTimestampMonotonic"])) / 1e6
+        seconds = (int(unit["ExecMainExitTimestampMonotonic"]) - int(unit["ExecMainStartTimestampMonotonic"])) / 1e6
         print("ravnix-printers ran for", seconds, "seconds at boot")
-        assert 0 < seconds < 60, seconds
+        assert 0 < seconds < 60, (seconds, unit)
 
       with subtest("a run with the DNS-SD printer away succeeds, and in seconds"):
         start = time.monotonic()
