@@ -435,6 +435,44 @@ the_private_directory_is_removed_when_the_search_fails() {
 	}
 }
 
+# A made-up mktemp that makes the directory with the real one and then
+# points $FULL_FILE (all or one) in it at /dev/full, so that writing the
+# entries there fails the way a full disk does. The caller puts fake_bin
+# first on the PATH and gives REAL_MKTEMP and FULL_FILE.
+fake_mktemp() {
+	fake_bin="$(mktemp -d -p "$scratch")"
+	{
+		printf '#!%s\n' "$BASH"
+		cat <<'SCRIPT'
+dir="$("$REAL_MKTEMP" "$@")" || exit
+ln -s /dev/full "$dir/$FULL_FILE"
+printf '%s\n' "$dir"
+SCRIPT
+	} >"$fake_bin/mktemp"
+	chmod +x "$fake_bin/mktemp"
+}
+
+a_failed_write_of_the_entries_is_an_error_and_not_a_hit() {
+	new_tree 'zq-made-up-token-7731'
+	put a.md 'zq-made-up-token-7731\n'
+	fake_mktemp
+	local file
+	for file in all one; do
+		capture in_tree env PATH="$fake_bin:$PATH" REAL_MKTEMP="$(command -v mktemp)" FULL_FILE="$file" "$check" "$list" .
+		# 2 is bad usage or a failure of the check; 1 is a hit, which the
+		# hooks answer with "rewrite your commit".
+		[[ "$status" == 2 ]] || {
+			echo "  with the write to '$file' failing, expected exit 2, got $status"
+			echo "  stdout: $out"
+			echo "  stderr: $err"
+			return 1
+		}
+		expect_err "cannot write the entries"
+		expect_no_out "deny-list.txt"
+		expect_no_err "hit"
+	done
+}
+
 # Names and links.
 
 a_file_name_holding_an_entry_is_a_hit() {
@@ -694,6 +732,7 @@ tests=(
 	a_link_hit_names_the_list_line_and_never_prints_the_entry
 	a_name_hit_names_the_list_line
 	the_summary_names_the_list_by_its_file_name_and_never_its_path
+	a_failed_write_of_the_entries_is_an_error_and_not_a_hit
 	the_entries_stay_off_the_command_line_and_in_a_private_file
 	the_private_directory_is_removed_when_the_search_fails
 )

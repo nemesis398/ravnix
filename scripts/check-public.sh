@@ -91,7 +91,9 @@ umask 077
 work="$(mktemp -d "${TMPDIR:-/tmp}/check-public.XXXXXX")" ||
 	die "cannot make a temporary directory"
 trap 'rm -rf -- "$work"' EXIT
-printf '%s\n' "${entries[@]}" >"$work/all"
+# A write that fails (a full disk) is an error of the check, exit 2. Left to
+# errexit it would end the script with status 1, which is a hit.
+printf '%s\n' "${entries[@]}" >"$work/all" || die "cannot write the entries to $work"
 
 # The same flags for every search: no user configuration, every file, binary
 # files as text, and the entries as literals without regard to case.
@@ -182,7 +184,7 @@ done
 
 for i in "${!entries[@]}"; do
 	((${#suspects[@]} > 0)) || break
-	printf '%s\n' "${entries[i]}" >"$work/one"
+	printf '%s\n' "${entries[i]}" >"$work/one" || die "cannot write the entries to $work"
 	status=0
 	while IFS= read -r -d '' path; do
 		IFS= read -r rest
@@ -207,7 +209,7 @@ check_strings() {
 	((status != 1)) || return 0
 	((status == 0)) || die "the search failed (rg exit $status)"
 	for i in "${!entries[@]}"; do
-		printf '%s\n' "${entries[i]}" >"$work/one"
+		printf '%s\n' "${entries[i]}" >"$work/one" || die "cannot write the entries to $work"
 		while IFS= read -r -d '' record; do
 			record="${record%%:*}"
 			hit "${shown_ref[record - 1]}" "$kind" "$i"
