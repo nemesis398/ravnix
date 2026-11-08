@@ -1,7 +1,7 @@
 # The applications of huginn (modules/desktop/apps.nix): every app of the spec's
 # "Apps on huginn" table that this task owns resolves on PATH or as a .desktop
-# file in the profile of the laptop shape; none of the dropped apps is in the
-# system's closure; Flatpak is off; the only unfree packages are the ones the
+# file in the profile of huginn; none of the dropped apps is in the system's
+# closure; Flatpak is off; the only unfree packages are the ones the
 # module names, and Packet Tracer's and Widevine's only for a host that asks
 # for them; the wtype is 0.5 or later; Handy is pinned to the iGPU; MangoHud
 # has no transparent background; and Helium gets its policies.
@@ -10,6 +10,12 @@
 # scanning, NetBird, NordVPN, logiops and the udev rules are Task 3.6's
 # (desktop-printing), and the CCNA deck tooling of the Study row is Task 3.2b's
 # (packages/ccna-deck). Packet Tracer, the other Study tool, is here.
+#
+# The host is huginn as the private flake builds it: the laptop shape and the
+# IdeaPad Pro 5 16AHP9 module, with the template's values, so what the shape and
+# the hardware bring (the NVIDIA driver, the boot loader, the disk layout) is in
+# the closure and in the list of unfree names. The closure is built, not only
+# evaluated; the kernel is a download, the NVIDIA driver is fetched from NVIDIA.
 #
 # Packet Tracer cannot be built without Cisco's download, which no build can
 # fetch. The system under test gets an empty package of the same name for it, so
@@ -24,7 +30,18 @@
   ...
 }:
 let
-  hostModules = import ../flake/helpers/host-modules.nix { inherit lib; };
+  # What a host needs besides ravnix's modules: the template's me.nix and a
+  # state version (as tests/laptop/shape.nix does). The shape brings its own
+  # file systems and boot loader, so tests/flake/helpers/host-modules.nix, which
+  # stubs both, would collide with it.
+  hostModules = [
+    ../../templates/default/me.nix
+    {
+      system.stateVersion = "26.05";
+      # The template's values are placeholders and warn about it.
+      warnings = lib.mkForce [ ];
+    }
+  ];
 
   stubPacketTracer = _final: prev: {
     cisco-packet-tracer_9 = prev.runCommand "cisco-packet-tracer-stub" { } ''
@@ -39,8 +56,13 @@ let
   mkHost =
     extra:
     inputs.nixpkgs.lib.nixosSystem {
-      inherit system;
-      modules = hostModules ++ [ self.nixosModules.desktop ] ++ extra;
+      modules =
+        hostModules
+        ++ [
+          self.nixosModules.laptop
+          self.nixosModules.hardware-ideapad-pro-5-16ahp9
+        ]
+        ++ extra;
     };
   host = mkHost [
     {
@@ -48,6 +70,15 @@ let
       ravnix.apps.packetTracer = lib.mkForce true;
     }
   ];
+  # The desktop module alone, on a stubbed host (tests/flake/helpers): what this
+  # module installs and nothing the shape or the hardware adds.
+  desktopOnly = inputs.nixpkgs.lib.nixosSystem {
+    inherit system;
+    modules = (import ../flake/helpers/host-modules.nix { inherit lib; }) ++ [
+      self.nixosModules.desktop
+    ];
+  };
+  hasPackage = name: h: lib.any (p: lib.getName p == name) h.config.environment.systemPackages;
   # The default: Packet Tracer is not asked for, so the host builds without
   # Cisco's download, and Widevine is not either.
   withoutPacketTracer = mkHost [ ];
@@ -252,6 +283,8 @@ let
   # What each host allows, by name. Packet Tracer's names are allowed only for
   # a host that asks for it, and Widevine's only for one that asks for that.
   unfreeBase = [
+    # The hardware module's: the NVIDIA driver of the RTX 4050.
+    "nvidia-x11"
     "obsidian"
     "steam"
     "steam-unwrapped"
@@ -273,6 +306,8 @@ let
 
   evalFailures =
     lib.optional config.services.flatpak.enable "Flatpak is enabled"
+    ++ lib.optional (hasPackage "prime-run" desktopOnly) "this module installs a prime-run, which would collide with the hardware module's"
+    ++ lib.optional (!hasPackage "prime-run" host) "huginn has no prime-run from the hardware module"
     # The theme module's GTK and Qt part (modules/theme/gtk-qt.nix) applies
     # where a host turns gtk and qt on. This module installs the first GTK and
     # Qt applications (Blanket, Prism Launcher, the Nextcloud client), so it
@@ -518,9 +553,11 @@ pkgs.runCommand "desktop-apps"
     grep -q '50_mesa[.]json' "$script" || fail "handy-launch does not pin the EGL vendor to Mesa"
     grep -q 'radeon_icd[.]x86_64[.]json' "$script" || fail "handy-launch does not pin Vulkan to RADV"
 
-    # NixOS's offload command is prime-run (the hardware module); a second one
-    # from here would collide with it.
-    [ ! -e "$profile/bin/prime-run" ] || fail "this module installs a prime-run"
+    # NixOS's offload command is prime-run, and the hardware module has it on
+    # huginn (the one in this profile). This module must not add a second one,
+    # which would collide with it: a host with the desktop alone has none (see
+    # evalFailures).
+    [ -e "$profile/bin/prime-run" ] || fail "huginn has no prime-run: the hardware module's offload command is missing"
 
     for w in $webappFiles; do
       [ -e "$profile/share/applications/$w.desktop" ] || fail "webapp: $w.desktop not found"
@@ -557,7 +594,7 @@ pkgs.runCommand "desktop-apps"
 
     # --- the system's closure, which must be a real one
     names "$closureStorePaths" > closure-names.txt
-    for must in ghostty helium obsidian steam; do
+    for must in ghostty helium obsidian steam nvidia-x11; do
       grep -Eq "^$must(-[A-Za-z][A-Za-z0-9_]*)*-[0-9]" closure-names.txt || fail "closure: $must is not in the system's closure"
     done
     for h in $(hits "$closureStorePaths" | tr ' ' '_'); do
