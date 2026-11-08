@@ -78,6 +78,20 @@ make the gate check every download live again.
 
 Findings that are not fixed, so nobody mistakes them for covered.
 
+- The flake step fails when this repository is checked out as a
+  subdirectory of another git repository: `nix flake prefetch` copies the
+  whole outer repository, the flake's directory survives only in
+  `locked.dir`, and `path:` of the copy does not keep it, so nix finds no
+  `flake.nix`. It fails closed; a normal clone is not affected.
+- Only the flake step reads the one copy of the source. The claude-code
+  step still reads the work tree, so a gate run during an edit can check
+  two trees across its steps.
+- The bounded stop (SIGTERM, then SIGKILL after 10 s) is tested for the
+  per-check builds and the outputs check only; the system query, the copy,
+  the listing and the JSON read have no test with a process that ignores
+  SIGTERM.
+- On the copy, `self.rev`, `self.shortRev` and `self.dirtyRev` are absent
+  and `self.lastModified` is 0. Nothing in ravnix reads them.
 - `check-public.sh` matches literals. It does not find a value that is
   compressed (a `.gz` file), encoded (base64, URL encoding), split across two
   lines, or written in another Unicode normal form (a decomposed `ö` against
