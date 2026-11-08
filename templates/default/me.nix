@@ -101,6 +101,16 @@
       # server: every session you start from the phone gets a worktree of
       # it. An absolute path in a string, or null to leave Remote Control off.
       remoteControlDir = "/home/alice/src/project";
+      # The public keys that may deploy to the server as root, one line of
+      # a .pub file each. Root's own, never one the account or an agent on
+      # the server holds: a security key's, made with its PIN (ssh-keygen
+      # -t ed25519-sk -O verify-required; without the flag the server
+      # refuses it), or one that stays on the laptop. Empty, root takes no
+      # key at all.
+      deployKeys = [ ];
+      # The addresses a deploy may come from, as the server sees them: the
+      # laptop's in your NetBird network. Bare addresses, no names.
+      deployFrom = [ "198.51.100.10" ];
     };
 
     # How the server reaches the laptop over NetBird to run a command there

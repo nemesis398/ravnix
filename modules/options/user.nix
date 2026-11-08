@@ -33,7 +33,7 @@ in
     };
 
     signingKey = mkOption {
-      type = types.strMatching "(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh[.]com|sk-ecdsa-sha2-nistp256@openssh[.]com) [A-Za-z0-9+/]+=*( [^\n]*)?";
+      type = ravnix.sshPublicKey;
       example = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly alice@example.org";
       description = ''
         The SSH public key your commits are signed with, as one line of a

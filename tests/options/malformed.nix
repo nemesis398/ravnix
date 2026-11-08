@@ -240,6 +240,36 @@ let
     "a room id with a blank" = room "!abc def:example.org" null;
     "a room id with a line break" = room "!abc\ndef:example.org" null;
     "a room id that is only the !" = room "!" null;
+    "a deploy key with options before its type" = server {
+      deployKeys = [ ''from="*" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly deploy'' ];
+    };
+    "a deploy key with a forced command before its type" = server {
+      deployKeys = [ ''command="/bin/sh" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly'' ];
+    };
+    "a deploy key of two lines" = server {
+      deployKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly a\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyToo b" ];
+    };
+    "a deploy key without its type" = server { deployKeys = [ "AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly" ]; };
+    "a deploy key given as one string, not a list" = server {
+      deployKeys = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly";
+    };
+    "deploy keys with no address to deploy from" = server {
+      deployKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly deploy" ];
+      deployFrom = [ ];
+    };
+    "a deploy address that is a name" = server { deployFrom = [ "huginn.example.org" ]; };
+    "a deploy address that is a wildcard" = server { deployFrom = [ "*" ]; };
+    "a deploy address with a wildcard in it" = server { deployFrom = [ "192.0.2.*" ]; };
+    "a negated deploy address" = server { deployFrom = [ "!192.0.2.10" ]; };
+    "two deploy addresses in one string" = server { deployFrom = [ "192.0.2.10,192.0.2.11" ]; };
+    "a deploy address with a quote, which would end from=" = server {
+      deployFrom = [ ''192.0.2.10" ssh-ed25519'' ];
+    };
+    "a deploy address with a prefix length" = server { deployFrom = [ "192.0.2.0/24" ]; };
+    "an IPv6 deploy address with a prefix length" = server { deployFrom = [ "2001:db8::/64" ]; };
+    "a deploy address with an octet above 255" = server { deployFrom = [ "192.0.2.256" ]; };
+    "a deploy address of three octets" = server { deployFrom = [ "192.0.2" ]; };
+    "an empty deploy address" = server { deployFrom = [ "" ]; };
     "a relative Remote Control directory" = server { remoteControlDir = "src/project"; };
     "a Remote Control directory given as a Nix path" = server { remoteControlDir = ./.; };
   };
@@ -262,6 +292,24 @@ let
     "a host reached as user@IPv4" = host { sshTarget = "admin@192.0.2.50"; };
     "a bare NetBird address" = server { netbirdAddress = "100.64.1.2"; };
     "an IPv6 NetBird address" = server { netbirdAddress = "fd00:1234::5"; };
+    "no deploy key and no deploy address" = server {
+      deployKeys = [ ];
+      deployFrom = [ ];
+    };
+    "deploy keys of each kind, a security key's among them, from IPv4 and IPv6" = server {
+      deployKeys = [
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly deploy@laptop"
+        "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tExampleOnly deploy@yubikey"
+        "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20ExampleOnly"
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYExampleOnly="
+      ];
+      deployFrom = [
+        "192.0.2.10"
+        "100.64.0.1"
+        "2001:db8::10"
+        "fd00:1234::5"
+      ];
+    };
     "an ssh target with a user" = server { sshTarget = "alice@host"; };
     "an ssh target with an underscore in the user" = server { sshTarget = "nas_admin@192.0.2.20"; };
     "an ssh alias as target" = server { sshTarget = "muninn"; };

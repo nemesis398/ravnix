@@ -1,6 +1,7 @@
-# The server shape, muninn: how the laptop's main terminal reaches it, and
-# the repository Claude Code's Remote Control works from.
-{ lib, ... }:
+# The server shape, muninn: how the laptop's main terminal reaches it, the
+# repository Claude Code's Remote Control works from, and who may deploy to
+# it as root.
+{ config, lib, ... }:
 let
   inherit (lib) mkOption types;
   ravnix = import ./types.nix { inherit lib; };
@@ -37,5 +38,45 @@ in
         `netbird status` prints after it.
       '';
     };
+
+    deployKeys = mkOption {
+      type = types.listOf ravnix.sshPublicKey;
+      default = [ ];
+      example = [ "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tExampleOnly deploy@laptop" ];
+      description = ''
+        The public keys that may log in to muninn as root over ssh, to
+        deploy (`nixos-rebuild switch --target-host root@muninn`), each as
+        one line of its .pub file, without options: ravnix puts
+        `from=` (the addresses of deployFrom) and `restrict` in front of
+        each. Keys of root's own, never one the account logs in or signs
+        with, and never one an agent on muninn holds: a key on a security
+        key made with its PIN (`ssh-keygen -t ed25519-sk -O
+        verify-required`), which takes a touch and the PIN for each login,
+        or a key that stays on the deploying machine. A security key's line
+        gets `verify-required` too, so one made without the flag does not
+        log in. Empty, root takes no key at all.
+      '';
+    };
+
+    deployFrom = mkOption {
+      type = types.listOf ravnix.ipAddress;
+      default = [ ];
+      example = [ "198.51.100.10" ];
+      description = ''
+        The addresses a deploy may come from, as muninn sees them: the
+        deploying machine's address in your NetBird network, or on muninn's
+        own network. Each a bare IPv4 or IPv6 address, no name and no
+        network. A deploy key works from these addresses alone, so it is
+        no good from muninn itself or through a hop over another host.
+        Needed as soon as deployKeys holds a key.
+      '';
+    };
   };
+
+  config.assertions = [
+    {
+      assertion = config.ravnix.server.deployKeys == [ ] || config.ravnix.server.deployFrom != [ ];
+      message = "ravnix.server.deployKeys holds a key, but ravnix.server.deployFrom names no address to deploy from, so the key would open root from nowhere. Add the deploying machine's address to ravnix.server.deployFrom.";
+    }
+  ];
 }

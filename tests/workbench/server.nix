@@ -172,6 +172,12 @@ pkgs.testers.runNixOSTest (
         # options tests check that they do); here the warnings are noise.
         warnings = lib.mkForce [ ];
 
+        # The test framework gives root an empty password, for a console
+        # login when the test runs interactively (test-instrumentation.nix);
+        # the server shape refuses a root password, and the driver needs
+        # none.
+        users.users.root.hashedPasswordFile = lib.mkForce null;
+
         # The editor of both hosts comes with the module; the VM needs one
         # language, not the toolchain of each (tests/common/nvim.nix runs the
         # editor with every language).
@@ -322,13 +328,16 @@ pkgs.testers.runNixOSTest (
             resolved = as_user("readlink -f $(command -v odin)").strip()
             assert resolved.startswith("${odin}/"), resolved
 
-        with subtest("sshd runs, and takes no password"):
+        with subtest("sshd runs, takes no password, and lets root in with a key only"):
             machine.wait_for_unit("sshd.service")
             machine.wait_for_open_port(22)
             effective = machine.succeed("sshd -T").lower()
             assert "passwordauthentication no" in effective, effective
             assert "kbdinteractiveauthentication no" in effective, effective
-            assert "permitrootlogin no" in effective, effective
+            # The deploy's way in (hosts/server/default.nix). The shape names
+            # no key for root.
+            assert "permitrootlogin prohibit-password" in effective, effective
+            machine.fail("test -s /etc/ssh/authorized_keys.d/root")
 
         with subtest("Podman runs a container as the user, not as root"):
             as_user("podman load -i ${helloImage}")

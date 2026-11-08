@@ -10,6 +10,8 @@ let
   name = "[A-Za-z0-9][A-Za-z0-9._-]*";
   # An IPv6 address: two colons at least.
   ipv6 = "[0-9A-Fa-f.]*:[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*";
+  octet = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+  ipv4 = "${octet}[.]${octet}[.]${octet}[.]${octet}";
   user = "[A-Za-z0-9_][A-Za-z0-9_.-]*";
 in
 {
@@ -42,5 +44,25 @@ in
   # a Nix path would be copied into the store, read-only.
   absolutePath = types.strMatching "/.+" // {
     description = "absolute path, as a string";
+  };
+
+  # An SSH public key as one line of its .pub file: the type, the key, and
+  # a comment if any, on one line. Nothing before the type, so a value
+  # cannot carry options of its own (from=, command=) into an
+  # authorized_keys line. A security key's types (sk-...) are keys too.
+  sshPublicKey =
+    types.strMatching "(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh[.]com|sk-ecdsa-sha2-nistp256@openssh[.]com) [A-Za-z0-9+/]+=*( [^\n]*)?"
+    // {
+      description = "SSH public key, one line of a .pub file";
+    };
+
+  # One machine's IPv4 or IPv6 address, as sshd compares it with where a
+  # connection comes from. No name (a name is what the connecting side's DNS
+  # says), no wildcard, no `!`, no list and no prefix length. The IPv6 half
+  # checks only its characters and colons, so a malformed one such as `:::`
+  # passes; sshd then matches it with nothing, and the rest of the from=
+  # list still holds (OpenSSH 10.6, addr_match_list).
+  ipAddress = types.strMatching "${ipv4}|${ipv6}" // {
+    description = "IPv4 or IPv6 address, without a prefix length";
   };
 }
