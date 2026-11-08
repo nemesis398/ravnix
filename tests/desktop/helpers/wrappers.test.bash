@@ -405,9 +405,9 @@ it_nord_setup_files_a_copy_of_the_key_under_the_baked_name() {
 it_nord_setup_files_the_key_although_visual_names_another_editor() {
 	fresh
 	nord_api
-	# ravnix exports VISUAL=nvim, and rbw takes VISUAL before EDITOR: an editor
-	# set only in EDITOR is never started. `false` stands for any editor that
-	# is not the key copier.
+	# ravnix exports VISUAL=nvim, and rbw takes VISUAL before EDITOR. The key
+	# goes to rbw on standard input, so no editor variable can matter; `false`
+	# stands for any editor that would not file the key.
 	VISUAL=false EDITOR=false capture "$NORD" setup
 	expect_status 0
 	expect_out "nord: key copied to Bitwarden as 'key item'"
@@ -423,6 +423,75 @@ it_nord_setup_files_the_key_from_a_cache_directory_with_a_space() {
 	expect_status 0
 	expect_out "nord: key copied to Bitwarden as 'key item'"
 	[[ "$(cat "$FAKE_DIR/rbw.added")" == "$key" ]]
+	[[ -z "$(ls -A "$XDG_CACHE_HOME")" ]]
+}
+
+# rbw 1.15.0 takes the item from standard input whenever that is not a
+# terminal, and starts no editor. The script hands it the key on standard
+# input itself, so what its own standard input is cannot matter: with the
+# editor approach the real rbw stored an empty item for /dev/null, exited 0,
+# and `nord setup` then said the key was filed.
+it_nord_setup_files_the_key_when_standard_input_is_dev_null() {
+	fresh
+	nord_api
+	capture "$NORD" setup </dev/null
+	expect_status 0
+	expect_out "nord: key copied to Bitwarden as 'key item'"
+	[[ "$(cat "$FAKE_DIR/rbw.added")" == "$key" ]]
+	[[ "$(cat "$FAKE_DIR/rbw.item.key_item")" == "$key" ]]
+}
+
+it_nord_setup_files_the_key_when_standard_input_is_a_pipe() {
+	fresh
+	nord_api
+	capture "$NORD" setup < <(echo "something else that is typed ahead")
+	expect_status 0
+	expect_out "nord: key copied to Bitwarden as 'key item'"
+	[[ "$(cat "$FAKE_DIR/rbw.added")" == "$key" ]]
+}
+
+it_nord_setup_reads_the_copy_back_before_it_says_the_key_is_filed() {
+	fresh
+	nord_api
+	capture "$NORD" setup </dev/null
+	expect_status 0
+	# The item is asked for after it was added.
+	[[ "$(log rbw)" == *"add key item"*"get key item"* ]]
+}
+
+it_nord_setup_fails_loudly_when_the_copy_read_back_differs() {
+	fresh
+	nord_api
+	fake rbw-add-corrupts
+	capture "$NORD" setup </dev/null
+	expect_status 1
+	expect_err "does not hold the key"
+	expect_err "Keep the access token until the copy is right"
+	# No success line and no hint to revoke, and neither the key nor the
+	# stored value is printed.
+	[[ "$out" != *"key copied"* && "$out" != *"ready"* && "$out" != *"REVOKE"* ]] || {
+		echo "  success or revoke hint on a bad copy: $out"
+		return 1
+	}
+	[[ "$out$err" != *"${key%=}"* ]] || {
+		echo "  the key was printed"
+		return 1
+	}
+	[[ -z "$(ls -A "$XDG_CACHE_HOME")" ]]
+}
+
+it_nord_setup_fails_loudly_when_the_copy_cannot_be_read_back() {
+	fresh
+	nord_api
+	fake rbw-get-fails-after-add
+	capture "$NORD" setup </dev/null
+	expect_status 1
+	expect_err "could not be read back"
+	expect_err "Keep the access token until the copy is right"
+	[[ "$out" != *"key copied"* && "$out" != *"REVOKE"* ]] || {
+		echo "  success or revoke hint on an unverified copy: $out"
+		return 1
+	}
 	[[ -z "$(ls -A "$XDG_CACHE_HOME")" ]]
 }
 
@@ -669,6 +738,11 @@ tests=(
 	it_nord_setup_files_a_copy_of_the_key_under_the_baked_name
 	it_nord_setup_files_the_key_although_visual_names_another_editor
 	it_nord_setup_files_the_key_from_a_cache_directory_with_a_space
+	it_nord_setup_files_the_key_when_standard_input_is_dev_null
+	it_nord_setup_files_the_key_when_standard_input_is_a_pipe
+	it_nord_setup_reads_the_copy_back_before_it_says_the_key_is_filed
+	it_nord_setup_fails_loudly_when_the_copy_read_back_differs
+	it_nord_setup_fails_loudly_when_the_copy_cannot_be_read_back
 	it_nord_setup_still_succeeds_when_the_copy_cannot_be_filed
 	it_nord_setup_refuses_when_a_profile_exists
 	it_nord_setup_reports_a_locked_vault_and_asks_nord_nothing

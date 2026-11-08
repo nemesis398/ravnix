@@ -413,7 +413,8 @@ let
         return machine.succeed("bash -lc " + shlex.quote(cmd))
 
       def nord(args, check=True):
-        # VISUAL is set the way ravnix sets it, and rbw asks it before EDITOR.
+        # The session's editor variables are set to something that files
+        # nothing: the key goes to rbw on standard input, so they cannot matter.
         cmd = "FAKE_DIR=/tmp/fake XDG_CACHE_HOME=/tmp/fake/cache HOME=/root VISUAL=false EDITOR=false ${nordVm}/bin/nord " + args
         return machine.succeed(cmd) if check else machine.execute(cmd)
 
@@ -533,8 +534,8 @@ let
         machine.succeed("echo '{\"protected\":true}' > /tmp/fake/insights.json")
         out = nord("setup")
         assert "profile 'nord' ready" in out, out
-        # With VISUAL=false in the environment, the copy of the key reaches the
-        # vault only if the script sets VISUAL itself, as rbw asks it first.
+        # The key was filed and read back, though VISUAL and EDITOR name `false`
+        # and the command's standard input is not a terminal.
         assert "key copied to Bitwarden as 'key item'" in out, out
         def prop(name):
           return machine.succeed("nmcli -g " + name + " connection show nord").strip()

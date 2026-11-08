@@ -167,7 +167,7 @@ setup() {
   command -v rbw >/dev/null || die "rbw is needed to read the access token"
   [ -n "$TOKEN_ITEM" ] || die "no Bitwarden item for the access token: set ravnix.vpn.nord.tokenItem (or NORD_TOKEN_ITEM)"
   need_country
-  local token key rec host station pub
+  local token key rec host station pub back
   token=$(rbw get "$TOKEN_ITEM") || die "no Bitwarden item '$TOKEN_ITEM' (or the vault is locked)"
   # The token goes to curl as a config line on its standard input, so that it
   # is on no command line.
@@ -206,21 +206,27 @@ setup() {
       ipv6.routing-rules "priority 120 fwmark $NETBIRD_MARK table 254" \
     || die "the profile was imported as '$IFACE' but could not be finished; fix or delete it by hand"
 
-  # A copy of the key in Bitwarden, as the record outside this machine. rbw
-  # opens an editor on a temp file; this editor copies the key file over it.
-  # rbw takes $VISUAL before $EDITOR (and ravnix exports VISUAL), so both are
-  # set. rbw runs an editor with a space in it through /bin/sh, so the path is
-  # quoted for a shell, and a cache directory with a space in its name works.
+  # A copy of the key in Bitwarden, as the record outside this machine. The
+  # key goes to rbw on its standard input: rbw 1.15.0 reads the new item from
+  # there whenever that is not a terminal, and starts no editor, so neither
+  # VISUAL nor EDITOR nor a terminal matters. (Given an editor and a standard
+  # input that is /dev/null, rbw took the empty input, stored an empty item
+  # and exited 0.) The item is read back and compared with the key before the
+  # success line and the hint to revoke the token are printed; a copy that is
+  # missing, empty or different stops setup with an error instead.
   ( umask 077; printf '%s\n' "$key" >"$tmp/key" )
   unset key
-  local copier
-  printf -v copier 'cp %q' "$tmp/key"
   if [ -z "$KEY_ITEM" ]; then
     echo "nord: no key item named (ravnix.vpn.nord.keyItem), so no copy of the key went to Bitwarden; the NM profile has it" >&2
-  elif VISUAL="$copier" EDITOR="$copier" rbw add "$KEY_ITEM" >/dev/null 2>&1; then
-    echo "nord: key copied to Bitwarden as '$KEY_ITEM'"
-  else
+  elif ! rbw add "$KEY_ITEM" <"$tmp/key" >/dev/null 2>&1; then
     echo "nord: could not copy the key to Bitwarden; the NM profile has it" >&2
+  else
+    back=$(rbw get "$KEY_ITEM" 2>/dev/null) \
+      || die "the key was filed as '$KEY_ITEM' in Bitwarden but could not be read back to check it. Profile '$CON' is ready and holds the key. Look at the item by hand, and delete it if it is wrong. Keep the access token until the copy is right."
+    [ "$back" = "$(<"$tmp/key")" ] \
+      || die "the Bitwarden item '$KEY_ITEM' does not hold the key. Profile '$CON' is ready and holds the key. Delete that item (the key is in the profile, nmcli can show it), and file it again by hand. Keep the access token until the copy is right."
+    unset back
+    echo "nord: key copied to Bitwarden as '$KEY_ITEM'"
   fi
   rm -f "$tmp/key"
 
