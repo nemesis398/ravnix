@@ -62,12 +62,17 @@ pkgs.runCommand "laptop-git-hosts"
     # in the sandbox is not: copy the config and its includes, and point
     # the copy at the copies.
     cp ${laptop} config
+    chmod u+w config
     for inc in $(sed -n 's/^Include //p' config); do
       cp "$inc" "inc-''${inc##*/}"
       sed -i "s|$inc|$PWD/inc-''${inc##*/}|" config
     done
+    # Aliases of the user's own after the include, as Fedora has them: an
+    # alias whose HostName is a git host is pinned too (Match final).
+    first=${lib.escapeShellArg (lib.head hosts)}
+    printf 'Host gitalias\n  HostName %s\n' "$first" >>config
     chmod 600 config inc-* 2>/dev/null || true
-    g() { ssh -G -F "$PWD/config" "$1" 2>&1 || echo "ssh -G failed: $?"; }
+    g() { ssh -G -F "$PWD/config" "$@" 2>&1 || echo "ssh -G failed: $?"; }
 
     ${lib.concatMapStrings (c: ''
       got=$(g ${lib.escapeShellArg c.name})
@@ -77,7 +82,22 @@ pkgs.runCommand "laptop-git-hosts"
       want=$(printf 'identityfile %s\n' ${lib.escapeShellArgs c.files} | sort)
       [ "$files" = "$want" ] || fail "${c.name}: the identity files are $files, not $want"
       grep -qx 'forwardagent no' <<<"$got" || fail "${c.name}: the agent is forwarded"
+      # One touch holds for ten minutes, on a socket in the runtime
+      # directory, and `ssh -O check` finds it, as on Fedora.
+      grep -qx 'controlmaster auto' <<<"$got" || fail "${c.name}: no ControlMaster"
+      grep -qx 'controlpersist 600' <<<"$got" || fail "${c.name}: ControlPersist is not 10 minutes"
+      grep -q '^controlpath /run/user/' <<<"$got" || fail "${c.name}: the ControlPath is not in the runtime directory: $(grep '^controlpath' <<<"$got")"
     '') cases}
+
+    # The alias reaches the pin through its HostName.
+    got=$(g gitalias)
+    grep -qx 'identityagent none' <<<"$got" || fail "an alias of $first asks an agent"
+    files=$(grep '^identityfile ' <<<"$got" | sort || true)
+    want=$(printf 'identityfile %s\n' ${lib.escapeShellArgs gitKeys.${lib.head hosts}} | sort)
+    [ "$files" = "$want" ] || fail "an alias of $first has the identity files $files"
+    # The deliberate fallback, by hand on the command line, still works.
+    got=$(g -o IdentityAgent=/run/user/1000/fallback.sock "$first")
+    grep -qx 'identityagent /run/user/1000/fallback.sock' <<<"$got" || fail "-o IdentityAgent= does not override the pin"
 
     # Any other host keeps rbw's agent.
     got=$(g other.example.org)

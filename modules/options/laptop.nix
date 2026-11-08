@@ -114,8 +114,11 @@ in
         handles (`ssh-keygen -t ed25519-sk`) that log in there. On the
         laptop ssh uses those files alone for these hosts, and no agent:
         rbw's agent holds touch-free keys for the same hosts, which would
-        log in without the touch. Lowercase host names as you write them in
-        a remote; ssh matches them in any case.
+        log in without the touch. One touch holds for ten minutes (a
+        control master, as `ssh -O check <host>` shows). Over ssh only: an
+        HTTPS remote of github.com takes gh's token and no key. Lowercase
+        host names, also for an alias's HostName; list every name a host
+        has (GitHub's ssh.github.com too).
       '';
     };
   };
