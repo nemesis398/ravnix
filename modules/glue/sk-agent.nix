@@ -75,19 +75,24 @@
 #     `Host *` of the user's own): ssh adds every IdentityFile it finds, and
 #     IdentitiesOnly lets it offer each one. No ravnix module sets one.
 #   - what the command line overrides: -F, which leaves out ~/.ssh/config and
-#     its Include; -o IdentityAgent= only together with -o IdentitiesOnly=no,
-#     and with -o ProxyCommand=none while the laptop is away (alone it fails
-#     closed: the second block's IdentitiesOnly yes and its security-key
-#     IdentityFiles still apply, and the first block refuses first while the
-#     laptop is away); GIT_SSH_COMMAND, which carries either of those.
+#     its Include; -o IdentityAgent= naming rbw's agent, together with
+#     -o IdentitiesOnly=no or an IdentityFile that names the public half of a
+#     vault key (-i, -o IdentityFile=, or a later block's; IdentitiesOnly
+#     yes still lets ssh offer that key), and with -o ProxyCommand=none while
+#     the laptop is away; GIT_SSH_COMMAND, which carries any of those. Alone,
+#     -o IdentityAgent= fails closed: the second block's IdentitiesOnly yes
+#     and its security-key IdentityFiles still apply, so ssh offers no key
+#     that agent holds, and the first block refuses first while the laptop is
+#     away.
 #
 # Except for the IdentityFile, each of these reaches the agent of
-# SSH_AUTH_SOCK (or the one -o IdentityAgent= names), which on the server is
-# rbw's: modules/common/rbw.nix puts it into the session variables, which
-# ~/.bashrc reads in every bash shell of the user (modules/common/bash.nix),
-# and into the user manager. That agent serves every SSH key item of the
-# vault without a touch, so if the vault holds a key the git host accepts,
-# such a command logs in without one while the vault is unlocked.
+# SSH_AUTH_SOCK or, with -o IdentityAgent=, the one it names. On the server
+# SSH_AUTH_SOCK is rbw's: modules/common/rbw.nix puts it into the session
+# variables, which ~/.bashrc reads in every bash shell of the user
+# (modules/common/bash.nix), and into the user manager. rbw's agent serves
+# every SSH key item of the vault without a touch, so if the vault holds a
+# key the git host accepts, such a command logs in without one while the
+# vault is unlocked.
 # modules/workbench/ssh-agent.nix says so for the server, and so does
 # "The vault and the keys" in modules/workbench/README.md.
 #
