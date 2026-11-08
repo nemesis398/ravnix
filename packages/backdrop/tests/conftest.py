@@ -146,30 +146,48 @@ def distance_to_box(px, py, box):
     return float(np.hypot(max(x0 - px, 0, px - x1), max(y0 - py, 0, py - y1)))
 
 
-def sgr(color):
-    return "\x1b[38;2;%d;%d;%dm" % color
+# What the real fastfetch prints with ravnix's own config (modules/common/cli.nix):
+# a capture of fastfetch 2.70 on a laptop, the personal values replaced by
+# invented ones and the colors by names, so that no test holds a color of its
+# own. \e is the escape character, and {blue}, {sapphire}, {accent}, {muted},
+# {yellow} and {red} are the "R;G;B" of palette entries. Memory is in the
+# accent, Swap in Yellow and Disk in Red, as fastfetch colors a percentage
+# that is low, high and over the limit; the Palette row is the eight colors of
+# the terminal, and the logo is the NixOS one, in block glyphs, bold.
+FASTFETCH = HERE / "fastfetch.ansi"
+KERNEL = "6.18.2"  # a value that occurs once, for the tests that change a fact
+FASTFETCH_ROLES = {
+    "blue": "blue",
+    "sapphire": "sapphire",
+    "accent": "mauve",
+    "muted": "overlay0",
+    "yellow": "yellow",
+    "red": "red",
+}
 
 
-def facts_text(logo_rows=19, key_rows=12):
-    """What fastfetch prints for the NixOS logo and a column of facts: the
-    logo in Blue and Sapphire, bold, then the keys in the accent, the
-    separator in Overlay0 and the values in Text. The rows after the logo's
-    last one start with a jump to the column, as fastfetch writes them."""
-    blue, sapphire = rgb("blue"), rgb("sapphire")
-    accent, muted, text = rgb("mauve"), rgb("overlay0"), rgb("text")
-    lines = []
-    for i in range(max(logo_rows, key_rows)):
-        line = ""
-        if i < logo_rows:
-            line += "\x1b[1m" + sgr(blue) + "█" * 8 + sgr(sapphire) + "█" * 8 + "\x1b[m"
-            line += " " * 4
-        else:
-            line += "\x1b[21G"
-        if i < key_rows:
-            line += "\x1b[m\x1b[1m" + sgr(accent) + "Key%02d" % i + "\x1b[m"
-            line += sgr(muted) + ":  " + "\x1b[m" + sgr(text) + "value %02d" % i + "\x1b[m"
-        lines.append(line)
-    return "\n".join(lines) + "\n"
+def facts_text():
+    text = FASTFETCH.read_text(encoding="utf-8").replace("\\e", "\x1b")
+    for name, entry in FASTFETCH_ROLES.items():
+        text = text.replace("{%s}" % name, ";".join(str(c) for c in rgb(entry)))
+    return text
+
+
+def palette_row_offset(right):
+    """How far the Palette row starts from the value column, in glyph advances.
+
+    `right` is the facts area of a wall. The row is eight swatches of three
+    glyphs; Green, the third, is the leftmost swatch that no other part of the
+    facts has the color of, so the first swatch starts six glyphs before it.
+    The value column starts at the leftmost pixel that is exactly Text, which
+    is where the values of the rows above begin. A second line of swatches
+    that starts under the frame, as the block symbol prints the bright eight,
+    pulls the leftmost Green far to the left and gives an offset of about 20."""
+    green = bbox(where(right, rgb("green")))
+    assert green, "no Palette row"
+    advance = (green[2] - green[0]) / 3
+    values = bbox(where(right, rgb("text")))[0]
+    return (green[0] - 6 * advance - values) / advance
 
 
 def svg(body):

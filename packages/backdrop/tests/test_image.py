@@ -29,6 +29,14 @@ def banded_png(path, w=400, h=400):
     return path
 
 
+def beyond_the_facts(img):
+    """The pixels outside the band of the facts, which carry Red, Yellow and
+    Green of their own: the usage percentages and the Palette row."""
+    outside = np.ones(img.shape[:2], dtype=bool)
+    outside[: int(0.40 * img.shape[0]), img.shape[1] // 2 :] = False
+    return outside
+
+
 def test_the_image_covers_the_output(lab):
     # A square image on a wide output: scaled until it covers, then cropped
     # at the middle, so Sky shows everywhere and Red and Green not at all.
@@ -38,8 +46,9 @@ def test_the_image_covers_the_output(lab):
     sky = where(img, rgb("sky"))
     assert sky[:200].any() and sky[-200:].any()
     assert sky[:, :200].any() and sky[:, -200:].any()
-    assert not where(img, rgb("red")).any()
-    assert not where(img, rgb("green")).any()
+    outside = beyond_the_facts(img)
+    assert not where(img, rgb("red"))[outside].any()
+    assert not where(img, rgb("green"))[outside].any()
     assert not where(img, rgb("base")).any(), "Base shows: the image does not cover"
     corners = [img[:8, :8], img[:8, -8:], img[-8:, :8], img[-8:, -8:]]
     for c in corners:
@@ -58,7 +67,7 @@ def test_a_tall_image_is_cropped_to_the_output(lab):
     surf.write_to_png(str(lab.work / "wide.png"))
     lab.write_config(image=str(lab.work / "wide.png"))
     img, _ = lab.render("wall", size=(600, 900), scale=1)
-    assert not where(img, rgb("red")).any()
+    assert not where(img, rgb("red"))[beyond_the_facts(img)].any()
     assert where(img, rgb("sky"))[:50].any()
 
 

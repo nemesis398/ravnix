@@ -92,6 +92,13 @@ cannot be written fail the command.
 real fastfetch with the config ravnix writes, in the build sandbox, so with no
 network. `desktop-backdrop-module` checks what the module writes.
 
+The facts the tests draw (`tests/fastfetch.ansi`) are a capture of the real
+fastfetch with ravnix's config, the personal values replaced by invented ones
+and the colors by names that `conftest.py` fills in from the theme. The one
+test that runs the real fastfetch also checks that the Palette row starts in
+the value column. `tests/pytest.ini` filters the one deprecation warning of the
+run: PyGObject itself raises it while it loads its GLib override.
+
 From a checkout:
 
 ```sh

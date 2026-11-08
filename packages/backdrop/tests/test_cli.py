@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from conftest import BACKDROP, H, S, W, facts_text, load_png, rgb, where
+from conftest import BACKDROP, H, KERNEL, S, W, facts_text, load_png, palette_row_offset, rgb, where
 
 
 def hands_to_sway(lab):
@@ -544,14 +544,18 @@ def test_the_real_fastfetch_draws_the_logo_and_the_facts_with_no_network(lab):
     right = img[: H // 2, W // 2 :]
     assert where(right, rgb("blue")).sum() > 500
     assert where(right, rgb("sapphire")).sum() > 500
-    assert where(right, rgb("text")).sum() > 100
+    assert where(right, rgb("text")).sum() > 30
     assert len(proc.stderr.splitlines()) <= 1, proc.stderr
+    # The Palette row is one line that starts in the value column, as on the
+    # terminal: fastfetch's block symbol prints the bright eight on a second
+    # line with no jump to that column, and no reflow here would hide it.
+    assert abs(palette_row_offset(img[: int(0.40 * H), W // 2 :])) < 1.5
 
 
 def test_a_line_that_is_too_wide_shrinks_the_facts_to_fit(lab):
     # 200 columns do not fit in the room right of the panel's left edge at the
     # usual size; the panel shrinks so that none of it runs off the screen.
-    lab.facts_path.write_text(facts_text().replace("value 03", "v" * 150))
+    lab.facts_path.write_text(facts_text().replace(KERNEL, "v" * 150))
     img, _ = lab.render("wall")
     from conftest import bbox, not_base
 

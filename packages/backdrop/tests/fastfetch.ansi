@@ -1,0 +1,24 @@
+\e[m                                                \e[m\e[1m\e[38;2;{accent}m┌─ system\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[muser@machine\e[m
+\e[1m\e[38;2;{blue}m           \e[38;2;{blue}m▗▄▄▄       \e[38;2;{sapphire}m▗▄▄▄▄    ▄▄▄▖\e[m             \e[m\e[1m\e[38;2;{accent}m│   OS\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[mNixOS 26.05 (Yarara)\e[m
+\e[1m\e[38;2;{sapphire}m           \e[38;2;{blue}m▜███▙       \e[38;2;{sapphire}m▜███▙  ▟███▛\e[m             \e[m\e[1m\e[38;2;{accent}m│   Host\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[mLaptop Model 16\e[m
+\e[1m\e[38;2;{sapphire}m            \e[38;2;{blue}m▜███▙       \e[38;2;{sapphire}m▜███▙▟███▛\e[m              \e[m\e[1m\e[38;2;{accent}m│   Kernel\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m6.18.2\e[m
+\e[1m\e[38;2;{sapphire}m             \e[38;2;{blue}m▜███▙       \e[38;2;{sapphire}m▜██████▛\e[m               \e[m\e[1m\e[38;2;{accent}m│   Uptime\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m3 days, 16 hours, 30 mins
+\e[1m\e[38;2;{sapphire}m      \e[38;2;{blue}m▟█████████████████▙ \e[38;2;{sapphire}m▜████▛     \e[38;2;{blue}m▟▙\e[m         \e[m\e[1m\e[38;2;{accent}m│   Packages\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m412 (nix-system), 96 (nix-user)
+\e[1m\e[38;2;{blue}m     \e[38;2;{blue}m▟███████████████████▙ \e[38;2;{sapphire}m▜███▙    \e[38;2;{blue}m▟██▙\e[m        \e[m\e[1m\e[38;2;{accent}m│   Shell\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[mbash 5.3.9\e[m
+\e[1m\e[38;2;{blue}m            \e[38;2;{sapphire}m▄▄▄▄▖           \e[38;2;{sapphire}m▜███▙  \e[38;2;{blue}m▟███▛\e[m        \e[m\e[1m\e[38;2;{accent}m│\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[m
+\e[1m\e[38;2;{blue}m           \e[38;2;{sapphire}m▟███▛             \e[38;2;{sapphire}m▜██▛ \e[38;2;{blue}m▟███▛\e[m         \e[m\e[1m\e[38;2;{accent}m├─ hardware\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[m
+\e[1m\e[38;2;{blue}m          \e[38;2;{sapphire}m▟███▛               \e[38;2;{sapphire}m▜▛ \e[38;2;{blue}m▟███▛\e[m          \e[m\e[1m\e[38;2;{accent}m│   CPU\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[mExample CPU (16)\e[m
+\e[1m\e[38;2;{blue}m \e[38;2;{sapphire}m▟███████████▛                  \e[38;2;{blue}m▟██████████▙\e[m    \e[m\e[1m\e[38;2;{accent}m│   GPU\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[mExample Graphics One [Discrete]\e[m
+\e[1m\e[38;2;{blue}m \e[38;2;{sapphire}m▜██████████▛                  \e[38;2;{blue}m▟███████████▛\e[m    \e[m\e[1m\e[38;2;{accent}m│   GPU\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[mExample Graphics Two [Integrated]\e[m
+\e[1m\e[38;2;{blue}m       \e[38;2;{sapphire}m▟███▛ \e[38;2;{blue}m▟▙               \e[38;2;{blue}m▟███▛\e[m             \e[m\e[1m\e[38;2;{accent}m│   Memory\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m6.47 GiB / 27.14 GiB \e[38;2;{accent}m24%\e[m\e[m
+\e[1m\e[38;2;{blue}m      \e[38;2;{sapphire}m▟███▛ \e[38;2;{blue}m▟██▙             \e[38;2;{blue}m▟███▛\e[m              \e[m\e[1m\e[38;2;{accent}m│   Swap\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m2.85 GiB / 8.00 GiB \e[38;2;{yellow}m62%\e[m\e[m
+\e[1m\e[38;2;{blue}m     \e[38;2;{sapphire}m▟███▛  \e[38;2;{blue}m▜███▙           \e[38;2;{blue}m▝▀▀▀▀\e[m               \e[m\e[1m\e[38;2;{accent}m│   Disk\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m136.67 GiB / 928.50 GiB \e[38;2;{red}m91%\e[m (btrfs)\e[m
+\e[1m\e[38;2;{blue}m     \e[38;2;{sapphire}m▜██▛    \e[38;2;{blue}m▜███▙ \e[38;2;{sapphire}m▜██████████████████▛\e[m         \e[m\e[1m\e[38;2;{accent}m│   Battery\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[38;2;{accent}m80%\e[m AC Connected\e[m
+\e[1m\e[38;2;{sapphire}m      \e[38;2;{sapphire}m▜▛     \e[38;2;{blue}m▟████▙ \e[38;2;{sapphire}m▜████████████████▛\e[m          \e[m\e[1m\e[38;2;{accent}m│\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[m
+\e[1m\e[38;2;{sapphire}m            \e[38;2;{blue}m▟██████▙         \e[38;2;{sapphire}m▜███▙\e[m              \e[m\e[1m\e[38;2;{accent}m├─ services\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[m
+\e[1m\e[38;2;{sapphire}m           \e[38;2;{blue}m▟███▛▜███▙         \e[38;2;{sapphire}m▜███▙\e[m             \e[m\e[1m\e[38;2;{accent}m│   Failed\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[mnone
+\e[1m\e[38;2;{sapphire}m          \e[38;2;{blue}m▟███▛  ▜███▙         \e[38;2;{sapphire}m▜███▙\e[m            \e[m\e[1m\e[38;2;{accent}m│\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[m
+\e[1m\e[38;2;{sapphire}m          \e[38;2;{blue}m▝▀▀▀    ▀▀▀▀▘         \e[38;2;{sapphire}m▀▀▀▘\e[m            \e[m\e[1m\e[38;2;{accent}m│   Palette\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[30m███\e[31m███\e[32m███\e[33m███\e[34m███\e[35m███\e[36m███\e[37m███\e[m
+                                                \e[m\e[1m\e[38;2;{accent}m│\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[m
+                                                \e[m\e[1m\e[38;2;{accent}m└─\e[m\e[m\e[38;2;{muted}m  \e[m\e[68G\e[m\e[m
+\e[m

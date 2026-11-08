@@ -1,14 +1,17 @@
 """The tool logos: optional, on the wallpaper only, spread around the rest."""
 
 import numpy as np
+import pytest
 
 from conftest import (
     H,
+    KERNEL,
     S,
     W,
     bbox,
     blobs,
     distance_to_box,
+    facts_text,
     not_base,
     rgb,
     where,
@@ -17,12 +20,23 @@ from conftest import (
 MARK_RADIUS = 102.5 * S  # the square the marks are drawn in, about its center
 
 
+@pytest.fixture(autouse=True)
+def facts_with_no_surface1(lab):
+    # The Palette row of the facts paints the terminal's black swatch in
+    # Surface1, which is also the gray of every other tool logo, and these
+    # tests count the gray shapes. The swatch gets the terminal's red instead:
+    # it keeps its place and size, so the clearance from the facts is still
+    # measured against the whole panel.
+    lab.facts_path.write_text(facts_text().replace("\x1b[30m", "\x1b[31m"))
+
+
 def grays(img):
     return where(img, rgb("surface1")), where(img, rgb("surface2"))
 
 
-def test_no_tools_by_default(wall):
-    one, two = grays(wall)
+def test_no_tools_by_default(lab):
+    img, _ = lab.render("wall")
+    one, two = grays(img)
     assert blobs(one | two) == []
 
 
@@ -102,7 +116,7 @@ def test_the_spread_is_the_same_on_every_render(lab):
 def test_the_logos_do_not_move_when_a_fact_changes(lab):
     lab.write_config(tools=lab.logos(*("bar", "disc", "tri") * 4))
     a, _ = lab.render("wall", name="a.png")
-    text = lab.facts_path.read_text().replace("value 03", "a much longer value than before")
+    text = lab.facts_path.read_text().replace(KERNEL, "a much longer value than before")
     lab.facts_path.write_text(text)
     b, _ = lab.render("wall", name="b.png")
     assert blobs(grays(a)[0] | grays(a)[1]) == blobs(grays(b)[0] | grays(b)[1])

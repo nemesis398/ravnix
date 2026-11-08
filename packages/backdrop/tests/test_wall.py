@@ -3,6 +3,7 @@
 from conftest import (
     BAR,
     H,
+    KERNEL,
     MARK_REACH,
     RING_INNER,
     S,
@@ -10,6 +11,7 @@ from conftest import (
     bbox,
     facts_text,
     not_base,
+    palette_row_offset,
     reach,
     rgb,
     where,
@@ -80,7 +82,8 @@ def test_nixos_logo_and_facts_are_top_right(wall):
     right = facts_area(wall)
     blue, sapphire = where(right, rgb("blue")), where(right, rgb("sapphire"))
     assert blue.sum() > 500 and sapphire.sum() > 500
-    assert where(right, rgb("text")).sum() > 100, "no fact in Text"
+    # Thin strokes at this size: only their cores are exactly Text.
+    assert where(right, rgb("text")).sum() > 30, "no fact in Text"
     assert where(right, rgb("mauve")).sum() > 100, "no key in the accent"
     x0, y0, x1, y1 = bbox(not_base(right))
     assert y0 > BAR * S
@@ -91,14 +94,37 @@ def test_nixos_logo_and_facts_are_top_right(wall):
     assert bbox(blue)[0] < bbox(where(right, rgb("mauve")))[0]
 
 
+def test_the_palette_row_starts_in_the_value_column(wall):
+    # The Palette row is one line that jumps to the column of the values, like
+    # the rows above it: a second line of swatches that starts under the frame
+    # would put the leftmost Green about 20 glyphs to the left.
+    assert abs(palette_row_offset(facts_area(wall))) < 1.5
+
+
 def test_the_left_half_below_the_phyllon_mark_is_empty(wall):
     below = wall[H // 2 + int(130 * S) :, : W // 2 - int(130 * S)]
     assert not not_base(below).any()
 
 
-def test_no_state_hue_on_the_wall(wall):
-    for warm in ("red", "peach", "maroon", "yellow", "green"):
-        assert not where(wall, rgb(warm)).any()
+def test_no_state_hue_in_the_marks(wall):
+    # The facts do carry state hues, as fastfetch prints them: the usage
+    # percentages turn Yellow and Red, and the Palette row shows the terminal's
+    # eight colors. The marks are the part of the wall that owns no state.
+    for part in (wall[window(wall, **CENTER)], corner(wall)):
+        for warm in ("red", "peach", "maroon", "yellow", "green"):
+            assert not where(part, rgb(warm)).any()
+
+
+def test_the_facts_show_the_usage_states_and_the_palette_row(wall):
+    right = facts_area(wall)
+    # Yellow and Red are the 62% and 91% of Swap and Disk and the second and
+    # fourth of the eight swatches; Green and Teal are swatches only.
+    for name in ("yellow", "red", "green", "teal"):
+        assert where(right, rgb(name)).sum() > 100, name
+    # The eight swatches are one line, in the order of the terminal's colors.
+    green, teal = bbox(where(right, rgb("green"))), bbox(where(right, rgb("teal")))
+    assert green[1] == teal[1] and green[3] == teal[3], "the swatches are not on one line"
+    assert green[2] < teal[0]
 
 
 def test_the_default_wall_is_deterministic(shared, wall):
@@ -131,4 +157,8 @@ def test_a_small_screen_still_holds_the_composition(lab):
 def test_the_facts_fixture_is_what_the_tests_assume():
     # Guards the fixture: a change of facts_text would silently weaken the
     # tests of the logo and the facts above.
-    assert facts_text().count("\n") == 19
+    text = facts_text()
+    assert text.count("\n") == 23
+    assert "Palette" in text and "\x1b[30m" in text and "\x1b[37m" in text
+    assert "{" not in text and "\\e" not in text, "a placeholder is left"
+    assert text.count(KERNEL) == 1
