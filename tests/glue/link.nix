@@ -97,8 +97,12 @@ pkgs.testers.runNixOSTest {
       users.users.${user}.openssh.authorizedKeys.keys = [ snakeoil.snakeOilEd25519PublicKey ];
       # The agent that signs the vault's commits, as the agent's module
       # gives its socket to the user manager (Task 4.3). Forced over rbw's
-      # socket, which modules/common/rbw.nix sets there: rbw's agent is not
-      # in this test, and the test's own agent signs the vault's commits.
+      # socket, which modules/common/rbw.nix sets there. rbw's agent runs in
+      # this VM too (the server shape brings the rbw-agent user unit, wanted
+      # by default.target, and the user lingers), but it is locked and holds
+      # no vault and no key. The test's own agent takes SSH_AUTH_SOCK
+      # because rbw's holds nothing here, and it is the one that signs the
+      # vault's commits.
       home-manager.users.${user}.systemd.user.sessionVariables.SSH_AUTH_SOCK =
         lib.mkForce "\${XDG_RUNTIME_DIR}/test-agent.sock";
       ravnix.server.remoteControlDir = lib.mkForce null;

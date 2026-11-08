@@ -80,9 +80,11 @@ let
   # huginn's user logs in to muninn with the second stand-in's key: the
   # server shape takes the account's keys from the configuration alone,
   # never from ~/.ssh/authorized_keys, so the public half is needed while
-  # the test is evaluated, and nixpkgs' two test keys are the ones known
-  # then. The forge does not know this one, so no login there is ever made
-  # with it.
+  # the test is evaluated. A key generated in a derivation (like `keys`
+  # below) would have to be read back with import-from-derivation, and this
+  # public repository holds no private key of its own, so the login key is
+  # nixpkgs' ECDSA test key. The forge does not know this one, so no login
+  # there is ever made with it.
   login = second;
 
   # The keys made for this test: a key that is not on the list, the key in
