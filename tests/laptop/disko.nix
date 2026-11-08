@@ -95,6 +95,11 @@ pkgs.testers.runNixOSTest {
     # mount, a write the hash would catch.
     no_lazy_init = "-E lazy_itable_init=0,lazy_journal_init=0"
 
+    # The disk's bytes as the disk holds them: O_DIRECT reads past the page
+    # cache, which could still hold what a write has since replaced.
+    def keep_hash():
+        return machine.succeed("set -o pipefail; dd if=${keepDevice} iflag=direct bs=1M status=none | sha256sum")
+
     with subtest("the disk to keep holds a system like Fedora's, mounted read-only"):
         machine.succeed(
             "sgdisk --clear --new=1:0:+256M --typecode=1:EF00 --new=2:0:0 ${keepDevice}",
@@ -108,7 +113,7 @@ pkgs.testers.runNixOSTest {
             "cryptsetup close keeproot",
             "sync",
         )
-        keep_before = machine.succeed("sha256sum < ${keepDevice}")
+        keep_before = keep_hash()
         machine.succeed(
             "printf keep | cryptsetup open --readonly --key-file - ${keepDevice}-part2 keeproot",
             "mount -o ro,noload /dev/mapper/keeproot /srv/keep/root",
@@ -181,7 +186,7 @@ pkgs.testers.runNixOSTest {
     with subtest("the disk to keep is bit for bit as it was"):
         machine.succeed("test \"$(cat /srv/keep/root/marker)\" = 'the running system'")
         machine.succeed("umount /srv/keep/boot /srv/keep/root", "cryptsetup close keeproot", "sync")
-        keep_after = machine.succeed("sha256sum < ${keepDevice}")
+        keep_after = keep_hash()
         assert keep_after == keep_before, "the disk to keep changed"
   '';
 }
