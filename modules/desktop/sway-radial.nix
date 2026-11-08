@@ -18,7 +18,10 @@
 #   the theme   the roles, the font and the line widths of the theme module as
 #               JSON, which the unit names in SWAY_RADIAL_THEME. The file is a
 #               store path in the unit, so a new accent changes the unit and
-#               restarts the service. The program draws no color of its own.
+#               restarts the service. The same file is linked to
+#               ~/.config/sway-radial/theme.json, where the program looks when
+#               the variable is not set (a run by hand). The program draws no
+#               color of its own.
 #
 # The apps it opens are Sway's, not the service's. A menu entry is started with
 # `swaymsg exec` (a `desktop` item as `gtk-launch ID`, with the gtk-launch the
@@ -43,9 +46,15 @@
 #     The countdown does not move either: holding still on a sector for the
 #     dwell time draws a 2 px arc along its edge, whole, at once, and the arc
 #     goes when the dwell fires or is cancelled.
-# The layer surface that carries the ring covers the whole output and has
-# nothing drawn on it outside the ring; it has to be clear, or the ring would
-# hide the screen. That is the absence of a surface and not a translucent one.
+#     "The round ring stays" brings two things with it, and they are part of
+#     this one exception, not new ones. The ring has no outer 1 px accent frame,
+#     which rule 2 gives to a floating menu: it is wedges drawn on a layer
+#     surface, and the accent marks the lit sector. And the layer surface around
+#     the ring is clear: it covers the whole output and has nothing drawn on it
+#     outside the ring, or the ring would hide the screen. That is the absence
+#     of a surface, not a translucent one (the program's stylesheet says
+#     `background-color: transparent` for it). scripts/check-style.sh does not
+#     read Python, so the gate does not see either of the two.
 { config, lib, ... }:
 let
   chosen = config.ravnix.desktop.radial.menu;
@@ -96,6 +105,10 @@ in
         home.packages = [ package ];
 
         xdg.configFile."sway-radial/menu.toml".source = menu;
+        # The same file the unit names in SWAY_RADIAL_THEME, where the program
+        # looks without the variable, so that a run by hand (`sway-radial -v`)
+        # draws in the theme too.
+        xdg.configFile."sway-radial/theme.json".source = themeFile;
 
         systemd.user.services.sway-radial = {
           Unit = {

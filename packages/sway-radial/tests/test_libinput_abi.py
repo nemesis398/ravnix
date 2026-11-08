@@ -94,3 +94,12 @@ def test_the_functions_that_return_a_double_are_declared_as_one(header):
     assert declared, "the binding declares no double"
     for name in declared:
         assert re.search(rf"double\s*\n\s*{name}\s*\(", header), f"{name} is no double in the header"
+
+
+def test_the_binding_names_the_test_file_that_checks_it():
+    """The docstring of the binding says which file compares it with the header;
+    a wrong name sends the next reader looking for a test that is not there."""
+    named = re.findall(r"tests/(test_\w+\.py)", li.__doc__)
+    assert named, "the docstring names no test file"
+    missing = [name for name in named if not (Path(__file__).parent / name).is_file()]
+    assert not missing, missing

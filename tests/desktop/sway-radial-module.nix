@@ -27,17 +27,18 @@ let
   homeOf = h: h.config.home-manager.users.${user};
   unitOf = h: (homeOf h).systemd.user.services.sway-radial;
   menuOf = h: toString (homeOf h).xdg.configFile."sway-radial/menu.toml".source;
-  # The file that home-manager links to ~/.config/sway-radial/menu.toml, which is
-  # the file the unit reads: sourceStorePath is what its files.nix links, after
-  # a path of the flake has been copied into the store. Reading it is what fails
-  # in a pure evaluation for a string that names a file outside the store.
-  linkedMenu =
-    h:
-    (homeOf h).lib.file.sourceStorePath (
-      lib.findFirst (f: f.target == ".config/sway-radial/menu.toml") (throw
-        "home-manager links no .config/sway-radial/menu.toml"
-      ) (lib.attrValues (homeOf h).home.file)
-    );
+  # The file that home-manager links to ~/.config/TARGET, or null when it links
+  # none. sourceStorePath is what its files.nix links, after a path of the flake
+  # has been copied into the store, so this is the file a program reads. Reading
+  # it is also what fails in a pure evaluation for a string that names a file
+  # outside the store.
+  linked =
+    h: target:
+    let
+      entry = lib.findFirst (f: f.target == ".config/${target}") null (lib.attrValues (homeOf h).home.file);
+    in
+    if entry == null then null else (homeOf h).lib.file.sourceStorePath entry;
+  linkedMenu = h: linked h "sway-radial/menu.toml";
   # What the host refuses to build, by the option it names.
   refusals =
     h:
@@ -147,6 +148,17 @@ let
     ++ lib.optional (
       map hash (unitOf mine).Unit.X-Restart-Triggers != [ (hash ownMenu) ]
     ) "a new menu of the user's does not restart the unit"
+    # The theme file in the place the program reads without the variable (a
+    # manual run, `sway-radial -v`), the very file the unit names.
+    ++ lib.optional (linked plain "sway-radial/theme.json" == null) "no ~/.config/sway-radial/theme.json for a run by hand"
+    ++ lib.optional (
+      linked plain "sway-radial/theme.json" != null
+      && toString (linked plain "sway-radial/theme.json") != themeFileOf plain
+    ) "~/.config/sway-radial/theme.json is not the theme file of the unit"
+    ++ lib.optional (
+      linked themed "sway-radial/theme.json" != null
+      && toString (linked themed "sway-radial/theme.json") != themeFileOf themed
+    ) "the theme.json of a themed host is not the theme file of its unit"
     # The theme: a store path that is a new one when the accent is.
     ++ lib.optional (!inStore (themeFileOf plain)) "the unit does not name a theme file in the store"
     ++ lib.optional (

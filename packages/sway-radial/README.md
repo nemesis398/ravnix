@@ -90,6 +90,10 @@ behavior is unchanged except for the following.
   `desktop` item, by the store path the wrapper names in
   `SWAY_RADIAL_GTK_LAUNCH`, and nothing but a plain desktop id is run (it
   reaches a shell, and Sway splits a command line at `;` and `,`).
+- **A manual run reads the theme too.** The program takes `$SWAY_RADIAL_THEME`
+  first, then `~/.config/sway-radial/theme.json`. The unit sets the variable,
+  and the module links the same file to the second place, so `sway-radial -v`
+  in a terminal draws in the theme and not in grayscale.
 - **Three findings fixed**, found by the new tests of malformed menu files: a
   menu file that is not UTF-8 text, and one nested a few hundred levels deep,
   raised an exception out of the loader and stopped the daemon at start instead
@@ -138,6 +142,18 @@ tests and the font tests) at a menu of your own. Three more variables are the
 Nix check's: `SWAY_RADIAL_TEST_PROGRAMS` and `SWAY_RADIAL_TEST_DESKTOP_IDS` (the
 commands and `.desktop` ids the menu may name) and `SWAY_RADIAL_TEST_LIBINPUT_H`
 (libinput's header); a test that needs one is skipped without it.
+
+The Nix check judges the default menu only. The two list tests (`.desktop` ids,
+programs) get their lists from the desktop host that the check evaluates, with
+nothing optional set (`sway-ask` is installed only with `ravnix.desktop.ask`, so
+it is not on the list), and they look at each program of a command: the first
+word, the one behind `ghostty -e` or `ghostty-float -e`, and each one inside an
+`sh -c` script. They do not run on a menu of your own in the check, because the
+programs and apps of your host are yours: with `SWAY_RADIAL_TEST_MENU` set and no
+list, both skip, so `sway-ask`, `kanshictl`, an editor or a web app of yours is
+not checked against your host. Hand them lists (one name per line, the programs
+and ids your host installs) and they run; `pytest -m machine` checks the ids
+against the `.desktop` files of the machine it runs on.
 
 ## Findings that are not fixed
 

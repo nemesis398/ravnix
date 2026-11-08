@@ -14,10 +14,13 @@
 #
 # Two lists come from here, because the sandbox has no machine to ask:
 #   the programs the default menu may run, which are the scripts of the Sway
-#   config and the bar, and the tools of the session that the config itself
-#   runs. Each tool is matched below with the package that provides it on a
-#   host with the desktop module, so a program that is dropped from the
-#   desktop fails here and not in front of the user;
+#   config and the bar that a host with the desktop module installs (and no
+#   optional one: sway-ask needs ravnix.desktop.ask), and the tools of the
+#   session. Each tool is matched below with the package that provides it on
+#   that host, so a program that is dropped from the desktop fails here and
+#   not in front of the user. The test looks past the first word of a command,
+#   at the program behind a terminal's -e and at each program of an `sh -c`
+#   script;
 #   the .desktop ids it may launch, which desktop-apps (the applications) and
 #   desktop-webapps (the web apps) prove exist.
 {
@@ -53,20 +56,31 @@ let
   themeLine = lib.findFirst (lib.hasPrefix "SWAY_RADIAL_THEME=") (throw "the unit sets no SWAY_RADIAL_THEME") unit.Service.Environment;
   themeFile = lib.removePrefix "SWAY_RADIAL_THEME=" themeLine;
 
-  # The desktop module on a stubbed host, for the providers below.
+  # The desktop module on a stubbed host, for the providers below. It is the host
+  # of a user who set nothing optional: sway-ask exists only when
+  # ravnix.desktop.ask is set, and the default menu is for everyone, so what only
+  # an option installs is not on the list.
   desktop = inputs.nixpkgs.lib.nixosSystem {
     inherit system;
-    modules = hostModules ++ [ self.nixosModules.desktop ];
+    modules = hostModules ++ [
+      self.nixosModules.desktop
+      { ravnix.desktop.ask = lib.mkForce null; }
+    ];
   };
   installed = map lib.getName (
     desktop.config.environment.systemPackages
     ++ desktop.config.home-manager.users.${user}.home.packages
   );
 
-  scripts = lib.concatMap (dir: lib.attrNames (builtins.readDir dir)) [
-    ../../modules/desktop/sway/bin
-    ../../modules/desktop/waybar/bin
-  ];
+  # The scripts of the Sway config and the bar that this host installs, by name:
+  # a file in those directories that the host does not install (sway-ask, here)
+  # is not a program the menu may run.
+  scripts = lib.filter (name: lib.elem name installed) (
+    lib.concatMap (dir: lib.attrNames (builtins.readDir dir)) [
+      ../../modules/desktop/sway/bin
+      ../../modules/desktop/waybar/bin
+    ]
+  );
 
   # Program -> the package that provides it on a host with the desktop module.
   providers = {
@@ -84,6 +98,9 @@ let
     loginctl = "systemd";
     swaymsg = "sway";
     btop-auto = "btop-gpu";
+    # `sh -c` in the menu's own commands. (read, which runs inside it, is a
+    # builtin of the shell, and test_default_menu.py knows that.)
+    sh = "bash-interactive";
   };
   missingProviders = lib.filter (name: !lib.elem providers.${name} installed) (lib.attrNames providers);
 
@@ -113,6 +130,9 @@ let
     ];
   };
 in
+assert lib.assertMsg (
+  !lib.elem "sway-ask" scripts
+) "tests/desktop/sway-radial.nix: sway-ask is on the list of programs the default menu may run, but it is installed only when ravnix.desktop.ask is set";
 assert lib.assertMsg (missingProviders == [ ])
   "tests/desktop/sway-radial.nix: the desktop module no longer installs the package behind: ${lib.concatStringsSep ", " missingProviders}";
 pkgs.runCommand "desktop-sway-radial"

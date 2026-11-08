@@ -1,7 +1,7 @@
 """ctypes binding to libinput's gesture API.
 
 Every enum value and signature here was read out of ``libinput.h``, the header
-shipped with the library (``tests/test_libinput_header.py`` compares the values
+shipped with the library (``tests/test_libinput_abi.py`` compares the values
 with it). Do not substitute remembered values: a wrong event type fails
 silently, because ``libinput_get_event`` happily returns events whose type never
 matches anything the daemon tests for, and the menu simply never opens.

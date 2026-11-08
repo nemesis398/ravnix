@@ -19,6 +19,7 @@ one the test is skipped, and says so.
 
 import os
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -126,15 +127,79 @@ def test_every_desktop_id_is_one_the_desktop_installs(menu_path):
     assert not unknown, unknown
 
 
-def test_every_command_runs_a_program_the_desktop_installs(menu_path):
+#: Terminals that run what follows -e, and shells that run what follows -c.
+TERMINALS = {"ghostty", "ghostty-float"}
+SHELLS = {"sh", "bash"}
+#: What a shell runs without a program behind it. Only inside `sh -c`.
+SHELL_BUILTINS = {"read"}
+
+
+def programs_of(command, *, in_shell=False):
+    """Every program a menu command runs, looking through a terminal (-e) and
+    a shell (-c), as (name, in_shell) pairs.
+
+    The first word of a command is not the whole story: `ghostty-float -e X`
+    opens a terminal and X is the program that has to exist, and `sh -c 'a; b'`
+    runs a and b. Checking only the first word lets a program that is not
+    installed sit behind a terminal that is, and the sector then opens a
+    window that closes at once.
+    """
+    words = shlex.split(command) if isinstance(command, str) else command
+    if not words:
+        return []
+    found = [(words[0], in_shell)]
+    rest = words[1:]
+    if words[0] in TERMINALS and "-e" in rest:
+        found += programs_of(rest[rest.index("-e") + 1 :])
+    elif words[0] in SHELLS and "-c" in rest and rest.index("-c") + 1 < len(rest):
+        script = rest[rest.index("-c") + 1]
+        for part in re.split(r"\s*(?:;|&&|\|\||\|)\s*", script):
+            found += programs_of(part, in_shell=True)
+    return found
+
+
+def unknown_programs(command, known):
+    return [
+        name
+        for name, in_shell in programs_of(command)
+        if name not in known and not (in_shell and name in SHELL_BUILTINS)
+    ]
+
+
+def test_every_command_runs_programs_the_desktop_installs(menu_path):
+    """The first word, the program behind a terminal's -e, and each program of
+    an `sh -c` script, against the programs the desktop host installs."""
     known = _names("SWAY_RADIAL_TEST_PROGRAMS")
     unknown = []
     for item in _leaves(load_menu(menu_path)):
         if item.command:
-            program = item.command.split()[0]
-            if program not in known:
-                unknown.append((item.label, program))
+            unknown += [(item.label, name) for name in unknown_programs(item.command, known)]
     assert not unknown, unknown
+
+
+KNOWN = {"ghostty", "ghostty-float", "sh", "netbird", "yazi", "swaymsg"}
+
+
+@pytest.mark.parametrize(
+    "command, expected",
+    [
+        ("ghostty", []),
+        ("swaymsg workspace number 3", []),
+        ("ghostty-float -e yazi", []),
+        ("ghostty-float -e lazydocker", ["lazydocker"]),
+        ("ghostty -e htop", ["htop"]),
+        ("ghostty-float -e sh -c 'netbird up; read -n1 -s -p \"\"'", []),
+        ("ghostty-float -e sh -c 'netbird up; lazydocker'", ["lazydocker"]),
+        ("ghostty-float -e sh -c 'netbird up && htop | less'", ["htop", "less"]),
+        ("sh -c 'read -n1'", []),
+        ("read -n1", ["read"]),
+        ("lazydocker", ["lazydocker"]),
+        ("ghostty-float -e", []),
+        ("sh -c", []),
+    ],
+)
+def test_the_programs_behind_a_terminal_and_a_shell_are_checked(command, expected):
+    assert unknown_programs(command, KNOWN) == expected
 
 
 def test_the_packaged_default_names_no_absolute_path_and_no_home():

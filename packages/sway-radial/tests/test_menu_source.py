@@ -11,11 +11,13 @@ the menu that is already loaded stays.
 
 import logging
 import os
+import sys
 import time
+import tomllib
 
 import pytest
 
-from sway_radial.config import ConfigError, load_menu
+from sway_radial.config import ConfigError, load_menu, parse_menu
 from sway_radial.daemon import Daemon, _packaged_menu
 
 ONE_ITEM = '[[items]]\ndir = "n"\nlabel = "{label}"\nexec = "true"\n'
@@ -27,6 +29,21 @@ def deeply_nested(levels: int) -> str:
     for number in range(levels):
         inner = '[{dir = "n", label = "level %d", items = %s}]' % (number, inner)
     return "items = " + inner + "\n"
+
+
+def header_nested(levels: int) -> str:
+    """A menu nested through [[items.items...]] headers, `levels` deep.
+
+    tomllib reads these without recursing (up to the length of a key it allows),
+    so the data arrives whole at parse_menu, unlike the inline tables above,
+    which the parser itself gives up on. Each level is a submenu holding the
+    next; the last is a leaf.
+    """
+    lines = []
+    for number in range(levels):
+        lines += ["[[" + ".".join(["items"] * (number + 1)) + "]]", 'dir = "n"', 'label = "level %d"' % number]
+    lines.append('exec = "true"')
+    return "\n".join(lines) + "\n"
 
 
 # Every kind of bad file, as the bytes it holds. "directory" and the links are
@@ -52,6 +69,11 @@ BAD_CONTENT = {
     "dwell is a string": b'dwell_ms = "slow"\n' + ONE_ITEM.format(label="A").encode(),
     "dwell is huge": b"dwell_ms = 99999999\n" + ONE_ITEM.format(label="A").encode(),
     "nested too deeply": deeply_nested(3000).encode(),
+    # As deep as tomllib's own limit on the parts of a key allows (1000), which
+    # is deeper than the interpreter's stack allows parse_menu to walk. Which of
+    # the two guards stops it depends on the Python; the test below pins the
+    # second.
+    "nested too deeply by headers": header_nested(1000).encode(),
 }
 
 
@@ -181,3 +203,26 @@ def test_the_daemon_stays_up_when_the_default_is_missing_too(tmp_path, monkeypat
     daemon = Daemon(config_path=tmp_path / "nowhere.toml")
     assert daemon.menu is None
     assert "no packaged default menu" in caplog.text
+
+
+def test_the_guard_in_parse_menu_stops_a_menu_nested_by_headers():
+    """The second RecursionError guard, the one tomllib never reaches.
+
+    The data is read at the normal limit, and the walk is run on a stack that
+    has room for fewer levels than the menu has, so the test does not depend on
+    how large the interpreter's limit is. At the normal limit the same data
+    loads: it is the depth of the walk that is refused, not the shape.
+    """
+    data = tomllib.loads(header_nested(300))
+    assert parse_menu(data, source="t").items["n"].children  # loads when there is room
+
+    frames, frame = 0, sys._getframe()
+    while frame is not None:
+        frames, frame = frames + 1, frame.f_back
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(frames + 100)
+    try:
+        with pytest.raises(ConfigError, match="nested too deeply"):
+            parse_menu(data, source="t")
+    finally:
+        sys.setrecursionlimit(limit)

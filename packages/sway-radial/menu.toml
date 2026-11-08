@@ -1,12 +1,17 @@
 # sway-radial default menu.
 #
-# Every command here is one that ravnix's Sway configuration runs itself
-# (modules/desktop/sway/config), so the menu and the keyboard cannot disagree,
-# and every application is one that the desktop module installs. A bare name
-# is looked up on the session's PATH; nothing here is an absolute path.
-# Applications go through `desktop` and are launched with gtk-launch, because
-# the whole point of that indirection is that the Wayland and Electron flags
-# stay defined in the .desktop file. A bare command is not equivalent.
+# Every command here is a program that ravnix installs on every desktop host:
+# its own scripts (the ones the Sway configuration and the bar run, such as
+# sway-volume and waybar-mode) and the tools of the desktop module (swaymsg,
+# pactl, playerctl, grimshot, netbird, bluetoothctl and the like). Some of the
+# tools, netbird and bluetoothctl among them, are run by no Sway binding; this
+# menu is where they are used. The tests check each program against what a
+# desktop host installs, including the program behind `ghostty-float -e` and
+# those inside an `sh -c` script. A bare name is looked up on the session's PATH;
+# nothing here is an absolute path. Applications go through `desktop`: Sway runs
+# gtk-launch on the id, because the whole point of that indirection is that the
+# Wayland and Electron flags stay defined in the .desktop file. A bare command is
+# not equivalent.
 #
 # This is the menu for a user who set nothing. To use your own, point
 # ravnix.desktop.radial.menu at a file of this shape: copy this one and edit it.
