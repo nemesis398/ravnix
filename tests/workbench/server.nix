@@ -88,7 +88,10 @@ let
   };
 
   # The programs of the laptop (modules/desktop, the graphical applications):
-  # none of them is on the server.
+  # none of them is on the server. Helium is not in the list: the server
+  # carries one, for the Chrome DevTools MCP server, which drives it headless
+  # (modules/common/chrome-devtools-mcp.nix); the checks of that module and the
+  # VM test desktop-chrome-devtools-mcp hold that it is only that.
   laptopOnly = [
     "sway"
     "swaylock"
@@ -99,7 +102,6 @@ let
     "kanshi"
     "greetd"
     "tuigreet"
-    "helium"
     "obsidian"
     "ghostty"
     "onlyoffice-desktopeditors"

@@ -465,6 +465,9 @@
     #   };
     # In a Nix string the reference is written \${NAME} (or ''${NAME} inside
     # ''...''): a bare ${NAME} is Nix's own interpolation and fails.
+    # Ravnix declares one server itself on both hosts, chrome-devtools (a
+    # headless Helium for Claude Code's browser tools); a server of that name
+    # here replaces it.
     claude.mcpServers = { };
 
     # The desktop's wallpaper and lock image. image is your own picture: a

@@ -197,6 +197,17 @@ In a Nix string the reference is written `\${NAME}` (or `''${NAME}` inside
 `''...''`), because a bare `${NAME}` is Nix's own interpolation and fails
 with "undefined variable".
 
+**The server ravnix declares itself.** Both hosts declare the Chrome DevTools MCP
+server as `chrome-devtools` (`modules/common/chrome-devtools-mcp.nix`): the
+wrapper `chrome-devtools-mcp-helium` driving a headless Helium, by its store
+path (`packages/chrome-devtools-mcp-helium/README.md` says why a wrapper). To use
+another server under that name, set `ravnix.claude.mcpServers.chrome-devtools`
+in `me.nix`; it replaces the declared one whole, and your servers under other
+names come beside it. A server set with a plain definition in home-manager
+(`home-manager.users.NAME.ravnix.claude.mcpServers`) outranks everything that
+`me.nix` and ravnix declare, `chrome-devtools` included, as it does for every
+value of ravnix (`modules/common/nixos.nix`).
+
 **No token enters the store.** A value under `headers` or `env` must be a
 reference to a variable of Claude Code's environment: `${NAME}`, or
 `Bearer ${NAME}` (also `Basic` and `Token`). Anything else is refused at

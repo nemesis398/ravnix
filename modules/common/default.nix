@@ -3,13 +3,16 @@
 # common"). Neovim (./nvim.nix) is a module of its own that this one imports.
 # Claude Code is another beside it (./claude-code.nix and ./claude-skills.nix),
 # which the flake's homeModules.common adds to this one: the `claude` function
-# of the shell starts its build (./bash.nix).
+# of the shell starts its build (./bash.nix). ./chrome-devtools-mcp.nix gives
+# Claude Code its browser tools, a headless Helium, on both hosts.
 #
 # It reads ravnix.user, ravnix.secrets, ravnix.services, ravnix.dev,
 # ravnix.shell, ravnix.editor, ravnix.dictionary and ravnix.theme, so
 # homeModules.options and homeModules.theme must be imported beside it.
 # nixosModules.common does all three, and gives home-manager the user's
-# values; use homeModules.common by itself only outside a ravnix host.
+# values; use homeModules.common by itself only outside a ravnix host. The home
+# reads ravnix's packages as pkgs.ravnix.NAME, so its pkgs must carry
+# overlays.default (nixosModules.common applies it to the system's).
 { config, lib, ... }:
 {
   imports = [
@@ -20,6 +23,7 @@
     ./starship.nix
     ./nvim.nix
     ./scripts.nix
+    ./chrome-devtools-mcp.nix
   ];
 
   # Outside a host, home-manager is told who it is working for once, here.
