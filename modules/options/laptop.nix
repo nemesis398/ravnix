@@ -1,8 +1,10 @@
-# The laptop shape, huginn: the one disk the installer may write, and the
-# monitor layouts kanshi switches between.
+# The laptop shape, huginn: the one disk the installer may write, the
+# monitor layouts kanshi switches between, and the security key's handles
+# for the git hosts.
 { lib, ... }:
 let
   inherit (lib) mkOption types;
+  ravnix = import ./types.nix { inherit lib; };
 
   output = types.submodule {
     options = {
@@ -97,6 +99,23 @@ in
       description = ''
         Your monitor layouts, in order: kanshi applies the first profile
         that matches the connected outputs.
+      '';
+    };
+
+    gitKeys = mkOption {
+      type = types.attrsOf (types.nonEmptyListOf ravnix.absolutePath);
+      default = { };
+      example = {
+        "github.com" = [ "/home/alice/.ssh/keys/github-sk" ];
+        "git.example.org" = [ "/home/alice/.ssh/keys/forge-sk" ];
+      };
+      description = ''
+        The git hosts and, for each, the files of the security key's
+        handles (`ssh-keygen -t ed25519-sk`) that log in there. On the
+        laptop ssh uses those files alone for these hosts, and no agent:
+        rbw's agent holds touch-free keys for the same hosts, which would
+        log in without the touch. Lowercase host names as you write them in
+        a remote; ssh matches them in any case.
       '';
     };
   };

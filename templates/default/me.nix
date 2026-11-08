@@ -172,6 +172,15 @@
 
     # The laptop.
     laptop = {
+      # The git hosts and, for each, the security key's handle files
+      # (ssh-keygen -t ed25519-sk) that log in there. ssh on the laptop uses
+      # them alone for these hosts and asks no agent, so a push takes a
+      # touch; the vault's agent keeps every other host. Host names in
+      # lowercase.
+      gitKeys = {
+        "github.com" = [ "/home/alice/.ssh/keys/github-sk" ];
+        "git.example.org" = [ "/home/alice/.ssh/keys/forge-sk" ];
+      };
       # The one disk the installer may write, by model and serial as
       # `lsblk -o NAME,MODEL,SERIAL` prints them. Never by device name: an
       # nvme0n1 can be another disk after the next boot. huginn hides every

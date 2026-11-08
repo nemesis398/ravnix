@@ -16,6 +16,16 @@
 #
 # It is a function of the flake, `import ./hosts/laptop { inherit self
 # inputs; }` (flake.nix, where it gets a key), for the modules it brings.
+#
+# The SSH agent is rbw's (modules/common/rbw.nix), as on the server, not
+# Bitwarden's desktop agent: its keys are the vault's SSH key items, and it
+# asks for the master password only in a terminal. While the vault is
+# locked, ssh and commit signing from a graphical program fail at once with
+# no window to type into; run ai-unlock in a terminal, and again 12 hours
+# later, when it locks itself. The git hosts of ravnix.laptop.gitKeys take
+# the security key and no agent at all (modules/desktop/git-hosts.nix).
+# Every login shell points SSH_AUTH_SOCK at rbw's agent, so one forwarded
+# into it with `ssh -A` is not used.
 { self, inputs }:
 { config, lib, ... }:
 let
