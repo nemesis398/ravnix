@@ -185,6 +185,11 @@
 
     # The graphical applications of the laptop.
     apps = {
+      # Cisco Packet Tracer. Its download needs a Networking Academy login, so
+      # a host that asks for it does not build until you add the file to the
+      # Nix store by hand (modules/desktop/apps.nix has the one command).
+      packetTracer = false;
+
       # The web address of your own Catppuccin userstyles repository, the
       # styles for sites the official collection does not cover. Helium gets a
       # bookmark to it; Stylus takes the styles by a step modules/desktop/apps.nix

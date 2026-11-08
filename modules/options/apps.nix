@@ -26,6 +26,21 @@ let
 in
 {
   options.ravnix.apps = {
+    packetTracer = mkOption {
+      type = types.bool;
+      default = false;
+      example = true;
+      description = ''
+        Install Cisco Packet Tracer. Cisco's download needs a login, so no
+        build can fetch it, and a host that asks for it stops with a message
+        until the file is in the Nix store. That is why it is off unless you
+        say so. The one step is in the header of `modules/desktop/apps.nix`:
+        download `CiscoPacketTracer_901_Ubuntu_64bit.deb` from the Networking
+        Academy and run `nix-store --add-fixed sha256` on it, on the machine
+        that builds the host.
+      '';
+    };
+
     userstylesUrl = mkOption {
       type = types.nullOr ravnix.url;
       default = null;
