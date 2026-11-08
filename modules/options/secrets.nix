@@ -28,9 +28,10 @@ in
         types.submodule {
           options = {
             url = mkOption {
-              # https, a host (and port) without a user, and a path.
-              type = types.strMatching "https://[A-Za-z0-9.-]+(:[0-9]+)?/[^[:space:]@]*[^[:space:]@/]" // {
-                description = "https URL of a repository, without a user";
+              # https, a host in lowercase (and a port) without a user, and
+              # a path.
+              type = types.strMatching "https://[a-z0-9.-]+(:[0-9]+)?/[^[:space:]@]*[^[:space:]@/]" // {
+                description = "https URL of a repository, its host in lowercase, without a user";
               };
               example = "https://git.example.org/alice/private.git";
               description = ''
@@ -63,7 +64,10 @@ in
         HTTPS tokens for git, each for one remote: when git asks for that
         remote's credentials, a helper reads the item with rbw (only while
         the vault is unlocked; it never prompts) and hands git the user and
-        the token, and no other helper of git's sees them. Per host: set it
+        the token. Helpers configured for every URL in your git config are
+        reset for these remotes; one in a repository's config, in
+        ~/.gitconfig or given with -c is not, and a storing one would keep
+        the token (see modules/common/tokens.nix). Per host: set it
         in the host's own module, so that only the host that pushes gets
         the write token.
       '';

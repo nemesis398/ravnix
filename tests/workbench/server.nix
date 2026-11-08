@@ -31,19 +31,26 @@ let
   # An rbw whose vault is locked while ~/rbw-locked exists, and otherwise
   # answers every item with a value made from its name. It records each
   # `get` in ~/rbw.log, so a test can see which item was asked for.
-  fakeRbw = pkgs.writeShellScriptBin "rbw" ''
-    case "$1" in
-      unlocked) [ ! -e "$HOME/rbw-locked" ] ;;
-      get)
-        shift
-        [ "$1" = -- ] && shift
-        [ ! -e "$HOME/rbw-locked" ] || exit 1
-        echo "$1" >>"$HOME/rbw.log"
-        printf 'secret-for:%s\n' "$1"
-        ;;
-      *) exit 0 ;;
-    esac
-  '';
+  # It stands in for rbw 1.15, which the SSH agent module asks for; it has no
+  # agent, so the rbw-agent unit fails here (tests/workbench/rbw.nix runs
+  # the real one).
+  fakeRbw =
+    (pkgs.writeShellScriptBin "rbw" ''
+      case "$1" in
+        unlocked) [ ! -e "$HOME/rbw-locked" ] ;;
+        get)
+          shift
+          [ "$1" = -- ] && shift
+          [ ! -e "$HOME/rbw-locked" ] || exit 1
+          echo "$1" >>"$HOME/rbw.log"
+          printf 'secret-for:%s\n' "$1"
+          ;;
+        *) exit 0 ;;
+      esac
+    '')
+    // {
+      version = "1.15.0";
+    };
 
   # A nextcloudcmd that writes what it was started with: its arguments, and
   # the two variables a non-interactive run reads credentials from.

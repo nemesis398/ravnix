@@ -193,14 +193,24 @@ let
     (lib.optional (
       failed nothing != [ ]
     ) "a host with none of the optional values fails: ${toString (failed nothing)}")
-    # A bare server runs herdr's server and the glue's ravnix-link-deliver,
-    # which delivers queued requests to the laptop from boot (Task 5.3) and
-    # needs none of the optional values; any other unit is one of theirs.
-    (lib.optional (
-      # rbw's agent is no optional value's: every host runs it
-      # (modules/common/rbw.nix).
-      lib.filter (u: u != "herdr-server" && u != "ravnix-link-deliver" && u != "rbw-agent") (unitsOf nothing) != [ ]
-    ) "a host with none of the optional values has units besides herdr, the link and rbw's agent: ${toString (unitsOf nothing)}")
+    (lib.optional
+      (
+        # A bare server runs herdr's server, the glue's ravnix-link-deliver,
+        # which delivers queued requests to the laptop from boot (Task 5.3),
+        # and rbw's agent and its 12-hour lock (modules/common/rbw.nix): none
+        # of them is an optional value's, and any other unit is one of theirs.
+        lib.filter (
+          u:
+          !lib.elem u [
+            "herdr-server"
+            "ravnix-link-deliver"
+            "rbw-agent"
+            "rbw-relock"
+          ]
+        ) (unitsOf nothing) != [ ]
+      )
+      "a host with none of the optional values has units besides herdr, the link and rbw's: ${toString (unitsOf nothing)}"
+    )
 
     # Mail accounts.
     (lib.optional (

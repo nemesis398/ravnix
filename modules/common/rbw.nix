@@ -16,12 +16,16 @@
 # open: each host, guest and account they are authorized for. That is the
 # maintainer's choice (2026-11-08), so that the server works with the lid
 # shut; a separate account with fewer items would be the narrower one.
-# And it lasts: rbw locks after lock_timeout (one hour, rbw's default) with
-# no request, but every read and every SSH signature starts that hour again,
-# so on the server, where the Nextcloud sync reads its password every five
-# minutes, the vault stays unlocked from ai-unlock until a reboot, `rbw
-# lock`, or the agent's restart (tests/workbench/rbw.nix shows a read
-# renewing the timeout).
+# How long it lasts: rbw locks after lock_timeout (one hour, rbw's default)
+# with no request, but every read and every SSH signature starts that hour
+# again, so on the server, where the Nextcloud sync reads its password every
+# five minutes, that timeout alone would never lock it (tests/workbench/
+# rbw.nix shows a read renewing it). So there is a cap, the maintainer's
+# choice (2026-11-08): each unlock arms rbw-relock.timer, and 12 hours
+# later (ravnix.rbw.lockAfter) rbw-relock.service runs `rbw lock`, whatever
+# used the vault in between, and says so in its journal. From then on the
+# syncs stop with status 75 and say the vault is locked, and nothing signs,
+# until the next ai-unlock.
 #
 # The agent runs as a user unit, rbw-agent, from the start of the user's
 # manager (at boot on the server, which lingers): locked, with its sockets
@@ -42,7 +46,21 @@
 # who just typed `ai-unlock` or `rbw get`. Every other request is cancelled
 # at once, so a locked agent refuses an SSH request in a moment and a unit
 # fails instead of hanging (tests/workbench/rbw.nix). A graphical pinentry,
-# which needs no terminal, is therefore never asked either.
+# which needs no terminal, is therefore never asked either: on the laptop a
+# locked vault makes ssh and signing from a graphical program fail, where
+# Bitwarden's desktop agent asked in a window; run ai-unlock in a terminal.
+# One case it cannot tell apart: while ai-unlock waits for the password on
+# a terminal that was also the last rbw command's, an SSH request that
+# arrives then gets a second pinentry on the same terminal, and the typed
+# password goes to whichever reads it. The guard is also where the 12-hour
+# cap is armed: it passes a prompt only to a person who is unlocking.
+#
+# SSH_AUTH_SOCK is set in every login shell, so an agent forwarded with
+# `ssh -A` is replaced by rbw's; nothing in ravnix forwards one. GCR's agent,
+# which GNOME's keyring brings along on the laptop and which would take
+# SSH_AUTH_SOCK in the user manager, is turned off (modules/common/nixos.nix).
+# rbw-agent serves SSH keys since 1.14; an older programs.rbw.package is
+# refused.
 #
 # After a reboot the vault is locked, and `ai-unlock` (in a terminal) is the
 # way back; until then signing fails, and the units that need a secret stop
@@ -95,7 +113,13 @@ let
       }
 
       if waiting; then
-        exec ${lib.getExe cfg.pinentry} "''${args[@]}"
+        # A person is unlocking: arm the cap, which locks again after
+        # ravnix.rbw.lockAfter whatever uses the vault in between.
+        ${
+          lib.optionalString (cfg.lockAfter != null) ''
+            ${pkgs.systemd}/bin/systemctl --user restart rbw-relock.timer 2>/dev/null || true
+          ''
+        }exec ${lib.getExe cfg.pinentry} "''${args[@]}"
       fi
 
       # Nobody waits at a terminal: answer as a pinentry whose user pressed
@@ -139,6 +163,16 @@ let
     exit 1
   '';
 
+  # The cap: lock, and say why, and what stops until the next unlock.
+  relock = pkgs.writeShellScript "rbw-relock" ''
+    if ${rbw}/bin/rbw unlocked >/dev/null 2>&1; then
+      ${rbw}/bin/rbw lock
+      echo "rbw-relock: locked the vault ${toString cfg.lockAfter} after it was unlocked; the syncs and signing stop until the next ai-unlock"
+    else
+      echo "rbw-relock: the vault was locked already (${toString cfg.lockAfter} after the last unlock); run ai-unlock to use it"
+    fi
+  '';
+
   # What rbw runs when no agent answers: the unit.
   starter = pkgs.writeShellScript "rbw-agent-start" ''
     if ${pkgs.systemd}/bin/systemctl --user start rbw-agent.service 2>/dev/null; then
@@ -148,6 +182,18 @@ let
   '';
 in
 {
+  options.ravnix.rbw.lockAfter = lib.mkOption {
+    type = lib.types.nullOr (lib.types.strMatching "[0-9]+(s|min|h|d)");
+    default = "12h";
+    example = "8h";
+    description = ''
+      How long after an unlock rbw-relock.timer locks the vault, however
+      much it was used in between (a time span as systemd writes it). rbw's
+      own lock_timeout counts from the last request and never runs out
+      while a timer reads the vault. Null: no cap.
+    '';
+  };
+
   options.ravnix.rbw.pinentry = lib.mkOption {
     type = lib.types.package;
     default = pkgs.pinentry-curses;
@@ -167,6 +213,31 @@ in
         email = lib.mkDefault secrets.rbwEmail;
         base_url = lib.mkDefault secrets.rbwBaseUrl;
         pinentry = lib.mkDefault guard;
+      };
+    };
+
+    assertions = [
+      {
+        assertion = lib.versionAtLeast (config.programs.rbw.package.version or "0") "1.14";
+        message = "programs.rbw.package is rbw ${
+          config.programs.rbw.package.version or "of no known version"
+        }; rbw's agent serves SSH keys from 1.14 on, and ravnix's SSH agent is that one.";
+      }
+    ];
+
+    systemd.user.timers.rbw-relock = lib.mkIf (cfg.lockAfter != null) {
+      Unit.Description = "Lock the vault ${cfg.lockAfter} after it was unlocked";
+      # Armed by an unlock (the guard), never at boot: no Install section.
+      Timer = {
+        OnActiveSec = cfg.lockAfter;
+        AccuracySec = "1min";
+      };
+    };
+    systemd.user.services.rbw-relock = lib.mkIf (cfg.lockAfter != null) {
+      Unit.Description = "Lock the vault, ${cfg.lockAfter} after it was unlocked";
+      Service = {
+        Type = "oneshot";
+        ExecStart = "${relock}";
       };
     };
 

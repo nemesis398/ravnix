@@ -127,6 +127,12 @@ in
     extraGroups = [ "wheel" ];
   };
 
+  # rbw's agent is the SSH agent (./rbw.nix). GCR's, which NixOS turns on
+  # with GNOME's keyring, would take SSH_AUTH_SOCK in the user manager from
+  # it (its socket unit runs `systemctl --user set-environment`), and user
+  # units would get an agent with no key.
+  services.gnome.gcr-ssh-agent.enable = lib.mkDefault false;
+
   home-manager = {
     # The packages of the system, so a home-manager package is the system's
     # build and nixpkgs is evaluated once; and installed into the user's

@@ -13,8 +13,18 @@
 #     gets nothing. A URL that names another user than the token's gets
 #     nothing either.
 #   - The remote's helper list starts empty (the empty `helper =` line), so
-#     a helper configured for every URL, `store` or `cache`, neither answers
-#     for it nor is handed the token to keep.
+#     a helper configured for every URL in the user's config, `store` or
+#     `cache`, neither answers for it nor is handed the token to keep.
+#     That holds only for helpers git reads before this line. A
+#     credential.helper in ~/.gitconfig (read after ~/.config/git/config),
+#     in a repository's .git/config, or given with -c comes after it, and git
+#     hands it the token on every success: `store` then writes it in clear
+#     to ~/.git-credentials, where it outlives the vault's lock and a reboot
+#     (tests/workbench/rbw.nix shows it). Configure no storing helper there
+#     on a host with tokens.
+#   - git passes the host as written in the remote, and finds the section
+#     without regard to case; the helper lowercases the host before it
+#     compares, and the option takes the host in lowercase only.
 #   - It never prompts: with the vault locked it says so and gives nothing,
 #     and git then asks its own way (or fails, with GIT_TERMINAL_PROMPT=0
 #     in a unit). The token goes from rbw to git through a pipe, never onto
@@ -45,7 +55,7 @@ let
       done
       # store and erase: there is nothing to keep, and nothing to forget.
       [[ $action == get ]] || exit 0
-      [[ -n $path && "$protocol://$host/$path" == "$url" ]] || exit 0
+      [[ -n $path && "$protocol://''${host,,}/$path" == "$url" ]] || exit 0
       say() { printf 'ravnix-git-token: %s\n' "$*" >&2; }
       if [[ -n $asked_user && $asked_user != "$user" ]]; then
         say "$url asks for the user $asked_user, and the token is $user's; giving none"

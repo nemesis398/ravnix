@@ -51,6 +51,13 @@ let
     laptop = build [ self.nixosModules.laptop ];
     server = server { };
   };
+  # The laptop with GNOME's keyring on, as its desktop apps want it: GCR's
+  # SSH agent comes along by default and would take SSH_AUTH_SOCK in the user
+  # manager (its socket unit runs systemctl --user set-environment).
+  keyring = build [
+    self.nixosModules.laptop
+    { services.gnome.gnome-keyring.enable = true; }
+  ];
   hm = s: s.config.home-manager.users.${user};
   failed = s: map (a: a.message) (lib.filter (a: !a.assertion) s.config.assertions);
   # A module that does not evaluate: its type is wrong.
@@ -115,6 +122,16 @@ let
         h.systemd.user.sessionVariables.${var} or null == "1"
       ) "${name}: the user manager lacks ${var}=1"
     ) telemetry
+    # The vault locks 12 h after an unlock at the latest: the guard arms the
+    # timer when a person unlocks, and the timer does not start at boot.
+    ++ check (
+      (h.systemd.user.timers.rbw-relock.Timer.OnActiveSec or null) == "12h"
+      && !(h.systemd.user.timers.rbw-relock ? Install)
+    ) "${name}: no rbw-relock timer 12 h after an unlock, or one that starts by itself"
+    ++ check (lib.hasInfix "rbw-relock" (
+      toString (h.systemd.user.services.rbw-relock.Service.ExecStart or "")
+    )) "${name}: no rbw-relock service"
+    ++ check (!s.config.services.gnome.gcr-ssh-agent.enable) "${name}: GCR's SSH agent is on"
     # Without tokens, no helper of ravnix's is in git's configuration.
     ++ check (
       !lib.hasInfix "ravnix-git-token" (builtins.toJSON (h.programs.git.settings.credential or { }))
@@ -166,6 +183,39 @@ let
       };
       says = "the server's own";
     };
+    "a token for a host written with capitals (git asks in lowercase)" = {
+      s = server {
+        ravnix.secrets.gitTokens = lib.mkForce [
+          (token // { url = "https://Git.example.org/alice/private.git"; })
+        ];
+      };
+      type = true;
+    };
+    "a deploy from loopback written as 0::1" = {
+      s = server {
+        ravnix.server.deployKeys = lib.mkForce [ proxmox.publicKey ];
+        ravnix.server.deployFrom = lib.mkForce [ "0::1" ];
+      };
+      says = "the server's own";
+    };
+    "a deploy from loopback written in full" = {
+      s = server {
+        ravnix.server.deployKeys = lib.mkForce [ proxmox.publicKey ];
+        ravnix.server.deployFrom = lib.mkForce [ "0000:0000:0000:0000:0000:0000:0000:0001" ];
+      };
+      says = "the server's own";
+    };
+    "an rbw without an SSH agent (before 1.14)" = {
+      s = server {
+        home-manager.users.${user}.programs.rbw.package = lib.mkForce (
+          pkgs.rbw.overrideAttrs {
+            version = "1.13.2";
+            __intentionallyOverridingVersion = true;
+          }
+        );
+      };
+      says = "1.14";
+    };
     "the Proxmox update key as a deploy key" = {
       s = server {
         ravnix.server.proxmoxUpdate = lib.mkForce proxmox;
@@ -181,6 +231,10 @@ let
   helper = lib.last (credential.${token.url}.helper or [ "" ]);
   failures =
     lib.concatLists (lib.mapAttrsToList perShape shapes)
+    ++ check (
+      !keyring.config.services.gnome.gcr-ssh-agent.enable
+      && keyring.config.services.gnome.gnome-keyring.enable
+    ) "with GNOME's keyring on, GCR's SSH agent is on too and takes SSH_AUTH_SOCK from rbw's agent"
     # The token helper: for its remote alone, its helper list reset first,
     # so a helper that stores (store, cache) never sees the token, and with
     # the path in the request, which the helper compares.

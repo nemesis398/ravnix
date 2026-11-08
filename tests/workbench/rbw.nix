@@ -309,6 +309,9 @@ pkgs.testers.runNixOSTest {
         code, out = fill(REMOTE)
         assert code == 0, out
         assert "username=${forgeUser}\npassword=" + TOKEN + "\n" in out, out
+        # The host as git passes it, whatever its case: the same server.
+        code, out = fill("https://FORGE.Test:8443/" + USER + "/private.git")
+        assert code == 0 and "password=" + TOKEN + "\n" in out, out
         # Another repository of the same user, the bare host, another host,
         # plain http, another user in the URL, a path that only starts the
         # same: no token, and git has nowhere else to get one.
@@ -337,6 +340,16 @@ pkgs.testers.runNixOSTest {
         machine.succeed("rm /tmp/forge.log")
         as_user("GIT_SSL_CAINFO=${cert}/cert.pem GIT_TERMINAL_PROMPT=0 git ls-remote https://forge.test:8443/" + USER + "/other.git", False)
         assert " None" in machine.succeed("cat /tmp/forge.log") and "Basic" not in machine.succeed("cat /tmp/forge.log")
+
+    with subtest("the limit: a storing helper configured after the reset, in a repository, is handed the token"):
+        # git reads the repository's config after the user's, so its helper
+        # comes after the empty helper line that resets the list. What this
+        # shows is documented (modules/common/tokens.nix): do not configure
+        # store or cache in a repository or with -c on a host with tokens.
+        as_user("cd ~/repo && git config credential.helper store")
+        as_user("cd ~/repo && printf 'url=%s\\nusername=${forgeUser}\\npassword=%s\\n\\n' " + shlex.quote(REMOTE) + " " + shlex.quote(TOKEN) + " | git credential approve")
+        assert TOKEN in as_user("cat ~/.git-credentials")
+        as_user("rm ~/.git-credentials && cd ~/repo && git config --unset credential.helper")
 
     with subtest("the token helper says so and gives nothing when the item is missing"):
         code, out = fill("https://forge.test:8443/" + USER + "/missing.git")
@@ -381,6 +394,28 @@ pkgs.testers.runNixOSTest {
         as_user("rm ~/.config/rbw/config.json")
         machine.succeed("systemctl restart home-manager-" + USER + ".service")
         as_user("test -L ~/.config/rbw/config.json")
+        # The agent reads its config at its start.
+        as_user("systemctl --user restart rbw-agent.service")
+
+    with subtest("an unlock arms the 12-hour lock, which locks the vault and says so"):
+        as_user("systemctl --user stop rbw-relock.timer")
+        # A request the guard refuses arms nothing.
+        ssh_add_fails_fast()
+        assert as_user("systemctl --user is-active rbw-relock.timer", False)[1].strip() == "inactive"
+        on_terminal("ai-unlock")
+        assert as_user("systemctl --user is-active rbw-relock.timer").strip() == "active"
+        timer = as_user("systemctl --user cat rbw-relock.timer")
+        assert "OnActiveSec=12h" in timer, timer
+        # The 12 hours, as if they had passed.
+        as_user("systemctl --user start rbw-relock.service")
+        assert as_user("rbw unlocked", False)[0] != 0
+        said = as_user("journalctl --user -u rbw-relock.service --no-pager -o cat")
+        assert "ai-unlock" in said and "12h" in said, said
+        # What needs the vault says that it is locked, and stops.
+        code, _ = as_user("systemctl --user start nextcloud-sync.service", False)
+        assert code != 0
+        assert "locked" in as_user("journalctl --user -u nextcloud-sync.service --no-pager -o cat"), "nextcloud-sync does not say the vault is locked"
+        ssh_add_fails_fast()
 
     with subtest("after a reboot the agent is locked, refuses at once, and ai-unlock brings it back"):
         on_terminal("ai-unlock")
@@ -401,9 +436,18 @@ pkgs.testers.runNixOSTest {
         old = as_user("systemctl --user show -p MainPID --value rbw-agent.service").strip()
         as_user("rbw stop-agent")
         # rbw stop-agent waits for the agent to exit, which ends the unit
-        # without a failure: nothing restarts it.
+        # without a failure: nothing restarts it. The state is read with
+        # as_user and compared here: `systemctl is-active` exits 3 for
+        # inactive, and the driver runs a command line with pipefail, so a
+        # `... | grep -qx inactive` never succeeds (that, not a restart, was
+        # why the first runs of this test timed out here).
         machine.fail("test -e /proc/" + old)
-        assert as_user("systemctl --user is-active rbw-agent.service", False)[1].strip() == "inactive"
+        for _ in range(10):
+            state = as_user("systemctl --user is-active rbw-agent.service", False)[1].strip()
+            if state == "inactive":
+                break
+            machine.sleep(1)
+        assert state == "inactive", state + "\n" + as_user("systemctl --user status rbw-agent.service --no-pager 2>&1; journalctl --user -u rbw-agent.service --no-pager -n 30 2>&1", False)[1]
         on_terminal("ai-unlock")
         assert as_user("systemctl --user is-active rbw-agent.service").strip() == "active"
         # One agent, the unit's.

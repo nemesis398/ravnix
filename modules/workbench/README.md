@@ -26,11 +26,14 @@ choice. rbw's agent runs on both hosts the same way (`modules/common/rbw.nix`):
   unlocked and is your SSH agent: `SSH_AUTH_SOCK` is
   `$XDG_RUNTIME_DIR/rbw/ssh-agent-socket` in the shell and in the user manager,
   so a commit signs from a terminal, from Claude Code and from a user unit.
-- It stays unlocked as long as something uses it. rbw locks after
-  `lock_timeout` (an hour) without a request, but every read and every signature
-  starts the hour again, and the Nextcloud sync reads its password every five
-  minutes: in practice the vault stays unlocked from `ai-unlock` until a reboot,
-  `rbw lock`, or a restart of the agent.
+- **It locks 12 hours after each unlock**, whatever used it in between:
+  `rbw-relock.timer` is armed when you unlock, and `rbw-relock.service` then
+  runs `rbw lock` and says so in its journal (`journalctl --user -u
+  rbw-relock`). rbw's own `lock_timeout` (an hour) would never run out here,
+  because every read and every signature starts it again and the Nextcloud sync
+  reads every five minutes. After the 12 hours the syncs stop with status 75
+  and say the vault is locked, and nothing signs, until the next `ai-unlock`.
+  `ravnix.rbw.lockAfter` (home-manager) changes the 12 hours.
 - A locked agent asks nobody. It refuses an SSH signature, a token or a read at
   once, unless an `rbw` command waits on a terminal for the master password (as
   `ai-unlock` does). A commit or a unit fails instead of waiting for a prompt in
@@ -38,15 +41,34 @@ choice. rbw's agent runs on both hosts the same way (`modules/common/rbw.nix`):
 - `ravnix.secrets.gitTokens` gives git an HTTPS token for exactly one remote
   each (set it in the server's host module: the update timer pushes the private
   flake with the write token). Another repository, host, scheme or user gets
-  nothing, and no other credential helper is handed the token to keep.
-- `ravnix.server.proxmoxUpdate` names the one key the server offers a Proxmox
-  node, at `ssh <alias>`. The node must take it with a forced command only, in
-  that user's `~/.ssh/authorized_keys` there:
+  nothing. A credential helper set for every URL in your git config is reset
+  for that remote; one in a repository's `.git/config`, in `~/.gitconfig` or
+  given with `-c` is not, and `store` there would write the token to
+  `~/.git-credentials`. Configure none on a host with tokens.
+- `ravnix.server.proxmoxUpdate` names the key the server's tools use for a
+  Proxmox node, at `ssh <alias>`. The node takes it with a forced command only,
+  in that user's `~/.ssh/authorized_keys` there:
   `command="/path/to/update-script",restrict ssh-ed25519 AAAA...`. ravnix does
   not configure the node; that line is yours to write.
-- No key the agent serves may open the server's root: the deploy keys are
-  root's, on a security key, and `ravnix.server.deployFrom` may name none of the
-  server's own addresses (an assertion says so).
+- **Known gap, accepted (2026-11-08): the agent serves every SSH key in the
+  vault, the Proxmox nodes' root keys among them.** While the vault is
+  unlocked, any agent on the server can log in to a node as root,
+  unrestricted, wherever the network lets the server reach it, and root on the
+  hypervisor is root on the server's disk. The forced-command key restricts
+  only itself. The same holds for every host a vault key opens, and for the
+  vault's touch-free git keys, which Task 5.4's blocks keep away from the git
+  host names but not from an alias, a trailing dot or an address. What would
+  close it: a vault account for the server with fewer items, or a
+  `from="!<server's addresses>,*"` on each node's root keys.
+- ssh offers every key of the agent to every host it connects to, unless a
+  block with `IdentitiesOnly` and the host's own public key says otherwise: a
+  host whose key comes late refuses with "Too many authentication failures",
+  and every server sees all your public keys. Pin a key for each host you use
+  from here.
+- The deploy keys are root's, on a security key (which rbw's agent cannot
+  serve), and `ravnix.server.deployFrom` may name none of the server's own
+  addresses (its NetBird address, a loopback address in any spelling; an
+  assertion says so). Its LAN address is in no option: keep it out by hand.
 
 ## Units
 
@@ -60,6 +82,7 @@ login (`users.users.<user>.linger`).
 | `vdirsyncer.timer` | the feeds, then discover, metasync and sync of calendars and contacts, every quarter hour | yes, except for the feeds |
 | `claude-remote-control.service` | Remote Control, as the development VM before it had it | no |
 | `rbw-agent.service` | rbw's agent and the SSH agent, locked from boot until `ai-unlock` | it is the vault |
+| `rbw-relock.timer` | locks the vault 12 hours after each unlock; armed by the unlock, not at boot | it locks it |
 
 ## Steps by hand
 
@@ -68,9 +91,8 @@ These cannot be declared, because each one is a login or a secret.
 1. **Unlock the vault** after every boot of the server (`ai-unlock`, in a
    terminal: over ssh or in a herdr pane). Until then nothing signs, and a unit
    that needs the vault stops, says that it is locked, and fails with status 75;
-   it runs again at its next tick. rbw's `lock_timeout` (an hour) counts from the
-   last request, and the Nextcloud sync makes one every five minutes, so after
-   `ai-unlock` the vault stays unlocked until the next reboot (see above).
+   it runs again at its next tick. The vault locks again 12 hours after each
+   unlock (see above), so unlock it again then.
 2. **Nextcloud and the calendar.** Make an app password in Nextcloud (Settings,
    Security, Create new app password) and put it into the vault as the item that
    `passwordItem` names. The first run of `nextcloud-sync` copies the whole of
@@ -121,9 +143,11 @@ These cannot be declared, because each one is a login or a secret.
   terminal, and a unit has no such shell. The unit starts at boot, while the
   vault is still locked, so reading them at its start would find nothing
   either; token-backed MCP servers fail in those sessions. Left so (Task 4.3).
-- After a reboot of the server, nothing tells you that the vault waits for
-  `ai-unlock`: the syncs fail with status 75 and stall until you unlock, and a
-  vault copy that does not sync is one the agents commit stale.
+- After a reboot of the server, or 12 hours after the last unlock, nothing
+  tells you that the vault waits for `ai-unlock` but the journal
+  (`rbw-relock`, and the syncs' own lines): the syncs fail with status 75 and
+  stall until you unlock, and a vault copy that does not sync is one the agents
+  commit stale. A message to Matrix (Task 5.6) would reach the phone.
 - The Remote Control unit is not rolled by `claude-roll` (it is not a herdr pane),
   so Task 6.1 must restart it after a Claude Code update.
 - herdr's notifications are set to `terminal` (ask the terminal that is attached);
