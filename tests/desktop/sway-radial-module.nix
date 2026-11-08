@@ -74,6 +74,15 @@ let
   # A path in the store that comes from a derivation, as a string with context:
   # nothing to copy, so it is fine.
   inTheStore = host [ { ravnix.desktop.radial.menu = lib.mkForce "${package}/lib/sway-radial/menu.toml"; } ];
+  # A store path typed out as a path literal: it is a Nix path under the store,
+  # but not one of the flake's source, and the same copy fails the same way.
+  storeLiteral = host [
+    { ravnix.desktop.radial.menu = lib.mkForce /nix/store/00000000000000000000000000000000-menu.toml; }
+  ];
+  # A derivation, as a module of the user's flake can give one (it has pkgs).
+  # Its value is an attribute set, not a string.
+  drvMenu = pkgs.writeText "menu.toml" (builtins.readFile ownMenu);
+  drv = host [ { ravnix.desktop.radial.menu = lib.mkForce drvMenu; } ];
   bad =
     value:
     (builtins.tryEval (
@@ -139,6 +148,15 @@ let
     ++ lib.optional (
       lib.length (refusals literal) != 1
     ) "an absolute path literal outside the flake is not refused once: ${toString (refusals literal)}"
+    ++ lib.optional (
+      lib.length (refusals storeLiteral) != 1
+    ) "a store path typed out as a path literal is not refused once: ${toString (refusals storeLiteral)}"
+    # A derivation is linked as it is: nothing to refuse, and the file the unit
+    # reads is the derivation's.
+    ++ lib.optional (refusals drv != [ ]) "a derivation as the menu is refused: ${toString (refusals drv)}"
+    ++ lib.optional (
+      toString (linkedMenu drv) != toString drvMenu
+    ) "the file the unit reads is not the derivation's: ${toString (linkedMenu drv)}"
     ++ lib.optional (bad { menu = "menu.toml"; }) "a relative menu path is accepted"
     ++ lib.optional (bad { menu = 5; }) "a number is accepted as the menu"
     ++ lib.optional (bad { menu = [ ownMenu ]; }) "a list is accepted as the menu"

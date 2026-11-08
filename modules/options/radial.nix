@@ -13,12 +13,13 @@
       Your own menu for the radial launcher, as a TOML file: a path in your
       flake (`./radial/menu.toml`; the flake's source is in the store, and
       Nix copies the file with it), or a store path that comes from a
-      derivation (a string with string context). Nothing else is read: a
-      string that names a file outside the store, a store path typed out as plain text (it has no
-      context, so Nix does not know it) and a path literal outside your flake
-      are refused with a message that names this option, because a flake
-      evaluates purely and could not copy them. The file is a copy, so a change
-      of the menu takes a rebuild, which restarts the launcher.
+      derivation (a string with string context, or the derivation itself).
+      Nothing else is read: a string that names a file outside the store, a
+      store path typed out (as plain text, which has no context so Nix does
+      not know it, or as an unquoted path literal) and a path literal outside
+      your flake are refused with a message that names this option, because a
+      flake evaluates purely and could not copy them. The file is a copy, so a
+      change of the menu takes a rebuild, which restarts the launcher.
 
       The menu decides what the eight sectors of the ring hold and what each
       one runs; the default menu at `packages/sway-radial/menu.toml` in ravnix

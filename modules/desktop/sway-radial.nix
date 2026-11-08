@@ -60,31 +60,35 @@ let
   chosen = config.ravnix.desktop.radial.menu;
 in
 {
-  # What home-manager can link: a path of the flake (the flake's source is in
-  # the store, so the path is too), or a string that Nix knows to be a store
-  # path, which is to say one with string context (it comes from a derivation).
-  # Anything else it copies with builtins.path, and a flake evaluates purely, so
-  # that stops with "access to absolute path is forbidden", which does not say
-  # which option is wrong. That covers a string naming a file outside the store,
-  # a store path typed out as text (no context, so Nix does not know it), and a
-  # path literal outside the flake. (An impure evaluation would only copy a
-  # snapshot, not link the live file.)
+  # What home-manager can link: a path of the flake, or a string or derivation
+  # that Nix knows to be a store path, which is to say one with string context
+  # (it comes from a derivation). Anything else it copies with builtins.path,
+  # and a flake evaluates purely, so that stops with "access to absolute path
+  # is forbidden", which does not say which option is wrong. That covers a
+  # string naming a file outside the store, a store path typed out as text (no
+  # context, so Nix does not know it), a path literal outside the flake, and a
+  # store path typed out as a path literal. The last one is under the store
+  # like a path of the flake, but the flake's source is the one store object
+  # that a path value can name and be read, and its name is "source" (every
+  # fetched or copied flake tree is called that), so that is what a path value
+  # has to start with. (An impure evaluation would only copy a snapshot, not
+  # link the live file.)
   assertions = [
     {
       assertion =
         chosen == null
         || (
           if builtins.isPath chosen then
-            lib.hasPrefix "${builtins.storeDir}/" (toString chosen)
+            builtins.match "${lib.escapeRegex builtins.storeDir}/[0-9a-z]{32}-source(/.*)?" (toString chosen) != null
           else
-            builtins.hasContext chosen
+            builtins.hasContext (toString chosen)
         );
       message = ''
         ravnix.desktop.radial.menu is ${toString chosen}, which a pure evaluation cannot read.
         Set it to a path of your flake (./radial/menu.toml) or to a store path that comes from a
-        derivation. A string that names a file outside the store, a store path typed out as text
-        and a path outside your flake are refused: a flake evaluates purely, and a copy would be a
-        snapshot, so a change of the menu is a rebuild.
+        derivation. A string that names a file outside the store, a store path typed out (as text,
+        or as a path without quotes) and a path outside your flake are refused: a flake evaluates
+        purely, and a copy would be a snapshot, so a change of the menu is a rebuild.
       '';
     }
   ];

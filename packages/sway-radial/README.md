@@ -173,5 +173,5 @@ against the `.desktop` files of the machine it runs on.
   `desktop-sway` starts the service, opens the ring with `SIGUSR1`, looks at
   the pixels and clicks an application of its own menu with the pointer (the
   app has to run outside the service's cgroup, with the session's environment,
-  and to survive a restart of the service); the `compositor` tests (`tests/smoke`) read the layer-shell
-  configuration back on a live session.
+  and to survive a restart of the service); the `compositor` tests
+  (`tests/smoke`) read the layer-shell configuration back on a live session.
