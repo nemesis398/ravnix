@@ -96,7 +96,7 @@ pkgs.testers.runNixOSTest {
     };
 
   nodes.huginn =
-    { pkgs, ... }:
+    { pkgs, lib, ... }:
     {
       imports = [
         common
@@ -104,6 +104,9 @@ pkgs.testers.runNixOSTest {
         self.nixosModules.glue
       ];
       ravnix.shape = "laptop";
+      # The template's key for muninn's laptop access would ask for NetBird,
+      # which this test has no use for; laptop access has its own test.
+      ravnix.laptopAccess.publicKey = lib.mkForce null;
       ravnix.link.programs = {
         # A target with "bleibt" starts a process that stays, as a browser
         # that xdg-open started would.
