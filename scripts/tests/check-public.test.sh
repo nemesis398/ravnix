@@ -17,6 +17,7 @@ check="$here/../check-public.sh"
 tree=""
 list=""
 fake_bin=""
+fake_log=""
 
 # Creates an empty fixture tree and a deny list holding the arguments, one
 # entry per line.
@@ -330,9 +331,12 @@ a_name_hit_names_the_list_line() {
 # A made-up rg that records how it was called and then runs the real one, or
 # fails when RG_FAIL is set. For each --file it notes the directory of the
 # file and the modes of both. The caller puts fake_bin first on the PATH and
-# gives it RG_LOG, the file to write, and REAL_RG, the rg to run.
+# gives it RG_LOG, the file to write, and REAL_RG, the rg to run. Each call
+# makes its own log, fake_log: the tests of one file share a scratch directory,
+# and a log that outlives its test would hold the directories of another run.
 fake_rg() {
 	fake_bin="$(mktemp -d -p "$scratch")"
+	fake_log="$(mktemp -p "$scratch")"
 	{
 		printf '#!%s\n' "$BASH"
 		cat <<'SCRIPT'
@@ -357,26 +361,26 @@ the_entries_stay_off_the_command_line_and_in_a_private_file() {
 	put a.md 'zq-made-up-token-7731\n'
 	ln -s /home/second-made-up-entry "$tree/lnk"
 	fake_rg
-	capture in_tree env PATH="$fake_bin:$PATH" RG_LOG="$scratch/rg.log" REAL_RG="$(command -v rg)" "$check" "$list" .
+	capture in_tree env PATH="$fake_bin:$PATH" RG_LOG="$fake_log" REAL_RG="$(command -v rg)" "$check" "$list" .
 	expect_status 1
 	# Every search ran, contents and links (a name that holds an entry is the
 	# file's own path, which any search of the file has to be given), and
 	# none was handed an entry as an argument.
 	local log
-	log="$(cat "$scratch/rg.log")"
+	log="$(cat "$fake_log")"
 	[[ "$log" != *zq-made-up-token* && "$log" != *second-made-up-entry* ]] || {
 		echo "  an entry was on rg's command line: $log"
 		return 1
 	}
 	local files
-	files="$(grep -c '^FILE ' "$scratch/rg.log")"
+	files="$(grep -c '^FILE ' "$fake_log")"
 	((files >= 4)) || {
 		echo "  expected the entries to be read from files in every search, got $files: $log"
 		return 1
 	}
 	# Each file is the owner's alone, in a directory that is the owner's alone,
 	# and the directory is gone when the check ends.
-	[[ -z "$(grep '^FILE ' "$scratch/rg.log" | awk '$3 != "600" || $4 != "700"')" ]] || {
+	[[ -z "$(grep '^FILE ' "$fake_log" | awk '$3 != "600" || $4 != "700"')" ]] || {
 		echo "  an entries file or its directory is open to others: $log"
 		return 1
 	}
@@ -386,21 +390,29 @@ the_entries_stay_off_the_command_line_and_in_a_private_file() {
 			echo "  $dir is still there after the check"
 			return 1
 		}
-	done < <(grep '^FILE ' "$scratch/rg.log" | awk '{ print $2 }' | sort -u)
+	done < <(grep '^FILE ' "$fake_log" | awk '{ print $2 }' | sort -u)
 }
 
 the_private_directory_is_removed_when_the_search_fails() {
 	new_tree 'zq-made-up-token-7731'
 	put a.md 'zq-made-up-token-7731\n'
 	fake_rg
-	capture in_tree env PATH="$fake_bin:$PATH" RG_LOG="$scratch/rg.log" REAL_RG="$(command -v rg)" RG_FAIL=1 "$check" "$list" .
+	capture in_tree env PATH="$fake_bin:$PATH" RG_LOG="$fake_log" REAL_RG="$(command -v rg)" RG_FAIL=1 "$check" "$list" .
 	expect_status 2
 	expect_err "the search failed"
 	expect_no_err "zq-made-up-token"
-	local dir
-	dir="$(grep '^FILE ' "$scratch/rg.log" | awk '{ print $2 }' | sort -u)"
-	[[ -n "$dir" && ! -e "$dir" ]] || {
-		echo "  the private directory '$dir' is still there after a failed search"
+	# One directory, made by this run, and gone. Each line is looked at on its
+	# own: a name with a newline in it is not one test of existence.
+	local dir n=0
+	while read -r dir; do
+		n=$((n + 1))
+		[[ -n "$dir" && ! -e "$dir" ]] || {
+			echo "  the private directory '$dir' is still there after a failed search"
+			return 1
+		}
+	done < <(grep '^FILE ' "$fake_log" | awk '{ print $2 }' | sort -u)
+	((n == 1)) || {
+		echo "  expected the log to name the directory of this one run, got $n"
 		return 1
 	}
 }
