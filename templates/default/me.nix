@@ -550,6 +550,14 @@
       tools = [ ];
     };
 
+    # The radial menu behind the four-finger pinch on the trackpad. menu is
+    # your own menu as a TOML file, for example ./radial/menu.toml in your
+    # flake; ravnix's own menu (packages/sway-radial/menu.toml) is the model to
+    # copy. Null keeps ravnix's own menu, which holds nothing that belongs to
+    # one machine: a sink name, a display profile or an app of yours is what a
+    # menu of your own is for.
+    desktop.radial.menu = null;
+
     # What the small scripts (packages/NAME) need of you, besides what they
     # read from claude.skillValues above (web.searxngUrl for searx, vault.root
     # for vault-check, agent-doctor and the Anki deck builders, nextcloud.root

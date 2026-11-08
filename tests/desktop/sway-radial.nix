@@ -8,9 +8,9 @@
 #
 # The tests run on the installed copy (PYTHONPATH is the package's lib), which
 # is the one with the three library names turned into store paths, and the
-# theme file is made from the roles of the theme module: the accent is teal
-# here, so a color that was written into the program instead of read from the
-# file would fail.
+# theme file is the one the module writes for the user's service: the accent is
+# teal here, so a color that was written into the program instead of read from
+# the file would fail. The module's own files are checks.desktop-sway-radial-module.
 #
 # Two lists come from here, because the sandbox has no machine to ask:
 #   the programs the default menu may run, which are the scripts of the Sway
@@ -39,19 +39,19 @@ let
   ]);
 
   hostModules = import ../flake/helpers/host-modules.nix { inherit lib; };
-  user = (import ../../templates/default/me.nix).ravnix.user.username;
-
-  # What theme.py reads: the roles, the font and the line widths. Not the
-  # default accent: see the header.
-  theme =
-    (lib.evalModules {
-      modules = [
-        lib.genericModules.assertions
-        ../../modules/theme/options.nix
-        { ravnix.theme.accent = "teal"; }
-      ];
-    }).config.ravnix.theme;
-  themeFile = pkgs.writeText "theme.json" (builtins.toJSON { inherit (theme) roles font lineWidth; });
+  host = inputs.nixpkgs.lib.nixosSystem {
+    inherit system;
+    modules = hostModules ++ [
+      self.nixosModules.common
+      ../../modules/desktop/sway-radial.nix
+      # Not the default accent: see the header.
+      { ravnix.theme.accent = lib.mkForce "teal"; }
+    ];
+  };
+  user = host.config.ravnix.user.username;
+  unit = host.config.home-manager.users.${user}.systemd.user.services.sway-radial;
+  themeLine = lib.findFirst (lib.hasPrefix "SWAY_RADIAL_THEME=") (throw "the unit sets no SWAY_RADIAL_THEME") unit.Service.Environment;
+  themeFile = lib.removePrefix "SWAY_RADIAL_THEME=" themeLine;
 
   # The desktop module on a stubbed host, for the providers below.
   desktop = inputs.nixpkgs.lib.nixosSystem {

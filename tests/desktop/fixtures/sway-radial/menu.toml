@@ -1,0 +1,8 @@
+# A menu of one item, for tests/desktop/sway-radial-module.nix: it only has to
+# differ from ravnix's own menu and to be a valid one.
+dwell_ms = 500
+
+[[items]]
+dir   = "n"
+label = "Example"
+exec  = "true"

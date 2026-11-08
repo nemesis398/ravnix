@@ -156,7 +156,8 @@ def main():
         expect(re.search(r"^exec_always waybar-launch$", sway, re.M), label("sway/config does not start Waybar"))
         for key in ("mail", "matrix", "vaultwarden", "thunar", "pavucontrol", "blueman"):
             expect(not re.search(rf"^[^#\n]*\b{key}\b", sway, re.M | re.I), label(f"sway/config still mentions {key}, which the design drops"))
-        # The four-finger pinch stays bound, and sway-radial is not needed.
+        # The four-finger pinch stays bound, and the Sway config never calls
+        # sway-radial: a user service runs it (modules/desktop/sway-radial.nix).
         expect(re.search(r"^bindgesture pinch:4 nop$", laptop, re.M), label("50-laptop.conf lost the four-finger pinch bind"))
         expect(re.search(r"^bindgesture hold:4\s+kill$", laptop, re.M), label("50-laptop.conf lost the four-finger hold"))
         for line in (sway + laptop).splitlines():

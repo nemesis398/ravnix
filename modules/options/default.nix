@@ -43,6 +43,7 @@ in
     ./matrix.nix
     ./workbench.nix
     ./backdrop.nix
+    ./radial.nix
     ./backup.nix
     ./dictionary.nix
     ./editor.nix

@@ -13,6 +13,13 @@ top of `sway.nix` and `waybar.nix`; the options are in `modules/options/desktop.
 `evalChecks`, `static`, `styleCheck`, `scriptTests`, `widths`, `udevRules`,
 `seamCheck`, `unsupportedGpu`, `badFragmentFails`, `vm`).
 
+`sway-radial.nix` runs the radial menu behind the four-finger pinch
+(`packages/sway-radial`) as a user service of the Sway session. Its program is
+checked by `tests/desktop/sway-radial.nix` (the pytest suite, in the sandbox),
+its files and unit by `tests/desktop/sway-radial-module.nix`, and the VM stage
+of `desktop-sway` opens the ring and looks at the pixels. The module lists its
+two style exceptions in its header: the round ring, and the countdown arc.
+
 ## Test seams in the scripts
 
 A script puts its runtime inputs first on its `PATH`, so a stub on the `PATH`
@@ -70,8 +77,6 @@ to prove it.
   service and are two options. `sway-ask` finds the Open WebUI window by
   `chrome-<host>__`, so the popup's window key works only when the two hosts
   match. The two are joined where 3.3 lands.
-* **`sway-radial`** (the radial menu behind the four-finger pinch) is deferred;
-  only `bindgesture pinch:4 nop` remains, which is harmless without it.
 * **`power-profiles-daemon` is turned on with `mkDefault`.** If Task 3.4 picks
   another power daemon, it overrides that line.
 * **`CLAUDE_CODE_DISABLE_ARTIFACT`** was set in this module's
