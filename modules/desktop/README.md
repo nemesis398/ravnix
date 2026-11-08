@@ -52,9 +52,9 @@ to prove it.
 * systemd user units do not see home-manager's session variables. Processes
   that Sway starts do (the Sway wrapper reads
   `/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh`). The units
-  get only the two variables of `systemd.user.sessionVariables` in
-  `sway.nix` (the Bitwarden SSH agent socket and `GTK_IM_MODULE`); a unit that
-  needs `QT_QPA_PLATFORMTHEME` would have to be given it there.
+  get only what `systemd.user.sessionVariables` sets, such as `GTK_IM_MODULE`
+  in `sway.nix` and rbw's SSH agent socket in `modules/common/rbw.nix`; a unit
+  that needs `QT_QPA_PLATFORMTHEME` would have to be given it there.
 
 ## Review findings left as they are, with the reason
 

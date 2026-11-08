@@ -508,9 +508,9 @@ in
 
           # The environment of the systemd user units (environment.d), so the
           # tray apps the XDG autostart starts see what the session sees.
+          # The session's SSH agent is rbw's (modules/common/rbw.nix); the
+          # Bitwarden desktop app's agent still listens on its own socket.
           systemd.user.sessionVariables = {
-            # The Bitwarden desktop app's SSH agent.
-            SSH_AUTH_SOCK = "\${HOME}/.bitwarden-ssh-agent.sock";
             # GTK 4 on Sway sends keys through the text-input protocol, which
             # does no Compose handling; the built-in "simple" context does.
             # Drop it if an input method framework is ever installed.
