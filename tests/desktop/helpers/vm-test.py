@@ -165,6 +165,41 @@ found = machine.succeed("cat /tmp/session-path.txt")
 for command in ("keep-awake", "waybar-launch", "waybar-mode", "ghostty-float", "sway-volume"):
     assert f"/bin/{command}" in found, f"{command} is not on the PATH of the Sway session: {found}"
 
+# The GPU the module names is the one the link points at, and Sway started
+# under it: the udev rule matched the PCI address (not a card number), and the
+# variable is in the compositor's environment.
+card = machine.succeed("readlink -f /dev/dri/primary-gpu").strip()
+assert card.startswith("/dev/dri/card"), f"/dev/dri/primary-gpu does not resolve to a card: {card}"
+parent = machine.succeed(f"readlink -f /sys/class/drm/{card.rsplit('/', 1)[1]}/device").strip()
+assert parent.endswith("/" + GPU_ADDRESS), f"the link {card} is the card of {parent}, not of {GPU_ADDRESS}"
+sway_env = machine.succeed(f"tr '\\0' '\\n' < /proc/$(pgrep -u {USER} -x sway | head -n1)/environ")
+assert "WLR_DRM_DEVICES=/dev/dri/primary-gpu" in sway_env.splitlines(), "Sway did not start with WLR_DRM_DEVICES=/dev/dri/primary-gpu"
+
+# home-manager's session variables reach the processes Sway starts, which is
+# what the launcher and the keys are: greetd runs no login shell, so the Sway
+# wrapper reads the file itself. Qt finds its platform theme through one of
+# them; another is a variable this test gave home-manager.
+hm_file = f"/etc/profiles/per-user/{USER}/etc/profile.d/hm-session-vars.sh"
+hm_qt = machine.succeed(f"sed -n 's/^export QT_QPA_PLATFORMTHEME=\"\\(.*\\)\"$/\\1/p' {hm_file}").strip()
+assert hm_qt, f"{hm_file} sets no QT_QPA_PLATFORMTHEME"
+swaymsg("exec", 'echo "qt=$QT_QPA_PLATFORMTHEME test=$RAVNIX_TEST_HM_VAR" > /tmp/hm-vars.txt')
+wait_for("the variables of a process Sway started", lambda: machine.execute("test -s /tmp/hm-vars.txt")[0] == 0, 20)
+seen = machine.succeed("cat /tmp/hm-vars.txt").strip()
+assert seen == f"qt={hm_qt} test=from-home-manager", f"a process started by Sway sees '{seen}', not the variables of home-manager (qt={hm_qt})"
+
+# The login shell can bring those variables along by itself (home-manager's
+# bash writes them into the profile), which would hide a wrapper that does not
+# read them. So the wrapper's own session commands are also run in an empty
+# environment, as greetd would run them for a shell that sources nothing.
+bare = machine.succeed("dirname $(readlink -f $(command -v sway))").strip() + "/.sway-wrapped"
+machine.succeed(f"sed -n '/XDG_CURRENT_DESKTOP=/,/_SWAY_WRAPPER_ALREADY_EXECUTED=1/p' {bare} > /tmp/session-commands.sh")
+machine.succeed("test $(wc -l < /tmp/session-commands.sh) -gt 3")
+machine.succeed(
+    "printf '%s\\n' '. /tmp/session-commands.sh' 'echo \"qt=$QT_QPA_PLATFORMTHEME test=$RAVNIX_TEST_HM_VAR\"' > /tmp/probe.sh"
+)
+bare_seen = machine.succeed(f"su {USER} -c 'env -i HOME=/home/{USER} USER={USER} PATH=/run/current-system/sw/bin bash -e /tmp/probe.sh'").strip()
+assert bare_seen == f"qt={hm_qt} test=from-home-manager", f"the Sway wrapper's session commands leave '{bare_seen}' in an empty environment, not the variables of home-manager"
+
 # Waybar has been up long enough to have failed on a bad config or stylesheet.
 machine.sleep(5)
 assert waybars() == 1, "Waybar is not running once"

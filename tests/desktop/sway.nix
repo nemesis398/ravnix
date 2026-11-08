@@ -46,6 +46,101 @@ let
   mauve = hostOf [ ];
   teal = hostOf [ { ravnix.theme.accent = lib.mkForce "teal"; } ];
   gpu = hostOf [ { ravnix.desktop.gpu.primary = "0000:36:00.0"; } ];
+  # huginn as the private flake builds it: the laptop shape (which brings the
+  # desktop) and the 16AHP9 module, with the template's values. Not the
+  # host-modules stub: the shape has file systems and a boot loader of its own.
+  huginnOf =
+    modules:
+    inputs.nixpkgs.lib.nixosSystem {
+      modules = [
+        me
+        { system.stateVersion = "26.05"; }
+        self.nixosModules.laptop
+        self.nixosModules.hardware-ideapad-pro-5-16ahp9
+      ] ++ modules;
+    };
+  huginn = huginnOf [ ];
+  # The iGPU's bus not given, given as Intel's, given wrongly, and the address set by hand.
+  huginnNoIds = huginnOf [ { hardware.nvidia.prime.amdgpuBusId = lib.mkForce ""; } ];
+  huginnIntel = huginnOf [
+    {
+      hardware.nvidia.prime = {
+        amdgpuBusId = lib.mkForce "";
+        intelBusId = "PCI:0:2:0";
+      };
+    }
+  ];
+  huginnBadId = huginnOf [ { hardware.nvidia.prime.amdgpuBusId = lib.mkForce "PCI:300:0:0"; } ];
+  huginnByHand = huginnOf [ { ravnix.desktop.gpu.primary = "0000:05:00.0"; } ];
+  # The proprietary driver on a host that is not huginn, and PRIME on one
+  # that has no bus id.
+  nvidiaDesktop = hostOf [ { services.xserver.videoDrivers = [ "nvidia" ]; } ];
+  # (host-modules.nix forces `warnings` empty, so a warning is read from a host
+  # of its own: the same stub without that line.)
+  bareOf =
+    modules:
+    inputs.nixpkgs.lib.nixosSystem {
+      inherit system;
+      modules = [
+        me
+        {
+          system.stateVersion = "26.05";
+          boot.loader.grub.enable = false;
+          fileSystems."/" = {
+            device = "none";
+            fsType = "tmpfs";
+          };
+        }
+        self.nixosModules.desktop
+      ] ++ modules;
+    };
+  bare = bareOf [ ];
+  primeDesktop = bareOf [ { hardware.nvidia.prime.offload.enable = true; } ];
+  gpuWarnings = host: lib.filter (w: lib.hasInfix "ravnix.desktop.gpu.primary" w) host.config.warnings;
+
+  # NixOS's bus id (decimal, no domain) to the address udev matches.
+  pci = import ../../lib/pci.nix { inherit lib; };
+  pciCases = [
+    [ "PCI:54:0:0" "0000:36:00.0" ] # the 16AHP9's 780M
+    [ "PCI:1:0:0" "0000:01:00.0" ] # its RTX 4050
+    [ "PCI:0:2:0" "0000:00:02.0" ]
+    [ "PCI:9:0:0" "0000:09:00.0" ]
+    [ "PCI:10:0:0" "0000:0a:00.0" ] # a bus above 9: a hex letter, lower case
+    [ "PCI:15:0:0" "0000:0f:00.0" ]
+    [ "PCI:16:0:0" "0000:10:00.0" ] # above 15: two hex digits
+    [ "PCI:58:0:0" "0000:3a:00.0" ]
+    [ "PCI:255:0:0" "0000:ff:00.0" ]
+    [ "PCI:0:13:1" "0000:00:0d.1" ] # a device above 9
+    [ "PCI:0:31:7" "0000:00:1f.7" ] # the highest device and function
+    [ "PCI:054:0:0" "0000:36:00.0" ] # a leading zero is still decimal
+    [ "pci:54:0:0" "0000:36:00.0" ]
+    [ "PCI:256:0:0" null ]
+    [ "PCI:0:32:0" null ]
+    [ "PCI:0:0:8" null ]
+    [ "PCI:a:0:0" null ]
+    [ "PCI:54:0" null ]
+    [ "PCI:1000:0:0" null ]
+    [ "pci@0000:36:00.0" null ]
+    [ "" null ]
+  ];
+  pciWrong = lib.filter (c: pci.fromBusId (lib.elemAt c 0) != lib.elemAt c 1) pciCases;
+  pciNotAnAddress = lib.filter (
+    c: let got = pci.fromBusId (lib.elemAt c 0); in got != null && builtins.match "[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}[.][0-7]" got == null
+  ) pciCases;
+
+  # A value of a user that looks like a token (a Bitwarden item, a command).
+  atHost = hostOf [
+    {
+      ravnix.desktop.terminal.main = "ghostty -e sh -c 'echo a@b@c'";
+      ravnix.desktop.ask = lib.mkForce {
+        url = "https://chat.example.org";
+        model = "quick";
+        rbwItem = "key@work@x";
+      };
+    }
+  ];
+  swayLib = import ../../modules/desktop/sway/lib.nix { inherit lib pkgs; };
+
   # The template sets ravnix.desktop.ask; a user who leaves it out gets no popup.
   askOff = hostOf [ { ravnix.desktop.ask = lib.mkForce null; } ];
   # What another module does with the seams: a fragment of config.d, and the
@@ -121,6 +216,15 @@ let
         udev = gpu.config.services.udev.extraRules;
       };
       noGpuSession = mauve.config.programs.sway.extraSessionCommands;
+      # huginn: the laptop shape with the 16AHP9 module. Nobody sets
+      # ravnix.desktop.gpu.primary; it comes from the PRIME bus id.
+      huginn = {
+        primary = huginn.config.ravnix.desktop.gpu.primary;
+        session = huginn.config.programs.sway.extraSessionCommands;
+        udev = huginn.config.services.udev.extraRules;
+        extraOptions = huginn.config.programs.sway.extraOptions;
+        warnings = gpuWarnings huginn;
+      };
       # What other tasks call by name has to be on the session's PATH, which
       # is the system profile: environment.systemPackages.
       installed = map (p: p.name) mauve.config.environment.systemPackages;
@@ -289,8 +393,35 @@ let
   refused =
     host: lib.any (a: !a.assertion) host.config.assertions;
   evaluates = expr: (builtins.tryEval (builtins.deepSeq expr expr)).success;
+  equals = expr: want: evaluates expr && expr == want;
   failures =
-    lib.optional (!mauve.config.programs.sway.enable) "programs.sway is not enabled"
+    map (c: "pci.fromBusId \"${lib.elemAt c 0}\" is \"${toString (pci.fromBusId (lib.elemAt c 0))}\", not \"${toString (lib.elemAt c 1)}\"") pciWrong
+    ++ map (c: "pci.fromBusId \"${lib.elemAt c 0}\" is no address udev matches") pciNotAnAddress
+    # The tokens of a data file are filled, and only they are checked: what a
+    # user's value holds is the user's.
+    ++ lib.optional (!equals (swayLib.fill { a = "x@word@y"; } "v=@a@") "v=x@word@y") "fill refuses, or changes, a value that holds @word@"
+    ++ lib.optional (!equals (swayLib.fill {
+      a = "@b@";
+      b = "B";
+    } "@a@") "@b@") "fill fills again a token that a value brought in, or throws on it"
+    ++ lib.optional (evaluates (swayLib.fill { a = "x"; } "v=@a@ @typo@")) "fill accepts a token of the file that nobody gives"
+    ++ lib.optional (!evaluates ((files atHost)."sway/config".source.drvPath)) "a terminal command with @b@ in it makes the Sway config throw"
+    ++ lib.optional (!evaluates (map (p: p.drvPath) (lib.filter (p: p.name == "sway-ask") atHost.config.environment.systemPackages))) "a Bitwarden item with @work@ in it makes the sway-ask script throw"
+    # GPU: where the address comes from.
+    ++ lib.optional (huginn.config.ravnix.desktop.gpu.primary != "0000:36:00.0") "huginn: gpu.primary is not taken from amdgpuBusId PCI:54:0:0 (it is ${toString huginn.config.ravnix.desktop.gpu.primary})"
+    ++ lib.optional (gpuWarnings huginn != [ ]) "huginn: the GPU warning is shown though the address is known"
+    ++ lib.optional (huginnIntel.config.ravnix.desktop.gpu.primary != "0000:00:02.0") "gpu.primary is not taken from intelBusId when there is no amdgpuBusId"
+    ++ lib.optional (huginnNoIds.config.ravnix.desktop.gpu.primary != null) "gpu.primary is set without a bus id"
+    ++ lib.optional (gpuWarnings huginnNoIds == [ ]) "PRIME is on and gpu.primary is null, and nothing warns"
+    ++ lib.optional (huginnBadId.config.ravnix.desktop.gpu.primary != null || gpuWarnings huginnBadId == [ ]) "a bus id out of range is taken or not warned about"
+    ++ lib.optional (huginnByHand.config.ravnix.desktop.gpu.primary != "0000:05:00.0") "a gpu.primary set by hand does not win over the bus id"
+    ++ lib.optional (gpuWarnings primeDesktop == [ ]) "PRIME on with no bus id on the desktop host warns of nothing"
+    ++ lib.optional (gpuWarnings bare != [ ]) "a host without PRIME is warned about the GPU"
+    # --unsupported-gpu: with the proprietary driver and only then.
+    ++ lib.optional (huginn.config.programs.sway.extraOptions != [ "--unsupported-gpu" ]) "huginn (driver nvidia) does not start Sway with --unsupported-gpu"
+    ++ lib.optional (nvidiaDesktop.config.programs.sway.extraOptions != [ "--unsupported-gpu" ]) "a host with the nvidia driver does not start Sway with --unsupported-gpu"
+    ++ lib.optional (mauve.config.programs.sway.extraOptions != [ ]) "a host without the nvidia driver starts Sway with ${toString mauve.config.programs.sway.extraOptions}"
+    ++ lib.optional (!mauve.config.programs.sway.enable) "programs.sway is not enabled"
     ++ lib.optional (!mauve.config.services.greetd.enable) "greetd is not enabled"
     ++ lib.optional (!(homeOf mauve).services.dunst.enable) "dunst is not enabled"
     ++ lib.optional (
@@ -368,15 +499,37 @@ let
       }
     ])) "a kanshi profile listed twice is not refused";
 
+  # What evaluation alone decides (the list above), as a stage of its own so
+  # that it builds without the VM.
+  evalChecks = pkgs.runCommand "desktop-sway-eval" { } ''
+    ${lib.concatMapStrings (f: "echo ${lib.escapeShellArg ("FAIL " + f)} >&2\n") failures}
+    ${lib.optionalString (failures != [ ]) "exit 1"}
+    echo "${toString (lib.length pciCases)} bus ids, the GPU defaults and the Sway options as expected" > $out
+  '';
+
   # The main terminal seam reaches the Sway config, and the fragment of another
   # module is part of what `sway --validate` accepted (the build of seamConfig
   # fails otherwise).
+  # The flag is in the Sway that greetd starts (the wrapper binary), when the
+  # nvidia driver is loaded, and only then.
+  unsupportedGpu = pkgs.runCommand "desktop-sway-unsupported-gpu" { } ''
+    grep -aqF -- '--unsupported-gpu' ${huginn.config.programs.sway.package}/bin/sway \
+      || { echo "huginn's sway wrapper does not pass --unsupported-gpu" >&2; exit 1; }
+    if grep -aqF -- '--unsupported-gpu' ${mauve.config.programs.sway.package}/bin/sway; then
+      echo "a host without the nvidia driver starts Sway with --unsupported-gpu" >&2
+      exit 1
+    fi
+    echo "--unsupported-gpu is passed with the nvidia driver and not without" > $out
+  '';
+
   seamCheck = pkgs.runCommand "desktop-sway-seam" { } ''
     grep -qxF 'set $work ghostty -e herdr --remote alice@198.51.100.20' ${seamConfig}
     echo "the seam reaches the Sway config" > $out
   '';
 
   # ── the VM ──────────────────────────────────────────────────────────────────
+  # Slot 0x10 of the root bus of the node (a q35 machine: pcie.0), which the qemu option below pins.
+  gpuAddress = "0000:00:10.0";
   vm = pkgs.testers.runNixOSTest {
     name = "desktop-sway";
 
@@ -398,8 +551,14 @@ let
           WLR_RENDERER = "pixman";
           WLR_NO_HARDWARE_CURSORS = "1";
         };
+        # The node's only GPU, at a fixed slot, is the one Sway is told to use:
+        # the udev rule has to link it, and the wlroots that starts under
+        # WLR_DRM_DEVICES=/dev/dri/primary-gpu has to find it there.
+        ravnix.desktop.gpu.primary = "${gpuAddress}";
+        # A variable of home-manager's, to see in a process that Sway starts.
+        home-manager.sharedModules = [ { home.sessionVariables.RAVNIX_TEST_HM_VAR = "from-home-manager"; } ];
         virtualisation = {
-          qemu.options = [ "-vga none -device virtio-gpu-pci" ];
+          qemu.options = [ "-vga none -device virtio-gpu-pci,bus=pcie.0,addr=0x10" ];
           memorySize = 3072;
           cores = 2;
         };
@@ -413,6 +572,7 @@ let
       BASE = "${palette.base}"
       MANTLE = "${palette.mantle}"
       ACCENT = "${mauve.config.ravnix.theme.roles.accent}"
+      GPU_ADDRESS = "${gpuAddress}"
     '' + builtins.readFile ./helpers/vm-test.py;
   };
 in
@@ -422,21 +582,21 @@ pkgs.runCommand "desktop-sway"
     # nix build .#checks.SYSTEM.desktop-sway.widths
     passthru = {
       inherit
+        evalChecks
         static
         styleCheck
         scriptTests
         widths
         udevRules
         seamCheck
+        unsupportedGpu
         badFragmentFails
         vm
         ;
     };
   }
   ''
-  ${lib.concatMapStrings (f: "echo ${lib.escapeShellArg f} >&2\n") failures}
-  ${lib.optionalString (failures != [ ]) "exit 1"}
-  cat ${static} ${styleCheck} ${scriptTests} ${widths} ${udevRules} ${seamCheck} > $out
+  cat ${evalChecks} ${static} ${styleCheck} ${scriptTests} ${widths} ${udevRules} ${seamCheck} ${unsupportedGpu} > $out
   grep -q "frobnicate" ${badFragmentFails}/testBuildFailure.log || {
     echo "the build of a Sway config with a bad fragment did not fail because of the fragment" >&2
     exit 1

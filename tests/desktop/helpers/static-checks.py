@@ -232,7 +232,7 @@ def main():
         for pin in (
             "origin=\"top-right\"", "offset=\"(10, 50)\"", "width=300", "height=\"(0, 300)\"",
             "padding=8", "horizontal_padding=8", "text_icon_padding=0", "gap_size=0",
-            "separator_height=2", "corner_radius=0", "transparency=0", "notification_limit=20",
+            "separator_height=1", "corner_radius=0", "transparency=0", "notification_limit=20",
             "progress_bar_height=10", "progress_bar_min_width=150", "progress_bar_max_width=300",
         ):
             expect(re.search(rf"^{re.escape(pin)}$", dunst, re.M), label(f"dunst geometry is not pinned: {pin}"))
@@ -285,6 +285,17 @@ def main():
         for value in re.findall(rf"{var}=(\S*)", gpu["session"]):
             expect(":" not in value, f"{var}={value} has a colon, which wlroots splits the list at")
             expect(value.startswith("/dev/dri/") and "by-path" not in value, f"{var}={value} is not a colon-free udev link below /dev/dri")
+
+    # huginn: the laptop shape and the 16AHP9 module, and nobody sets the
+    # address. The iGPU's PRIME bus id (PCI:54:0:0) becomes the link, so Sway
+    # renders on the 780M alone and the RTX 4050 can power off.
+    huginn = args["huginn"]
+    expect(huginn["primary"] == "0000:36:00.0", f"huginn: gpu.primary is {huginn['primary']}, not the 780M (0000:36:00.0)")
+    expect(re.search(r"^export WLR_DRM_DEVICES=/dev/dri/primary-gpu$", huginn["session"], re.M), "huginn: the session does not export WLR_DRM_DEVICES=/dev/dri/primary-gpu")
+    expect(not re.search(r"WLR_DRM_DEVICES=\S*:", huginn["session"]), "huginn: WLR_DRM_DEVICES has a colon")
+    expect('KERNELS=="0000:36:00.0"' in huginn["udev"] and 'SYMLINK+="dri/primary-gpu"' in huginn["udev"], "huginn: the udev rule does not link the card at 0000:36:00.0")
+    expect(huginn["extraOptions"] == ["--unsupported-gpu"], f"huginn: Sway is started with {huginn['extraOptions']}, not --unsupported-gpu")
+    expect(huginn["warnings"] == [], f"huginn: a GPU warning is shown: {huginn['warnings']}")
 
     # The commands that other tasks call by name (energy runs keep-awake and
     # waybar-launch, the keys run the rest) are in the system profile.
