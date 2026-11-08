@@ -12,9 +12,12 @@
 # unplugs the charger and sees tuned-ppd move to the battery profiles, picks
 # each profile in the real `energy menu` (fuzzel is a stand-in that picks a
 # row), lets UPower power the VM off at 2 %, boots again, and lets the
-# emergency poweroff do it at 3 % with UPower masked. The fake battery is
-# test_battery, not BAT0, so the emergency poweroff runs by hand against it,
-# and the unit is checked for what it runs and when.
+# emergency poweroff do it at 3 % with UPower masked, then once more while
+# logind refuses every poweroff (a suspend held back by a delay lock, as in
+# the incident's suspend loop), so the helper must ask systemd itself.
+# The fake battery is test_battery, not BAT0, so the emergency poweroff
+# runs by hand against it, and the unit is checked for what it runs and
+# when.
 #
 # What only the real laptop can show (Task 3.7, and Task 3.5's first boot):
 #   - the CPU policy itself: amd-pstate's EPP, the boost and the ACPI
@@ -306,6 +309,41 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"systemd-run --unit=emergency-poweroff ${helper} {battery_dir}")
         machine.wait_for_console_text("battery at 3% and discharging, powering off in 10s")
         machine.wait_for_console_text("System is powering down")
+        machine.wait_for_shutdown()
+
+    with subtest("when logind refuses, the emergency poweroff asks systemd itself"):
+        machine.start()
+        machine.wait_for_unit("multi-user.target")
+        machine.succeed("systemctl mask --runtime --now upower.service")
+        # A suspend that a delay lock holds back, as the failing suspend loop
+        # of the incident kept logind busy: until it ends, logind refuses
+        # every other action, and systemctl poweroff gives up on that.
+        machine.succeed(
+            "mkdir -p /run/systemd/logind.conf.d"
+            " && printf '[Login]\\nInhibitDelayMaxSec=600\\n' > /run/systemd/logind.conf.d/50-hold.conf"
+            " && systemctl reload systemd-logind"
+        )
+        # PID 1's PATH has no coreutils, so sleep is named by its path.
+        machine.succeed(
+            "systemd-run --unit=hold-sleep systemd-inhibit --what=sleep --mode=delay"
+            " --who=hold-sleep /run/current-system/sw/bin/sleep infinity"
+        )
+        machine.wait_until_succeeds(
+            "systemd-inhibit --list --no-legend | grep -q hold-sleep", timeout=30
+        )
+        machine.succeed("systemctl suspend")
+        refused = machine.fail("systemctl poweroff 2>&1")
+        assert "already in progress" in refused, f"logind did not refuse the poweroff: {refused}"
+        machine.succeed("modprobe test_power")
+        battery(
+            ac_online="off", usb_online="off", battery_status="discharging", battery_capacity=3
+        )
+        machine.succeed(f"systemd-run --unit=emergency-fallback ${helper} {battery_dir}")
+        machine.wait_for_console_text("battery at 3% and discharging, powering off in 10s")
+        machine.wait_for_console_text(
+            "logind refused the poweroff; starting poweroff.target directly", timeout=60
+        )
+        machine.wait_for_console_text("reboot: Power down", timeout=120)
         machine.wait_for_shutdown()
   '';
 }

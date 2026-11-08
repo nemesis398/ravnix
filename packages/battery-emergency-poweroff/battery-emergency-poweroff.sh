@@ -4,7 +4,8 @@
 # apart from upowerd, D-Bus and logind's battery handling: when the battery
 # discharges at 3 % or less, it warns for 10 seconds and powers off.
 # Plugging in the charger in those 10 seconds aborts, because the battery
-# then stops discharging.
+# then stops discharging, and so does a capacity above 3 % at the second
+# reading. When logind refuses the poweroff, it asks systemd directly.
 #
 # Why it exists: on the Fedora laptop the battery ran to 0 % twice while a
 # broken suspend looped all night with the lid closed (2026-07-13 and
@@ -29,9 +30,22 @@ if [ "$status" = "Discharging" ] && [ "$cap" -le 3 ] 2>/dev/null; then
     logger -t battery-emergency-poweroff "battery at ${cap}% and discharging, powering off in 10s"
     wall "Battery at ${cap}%: EMERGENCY POWEROFF in 10 seconds. Plug in AC now to abort." 2>/dev/null || true
     sleep 10
-    # Plugging in the charger during the warning aborts.
-    if [ "$(cat "$BAT/status")" = "Discharging" ]; then
-        exec systemctl poweroff
+    # Read both again: plugging in the charger during the warning aborts,
+    # and so does a capacity that is above 3 % again or no number, so one
+    # low sample, as right after a resume, never powers a healthy battery
+    # off.
+    status=$(cat "$BAT/status" 2>/dev/null)
+    cap=$(cat "$BAT/capacity" 2>/dev/null)
+    if [ "$status" = "Discharging" ] && [ "$cap" -le 3 ] 2>/dev/null; then
+        systemctl poweroff && exit 0
+        # logind refuses while a suspend or a shutdown is under way ("Action
+        # suspend already in progress"), and systemctl then gives up instead
+        # of asking systemd: the failing suspend loop this net exists for is
+        # such a time. So ask systemd directly, as systemctl does without
+        # logind; replace-irreversibly also stops the pending suspend from
+        # taking over again.
+        logger -t battery-emergency-poweroff "logind refused the poweroff; starting poweroff.target directly"
+        exec systemctl start --job-mode=replace-irreversibly --no-block poweroff.target
     fi
 fi
 exit 0

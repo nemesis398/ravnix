@@ -25,21 +25,39 @@ None.
 - the `cond && cond || exit 0` guard and the last `[ ... ] && exec` are `if`
   blocks, the same logic;
 - the warning text has a colon and a comma where the original had dashes;
-- bash, not `/bin/sh`, with the store's tools only (`inheritPath = false`).
+- bash, not `/bin/sh`, with the store's tools only (`inheritPath = false`);
+- after the warning it reads the capacity again, not only the status, and
+  powers off only when that second reading is 3 % or less too: one low
+  sample, as right after a resume, no longer powers a healthy battery off.
+  A file gone by then aborts quietly;
+- when logind refuses the poweroff, it starts `poweroff.target` with
+  `systemctl start --job-mode=replace-irreversibly --no-block`, as
+  systemctl itself does without logind, and logs that it did. logind
+  refuses while a suspend or a shutdown is pending ("Action suspend already
+  in progress, refusing requested poweroff operation"), and `systemctl
+  poweroff` then exits 1 without a fallback of its own. The VM test shows
+  both: the refusal, and this script powering the VM off through it. The
+  original would have tried again only 2 minutes later, in the very suspend
+  loop it exists for.
 
 ## Tests
 
 `tests/battery-emergency-poweroff.test.sh`, the check
-`bin-battery-emergency-poweroff`, 28 cases, with logger, wall, sleep and
+`bin-battery-emergency-poweroff`, 37 cases, with logger, wall, sleep and
 systemctl as stubs: 3, 1 and 0 % power off, 4 and 50 % do not; charging,
 parked ("Not charging"), full, unknown and a lower-case status do nothing;
 plugging in or parking during the warning aborts, still discharging powers
-off; a failing wall or logger still powers off; no battery, no status or
-capacity file, an unreadable, empty, non-numeric, `2%` or huge capacity do
-nothing; two runs at once; BAT0 as the default; and the package's script and
-PATH. The VM test `hardware-power` runs the package against the kernel's
-test_power battery: 4 % leaves it alone, plugging in during the warning
-aborts, and at 3 %, with UPower masked, it powers the VM off.
+off; a second capacity reading above 3 % (4 and 57), empty, non-numeric,
+`2%`, huge or gone aborts, a still low one powers off, a status gone aborts;
+logind refusing makes it start `poweroff.target` itself, with a failing
+logger too, and a failing fallback fails the run; a failing wall or logger
+still powers off; no battery, no status or capacity file, an unreadable,
+empty, non-numeric, `2%` or huge capacity do nothing; two runs at once; BAT0
+as the default; and the package's script and PATH. The VM test
+`hardware-power` runs the package against the kernel's test_power battery:
+4 % leaves it alone, plugging in during the warning aborts, at 3 %, with
+UPower masked, it powers the VM off, and once more while a suspend held
+back by a delay lock makes logind refuse every poweroff.
 
 ## Findings that are not fixed
 

@@ -7,7 +7,9 @@
 # directory, with stubs on the PATH for the four commands that act: logger,
 # wall, sleep and systemctl log their arguments and do nothing else, so no
 # case powers anything off. The sleep stub can also change the battery's
-# status, as plugging in the charger during the warning does. The last tests
+# status, as plugging in the charger during the warning does, and its
+# capacity; the systemctl stub can refuse the poweroff, as logind does
+# while a suspend is under way. The last tests
 # check the package: the script is the one tested here, and its PATH is the
 # store's tools and nothing inherited, since it runs as root.
 #
@@ -29,8 +31,17 @@ write_script "$bin/logger" 'printf "logger %s\n" "$*" >>"$CALLS"; exit "${LOGGER
 write_script "$bin/wall" 'printf "wall %s\n" "$*" >>"$CALLS"; exit "${WALL_STATUS:-0}"'
 write_script "$bin/sleep" \
 	'printf "sleep %s\n" "$*" >>"$CALLS"' \
-	'[ -z "${ON_SLEEP:-}" ] || printf "%s\n" "$ON_SLEEP" >"$BAT_DIR/status"'
-write_script "$bin/systemctl" 'printf "systemctl %s\n" "$*" >>"$CALLS"'
+	'[ -z "${ON_SLEEP:-}" ] || printf "%s\n" "$ON_SLEEP" >"$BAT_DIR/status"' \
+	'[ -z "${ON_SLEEP_CAPACITY+set}" ] || printf "%s\n" "$ON_SLEEP_CAPACITY" >"$BAT_DIR/capacity"' \
+	'[ -z "${ON_SLEEP_GONE:-}" ] || rm -f -- "$BAT_DIR/$ON_SLEEP_GONE"'
+# systemctl: logs; LOGIND_REFUSES makes `systemctl poweroff` fail as it does
+# when logind answers OperationInProgress, FALLBACK_FAILS the direct start.
+write_script "$bin/systemctl" \
+	'printf "systemctl %s\n" "$*" >>"$CALLS"' \
+	'if [ "$1" = poweroff ] && [ -n "${LOGIND_REFUSES:-}" ]; then' \
+	'  echo "Call to PowerOff failed: Action suspend already in progress, refusing requested poweroff operation." >&2; exit 1' \
+	'fi' \
+	'[ "$1" != start ] || [ -z "${FALLBACK_FAILS:-}" ] || exit 1'
 
 # battery STATUS CAPACITY: a battery directory as sysfs shows it.
 battery() {
@@ -168,6 +179,108 @@ test_still_discharging_after_the_warning_powers_off() {
 	battery Discharging 3
 	ON_SLEEP=Discharging run
 	poweroff_calls 3
+}
+
+# The capacity is read again after the warning, and the poweroff needs that
+# reading low as well: a single low sample, as right after a resume, never
+# powers a healthy battery off.
+
+test_capacity_back_above_3_after_the_warning_aborts() {
+	battery Discharging 3
+	ON_SLEEP_CAPACITY=4 run
+	expect_status 0
+	expect_calls \
+		"logger -t battery-emergency-poweroff battery at 3% and discharging, powering off in 10s" \
+		"wall Battery at 3%: EMERGENCY POWEROFF in 10 seconds. Plug in AC now to abort." \
+		"sleep 10"
+}
+
+test_capacity_far_above_after_the_warning_aborts() {
+	battery Discharging 1
+	ON_SLEEP_CAPACITY=57 run
+	expect_status 0
+	[[ "$(cat "$calls")" != *"systemctl"* ]] || {
+		echo "  powered off although the second reading was 57 %"
+		return 1
+	}
+}
+
+test_capacity_still_low_after_the_warning_powers_off() {
+	battery Discharging 3
+	ON_SLEEP_CAPACITY=2 run
+	poweroff_calls 3
+}
+
+test_capacity_no_number_after_the_warning_aborts() {
+	local bad
+	for bad in "" abc "2%" 99999999999999999999999; do
+		battery Discharging 2
+		ON_SLEEP_CAPACITY="$bad" run
+		expect_status 0
+		[[ "$(cat "$calls")" != *"systemctl"* ]] || {
+			echo "  powered off on a second reading of '$bad'"
+			return 1
+		}
+	done
+}
+
+test_capacity_gone_after_the_warning_aborts() {
+	battery Discharging 2
+	ON_SLEEP_GONE=capacity run
+	expect_status 0
+	[[ "$(cat "$calls")" != *"systemctl"* ]] || {
+		echo "  powered off without a second reading"
+		return 1
+	}
+	[[ -z "$err" ]] || { echo "  stderr: $err"; return 1; }
+}
+
+test_status_gone_after_the_warning_aborts() {
+	battery Discharging 2
+	ON_SLEEP_GONE=status run
+	expect_status 0
+	[[ "$(cat "$calls")" != *"systemctl"* ]] || {
+		echo "  powered off without a second status"
+		return 1
+	}
+	[[ -z "$err" ]] || { echo "  stderr: $err"; return 1; }
+}
+
+# When logind refuses the poweroff (OperationInProgress while a suspend or
+# a shutdown is pending), systemctl gives up instead of asking systemd, so
+# the script asks systemd itself, as systemctl does without logind.
+
+test_falls_back_to_systemd_when_logind_refuses() {
+	battery Discharging 2
+	LOGIND_REFUSES=1 run
+	expect_status 0
+	expect_calls \
+		"logger -t battery-emergency-poweroff battery at 2% and discharging, powering off in 10s" \
+		"wall Battery at 2%: EMERGENCY POWEROFF in 10 seconds. Plug in AC now to abort." \
+		"sleep 10" \
+		"systemctl poweroff" \
+		"logger -t battery-emergency-poweroff logind refused the poweroff; starting poweroff.target directly" \
+		"systemctl start --job-mode=replace-irreversibly --no-block poweroff.target"
+}
+
+test_falls_back_when_logger_fails_too() {
+	battery Discharging 2
+	LOGIND_REFUSES=1 LOGGER_STATUS=1 run
+	expect_status 0
+	[[ "$(tail -n 1 "$calls")" == "systemctl start --job-mode=replace-irreversibly --no-block poweroff.target" ]] || {
+		echo "  no direct poweroff after a refusal and a failing logger:"
+		cat "$calls"
+		return 1
+	}
+}
+
+test_a_failing_fallback_fails_the_run() {
+	battery Discharging 2
+	LOGIND_REFUSES=1 FALLBACK_FAILS=1 run
+	[[ "$status" != 0 ]] || {
+		echo "  exit 0 although neither poweroff was taken"
+		return 1
+	}
 }
 
 # A failing warning never stops the poweroff.
@@ -324,6 +437,15 @@ tests=(
 	test_plugging_in_during_the_warning_aborts
 	test_parking_during_the_warning_aborts
 	test_still_discharging_after_the_warning_powers_off
+	test_capacity_back_above_3_after_the_warning_aborts
+	test_capacity_far_above_after_the_warning_aborts
+	test_capacity_still_low_after_the_warning_powers_off
+	test_capacity_no_number_after_the_warning_aborts
+	test_capacity_gone_after_the_warning_aborts
+	test_status_gone_after_the_warning_aborts
+	test_falls_back_to_systemd_when_logind_refuses
+	test_falls_back_when_logger_fails_too
+	test_a_failing_fallback_fails_the_run
 	test_powers_off_when_wall_fails
 	test_powers_off_when_logger_fails
 	test_no_battery_directory
