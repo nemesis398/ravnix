@@ -57,6 +57,7 @@ import math
 import os
 import random
 import re
+import selectors
 import shlex
 import signal
 import subprocess
@@ -112,6 +113,8 @@ PANEL_RIGHT, PANEL_MIN_FONT = 0.02, 6
 # What is read and drawn of the facts, so that a runaway command cannot make
 # the wallpaper slow or the panel huge.
 FACTS_BYTES, FACTS_LINES, FACTS_COLUMNS, FACTS_SECONDS = 1 << 20, 80, 240, 10
+# How much of a command's stderr is read, of which one line is quoted.
+STDERR_BYTES = 1 << 16
 
 # An image that would take more memory than this to decode is not used.
 MAX_IMAGE_PIXELS = 64_000_000
@@ -519,20 +522,50 @@ def apply_sgr(args, color, bold, theme):
     return color, bold
 
 
-def run_group(cmd, seconds):
+def run_group(cmd, seconds, limit):
     # (returncode, stdout, stderr) of cmd, or None when it ran out of time. cmd
     # gets a process group of its own, which is killed with it: fastfetch is
     # bash's child, and a child that outlives its parent keeps the pipes open
-    # and the caller waiting.
+    # and the caller waiting. stdout is read up to limit + 1 bytes and stderr
+    # up to STDERR_BYTES; a command that has printed more than that is killed,
+    # so that one that never stops cannot fill the memory within its time.
     proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, start_new_session=True)
+    caps = {proc.stdout: limit + 1, proc.stderr: STDERR_BYTES}
+    got = {proc.stdout: bytearray(), proc.stderr: bytearray()}
+    deadline = time.monotonic() + seconds
+    full = False
     try:
-        out, err = proc.communicate(timeout=seconds)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        return None
-    return proc.returncode, out, err
+        with selectors.DefaultSelector() as sel:
+            for pipe in got:
+                sel.register(pipe, selectors.EVENT_READ)
+            while sel.get_map() and not full:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return None
+                for key, _ in sel.select(left):
+                    data = os.read(key.fileobj.fileno(), 1 << 16)
+                    if not data:
+                        sel.unregister(key.fileobj)
+                        continue
+                    buf = got[key.fileobj]
+                    buf += data[: caps[key.fileobj] - len(buf)]
+                    full = full or len(buf) >= caps[key.fileobj] and key.fileobj is proc.stdout
+        if full:
+            os.killpg(proc.pid, signal.SIGKILL)
+        try:
+            proc.wait(timeout=max(deadline - time.monotonic(), 0))
+        except subprocess.TimeoutExpired:
+            return None
+        return proc.returncode, bytes(got[proc.stdout]), bytes(got[proc.stderr])
+    finally:
+        # Out of time, or failed in here: the group is killed. A leader that
+        # was already reaped has no group of its own left to name.
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.stdout.close()
+        proc.stderr.close()
+        proc.wait()
 
 
 def fastfetch_text(theme):
@@ -546,7 +579,7 @@ def fastfetch_text(theme):
     script = f"fastfetch --pipe false {flags}; s=$?; exit \"$s\""
     try:
         seconds = float(os.environ.get("BACKDROP_FASTFETCH_SECONDS") or FACTS_SECONDS)
-        done = run_group(["bash", "-c", script], seconds)
+        done = run_group(["bash", "-c", script], seconds, FACTS_BYTES)
     except (OSError, ValueError) as e:
         log(f"fastfetch did not run: {first_line(e)}; no facts on the wallpaper")
         return ""
@@ -555,6 +588,10 @@ def fastfetch_text(theme):
         return ""
     code, stdout, stderr = done
     out = stdout[:FACTS_BYTES].decode("utf-8", "replace")
+    if len(stdout) > FACTS_BYTES:
+        # run_group stopped it there, so its exit status says nothing.
+        log(f"fastfetch printed more than {FACTS_BYTES} bytes; the facts are cut there")
+        return out
     if code != 0 or not out.strip():
         why = first_line(stderr.decode("utf-8", "replace")) if stderr.strip() else f"exit {code}"
         log(f"fastfetch gave no facts ({why}); none on the wallpaper")

@@ -79,6 +79,7 @@ cannot be written fail the command.
 | no room for the logos (a tiny output) | the logos that fit, one line |
 | fastfetch is missing, fails or takes more than 10 s | no facts, one line |
 | the facts are hostile (control codes, binary, huge) | cut to 80 lines of 240 columns and drawn |
+| fastfetch prints more than 1 MiB | it is killed with its children as soon as it has, the first MiB is drawn (cut as above), one line |
 | a facts line is wider than the room right of the panel | the whole panel's font shrinks to fit, never below 6 px |
 | `backdrop` fails or takes more than 2 s inside `lock-screen` | swaylock starts on plain Base |
 | swaylock rejects the images | swaylock is started once more without them |

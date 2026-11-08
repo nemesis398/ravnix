@@ -435,6 +435,8 @@ def render_with_fastfetch(lab, **env):
         ("exit 0\n", "no facts"),
         ("echo; echo '   '; exit 0\n", "no facts"),
         ("echo 'some facts'; echo 'fastfetch: half way' >&2; exit 1\n", "half way"),
+        # More on stderr than is read: the pipe is still emptied, so it cannot block.
+        ("echo 'fastfetch: loud' >&2; head -c 300000 /dev/zero | tr '\\0' x >&2; exit 3\n", "loud"),
     ],
 )
 def test_a_fastfetch_that_fails_leaves_the_wallpaper_without_facts(lab, body, word):
@@ -456,6 +458,34 @@ def test_a_fastfetch_that_hangs_is_given_up_on_with_its_children(lab):
     lines = proc.stderr.splitlines()
     assert len(lines) == 1 and "fastfetch took more than 2 s" in lines[0], lines
     assert where(load_png(out), rgb("mauve")).sum() > 500
+
+
+def alive(pid):
+    # A killed process that nobody has reaped yet is a zombie, which is dead.
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return False
+
+
+def test_a_fastfetch_that_never_stops_printing_is_cut_and_killed(lab):
+    # What it printed is read only up to the cap, then it is killed with its
+    # children: the 2 s it is given are neither used up nor spent holding
+    # everything it wrote in memory.
+    pid = lab.work / "pid.txt"
+    lab.install_stub(
+        "fastfetch",
+        "#!/usr/bin/env bash\necho $$ > " + str(pid) + "\n"
+        "while :; do printf '\\033[1mKey\\033[m value 0123456789 0123456789 0123456789\\n'; done\n",
+    )
+    proc, elapsed, out = render_with_fastfetch(lab)
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stderr.splitlines()
+    assert len(lines) == 1 and "printed more than 1048576 bytes" in lines[0], lines
+    assert elapsed < 20
+    assert not right_half_is_bare(load_png(out)), "the first of what it printed is not used"
+    assert not alive(int(pid.read_text())), "the runaway fastfetch was left running"
 
 
 def test_a_bad_fastfetch_timeout_is_a_line_not_a_crash(lab):
