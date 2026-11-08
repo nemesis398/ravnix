@@ -263,7 +263,10 @@ as_user("dunstctl close-all")
 # windows are not what the next stage looks at: it counts colors on the screen,
 # and a browser page under the ring has the wash and the accent in it and would
 # change the numbers it is compared with. So the layout is waited for, and its
-# windows are closed.
+# windows are closed. Closing is not the end: Helium is killed too, and what
+# is left is waited out until, for three seconds in a row, no window is on the
+# tree and no Helium runs, so that no window of the layout maps after the
+# baseline of the next stage.
 wait_for("the login layout to be done", lambda: machine.execute(f"pgrep -u {USER} -f sway-session-layout")[0] != 0, 120)
 
 
@@ -280,14 +283,22 @@ def windows():
     return found
 
 
-def close_windows():
+def helium_runs():
+    return machine.execute(f"pgrep -u {USER} -f '/share/helium/helium'")[0] == 0
+
+
+def layout_gone():
+    machine.execute(f"pkill -u {USER} -f '/share/helium/helium'")
     for window in windows():
         swaymsg(f"[con_id={window}]", "kill")
-    return not windows()
+    for _ in range(3):
+        machine.sleep(1)
+        if windows() or helium_runs():
+            return False
+    return True
 
 
-wait_for("the windows of the layout to be closed", close_windows, 60)
-machine.execute(f"pkill -u {USER} -f '/share/helium/helium'")
+wait_for("the apps of the layout to be gone, and no window to map late", layout_gone, 90)
 
 # ── the radial menu ───────────────────────────────────────────────────────────
 # sway-radial is a user service of the session. It reads the trackpad, which the
@@ -374,7 +385,11 @@ assert "sway-radial.service" in daemon_cgroup, f"the daemon is not in its own un
 app_env = environ_of(app_pid)
 for name in ("GI_TYPELIB_PATH", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "SWAY_RADIAL_GTK_LAUNCH", "SWAY_RADIAL_THEME"):
     assert name not in app_env, f"the app of the ring has the program's {name}={app_env[name]}"
-assert "/run/wrappers/bin" in app_env.get("PATH", "").split(":"), f"the app of the ring has not the session's PATH: {app_env.get('PATH')}"
+# Exactly Sway's PATH, which is not the daemon's (the user manager's, with the
+# wrapper's swaymsg behind it, and without ~/.local/bin): an app that the daemon
+# started itself would have the daemon's.
+sway_path = next(line[len("PATH=") :] for line in sway_env.splitlines() if line.startswith("PATH="))
+assert app_env.get("PATH") == sway_path, f"the app of the ring has not the session's PATH: {app_env.get('PATH')} against Sway's {sway_path}"
 
 as_user("systemctl --user restart sway-radial.service")
 wait_for(
