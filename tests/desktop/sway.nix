@@ -157,6 +157,24 @@ let
   ];
   swayLib = import ../../modules/desktop/sway/lib.nix { inherit lib pkgs; };
 
+  # A value that would end a Python string, a line and a statement: the
+  # address of the Open WebUI is the one user value that reaches a Python
+  # literal, and the option's type lets quotes and backslashes through.
+  hostileUrl = ''https://chat.example.org/");__import__("os").system("id");x=("\end'';
+  askHostile = hostOf [
+    {
+      ravnix.desktop.ask = lib.mkForce {
+        url = hostileUrl;
+        model = "quick";
+        rbwItem = "Open WebUI - API key";
+      };
+    }
+  ];
+  swayAsk = host: "${lib.findFirst (p: p.name == "sway-ask") (throw "no sway-ask") host.config.environment.systemPackages}/bin/sway-ask";
+  # Every character a literal has to survive, line breaks included (the option
+  # refuses white space, so only the helper can be shown them).
+  hostileAll = "a\"b\\c\nd\re\tf'g\${h}#ié";
+
   # The template sets ravnix.desktop.ask; a user who leaves it out gets no popup.
   askOff = hostOf [ { ravnix.desktop.ask = lib.mkForce null; } ];
   # What another module does with the seams: a fragment of config.d, and the
@@ -250,6 +268,11 @@ let
         udev = gpu.config.services.udev.extraRules;
       };
       noGpuSession = mauve.config.programs.sway.extraSessionCommands;
+      askInjection = {
+        script = swayAsk askHostile;
+        url = hostileUrl;
+        host = "chat.example.org";
+      };
       bigCursor = {
         sway = source bigCursor "sway/config";
         inherit (cursorOf bigCursor) name size;
@@ -546,6 +569,24 @@ let
     echo "${toString (lib.length pciCases)} bus ids, the GPU defaults and the Sway options as expected" > $out
   '';
 
+  # A user's value can sit in a Python literal of a script without ending it:
+  # the helper's escape, with every troublesome character, built into a script
+  # that prints it, and compared byte for byte.
+  tokenProbe =
+    let
+      probe = swayLib.python {
+        name = "token-probe";
+        src = ./helpers/token-probe.py;
+        tokens.value = swayLib.pyString hostileAll;
+      };
+    in
+    pkgs.runCommand "desktop-sway-token-probe" { } ''
+      ${probe}/bin/token-probe > got
+      printf '%s' ${lib.escapeShellArg hostileAll} > want
+      cmp want got || { echo "the Python script does not hold the value it was given" >&2; exit 1; }
+      echo "a value with quotes, backslashes and line breaks survives as a Python literal" > $out
+    '';
+
   # The main terminal seam reaches the Sway config, and the fragment of another
   # module is part of what `sway --validate` accepted (the build of seamConfig
   # fails otherwise).
@@ -634,13 +675,14 @@ pkgs.runCommand "desktop-sway"
         udevRules
         seamCheck
         unsupportedGpu
+        tokenProbe
         badFragmentFails
         vm
         ;
     };
   }
   ''
-  cat ${evalChecks} ${static} ${styleCheck} ${scriptTests} ${widths} ${udevRules} ${seamCheck} ${unsupportedGpu} > $out
+  cat ${evalChecks} ${static} ${styleCheck} ${scriptTests} ${widths} ${udevRules} ${seamCheck} ${unsupportedGpu} ${tokenProbe} > $out
   grep -q "frobnicate" ${badFragmentFails}/testBuildFailure.log || {
     echo "the build of a Sway config with a bad fragment did not fail because of the fragment" >&2
     exit 1

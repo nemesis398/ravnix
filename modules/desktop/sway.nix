@@ -208,10 +208,12 @@ let
         name = "sway-ask";
         src = bin + "/sway-ask";
         tokens = {
-          askUrl = lib.removeSuffix "/" cfg.ask.url;
-          askModel = cfg.ask.model;
-          askRbwItem = cfg.ask.rbwItem;
-          askWebappPrefix = "chrome-${askHost}__";
+          # Python string literals (helpers.pyString): the address takes a
+          # quote and a backslash, which must stay inside them.
+          askUrl = helpers.pyString (lib.removeSuffix "/" cfg.ask.url);
+          askModel = helpers.pyString cfg.ask.model;
+          askRbwItem = helpers.pyString cfg.ask.rbwItem;
+          askWebappPrefix = helpers.pyString "chrome-${askHost}__";
           baseOpaque = opaque roles.canvas;
           textOpaque = opaque roles.text;
         };

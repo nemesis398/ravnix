@@ -96,10 +96,10 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-BASE_URL = "@askUrl@"
+BASE_URL = @askUrl@
 API_URL = f"{BASE_URL}/api/chat/completions"
-MODEL = "@askModel@"
-RBW_ITEM = "@askRbwItem@"
+MODEL = @askModel@
+RBW_ITEM = @askRbwItem@
 # A search that loads five pages has taken 41 s; give it room.
 REQUEST_TIMEOUT = 180
 POLL_SECONDS = 1
@@ -131,7 +131,7 @@ EXIT_FOLLOW_UP, EXIT_COPY, EXIT_NEW, EXIT_WEB = 10, 11, 12, 13  # fuzzel custom-
 # Chromium names an --app window after the URL, path included, so the start
 # page is chrome-<host>__-Default and a chat is chrome-<host>__c_<id>-Default.
 # The prefix catches both.
-WEBAPP_PREFIX = "@askWebappPrefix@"
+WEBAPP_PREFIX = @askWebappPrefix@
 # The flags of the webapp-openwebui.desktop entry. They only take effect
 # when Helium is not running yet; otherwise the running browser opens the window.
 HELIUM_FLAGS = (

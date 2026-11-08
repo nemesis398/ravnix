@@ -6,6 +6,7 @@
 #
 #   helpers = import ./sway/lib.nix { inherit lib pkgs; };
 #   helpers.fill { accent = "..."; } text      text with @accent@ replaced
+#   helpers.pyString value                     the value as a Python string literal
 #   helpers.bash { name; src; tokens; runtimeInputs; }
 #   helpers.python { name; src; tokens; flakeIgnore; }
 { lib, pkgs }:
@@ -31,6 +32,13 @@ rec {
       throw "modules/desktop: ${lib.concatStringsSep ", " left} is no token of this file (known: ${lib.concatStringsSep ", " (lib.attrNames tokens)})"
     else
       lib.replaceStrings known (lib.attrValues tokens) text;
+
+  # A value as the text of a Python string literal, quotes included, for a
+  # data file that says `NAME = @token@` with no quotes of its own. JSON's string
+  # syntax is Python's here (\" \\ \n \r \t and \u00XX), so no character of a
+  # user's value can end the literal, the line or the statement. Wrapping the
+  # token in quotes in the file instead lets a `"` or a `\` out of them.
+  pyString = builtins.toJSON;
 
   # The text of a script without its shebang: the builders add their own.
   body =

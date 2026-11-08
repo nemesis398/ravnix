@@ -11,6 +11,7 @@ stderr, one line each, and the exit status is 1 if there was any.
 The rows of the style spec's table that belong to this module are checked
 here, each named in its message, so that a regression says which row broke.
 """
+import ast
 import json
 import re
 import sys
@@ -280,6 +281,27 @@ def main():
             expect(value.isdigit() and 0 <= int(value) <= 15, f"the tuigreet theme names {key} by {value}, not by a palette index")
         expect(pairs.get("border") == "13" and pairs.get("prompt") == "13", "tuigreet's frame and prompt are not the accent (index 13)")
         expect(pairs.get("container") == "0", "tuigreet's screen is not Base (index 0)")
+
+    # The address of the Open WebUI reaches sway-ask as Python literals. A value
+    # with quotes and a backslash (the option's type takes them) must stay
+    # inside them: the script parses, the constants are the values, and
+    # nothing calls os.system.
+    inj = args["askInjection"]
+    try:
+        tree = ast.parse(read(inj["script"]))
+    except SyntaxError as e:
+        fail(f"sway-ask does not parse with a quote and a backslash in ask.url: {e}")
+    else:
+        constants = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in ("BASE_URL", "MODEL", "RBW_ITEM", "WEBAPP_PREFIX"):
+                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    constants[node.targets[0].id] = node.value.value
+                else:
+                    fail(f"sway-ask: {node.targets[0].id} is not one plain string literal")
+        expect(constants.get("BASE_URL") == inj["url"], f"sway-ask: BASE_URL is {constants.get('BASE_URL')!r}, not the address {inj['url']!r}")
+        expect(constants.get("WEBAPP_PREFIX") == f"chrome-{inj['host']}__", f"sway-ask: WEBAPP_PREFIX is {constants.get('WEBAPP_PREFIX')!r}")
+        expect(not any(isinstance(n, ast.Attribute) and n.attr == "system" for n in ast.walk(tree)), "sway-ask runs os.system: the address ended its string and added a statement")
 
     # A user who changes the cursor in home-manager gets it in Sway's seat too.
     big = args["bigCursor"]
