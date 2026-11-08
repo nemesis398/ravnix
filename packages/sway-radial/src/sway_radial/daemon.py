@@ -451,6 +451,11 @@ class Daemon:
         # try to remove a source GLib is in the middle of retiring.
         self._dwell_source = None
         self._dwell_target = None
+        # The arc is static, so nothing runs it out. Whatever the action does
+        # (closes the ring, leaves no target to count down to), the arc of the
+        # dwell that just fired must not outlive it.
+        if self._overlay is not None:
+            self._overlay.cancel_dwell()
         if self._machine is not None:
             self._apply(self._machine.dwell())
         return False  # GLib.SOURCE_REMOVE

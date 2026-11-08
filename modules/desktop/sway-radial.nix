@@ -27,20 +27,16 @@
 # WAYLAND_DISPLAY and SWAYSOCK come from the Sway session (NixOS's
 # sway-session integration imports them into the user manager).
 #
-# EXCEPTIONS (docs/style.md, rule 9), two, both kept from the original program
-# on purpose and both written down here so they are not found by accident:
+# EXCEPTION (docs/style.md, rule 9), one, kept from the original program on
+# purpose and written down here so it is not found by accident:
 #   - The ring is round. The style has square corners everywhere, and a radial
 #     menu cannot have them: its sectors are wedges of a circle. This is the
 #     exception the style spec lists (the row "sway-radial" of *Where the
 #     Fedora configs differ*, "the round ring stays"). The ring is opaque and
 #     nothing fades: the program was patched from alpha 0.92 and an 80 ms fade.
-#   - The countdown arc moves. Holding still on a sector for the dwell time
-#     (one second) is what chooses it, and the arc that fills while it counts
-#     is the only feedback that the hand is holding on purpose; without it a
-#     dwell looks like a menu that has stopped answering. It is a gauge, like
-#     the lock ring, and not decoration: it shows how much of the time has
-#     passed, and it fills only while the fingers hold still. It is 2 px wide,
-#     the marker width of the theme.
+#     The countdown does not move either: holding still on a sector for the
+#     dwell time draws a 2 px arc along its edge, whole, at once, and the arc
+#     goes when the dwell fires or is cancelled.
 # The layer surface that carries the ring covers the whole output and has
 # nothing drawn on it outside the ring; it has to be clear, or the ring would
 # hide the screen. That is the absence of a surface and not a translucent one.

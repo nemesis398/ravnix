@@ -22,7 +22,7 @@ and writes the two files it reads. `packages/sway-radial/default.nix` builds it.
 | --- | --- |
 | four-finger pinch | opens the ring with one sector lit; closing the fingers past 85 percent arms it, and until then nothing can be chosen |
 | move the fingers | lights the sector in that direction; a sector you cross on the way never opens |
-| hold still on a lit sector | after `dwell_ms` (one second by default) a submenu opens, a leaf runs, or Back pops one level; an arc fills while it counts |
+| hold still on a lit sector | after `dwell_ms` (one second by default) a submenu opens, a leaf runs, or Back pops one level; a 2 px arc along the sector's edge shows that it counts |
 | spread the fingers back out | runs the lit leaf, or opens the lit submenu and keeps the ring for the pointer; with nothing under the fingers it closes |
 | let go without spreading | keeps the ring on screen for the pointer (latched) |
 | hold still in the middle | closes the menu without running anything, at any depth |
@@ -66,7 +66,14 @@ behavior is unchanged except for the following.
   Mauve. It now reads `theme.json` (above), so the user's accent reaches the lit
   sector, the font is the theme's, and the line between sectors and the
   countdown arc are the theme's frame (1 px) and marker (2 px) widths; the arc
-  was 3 px. No color is written in the program.
+  was 3 px. The arc on the lit sector is the `deepest` role (Crust), the one the
+  style gives to marks on an accent fill; the exit ring around the hub is
+  `text`. No color is written in the program.
+- **The countdown arc does not move.** The original swept an arc from the start
+  of the sector to its end over the dwell time, redrawn every 16 ms. `docs/style.md`
+  has no motion, so the arc now appears whole when the dwell starts and goes
+  when the dwell fires or is cancelled (or the ring closes). The overlay has no
+  timer any more; the daemon's one-shot timer fires the action, as before.
 - **The menu is a file of the user's.** The original `menu.toml` was the author's
   own menu and held their paths, their sink names and their apps. It is not
   here. The default menu is a generic one, and a user's goes through the option.
@@ -84,11 +91,10 @@ behavior is unchanged except for the following.
 
 ## Style exceptions
 
-Both are listed in the module that installs it (`modules/desktop/sway-radial.nix`),
+One, listed in the module that installs it (`modules/desktop/sway-radial.nix`),
 as `docs/style.md` rule 9 asks: the ring is round, as the style spec says it
-stays, and the countdown arc moves while the fingers hold still, because it is a
-gauge of the time that has passed and the only sign that holding is doing
-something.
+stays. Nothing else is an exception: the ring is opaque, nothing fades, and the
+countdown arc is static.
 
 ## Left out of the vendored tree
 

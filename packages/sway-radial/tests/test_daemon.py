@@ -254,6 +254,7 @@ class _FakeOverlay:
 
     def __init__(self):
         self.calls = []
+        self.cancelled = 0
 
     def show(self, origin, output):
         self.calls.append(("show", origin, output))
@@ -271,7 +272,7 @@ class _FakeOverlay:
         self.calls.append(("dwell", ms))
 
     def cancel_dwell(self):
-        pass
+        self.cancelled += 1
 
 
 def _mouse_daemon(tmp_path, monkeypatch):
@@ -380,3 +381,15 @@ def test_a_rename_into_place_behind_the_symlink_reloads_without_an_error(tmp_pat
     _run_loop(GLib, rename)
     assert _label(d) == "Renamed"
     assert "reload failed" not in caplog.text
+
+
+def test_a_dwell_that_fires_takes_its_arc_away(tmp_path):
+    """The arc is static, so nothing runs it out: the firing must remove it,
+    even when the action closes the ring or leaves nothing to count down to."""
+    d = _dwelling_daemon(tmp_path)
+    d._overlay = _FakeOverlay()
+    _drive(d, _event("begin"), _event("update", scale=0.8), _event("update", scale=0.8, dy=-100))
+    assert d._dwell_target is not None
+    before = d._overlay.cancelled
+    d._on_dwell()
+    assert d._overlay.cancelled > before

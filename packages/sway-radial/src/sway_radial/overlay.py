@@ -29,7 +29,6 @@ ctypes.CDLL("libgtk4-layer-shell.so.0")
 
 import logging  # noqa: E402
 import math  # noqa: E402
-import time  # noqa: E402
 from collections.abc import Callable, Sequence  # noqa: E402
 
 import cairo  # noqa: E402
@@ -44,7 +43,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
 
-from gi.repository import Gdk, GLib, Gtk, Gtk4LayerShell  # noqa: E402
+from gi.repository import Gdk, Gtk, Gtk4LayerShell  # noqa: E402
 
 __all__ = ["Overlay", "draw_ring"]
 
@@ -63,8 +62,6 @@ _LABEL_SIZE = 15.0
 _EDGE_PAD = 6.0
 #: The dwell arc, drawn just inside the ring's edge.
 _DWELL_INSET = 4.0
-#: Roughly 60 fps. The arc is the only thing that moves.
-_DWELL_FRAME_MS = 16
 _PATH_SIZE = 9.0
 _HUB_SIZE = 12.0
 #: The X that replaces the breadcrumb while the exit counts down. Drawn in TEXT
@@ -276,7 +273,7 @@ def draw_ring(
     breadcrumb: Sequence[str],
     origin: tuple[float, float],
     scale: float,
-    dwell: float = 0.0,
+    dwell: bool = False,
 ) -> None:
     """Paint one ring centered on ``origin``, in logical pixels times ``scale``.
 
@@ -345,43 +342,39 @@ def draw_ring(
             bound=R_DRAW - _EDGE_PAD,
         )
 
-    _draw_dwell(cr, highlighted, dwell)
-    _draw_hub(cr, menu, breadcrumb, closing=highlighted is None and dwell > 0.0)
+    if dwell:
+        _draw_dwell(cr, highlighted)
+    _draw_hub(cr, menu, breadcrumb, closing=highlighted is None and dwell)
     cr.restore()
 
 
-def _draw_dwell(cr: cairo.Context, highlighted: Direction | None, progress: float) -> None:
-    """The countdown, drawn as an arc filling the highlighted sector's edge.
+def _draw_dwell(cr: cairo.Context, highlighted: Direction | None) -> None:
+    """The countdown, drawn as an arc along the highlighted sector's edge.
 
     Without it a dwell is indistinguishable from a menu that has stopped
     responding: the hand is holding still on purpose and nothing on screen says
-    for how much longer. Drawn in TEXT rather than the accent, because the wedge
-    underneath is already the accent and the accent on the accent is invisible.
+    that something is about to happen. It appears whole when the dwell starts
+    and goes when the dwell fires or is cancelled; it does not sweep, because
+    the style has no motion (docs/style.md of ravnix). It is drawn in DEEPEST,
+    the role for marks on an accent fill, because the wedge underneath is the
+    accent and the accent on the accent is invisible.
 
     With nothing highlighted the countdown belongs to the exit, so it is drawn
-    as a full turn around the dead zone instead, just outside the hub
-    fill, which paints over anything inside R_DEAD.
+    as a full turn around the dead zone instead, just outside the hub fill,
+    which paints over anything inside R_DEAD. That one lies on the canvas and
+    the wash, not on the accent, so it stays TEXT.
     """
-    if progress <= 0.0:
-        return
     if highlighted is None:
         cr.new_path()
-        cr.arc(
-            0.0,
-            0.0,
-            R_DEAD + _DWELL_INSET,
-            _CAIRO_TURN,
-            _CAIRO_TURN + math.tau * min(1.0, progress),
-        )
+        cr.arc(0.0, 0.0, R_DEAD + _DWELL_INSET, 0.0, math.tau)
         cr.set_source_rgb(*theme.TEXT)
         cr.set_line_width(theme.MARKER)
         cr.stroke()
         return
     start, end = sector_bounds(highlighted)
-    swept = start + (end - start) * min(1.0, progress)
     cr.new_path()
-    cr.arc(0.0, 0.0, R_DRAW - _DWELL_INSET, start + _CAIRO_TURN, swept + _CAIRO_TURN)
-    cr.set_source_rgb(*theme.TEXT)
+    cr.arc(0.0, 0.0, R_DRAW - _DWELL_INSET, start + _CAIRO_TURN, end + _CAIRO_TURN)
+    cr.set_source_rgb(*theme.DEEPEST)
     cr.set_line_width(theme.MARKER)
     cr.stroke()
 
@@ -415,9 +408,7 @@ class Overlay:
         self._breadcrumb: tuple[str, ...] = ()
         self._origin: tuple[float, float] = (0.0, 0.0)
         self._output: str | None = None
-        self._dwell_started: float | None = None
-        self._dwell_ms: int = 0
-        self._dwell_tick: int | None = None
+        self._dwell_armed = False
         self._latched = False
 
         self._window = Gtk.Window()
@@ -510,7 +501,7 @@ class Overlay:
             breadcrumb=self._breadcrumb,
             origin=self._origin,
             scale=1.0,
-            dwell=self._dwell_progress(),
+            dwell=self._dwell_armed,
         )
 
     def _on_pressed(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
@@ -537,39 +528,19 @@ class Overlay:
             return True
         return False
 
-    def _dwell_progress(self) -> float:
-        if self._dwell_started is None or self._dwell_ms <= 0:
-            return 0.0
-        elapsed = (time.monotonic() - self._dwell_started) * 1000.0
-        return max(0.0, min(1.0, elapsed / self._dwell_ms))
-
     def start_dwell(self, duration_ms: int) -> None:
-        """Begin the countdown animation. Cosmetic only.
+        """Show the countdown arc, whole, until the dwell fires or is cancelled.
 
-        The daemon keeps its own timer for the action. This one only paints, so
-        a dropped frame slows the arc and never changes what the dwell does.
+        Cosmetic only. The daemon keeps the timer that fires the action; this
+        one draws once and holds still, so it has no timer of its own and a
+        dropped frame cannot change what the dwell does.
         """
-        self.cancel_dwell()
-        if duration_ms <= 0:
-            return
-        self._dwell_started = time.monotonic()
-        self._dwell_ms = duration_ms
-        self._dwell_tick = GLib.timeout_add(_DWELL_FRAME_MS, self._on_dwell_frame)
+        self._dwell_armed = duration_ms > 0
+        self._area.queue_draw()
 
     def cancel_dwell(self) -> None:
-        if self._dwell_tick is not None:
-            GLib.source_remove(self._dwell_tick)
-            self._dwell_tick = None
-        self._dwell_started = None
-        self._dwell_ms = 0
+        self._dwell_armed = False
         self._area.queue_draw()
-
-    def _on_dwell_frame(self) -> bool:
-        self._area.queue_draw()
-        if self._dwell_progress() >= 1.0:
-            self._dwell_tick = None
-            return False
-        return True
 
     def _monitor_named(self, name: str | None):
         """The Gdk.Monitor whose connector is ``name``, or None.
@@ -606,6 +577,7 @@ class Overlay:
 
     def hide(self) -> None:
         """Gone at once: the ring does not fade (docs/style.md of ravnix)."""
+        self._dwell_armed = False
         self._window.set_visible(False)
         self.set_latched(False)
 

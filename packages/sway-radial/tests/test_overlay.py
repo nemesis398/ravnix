@@ -41,6 +41,62 @@ def at(direction, r):
     a = angle_of(direction)
     return ORIGIN[0] + math.sin(a) * r, ORIGIN[1] - math.cos(a) * r
 
+def render_dwelling(menu, highlighted=None, breadcrumb=()):
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
+    cr = cairo.Context(surface)
+    draw_ring(cr, menu=menu, highlighted=highlighted, breadcrumb=breadcrumb,
+              origin=ORIGIN, scale=1.0, dwell=True)
+    surface.flush()
+    return surface
+
+#: Two accents unlike each other and unlike every other role of the fallback
+#: theme, so a test that passes on one of them by luck fails on the other.
+ACCENTS = ((0.90, 0.25, 0.35), (0.25, 0.85, 0.45))
+
+#: The radius the countdown arc is stroked at, and the sector's half width.
+ARC_RADIUS = 196.0
+HALF_SECTOR = math.pi / 8
+
+def arc_at(direction, offset):
+    """The point on the arc ``offset`` radians from the sector's middle."""
+    a = angle_of(direction) + offset
+    return ORIGIN[0] + math.sin(a) * ARC_RADIUS, ORIGIN[1] - math.cos(a) * ARC_RADIUS
+
+@pytest.mark.parametrize("accent", ACCENTS)
+def test_the_countdown_arc_on_the_lit_sector_is_the_deepest_role(menu, monkeypatch, accent):
+    monkeypatch.setattr(theme, "ACCENT", accent)
+    s = render_dwelling(menu, highlighted="n")
+    assert (theme.DEEPEST != pytest.approx(accent, abs=0.1)), "the fixture accent is too close to DEEPEST"
+    for offset in (-0.8 * HALF_SECTOR, 0.0, 0.8 * HALF_SECTOR):
+        r, g, b, a = pixel(s, *arc_at("n", offset))
+        assert a == 1.0
+        assert (r, g, b) == pytest.approx(theme.DEEPEST, abs=0.02), offset
+    # and the sector itself next to the arc is still the accent
+    r, g, b, _ = pixel(s, *at("n", 120))
+    assert (r, g, b) == pytest.approx(accent, abs=0.02)
+
+@pytest.mark.parametrize("accent", ACCENTS)
+def test_the_countdown_arc_is_the_whole_edge_at_once(menu, monkeypatch, accent):
+    """No progress to sweep: the arc spans the sector from the first draw."""
+    monkeypatch.setattr(theme, "ACCENT", accent)
+    s = render_dwelling(menu, highlighted="e")
+    for offset in (-0.9 * HALF_SECTOR, -0.5 * HALF_SECTOR, 0.5 * HALF_SECTOR, 0.9 * HALF_SECTOR):
+        r, g, b, _ = pixel(s, *arc_at("e", offset))
+        assert (r, g, b) == pytest.approx(theme.DEEPEST, abs=0.02), offset
+
+def test_without_a_dwell_the_lit_sector_edge_has_no_arc(menu):
+    s = render(menu, highlighted="n")
+    r, g, b, _ = pixel(s, *arc_at("n", 0.0))
+    assert (r, g, b) == pytest.approx(theme.ACCENT, abs=0.02)
+
+def test_the_exit_countdown_is_a_whole_turn_in_text_around_the_dead_zone(menu):
+    s = render_dwelling(menu, highlighted=None)
+    radius = 44.0
+    for a in (0.0, math.pi / 2, math.pi, 1.5 * math.pi, 0.7):
+        r, g, b, _ = pixel(s, ORIGIN[0] + math.sin(a) * radius, ORIGIN[1] - math.cos(a) * radius)
+        assert (r, g, b) == pytest.approx(theme.TEXT, abs=0.02), a
+
+
 def test_nothing_highlighted_draws_no_accent(menu):
     s = render(menu)
     r, g, b, _ = pixel(s, *at("n", 120))
@@ -196,13 +252,15 @@ def overlay_without_a_display(monkeypatch):
     from sway_radial import overlay
 
     recorder = _Recorder()
-    monkeypatch.setattr(overlay, "GLib", recorder)
+    # The overlay imports no GLib any more; a use of the name would land here.
+    monkeypatch.setattr(overlay, "GLib", recorder, raising=False)
     ov = overlay.Overlay.__new__(overlay.Overlay)
     ov._window = _Window()
     ov._area = _Area()
     ov._origin = (0.0, 0.0)
     ov._output = None
     ov._hide_source = None  # the fade's timer, in the old Overlay
+    ov._dwell_armed = False
     latched = []
     monkeypatch.setattr(ov, "set_latched", lambda value: latched.append(value))
     return ov, recorder, latched
@@ -236,3 +294,61 @@ def test_showing_after_hiding_leaves_nothing_pending(overlay_without_a_display):
     ov.show((1.0, 2.0))
     assert ov._window.visible is True
     assert recorder.calls == []
+
+
+def _paint_with(ov, monkeypatch):
+    """Run the overlay's draw function against a recording draw_ring."""
+    from sway_radial import overlay
+
+    seen = []
+    monkeypatch.setattr(overlay, "draw_ring", lambda cr, **kw: seen.append(kw))
+    ov._menu = object()
+    ov._highlighted = None
+    ov._breadcrumb = ()
+    ov._draw(None, None, 0, 0)
+    return seen
+
+
+def test_starting_a_dwell_queues_one_draw_and_adds_no_timer(overlay_without_a_display, monkeypatch):
+    ov, recorder, _ = overlay_without_a_display
+    before = ov._area.draws
+    ov.start_dwell(200)
+    assert ov._area.draws == before + 1
+    assert recorder.calls == [], "start_dwell scheduled a timer for the arc"
+    assert _paint_with(ov, monkeypatch)[0]["dwell"] is True
+
+
+def test_cancelling_a_dwell_takes_the_arc_away(overlay_without_a_display, monkeypatch):
+    ov, recorder, _ = overlay_without_a_display
+    ov.start_dwell(200)
+    before = ov._area.draws
+    ov.cancel_dwell()
+    assert ov._area.draws == before + 1
+    assert recorder.calls == []
+    assert _paint_with(ov, monkeypatch)[0]["dwell"] is False
+
+
+def test_a_dwell_of_no_length_arms_nothing(overlay_without_a_display, monkeypatch):
+    ov, recorder, _ = overlay_without_a_display
+    ov.start_dwell(0)
+    assert _paint_with(ov, monkeypatch)[0]["dwell"] is False
+
+
+def test_hiding_takes_an_armed_arc_away(overlay_without_a_display, monkeypatch):
+    ov, _, _ = overlay_without_a_display
+    ov.start_dwell(200)
+    ov.hide()
+    ov.show((1.0, 2.0))
+    assert _paint_with(ov, monkeypatch)[0]["dwell"] is False
+
+
+def test_the_overlay_keeps_no_timer_for_drawing():
+    from sway_radial import overlay
+
+    for name in ("_DWELL_FRAME_MS",):
+        assert not hasattr(overlay, name), name
+    for name in ("_on_dwell_frame", "_dwell_progress"):
+        assert not hasattr(overlay.Overlay, name), name
+    source = open(overlay.__file__).read()
+    assert "timeout_add" not in source, "the overlay schedules a timer"
+    assert "monotonic" not in source, "the overlay reads the clock for an animation"
