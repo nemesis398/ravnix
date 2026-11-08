@@ -560,6 +560,7 @@ test_menu_keep_awake_without_keep_awake_says_so() {
 	mv "$bin/keep-awake" "$scratch/keep-awake.away"
 	run menu
 	mv "$scratch/keep-awake.away" "$bin/keep-awake"
+	expect_status 1
 	expect_err "energy: keep-awake is not on the PATH, so keep-awake is unchanged"
 	calls_are "notify-send -a Energy -u critical keep-awake not found keep-awake is unchanged."
 }
