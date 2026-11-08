@@ -67,9 +67,9 @@ in
       default = [ ];
       description = ''
         The security key's handles. The laptop runs an agent of their own on
-        `ravnix.skAgent.socket`, apart from Bitwarden's and from any other,
-        that holds these and nothing else. Empty: the laptop runs no such
-        agent.
+        `ravnix.skAgent.socket`, apart from rbw's (the one `SSH_AUTH_SOCK`
+        names) and from any other, that holds these and nothing else. Empty:
+        the laptop runs no such agent.
       '';
     };
 
@@ -84,7 +84,7 @@ in
         The git hosts that ssh on the server reaches with the security key,
         as git's remotes name them (`git@HOST:...`, `ssh://git@HOST:PORT/...`).
         For these, ssh uses the laptop's agent through the forwarded socket
-        and no other agent, Bitwarden's included, and offers the keys of
+        and no other agent, rbw's included, and offers the keys of
         `ravnix.skAgent.keys` alone; while the laptop is not connected it
         stops at once with a message that says so. Empty: the server leaves
         ssh as it is.

@@ -38,7 +38,8 @@ in
       description = ''
         The SSH public key your commits are signed with, as one line of a
         `.pub` file. Without git's `key::` prefix, which ravnix adds where git
-        needs it. The private half stays in your Bitwarden agent.
+        needs it. The private half stays in your Bitwarden vault, which rbw's
+        agent serves as an SSH key.
       '';
     };
   };

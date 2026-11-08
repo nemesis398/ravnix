@@ -34,8 +34,9 @@ in
         string (a Nix path would copy the key into the store). Make it with
         `ssh-keygen -t ed25519 -N "" -f <path>`: the command runs without
         anyone to type a passphrase, and it never asks for one. It is a key of
-        its own, not the YubiKey's and not the one Bitwarden's agent holds for
-        the git hosts; the command ignores every agent and every file in
+        its own, not the YubiKey's and not one of the vault's SSH keys, which
+        rbw's agent (the one `SSH_AUTH_SOCK` names) serves, the git hosts'
+        among them; the command ignores every agent and every file in
         `~/.ssh/config`. Null: the server has no `ravnix-laptop`.
       '';
     };

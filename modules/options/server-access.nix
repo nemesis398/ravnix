@@ -41,12 +41,13 @@ in
         key into the store). Make it with `ssh-keygen -t ed25519 -N "" -f
         <path>`: the laptop connects again by itself after every drop, with
         nobody there to type a passphrase. It is a key of its own, not the
-        YubiKey's and not one Bitwarden's agent holds; with it set, the
-        connection asks no agent. Null: ssh's own defaults, the agent of
-        SSH_AUTH_SOCK (Bitwarden's) and ~/.ssh/id_*, which a reconnect after
-        a suspend may find locked. A space or a % in the path is fine; a $,
-        a double quote, a backslash or a control character is refused, since
-        ssh_config could not hold it.
+        YubiKey's and not one of the vault's SSH keys, which rbw's agent
+        serves; with it set, the connection asks no agent. Null: ssh's own
+        defaults, the agent of SSH_AUTH_SOCK (rbw's, which serves the vault's
+        SSH keys) and ~/.ssh/id_*, which a reconnect after a suspend may find
+        locked. A space or a % in the path is fine; a $, a double quote, a
+        backslash or a control character is refused, since ssh_config could
+        not hold it.
       '';
     };
 
