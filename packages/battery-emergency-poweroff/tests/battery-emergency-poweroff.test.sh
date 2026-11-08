@@ -3,13 +3,16 @@
 # Tests for battery-emergency-poweroff (packages/battery-emergency-poweroff),
 # run by the check bin-battery-emergency-poweroff.
 #
-# The script runs as it is, against a battery directory in the scratch
-# directory, with stubs on the PATH for the four commands that act: logger,
+# The script runs as a copy whose one fixed path, the runtime unit
+# directory where it blocks sleep, points into the scratch directory, and a
+# test fails when the copy still names the real one. It runs against a
+# battery directory in the scratch directory, with stubs on the PATH for
+# the four commands that act: logger,
 # wall, sleep and systemctl log their arguments and do nothing else, so no
 # case powers anything off. The sleep stub can also change the battery's
 # status, as plugging in the charger during the warning does, and its
 # capacity; the systemctl stub can refuse the poweroff, as logind does
-# while a suspend is under way. The last tests
+# while a suspend is under way, and fail the daemon-reload. The last tests
 # check the package: the script is the one tested here, and its PATH is the
 # store's tools and nothing inherited, since it runs as root.
 #
@@ -26,6 +29,15 @@ source "${TEST_LIB:?TEST_LIB names scripts/tests/lib.sh}"
 bin="$scratch/bin"
 calls="$scratch/calls"
 bat="$scratch/BAT0"
+units="$scratch/run-units"
+script="$scratch/battery-emergency-poweroff"
+
+# The copy under test; the sandbox has no /usr/bin/env.
+sed -e "1s|^#!.*|#!$BASH|" -e "s|/run/systemd/system|$units|g" "$SOURCE" >"$script"
+if grep -Ev '^[[:space:]]*#' "$script" | grep -q '/run/systemd/system'; then
+	echo "the copy of the script still names /run/systemd/system" >&2
+	exit 1
+fi
 
 write_script "$bin/logger" 'printf "logger %s\n" "$*" >>"$CALLS"; exit "${LOGGER_STATUS:-0}"'
 write_script "$bin/wall" 'printf "wall %s\n" "$*" >>"$CALLS"; exit "${WALL_STATUS:-0}"'
@@ -35,17 +47,19 @@ write_script "$bin/sleep" \
 	'[ -z "${ON_SLEEP_CAPACITY+set}" ] || printf "%s\n" "$ON_SLEEP_CAPACITY" >"$BAT_DIR/capacity"' \
 	'[ -z "${ON_SLEEP_GONE:-}" ] || rm -f -- "$BAT_DIR/$ON_SLEEP_GONE"'
 # systemctl: logs; LOGIND_REFUSES makes `systemctl poweroff` fail as it does
-# when logind answers OperationInProgress, FALLBACK_FAILS the direct start.
+# when logind answers OperationInProgress, FALLBACK_FAILS the direct start,
+# RELOAD_FAILS the daemon-reload.
 write_script "$bin/systemctl" \
 	'printf "systemctl %s\n" "$*" >>"$CALLS"' \
 	'if [ "$1" = poweroff ] && [ -n "${LOGIND_REFUSES:-}" ]; then' \
 	'  echo "Call to PowerOff failed: Action suspend already in progress, refusing requested poweroff operation." >&2; exit 1' \
 	'fi' \
-	'[ "$1" != start ] || [ -z "${FALLBACK_FAILS:-}" ] || exit 1'
+	'[ "$1" != start ] || [ -z "${FALLBACK_FAILS:-}" ] || exit 1' \
+	'[ "$1" != daemon-reload ] || [ -z "${RELOAD_FAILS:-}" ] || exit 1'
 
 # battery STATUS CAPACITY: a battery directory as sysfs shows it.
 battery() {
-	rm -rf -- "$bat"
+	rm -rf -- "$bat" "$units"
 	mkdir -p "$bat"
 	printf '%s\n' "$1" >"$bat/status"
 	printf '%s\n' "$2" >"$bat/capacity"
@@ -54,7 +68,7 @@ battery() {
 # Runs the script against $bat, or against the directory given.
 run() {
 	: >"$calls"
-	capture env PATH="$bin:$PATH" CALLS="$calls" BAT_DIR="$bat" bash "$SOURCE" "${1:-$bat}"
+	capture env PATH="$bin:$PATH" CALLS="$calls" BAT_DIR="$bat" bash "$script" "${1:-$bat}"
 }
 
 expect_calls() {
@@ -259,8 +273,88 @@ test_falls_back_to_systemd_when_logind_refuses() {
 		"wall Battery at 2%: EMERGENCY POWEROFF in 10 seconds. Plug in AC now to abort." \
 		"sleep 10" \
 		"systemctl poweroff" \
-		"logger -t battery-emergency-poweroff logind refused the poweroff; starting poweroff.target directly" \
+		"logger -t battery-emergency-poweroff logind refused the poweroff; blocking sleep, then starting poweroff.target directly" \
+		"systemctl daemon-reload" \
 		"systemctl start --job-mode=replace-irreversibly --no-block poweroff.target"
+}
+
+# Before that direct poweroff, every sleep unit refuses to start for the
+# rest of the boot: the suspend logind holds back is still armed, and
+# nothing in the sleep units conflicts with a shutdown, so it could start
+# in the middle of one. A drop-in under /run, since NixOS's units live in
+# /etc/systemd/system, which a runtime mask does not override.
+sleep_units=(
+	sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+	systemd-suspend.service systemd-hibernate.service systemd-hybrid-sleep.service
+	systemd-suspend-then-hibernate.service
+)
+blocked=$'[Unit]\nRefuseManualStart=yes\nConditionPathExists=!/'
+
+test_the_fallback_blocks_every_sleep_unit() {
+	battery Discharging 2
+	LOGIND_REFUSES=1 run
+	expect_status 0
+	local unit got
+	for unit in "${sleep_units[@]}"; do
+		got="$(cat "$units/$unit.d/50-battery-emergency-poweroff.conf" 2>/dev/null || echo "<no drop-in>")"
+		[[ "$got" == "$blocked" ]] || {
+			echo "  $unit is not blocked: $got"
+			return 1
+		}
+	done
+	got="$(find "$units" -name '*.conf' | wc -l)"
+	[[ "$got" == "${#sleep_units[@]}" ]] || {
+		echo "  $got drop-ins, not ${#sleep_units[@]}:"
+		find "$units"
+		return 1
+	}
+}
+
+test_no_block_when_logind_takes_the_poweroff() {
+	battery Discharging 2
+	run
+	poweroff_calls 2
+	[[ ! -e "$units" ]] || {
+		echo "  blocked sleep although logind took the poweroff:"
+		find "$units"
+		return 1
+	}
+}
+
+test_no_block_when_the_battery_recovers() {
+	battery Discharging 3
+	LOGIND_REFUSES=1 ON_SLEEP=Charging run
+	[[ ! -e "$units" ]] || {
+		echo "  blocked sleep on the charger"
+		return 1
+	}
+}
+
+# A block that cannot be written, or a daemon-reload that fails, never
+# stops the poweroff.
+test_a_block_that_cannot_be_written_still_powers_off() {
+	battery Discharging 2
+	# A file where the directory goes, so no drop-in can be made, for root
+	# as for anyone.
+	: >"$units"
+	LOGIND_REFUSES=1 run
+	expect_status 0
+	[[ "$(tail -n 1 "$calls")" == "systemctl start --job-mode=replace-irreversibly --no-block poweroff.target" ]] || {
+		echo "  no direct poweroff after a failed block:"
+		cat "$calls"
+		return 1
+	}
+}
+
+test_a_failing_daemon_reload_still_powers_off() {
+	battery Discharging 2
+	LOGIND_REFUSES=1 RELOAD_FAILS=1 run
+	expect_status 0
+	[[ "$(tail -n 1 "$calls")" == "systemctl start --job-mode=replace-irreversibly --no-block poweroff.target" ]] || {
+		echo "  no direct poweroff after a failed daemon-reload:"
+		cat "$calls"
+		return 1
+	}
 }
 
 test_falls_back_when_logger_fails_too() {
@@ -373,8 +467,8 @@ test_negative_capacity_counts_as_empty() {
 test_two_runs_at_once() {
 	battery Discharging 3
 	: >"$calls"
-	env PATH="$bin:$PATH" CALLS="$calls" BAT_DIR="$bat" bash "$SOURCE" "$bat" &
-	env PATH="$bin:$PATH" CALLS="$calls" BAT_DIR="$bat" bash "$SOURCE" "$bat" &
+	env PATH="$bin:$PATH" CALLS="$calls" BAT_DIR="$bat" bash "$script" "$bat" &
+	env PATH="$bin:$PATH" CALLS="$calls" BAT_DIR="$bat" bash "$script" "$bat" &
 	wait
 	[[ "$(grep -c '^systemctl poweroff$' "$calls")" == 2 ]] || {
 		echo "  expected two poweroffs, got:"
@@ -444,6 +538,11 @@ tests=(
 	test_capacity_gone_after_the_warning_aborts
 	test_status_gone_after_the_warning_aborts
 	test_falls_back_to_systemd_when_logind_refuses
+	test_the_fallback_blocks_every_sleep_unit
+	test_no_block_when_logind_takes_the_poweroff
+	test_no_block_when_the_battery_recovers
+	test_a_block_that_cannot_be_written_still_powers_off
+	test_a_failing_daemon_reload_still_powers_off
 	test_falls_back_when_logger_fails_too
 	test_a_failing_fallback_fails_the_run
 	test_powers_off_when_wall_fails

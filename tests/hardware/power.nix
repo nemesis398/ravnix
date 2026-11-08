@@ -14,7 +14,8 @@
 # row), lets UPower power the VM off at 2 %, boots again, and lets the
 # emergency poweroff do it at 3 % with UPower masked, then once more while
 # logind refuses every poweroff (a suspend held back by a delay lock, as in
-# the incident's suspend loop), so the helper must ask systemd itself.
+# the incident's suspend loop), so the helper must ask systemd itself, and
+# the held-back suspend, let go during the shutdown, must not start.
 # The fake battery is test_battery, not BAT0, so the emergency poweroff
 # runs by hand against it, and the unit is checked for what it runs and
 # when.
@@ -323,10 +324,13 @@ pkgs.testers.runNixOSTest {
             " && printf '[Login]\\nInhibitDelayMaxSec=600\\n' > /run/systemd/logind.conf.d/50-hold.conf"
             " && systemctl reload systemd-logind"
         )
-        # PID 1's PATH has no coreutils, so sleep is named by its path.
+        # The lock is let go the moment the poweroff job is queued, so the
+        # held-back suspend fires in the middle of the shutdown, while logind
+        # still runs. PID 1's PATH has no coreutils, hence the unit's own.
         machine.succeed(
-            "systemd-run --unit=hold-sleep systemd-inhibit --what=sleep --mode=delay"
-            " --who=hold-sleep /run/current-system/sw/bin/sleep infinity"
+            "systemd-run --unit=hold-sleep --setenv=PATH=/run/current-system/sw/bin"
+            " systemd-inhibit --what=sleep --mode=delay --who=hold-sleep"
+            " sh -c 'until systemctl list-jobs --no-legend | grep -q poweroff.target; do sleep 0.1; done'"
         )
         machine.wait_until_succeeds(
             "systemd-inhibit --list --no-legend | grep -q hold-sleep", timeout=30
@@ -340,10 +344,24 @@ pkgs.testers.runNixOSTest {
         )
         machine.succeed(f"systemd-run --unit=emergency-fallback ${helper} {battery_dir}")
         machine.wait_for_console_text("battery at 3% and discharging, powering off in 10s")
+        fallback = "logind refused the poweroff; blocking sleep, then starting poweroff.target directly"
+        machine.wait_for_console_text(fallback, timeout=60)
+        # logind tries the suspend it held back, and the blocked target
+        # refuses it.
         machine.wait_for_console_text(
-            "logind refused the poweroff; starting poweroff.target directly", timeout=60
+            r"Error during inhibitor-delayed operation .*suspend\.target may be requested by dependency only",
+            timeout=60,
         )
         machine.wait_for_console_text("reboot: Power down", timeout=120)
         machine.wait_for_shutdown()
+        # And no sleep unit started between the fallback and the power-off.
+        after = machine.get_console_log().split(fallback, 1)[1]
+        for started in [
+            "Reached target sleep.target",
+            "Starting systemd-suspend.service",
+            "Performing sleep operation",
+            "PM: suspend entry",
+        ]:
+            assert started not in after, f"a sleep started during the shutdown: {started}"
   '';
 }

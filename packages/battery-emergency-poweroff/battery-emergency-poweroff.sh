@@ -5,7 +5,8 @@
 # discharges at 3 % or less, it warns for 10 seconds and powers off.
 # Plugging in the charger in those 10 seconds aborts, because the battery
 # then stops discharging, and so does a capacity above 3 % at the second
-# reading. When logind refuses the poweroff, it asks systemd directly.
+# reading. When logind refuses the poweroff, it blocks sleep for the rest of
+# the boot and asks systemd directly.
 #
 # Why it exists: on the Fedora laptop the battery ran to 0 % twice while a
 # broken suspend looped all night with the lid closed (2026-07-13 and
@@ -20,6 +21,25 @@
 #   BATTERY is the battery's sysfs directory, /sys/class/power_supply/BAT0
 #   unless given. The unit gives none; the tests name another.
 BAT=${1:-/sys/class/power_supply/BAT0}
+
+# Blocks every sleep unit for the rest of the boot, before the direct
+# poweroff below: a drop-in that refuses a start by request (logind's
+# StartUnit is one) and a condition that never holds (a start as a
+# dependency). It goes under /run because NixOS's units live in
+# /etc/systemd/system, and a runtime mask in /run would not override them.
+# A failure here never stops the poweroff.
+block_sleep() {
+    local unit
+    for unit in sleep.target suspend.target hibernate.target hybrid-sleep.target \
+        suspend-then-hibernate.target systemd-suspend.service systemd-hibernate.service \
+        systemd-hybrid-sleep.service systemd-suspend-then-hibernate.service; do
+        mkdir -p "/run/systemd/system/$unit.d" 2>/dev/null &&
+            printf '[Unit]\nRefuseManualStart=yes\nConditionPathExists=!/\n' \
+                >"/run/systemd/system/$unit.d/50-battery-emergency-poweroff.conf" 2>/dev/null
+    done
+    systemctl daemon-reload
+}
+
 if [ ! -r "$BAT/status" ] || [ ! -r "$BAT/capacity" ]; then
     exit 0
 fi
@@ -42,9 +62,18 @@ if [ "$status" = "Discharging" ] && [ "$cap" -le 3 ] 2>/dev/null; then
         # suspend already in progress"), and systemctl then gives up instead
         # of asking systemd: the failing suspend loop this net exists for is
         # such a time. So ask systemd directly, as systemctl does without
-        # logind; replace-irreversibly also stops the pending suspend from
-        # taking over again.
-        logger -t battery-emergency-poweroff "logind refused the poweroff; starting poweroff.target directly"
+        # logind. The suspend that logind holds back stays armed: it fires
+        # when its delay lock goes or its delay runs out, also during the
+        # shutdown. replace-irreversibly does not disarm it; it only keeps a
+        # later request from cancelling the poweroff's own jobs. On NixOS
+        # that late suspend is refused today all the same, because its
+        # transaction pulls in sleep-actions.service, whose default
+        # dependencies collide with those jobs (the VM test saw
+        # "Transaction for suspend.target/start is destructive"). The block
+        # first makes the refusal rest on nothing else: logind's start of a
+        # sleep target fails at once.
+        logger -t battery-emergency-poweroff "logind refused the poweroff; blocking sleep, then starting poweroff.target directly"
+        block_sleep
         exec systemctl start --job-mode=replace-irreversibly --no-block poweroff.target
     fi
 fi

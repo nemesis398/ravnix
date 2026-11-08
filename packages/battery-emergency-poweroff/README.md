@@ -38,26 +38,47 @@ None.
   poweroff` then exits 1 without a fallback of its own. The VM test shows
   both: the refusal, and this script powering the VM off through it. The
   original would have tried again only 2 minutes later, in the very suspend
-  loop it exists for.
+  loop it exists for;
+- before that direct poweroff it blocks every sleep unit for the rest of the
+  boot (`sleep.target`, `suspend.target`, `hibernate.target`,
+  `hybrid-sleep.target`, `suspend-then-hibernate.target` and their four
+  `systemd-*.service` units): a drop-in under
+  `/run/systemd/system/UNIT.d/` with `RefuseManualStart=yes` and
+  `ConditionPathExists=!/`, then `systemctl daemon-reload`. A drop-in, not
+  `systemctl mask --runtime`, because NixOS's units live in
+  `/etc/systemd/system`, which outranks a mask in `/run`. The suspend
+  logind holds back stays armed when the fallback runs and fires once its
+  delay lock goes, also during the shutdown; `replace-irreversibly` does
+  not disarm it. On NixOS systemd refuses that late suspend all the same,
+  since its transaction pulls in `sleep-actions.service`, whose default
+  dependencies collide with the shutdown's jobs (the VM saw "Transaction
+  for suspend.target/start is destructive" with the block left out). With
+  the block, logind's start fails at once ("may be requested by dependency
+  only"), whatever the sleep transaction holds. A block that cannot be
+  written, or a failing daemon-reload, never stops the poweroff.
 
 ## Tests
 
 `tests/battery-emergency-poweroff.test.sh`, the check
-`bin-battery-emergency-poweroff`, 37 cases, with logger, wall, sleep and
+`bin-battery-emergency-poweroff`, 42 cases, with logger, wall, sleep and
 systemctl as stubs: 3, 1 and 0 % power off, 4 and 50 % do not; charging,
 parked ("Not charging"), full, unknown and a lower-case status do nothing;
 plugging in or parking during the warning aborts, still discharging powers
 off; a second capacity reading above 3 % (4 and 57), empty, non-numeric,
 `2%`, huge or gone aborts, a still low one powers off, a status gone aborts;
-logind refusing makes it start `poweroff.target` itself, with a failing
-logger too, and a failing fallback fails the run; a failing wall or logger
-still powers off; no battery, no status or capacity file, an unreadable,
-empty, non-numeric, `2%` or huge capacity do nothing; two runs at once; BAT0
-as the default; and the package's script and PATH. The VM test
+logind refusing makes it block the nine sleep units and start
+`poweroff.target` itself, with a failing logger too, an unwritable block or
+a failing daemon-reload, no block when logind takes the poweroff or the
+charger comes back, and a failing fallback fails the run; a failing wall or
+logger still powers off; no battery, no status or capacity file, an
+unreadable, empty, non-numeric, `2%` or huge capacity do nothing; two runs
+at once; BAT0 as the default; and the package's script and PATH. The VM test
 `hardware-power` runs the package against the kernel's test_power battery:
 4 % leaves it alone, plugging in during the warning aborts, at 3 %, with
 UPower masked, it powers the VM off, and once more while a suspend held
-back by a delay lock makes logind refuse every poweroff.
+back by a delay lock makes logind refuse every poweroff: the held-back
+suspend, let go during the shutdown, is refused by the block, and no sleep
+unit starts.
 
 ## Findings that are not fixed
 
