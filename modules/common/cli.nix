@@ -230,7 +230,17 @@ in
             keyWidth = 0;
             format = "";
           }
-          (rowWith "│   Palette" "colors" { symbol = "block"; })
+          # The eight colors of the terminal in one line: the block symbol
+          # prints the bright eight on a second line that has no jump to the
+          # value column, so it starts under the frame, in the terminal and on
+          # the wallpaper alike.
+          (rowWith "│   Palette" "colors" {
+            symbol = "block";
+            block.range = [
+              0
+              7
+            ];
+          })
           {
             type = "custom";
             key = "│";

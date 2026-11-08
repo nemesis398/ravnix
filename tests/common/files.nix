@@ -298,6 +298,11 @@ let
     (lib.optional (lib.any (m: (m.symbol or "block") != "block" && (m.type or "") == "colors") (
       base.programs.fastfetch.settings.modules
     )) "fastfetch draws its palette in a shape that is not the block")
+    # One line of eight: the block symbol's second line, of the bright eight,
+    # starts at the frame and not at the values.
+    (lib.optional (lib.any (m: (m.type or "") == "colors" && (m.block.range or null) != [ 0 7 ]) (
+      base.programs.fastfetch.settings.modules
+    )) "fastfetch's palette is not the single line of block.range [ 0 7 ]")
     # Home-manager's `lg` function for lazygit is Fedora's no more (and a `cd`
     # in it would be the zd alias).
     (lib.optional base.programs.lazygit.enableBashIntegration "lazygit's bash integration adds an lg function")
