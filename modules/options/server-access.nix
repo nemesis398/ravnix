@@ -70,9 +70,25 @@ in
       description = ''
         The server's ssh host key, as the server's
         `/etc/ssh/ssh_host_ed25519_key.pub` has it. The laptop refuses any
-        other. Null: it trusts the first key the server shows, remembers it
-        in ~/.ssh/known_hosts (as `ravnix-server`), and refuses a different
-        one after that; set the key to avoid that first trust.
+        other.
+
+        Null: the laptop checks the key against ~/.ssh/known_hosts, under
+        the name `ravnix-server`, and reaches the server only once it is
+        there. Until then the main key's window says "Host key verification
+        failed" and the main connection forwards nothing, because the
+        forwards hand the server your security key's agent; the laptop
+        never takes the first key it is shown, and warns at every build
+        while this is null. To put the key there once, by hand, run on the
+        laptop
+
+            ssh -o BatchMode=no -o StrictHostKeyChecking=ask ravnix-server true
+
+        compare the fingerprint it shows with what
+        `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints on the
+        server, read on the server's own console and not over this
+        connection, and answer yes only when they match. Then run
+        `systemctl --user restart ravnix-connection`. Setting the key here
+        does the same without that step, and on every laptop you build.
       '';
     };
   };

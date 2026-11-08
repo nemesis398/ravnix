@@ -8,11 +8,20 @@
 #     sockets, and the laptop's herdr reads the server's settings;
 #   - what ssh makes of the generated block (`ssh -G`, which connects
 #     nowhere): the NetBird address and the account, the key of its own and
-#     no agent, the pinned host key or the first one remembered, the
-#     keepalive, no prompt; with herdr's own configuration in front, as
-#     `herdr --remote` runs ssh, the block's keepalive still wins; without
+#     no agent, a host key that is checked, pinned or not, the keepalive, no
+#     prompt; with herdr's own configuration in front, as `herdr --remote`
+#     runs ssh, the block's keepalive and host key check still win; without
 #     an identity file, ssh's defaults and the agent stay; a key whose path
 #     has a space and a % is the file at that path;
+#   - against an sshd in the build sandbox, which takes no login there (the
+#     sandbox's account has no shell), so what it tells is how far ssh got:
+#     without a pinned host key, the laptop's main connection and main
+#     terminal stop at the host key until ~/.ssh/known_hosts has the server's
+#     under ravnix-server, remember none, and go on to log in once it has;
+#     with a pinned one, a key in ~/.ssh/known_hosts does not count; and the
+#     main connection checks the host key even when the user's ssh
+#     configuration says not to;
+#   - the laptop warns while the server's host key is not pinned;
 #   - the server's herdr settings are the laptop's and the shell of its
 #     panes, merged key by key, and the shared ones set no shell;
 #   - ghostty writes OSC 52 into the clipboard and does not let a pane read
@@ -87,6 +96,7 @@ let
   ghostty = (hm h).programs.ghostty.settings;
   herdrLaptop = (hm h).programs.herdr.settings;
   herdrServer = (hm m).programs.herdr.settings;
+  pinWarnings = c: lib.filter (lib.hasPrefix "ravnix.serverAccess.hostKey is null") c.warnings;
   keyLine = "restrict,port-forwarding,pty ${template.serverAccess.publicKey}";
   forwardingKeys =
     c:
@@ -145,6 +155,11 @@ let
     ++ check (
       herdrServer.terminal.default_shell or null != null
     ) "the server's herdr has no shell of its panes"
+    # Unpinned, the laptop says so; pinned, it does not.
+    ++ check (
+      lib.length (pinWarnings h) == 1 && lib.hasInfix "ssh_host_ed25519_key.pub" (lib.head (pinWarnings h ++ [ "" ]))
+    ) "the laptop does not warn, naming the file to copy, while serverAccess.hostKey is null"
+    ++ check (pinWarnings pinned == [ ]) "the laptop warns with a pinned host key"
     ++ check (
       lib.toList (ghostty.clipboard-write or [ ]) == [ "allow" ]
     ) "ghostty does not write OSC 52 into the clipboard"
@@ -172,10 +187,15 @@ let
 
   sshConfig = c: (hm c).home.file.".ssh/config".source;
   ssh = lib.getExe' pkgs.openssh "ssh";
+  laptopConnection = c: lib.getExe (lib.head (homeNamed "ravnix-connection" c));
+  laptopTerminal = c: lib.getExe (lib.head (homeNamed "ravnix-terminal" c));
 in
 pkgs.runCommand "glue-terminal-shapes"
   {
-    nativeBuildInputs = [ pkgs.openssh ];
+    nativeBuildInputs = [
+      pkgs.openssh
+      pkgs.util-linux
+    ];
   }
   ''
       # Every check runs, and says what it found: no -e, which stdenv sets.
@@ -215,7 +235,7 @@ pkgs.runCommand "glue-terminal-shapes"
       has "$g" "identitiesonly yes" "only that key"
       has "$g" "identityagent none" "no agent"
       has "$g" "hostkeyalias ravnix-server" "the host key's name"
-      has "$g" "stricthostkeychecking accept-new" "the first host key remembered"
+      has "$g" "stricthostkeychecking true" "without a pinned host key, one that is checked"
       has "$g" "batchmode yes" "no prompt"
       has "$g" "serveraliveinterval 1" "the keepalive"
       has "$g" "serveralivecountmax 3" "the keepalive's count"
@@ -228,6 +248,7 @@ pkgs.runCommand "glue-terminal-shapes"
       g=$(effective herdr-config) || fail "ssh refuses herdr's configuration: $g"
       has "$g" "serveraliveinterval 1" "herdr's keepalive wins over the block's"
       has "$g" "identityagent none" "herdr's ssh asks an agent"
+      has "$g" "stricthostkeychecking true" "herdr's ssh takes a host key unchecked"
 
       g=$(effective ${sshConfig pinned}) || fail "ssh refuses the pinned configuration: $g"
       has "$g" "stricthostkeychecking true" "the pinned host key"
@@ -252,6 +273,72 @@ pkgs.runCommand "glue-terminal-shapes"
       grep -qE '^debug1: identity file /build/my keys/ravnix%server type [0-9]+.?$' <<<"$loaded" ||
         fail "ssh does not load the key at the path with a space and a %: $loaded"
 
+      # --- an sshd in the sandbox ----------------------------------------
+      mkdir -p /build/sshd /build/run /build/.ssh
+      ssh-keygen -q -t ed25519 -N "" -f /build/sshd/host
+      printf '%s\n' 'ListenAddress 127.0.0.1:2222' 'HostKey /build/sshd/host' \
+        'PidFile /build/sshd/pid' 'StrictModes no' 'UsePAM no' 'PerSourcePenalties no' \
+        'LogLevel VERBOSE' >/build/sshd/config
+      ${lib.getExe' pkgs.openssh "sshd"} -D -e -f /build/sshd/config 2>>/build/sshd/log &
+      sshd=$!
+      for _ in $(seq 50); do grep -q 'Server listening' /build/sshd/log && break; sleep 0.1; done
+      grep -q 'Server listening' /build/sshd/log || fail "sshd does not start: $(cat /build/sshd/log)"
+      serverKey="ravnix-server $(cat /build/sshd/host.pub)"
+
+      # try KIND CONFIG [BEFORE]: the laptop's ravnix-connection (KIND
+      # connection) or ravnix-terminal (terminal) of a configuration, for
+      # 3 s, against the sshd, with ~/.ssh/config pointing ravnix-server at
+      # it, BEFORE in front of the configuration. What it said is in
+      # $said, what sshd logged in $logged.
+      try() {
+        { printf 'Host ravnix-server\n  HostName 127.0.0.1\n  Port 2222\n%s\n' "''${3:-}"
+          printf 'Include %s\n' "$(local_copy "$2")"; } >/build/.ssh/config
+        chmod 600 /build/.ssh/config
+        : >/build/sshd/log
+        case $1 in
+          connection) XDG_RUNTIME_DIR=/build/run timeout 3 "$4" >/build/said 2>&1 ;;
+          terminal) XDG_RUNTIME_DIR=/build/run timeout 3 script -qec "$4" /dev/null </dev/null >/build/said 2>&1 ;;
+        esac
+        said=$(cat /build/said)
+        logged=$(cat /build/sshd/log)
+        printf -- '--- %s of %s\n%s\n--- sshd:\n%s\n' "$1" "$2" "$said" "$logged"
+      }
+      # stopped_at_the_host_key WHAT: ssh reached the sshd and went no
+      # further than its host key: no user named, nothing remembered.
+      stopped_at_the_host_key() {
+        grep -q 'Connection from 127.0.0.1' <<<"$logged" || fail "$1: never reached the sshd: $said"
+        grep -qF 'Host key verification failed' <<<"$said" || fail "$1: no refused host key: $said"
+        ! grep -qi 'user' <<<"$logged" || fail "$1: got past the host key to a login: $logged"
+        [ ! -s /build/.ssh/known_hosts ] || fail "$1: remembered a host key: $(cat /build/.ssh/known_hosts)"
+      }
+      past_the_host_key() {
+        ! grep -qF 'Host key verification failed' <<<"$said" || fail "$1: the host key is refused: $said"
+        grep -q 'Invalid user ${user}' <<<"$logged" || fail "$1: no login after the host key: $logged"
+      }
+
+      rm -f /build/.ssh/known_hosts
+      try connection ${sshConfig h} "" ${laptopConnection h}
+      stopped_at_the_host_key "the main connection without a pinned or known host key"
+      rm -f /build/.ssh/known_hosts
+      try terminal ${sshConfig h} "" ${laptopTerminal h}
+      stopped_at_the_host_key "the main terminal without a pinned or known host key"
+      rm -f /build/.ssh/known_hosts
+      try connection ${sshConfig h} "Host *
+        StrictHostKeyChecking no" ${laptopConnection h}
+      stopped_at_the_host_key "the main connection when the user's ssh configuration says StrictHostKeyChecking no"
+
+      printf '%s\n' "$serverKey" >/build/.ssh/known_hosts
+      try connection ${sshConfig h} "" ${laptopConnection h}
+      past_the_host_key "the main connection with the server's key in ~/.ssh/known_hosts"
+      try terminal ${sshConfig h} "" ${laptopTerminal h}
+      past_the_host_key "the main terminal with the server's key in ~/.ssh/known_hosts"
+
+      try connection ${sshConfig pinned} "" ${laptopConnection pinned}
+      grep -qF 'Host key verification failed' <<<"$said" ||
+        fail "a pinned host key gives way to one in ~/.ssh/known_hosts: $said"
+      ! grep -qi 'user' <<<"$logged" || fail "a pinned host key gives way to one in ~/.ssh/known_hosts: $logged"
+
+      kill "$sshd" 2>/dev/null || true
       [ "$failed" = 0 ] || exit 1
       touch $out
   ''

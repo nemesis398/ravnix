@@ -13,11 +13,19 @@
 #             account (the same on both hosts), and the key of
 #             serverAccess.identityFile with no agent, so neither the YubiKey
 #             nor Bitwarden's agent is asked and a reconnect after a suspend
-#             finds nothing locked. The host key is serverAccess.hostKey,
-#             pinned; without one, the first key the server shows is
-#             remembered under the name ravnix-server and any other refused.
-#             A dead connection is noticed within 3 to 4 s (ServerAlive), and
-#             BatchMode keeps every prompt out: nobody may be there to answer.
+#             finds nothing locked. The host key is always checked
+#             (StrictHostKeyChecking yes): against serverAccess.hostKey,
+#             pinned, or, without one, against what ~/.ssh/known_hosts holds
+#             under the name ravnix-server, which the user puts there once by
+#             hand (modules/options/server-access.nix says how; the laptop
+#             warns until the key is pinned). Nothing takes the first key it
+#             is shown: the main connection would hand that host the security
+#             key's agent and the link, and the main window would show its
+#             shell. ravnix-connection says StrictHostKeyChecking=yes on its
+#             command line too, so no ssh configuration of the user turns it
+#             off. A dead connection is noticed within 3 to 4 s (ServerAlive),
+#             and BatchMode keeps every prompt out: nobody may be there to
+#             answer.
 #   the main key ($mod+Return; ravnix.desktop.terminal.main, which the Sway
 #             config and its session layout read) opens ghostty running
 #             ravnix-terminal: herdr's own remote attach, `herdr --remote
@@ -138,17 +146,14 @@ let
         "  IdentitiesOnly yes"
         "  IdentityAgent none"
       ]
-      ++ (
-        if cfg.hostKey != null then
-          [
-            "  UserKnownHostsFile ${knownHosts}"
-            "  GlobalKnownHostsFile /dev/null"
-            "  StrictHostKeyChecking yes"
-          ]
-        else
-          [ "  StrictHostKeyChecking accept-new" ]
-      )
+      # The host key is checked, pinned or not: against the pinned one, or
+      # against ~/.ssh/known_hosts, and never taken because it is the first.
+      ++ lib.optionals (cfg.hostKey != null) [
+        "  UserKnownHostsFile ${knownHosts}"
+        "  GlobalKnownHostsFile /dev/null"
+      ]
       ++ [
+        "  StrictHostKeyChecking yes"
         "  BatchMode yes"
         "  ConnectTimeout 5"
         "  ServerAliveInterval 1"
@@ -174,6 +179,15 @@ in
   config = lib.mkMerge [
     (lib.mkIf (os.ravnix.shape == "laptop") {
       ravnix.desktop.terminal.main = "ghostty -e ${lib.getExe terminal}";
+
+      warnings = lib.optional (cfg.hostKey == null) (
+        "ravnix.serverAccess.hostKey is null, so the laptop reaches the server only once "
+        + "~/.ssh/known_hosts holds the server's host key under the name ravnix-server: until "
+        + "then the main key's window says \"Host key verification failed\" and the main "
+        + "connection forwards nothing. Copy /etc/ssh/ssh_host_ed25519_key.pub from the server "
+        + "into ravnix.serverAccess.hostKey, or add the key by hand once, as the option's "
+        + "description says."
+      );
 
       home-manager.users.${user} =
         { config, ... }:

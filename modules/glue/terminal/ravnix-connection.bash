@@ -39,8 +39,11 @@ cap=8
 : "${XDG_RUNTIME_DIR:?ravnix-connection: XDG_RUNTIME_DIR is not set; the sockets are forwarded from there}"
 
 # Each connection is its own, never a multiplexed one: a master that another
-# program started could be gone or stale.
-own=(-o ControlMaster=no -o ControlPath=none)
+# program started could be gone or stale. The host key is checked, against
+# the pinned one or one already in known_hosts, whatever an ssh
+# configuration says: the forwards hand the server the security key's agent.
+# And nobody is there to answer a prompt.
+own=(-o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=yes -o BatchMode=yes)
 
 # What ssh says, kept to find its last line; removed when the command ends.
 said=$(mktemp -p "$XDG_RUNTIME_DIR" ravnix-connection.XXXXXX)

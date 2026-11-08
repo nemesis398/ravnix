@@ -236,6 +236,20 @@ test_connection_forwards_both_sockets_on_a_connection_of_its_own() {
 	}
 }
 
+test_connection_checks_the_host_key_whatever_the_configuration_says() {
+	fresh
+	answer ssh 1 out 1000
+	answer ssh 2 status 255
+	echo 1 >"$FAKE_DIR/sleep.max"
+	capture timeout 60 "$CONNECTION"
+	local k
+	for k in 1 2; do
+		argv ssh "$k"
+		has_args -o StrictHostKeyChecking=yes
+		has_args -o BatchMode=yes
+	done
+}
+
 test_connection_refuses_what_is_no_uid() {
 	local bad
 	for bad in "" abc -1 "1000 1001" $'1000\n1001' ../0 "1000;id"; do
@@ -418,6 +432,7 @@ tests=(
 	test_terminal_without_herdr_keeps_trying_and_says_why
 	test_terminal_two_windows_at_once_are_two_attaches
 	test_connection_forwards_both_sockets_on_a_connection_of_its_own
+	test_connection_checks_the_host_key_whatever_the_configuration_says
 	test_connection_refuses_what_is_no_uid
 	test_connection_backs_off_quietly_while_the_server_is_away
 	test_connection_says_a_new_reason_once

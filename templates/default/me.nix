@@ -160,7 +160,12 @@
       # for your account. Not a real key.
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey ravnix-server@example.org";
       # The server's host key (/etc/ssh/ssh_host_ed25519_key.pub on the
-      # server). Null trusts the first key the server shows and remembers it.
+      # server). Null: the laptop never takes the first key the server
+      # shows, since the main connection hands it your security key's agent.
+      # It connects only once ~/.ssh/known_hosts has the key under the name
+      # ravnix-server, which you add once by hand after comparing the
+      # fingerprint (the option's description has the commands), and it
+      # warns at every build until you copy the key in here.
       hostKey = null;
     };
 
