@@ -41,11 +41,14 @@ terminal. On the wallpaper the swatches of the terminal's Red, Green, Yellow
 and Blue, bright or not, are left out and the rest close up (Black, Pink, Teal
 and White), because those hues carry a state (docs/style.md, rule 4 and the
 State table, which gives Blue "busy") and the row is decoration. The logo keeps
-its Blue and Sapphire: it is not a swatch. Only swatches go: text in those
-colors, and blocks in an RGB that fastfetch chose, are state and stay. A swatch
-is a run of block elements, or of fastfetch's other symbols for them (a circle,
-square, triangle or diamond), whether or not it has the space they come with,
-in one of the terminal's own 16 colors.
+its Blue and Sapphire: it is not a swatch. Only swatches on the Palette row go.
+A swatch is a run of block elements, or of fastfetch's other symbols for them (a
+circle, square, triangle or diamond), whether or not it has the space they come
+with, in one of the terminal's own 16 colors; the Palette row is a line that,
+from its first swatch on, is swatches of more than one color and nothing else.
+Everything else is state and stays: text in those colors, blocks in an RGB that
+fastfetch chose, a percent bar of squares in the color of its state followed by
+dashes, and a status dot with words after it.
 
 The ravnix mark is the wordmark `ravnix` in the theme's font, bold, until Task
 12.2 ships the mark. From then on `assets/ravnix-mark.svg` is drawn instead,
@@ -154,6 +157,10 @@ nix build .#checks.x86_64-linux.desktop-backdrop -L
   prints: blocks, and the circle, square, triangle and diamond. A new symbol
   of a later release would be drawn in its state hue until it is added to
   `SWATCH_SYMBOLS`; the real-fastfetch test looks for a state hue in the row.
+- What counts as the Palette row is a line, from its first swatch on, of
+  swatches in two or more colors and nothing else. A line of state dots with
+  no words, such as `● ● ●` in red and green, looks the same and loses its
+  state-hue dots; a bar or a dot with words, or in one color, keeps them.
 - ravnix's fastfetch config sets only the logo's color slots 1 and 2, so in a
   terminal the other four stay in the terminal's blue and cyan (Blue and Teal).
   `backdrop` sets all six for the wallpaper itself.

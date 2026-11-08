@@ -487,6 +487,40 @@ def cells(text):
                for ch in text)
 
 
+def is_swatch(run):
+    # A run of nothing but the symbols a swatch is printed with, in one of the
+    # terminal's own 16 colors. The padding a symbol comes with does not make
+    # it text.
+    _, chunk, color, _ = run
+    swatch = chunk.strip()
+    return bool(swatch) and isinstance(color, Ansi) and all(
+        "\u2580" <= ch <= "\u259f" or ch in SWATCH_SYMBOLS for ch in swatch)
+
+
+def without_state_swatches(runs, theme):
+    # The Palette row is a line that, from its first swatch on, is swatches of
+    # more than one color and nothing else. The swatches of it in a state hue
+    # are left out and the ones after them close up. Anywhere else the same
+    # symbols are state and stay: a percent bar is a run of squares in the
+    # color of its state, followed by dashes, and a status can be a lone dot.
+    swatches = [i for i, run in enumerate(runs) if is_swatch(run)]
+    if len({runs[i][2] for i in swatches}) < 2:
+        return runs
+    if any(run[1].strip() and not is_swatch(run) for run in runs[swatches[0]:]):
+        return runs
+    kept, shift, end = [], 0, None
+    for run in runs:
+        col, chunk, color, bold = run
+        if end is not None and col != end:
+            shift = 0  # a jump to a column: what follows is where it says
+        end = col + cells(chunk)
+        if is_swatch(run) and color in theme.state_hues:
+            shift += cells(chunk)
+            continue
+        kept.append((col - shift, chunk, color, bold))
+    return kept
+
+
 def parse_ansi(text, theme):
     # fastfetch's colored output as lines of (column, text, color, bold) runs.
     # It uses SGR colors (38;2;r;g;b, and 38;5;N or 30-37/90-97 for the
@@ -504,14 +538,8 @@ def parse_ansi(text, theme):
             chunk = chunk.replace("\x1b", "")
             if chunk and col < FACTS_COLUMNS:
                 chunk = chunk[:FACTS_COLUMNS - col]
-                # A swatch of the terminal's palette in a state hue is left
-                # out, and the ones after it close up. The padding a symbol
-                # comes with does not make it text.
-                swatch = chunk.strip()
-                if not (swatch and isinstance(color, Ansi) and color in theme.state_hues
-                        and all("\u2580" <= ch <= "\u259f" or ch in SWATCH_SYMBOLS for ch in swatch)):
-                    runs.append((col, chunk, color, bold))
-                    col += cells(chunk)
+                runs.append((col, chunk, color, bold))
+                col += cells(chunk)
             if m is None:
                 break
             pos = m.end()
@@ -520,7 +548,7 @@ def parse_ansi(text, theme):
                 col = min(max(int(args or 1) - 1 if args.isdigit() or not args else 0, col), FACTS_COLUMNS)
             elif cmd == "m":
                 color, bold = apply_sgr(args, color, bold, theme)
-        lines.append(runs)
+        lines.append(without_state_swatches(runs, theme))
     while lines and not any(r[1].strip() for r in lines[-1]):
         lines.pop()
     return lines

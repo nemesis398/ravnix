@@ -26,17 +26,27 @@ STATE_CODES = [
 ]
 
 
+# The Palette row is a line of swatches in different colors: that is what the
+# colors module prints, and what a state-hue swatch is dropped from. A pink one
+# keeps each of these lines a Palette row, and what is left of it is the pink.
+def palette_row(first, last="35", run="███"):
+    return "\x1b[%sm%s\x1b[%sm%s\x1b[m\n" % (first, run, last, run)
+
+
 @pytest.mark.parametrize("code", STATE_CODES)
 def test_a_state_hue_swatch_of_the_terminal_is_left_out(lab, code):
-    right, proc = render_facts(lab, "\x1b[%sm███\x1b[m\n" % code)
+    right, proc = render_facts(lab, palette_row(code))
     assert lab.journal(proc) == []
-    assert not (right != rgb("base")).any(), "the swatch is drawn"
+    only_pink, _ = render_facts(lab, "\x1b[35m███\x1b[m\n")
+    assert (only_pink != rgb("base")).any(), "nothing was drawn"
+    assert (right == only_pink).all(), "the swatch is drawn"
 
 
 @pytest.mark.parametrize("run", ["███ ", " ███", " ███ ", "██"])
 def test_padding_does_not_bring_a_swatch_back(lab, run):
-    right, _ = render_facts(lab, "\x1b[31m%s\x1b[m\n" % run)
-    assert not (right != rgb("base")).any(), "the swatch is drawn"
+    right, _ = render_facts(lab, palette_row("31", run=run))
+    only_pink, _ = render_facts(lab, "\x1b[35m%s\x1b[m\n" % run)
+    assert (right == only_pink).all(), "the swatch is drawn"
 
 
 @pytest.mark.parametrize("symbol", ["●", "■", "▲", "◆"])
@@ -44,12 +54,14 @@ def test_padding_does_not_bring_a_swatch_back(lab, run):
 def test_the_symbols_of_the_other_colors_shapes_are_left_out_too(lab, code, symbol):
     # fastfetch's colors module can print circles, squares, triangles or
     # diamonds, each followed by a space, instead of blocks.
-    right, _ = render_facts(lab, "\x1b[%sm%s \x1b[m\n" % (code, symbol))
-    assert not (right != rgb("base")).any(), "the symbol is drawn"
+    right, _ = render_facts(lab, palette_row(code, run=symbol + " "))
+    only_pink, _ = render_facts(lab, "\x1b[35m%s \x1b[m\n" % symbol)
+    assert (only_pink != rgb("base")).any(), "nothing was drawn"
+    assert (right == only_pink).all(), "the symbol is drawn"
 
 
 def test_a_symbol_in_a_color_that_is_no_state_hue_is_drawn(lab):
-    right, _ = render_facts(lab, "\x1b[35m● \x1b[m\n")
+    right, _ = render_facts(lab, palette_row("35", "36", run="● "))
     assert (right != rgb("base")).any()
 
 
@@ -75,3 +87,39 @@ def test_blocks_in_an_rgb_red_keep_their_state_hue(lab):
     # palette) is state too: three cells of it are drawn.
     right, _ = render_facts(lab, sgr(rgb("red")) + "███\x1b[m\n")
     assert where(right, rgb("red")).sum() > 500
+
+
+# What fastfetch prints in the terminal's own colors besides the Palette row: a
+# percent bar (type 3) is squares in the color of its state, then dashes, and a
+# status can be a dot. They are state, and they are not on a Palette row.
+BARS = {"31": "red", "32": "green", "33": "yellow", "91": "red", "92": "green", "93": "yellow",
+        "38;5;1": "red", "38;5;2": "green", "38;5;3": "yellow"}
+
+
+@pytest.mark.parametrize("code", BARS)
+def test_a_bar_of_squares_in_the_terminals_state_colors_keeps_its_hue(lab, code):
+    right, _ = render_facts(lab, "Disk  \x1b[%sm\u25a0\u25a0\u25a0\u25a0\u25a0\u25a0\u25a0\u25a0\x1b[m\x1b[37m--\x1b[m 80%%\n" % code)
+    assert where(right, rgb(BARS[code])).sum() > 100
+
+
+def test_a_bar_of_blocks_keeps_its_hue(lab):
+    right, _ = render_facts(lab, "Memory  \x1b[32m█████\x1b[37m-----\x1b[m 50%\n")
+    assert where(right, rgb("green")).sum() > 500
+
+
+def test_a_status_dot_keeps_its_hue(lab):
+    right, _ = render_facts(lab, "Failed  \x1b[31m\u25cf\x1b[m 2 units\n")
+    assert where(right, rgb("red")).sum() > 20
+
+
+def test_a_line_of_one_swatch_is_not_a_palette_row(lab):
+    right, _ = render_facts(lab, "\x1b[31m\u25a0\u25a0\u25a0\u25a0\u25a0\x1b[m\n")
+    assert where(right, rgb("red")).sum() > 100
+
+
+
+def test_a_line_of_state_dots_with_no_words_is_taken_for_a_palette_row(lab):
+    # The trade-off, pinned: a line of nothing but dots in two colors looks like
+    # the Palette row, so its state-hue dots are left out (README, findings).
+    right, _ = render_facts(lab, "\x1b[31m● \x1b[32m● \x1b[m\n")
+    assert not (right != rgb("base")).any()
