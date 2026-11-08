@@ -6,8 +6,10 @@
 # include sets for that name (a later Host * or Host <name>). rbw's agent
 # holds touch-free keys for the same hosts (the vault's fallback keys), so a
 # git host that reached SSH_AUTH_SOCK would push without the touch. An alias
-# is pinned through its HostName. Every other host keeps the agent, and
-# without gitKeys there is no such block.
+# is pinned through its HostName. The fallback the module's header
+# documents reaches the agent and opens no master that pinned connections
+# would reuse. Every other host keeps the agent, and without gitKeys there
+# is no such block.
 {
   self,
   inputs,
@@ -40,6 +42,18 @@ let
   laptop = configOf (build { });
   without = build { ravnix.laptop.gitKeys = lib.mkForce { }; };
   hosts = lib.attrNames gitKeys;
+  # The fallback as the header of the module writes it, with the socket
+  # filled in: the documented line itself is what is checked.
+  fallbackLines = lib.filter (m: m != null) (
+    map (builtins.match ''#   GIT_SSH_COMMAND="ssh (.*)" git push'') (
+      lib.splitString "\n" (builtins.readFile ../../modules/desktop/git-hosts.nix)
+    )
+  );
+  fallbackArgs = lib.splitString " " (
+    lib.replaceStrings [ "$SSH_AUTH_SOCK" ] [ "/run/user/1000/fallback.sock" ] (
+      lib.head (lib.head fallbackLines)
+    )
+  );
   # The configs the pin must hold in: the user's blocks after the include,
   # an alias of their own, and then a block of the first pass that sets the
   # pinned options otherwise, for every name (Host *, as home-manager's old
@@ -82,6 +96,7 @@ pkgs.runCommand "laptop-git-hosts"
     first=${lib.escapeShellArg (lib.head hosts)}
     cp config plain
     printf 'Host gitalias\n  HostName %s\n' "$first" >>plain
+    printf 'Host gitfallback\n  HostName %s\n  IdentityAgent /run/user/1000/fallback.sock\n  IdentitiesOnly no\n  ControlPath none\n' "$first" >>plain
     { cat plain; printf 'Host *\n  IdentityAgent /run/user/1000/star.sock\n  IdentitiesOnly no\n  ControlMaster no\n  ControlPath ~/.ssh/master-%%r@%%n:%%p\n  ControlPersist no\n  ForwardAgent yes\n'; } >star
     { cat plain; printf 'Host %s\n  IdentityAgent /run/user/1000/named.sock\n  IdentitiesOnly no\n  ControlMaster no\n  ForwardAgent yes\n' ${lib.escapeShellArg (toString hosts)}; } >named
     chmod 600 config plain star named inc-* 2>/dev/null || true
@@ -118,9 +133,24 @@ pkgs.runCommand "laptop-git-hosts"
     want=$(printf 'identityfile %s\n' ${lib.escapeShellArgs gitKeys.${lib.head hosts}} | sort)
     [ "$files" = "$want" ] || fail "an alias of $first has the identity files $files"
 
-    # The deliberate fallback, by hand on the command line, still works.
-    got=$(g plain -o IdentityAgent=/run/user/1000/fallback.sock "$first")
-    grep -qx 'identityagent /run/user/1000/fallback.sock' <<<"$got" || fail "-o IdentityAgent= does not override the pin"
+    # The deliberate fallback, by hand, still reaches the agent, and opens
+    # no master: one on the pinned ControlPath would carry every plain push
+    # for ten minutes with no touch. Both as the header writes it on the
+    # command line and as an alias with ControlPath none.
+    ${
+      if fallbackLines == [ ] then
+        ''fail "the header of modules/desktop/git-hosts.nix documents no GIT_SSH_COMMAND fallback"''
+      else
+        ''
+          got=$(g plain ${lib.escapeShellArgs fallbackArgs} "$first")
+          grep -qx 'identityagent /run/user/1000/fallback.sock' <<<"$got" || fail "the documented fallback does not override the pin: $(grep '^identityagent' <<<"$got")"
+          grep -qx 'identitiesonly no' <<<"$got" || fail "the documented fallback keeps IdentitiesOnly"
+          if grep -q '^controlpath ' <<<"$got"; then fail "the documented fallback opens a master that pinned pushes reuse: $(grep '^controlpath' <<<"$got")"; fi
+        ''
+    }
+    got=$(g plain gitfallback)
+    grep -qx 'identityagent /run/user/1000/fallback.sock' <<<"$got" || fail "a fallback alias of $first does not reach its agent"
+    if grep -q '^controlpath ' <<<"$got"; then fail "a fallback alias with ControlPath none opens a master: $(grep '^controlpath' <<<"$got")"; fi
 
     # Any other host keeps rbw's agent.
     got=$(g plain other.example.org)

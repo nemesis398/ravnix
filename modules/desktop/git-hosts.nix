@@ -40,9 +40,13 @@
 #   over every block.
 #
 # The fallback when the security key is not at hand is the last of these,
-# on purpose and by hand:
-#   GIT_SSH_COMMAND="ssh -o IdentityAgent=$SSH_AUTH_SOCK -o IdentitiesOnly=no" git push
-# (tests/laptop/git-hosts.nix).
+# on purpose and by hand, and without a control socket: the master is
+# shared by host, port and user (%C), so one that the agent opened on the
+# pinned ControlPath would carry every plain push for ten minutes, with no
+# touch:
+#   GIT_SSH_COMMAND="ssh -o IdentityAgent=$SSH_AUTH_SOCK -o IdentitiesOnly=no -o ControlPath=none" git push
+# A fallback alias (HostName github.com and an IdentityAgent of its own)
+# needs `ControlPath none` for the same reason (tests/laptop/git-hosts.nix).
 {
   config,
   lib,
