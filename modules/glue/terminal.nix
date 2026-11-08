@@ -8,8 +8,17 @@
 #
 # The laptop end.
 #
-#   ssh       The user's ~/.ssh/config begins with an Include of one block,
-#             `Host ravnix-server`: the server's NetBird address, the user's
+#   ssh       The user's ~/.ssh/config begins with the Includes of the
+#             modules that write one. This module's is one block,
+#             `Host ravnix-server`; on a laptop with ravnix.laptop.gitKeys the
+#             git hosts' pin (modules/desktop/git-hosts.nix) is the other.
+#             home-manager writes both on one line, `Include PIN BLOCK`,
+#             which ssh reads as two files. The pin matches the git hosts by
+#             name (`Match host`, `Match final host`) and this block matches
+#             ravnix-server, so neither sets anything for the other's hosts
+#             and their order changes no value (tests/glue/terminal-shapes.nix
+#             reads the laptop's configuration with both).
+#             The block holds the server's NetBird address, the user's
 #             account (the same on both hosts), and the key of
 #             serverAccess.identityFile with no agent, so neither the YubiKey
 #             nor rbw's agent is asked and a reconnect after a suspend
@@ -27,7 +36,7 @@
 #             and BatchMode keeps every prompt out: nobody may be there to
 #             answer.
 #   ~/.ssh/config is home-manager's on the laptop (programs.ssh), so that
-#             the Include above comes first. home-manager replaces no file
+#             the Includes above come first. home-manager replaces no file
 #             it did not write: an existing ~/.ssh/config stops the switch
 #             ("Existing file ... would be clobbered"), or, where the
 #             private flake sets home-manager.backupFileExtension, is renamed
