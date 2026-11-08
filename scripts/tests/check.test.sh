@@ -192,7 +192,7 @@ a_staged_leak_fails_the_gate() {
 	stage hosts.nix 'address = "198.51.100.7";'
 	gate --fast
 	expect_status 1
-	expect_out "hosts.nix:1:198.51.100."
+	expect_out "hosts.nix:1:deny-list.txt:2"
 }
 
 a_staged_leak_under_a_clean_work_tree_fails_the_gate() {
@@ -201,7 +201,7 @@ a_staged_leak_under_a_clean_work_tree_fails_the_gate() {
 	printf 'address = "192.0.2.1";\n' >"$repo/hosts.nix"
 	gate --fast
 	expect_status 1
-	expect_out "hosts.nix:1:198.51.100."
+	expect_out "hosts.nix:1:deny-list.txt:2"
 }
 
 an_unstaged_leak_in_a_tracked_file_fails_the_gate() {
@@ -209,7 +209,7 @@ an_unstaged_leak_in_a_tracked_file_fails_the_gate() {
 	printf 'mail alice@example.org\n' >>"$repo/a.md"
 	gate --fast
 	expect_status 1
-	expect_out "a.md:2:alice@example.org"
+	expect_out "a.md:2:deny-list.txt:1"
 }
 
 an_untracked_file_is_not_checked() {
@@ -233,7 +233,7 @@ a_staged_symlink_to_a_personal_path_fails_the_gate() {
 	git -C "$repo" add notes
 	gate --fast
 	expect_status 1
-	expect_out "notes:link:alice@example.org"
+	expect_out "notes:link:deny-list.txt:1"
 }
 
 a_staged_file_name_holding_an_entry_fails_the_gate() {
@@ -241,7 +241,7 @@ a_staged_file_name_holding_an_entry_fails_the_gate() {
 	stage 'docs/alice@example.org.md' 'clean'
 	gate --fast
 	expect_status 1
-	expect_out "docs/alice@example.org.md:name:alice@example.org"
+	expect_out "docs/alice@example.org.md:name:deny-list.txt:1"
 }
 
 a_path_with_spaces_is_snapshotted() {
@@ -249,7 +249,7 @@ a_path_with_spaces_is_snapshotted() {
 	stage 'docs/a b/c d.md' 'mail alice@example.org'
 	gate --fast
 	expect_status 1
-	expect_out "docs/a b/c d.md:1:alice@example.org"
+	expect_out "docs/a b/c d.md:1:deny-list.txt:1"
 }
 
 a_staged_deletion_of_a_leak_passes() {
@@ -289,7 +289,8 @@ a_relative_deny_list_is_read_from_the_top_of_the_checkout() {
 	stage hosts.nix '198.51.100.7'
 	gate --fast
 	expect_status 1
-	expect_out "hosts.nix:1:198.51.100."
+	# The list is named as the gate was told, by its file name.
+	expect_out "hosts.nix:1:.deny:2"
 }
 
 the_first_failing_step_ends_the_gate_with_its_status() {

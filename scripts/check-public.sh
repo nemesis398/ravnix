@@ -3,10 +3,17 @@
 # repository. It searches the given paths for every entry of the list and
 # prints one line per hit:
 #
-#   file:line:entry   the entry appears in the file's contents on that line
-#   file:name:entry   the entry appears in the file's path below a directory
+#   file:line:list:N  an entry appears in the file's contents on that line
+#   file:name:list:N  an entry appears in the file's path below a directory
 #                     argument
-#   file:link:entry   the file is a symbolic link whose target holds the entry
+#   file:link:list:N  the file is a symbolic link whose target holds an entry
+#
+# where list is the deny list's file name and N the line of the entry in it.
+# A hit never prints the entry itself: the output goes into logs, transcripts
+# and reports, and the entries are the values the list keeps out of them. For
+# the same reason they are never put on a command line, where any local user
+# could read them: they reach rg as files, in a directory of the owner's alone
+# that is removed when the check ends.
 #
 # Usage: check-public.sh DENY_LIST [PATH...]
 #
@@ -58,15 +65,29 @@ paths=("$@")
 [[ -f "$list" && -r "$list" ]] || die "cannot read the deny list $list"
 command -v rg >/dev/null 2>&1 || die "rg not found; install ripgrep."
 
-entries=()
+entries=()    # the literals
+entry_line=() # the line of each in the list
+listname="${list##*/}"
+lineno=0
 while IFS= read -r line || [[ -n "$line" ]]; do
+	lineno=$((lineno + 1))
 	line="${line%$'\r'}"
 	line="${line#"${line%%[![:space:]]*}"}"
 	line="${line%"${line##*[![:space:]]}"}"
 	[[ -z "$line" || "$line" == '#'* ]] && continue
 	entries+=("$line")
+	entry_line+=("$lineno")
 done <"$list"
 ((${#entries[@]} > 0)) || die "the deny list $list has no entries"
+
+# The entries as files for rg, in a directory only this user can enter: all of
+# them in one, and one at a time in another for the searches that say which
+# entry matched. Removed on every way out.
+umask 077
+work="$(mktemp -d "${TMPDIR:-/tmp}/check-public.XXXXXX")" ||
+	die "cannot make a temporary directory"
+trap 'rm -rf -- "$work"' EXIT
+printf '%s\n' "${entries[@]}" >"$work/all"
 
 # The same flags for every search: no user configuration, every file, binary
 # files as text, and the entries as literals without regard to case.
@@ -129,8 +150,11 @@ done
 hits=()
 declare -A seen=()
 
+# hit PATH WHERE ENTRY: WHERE is a line number, name or link, and ENTRY the
+# index of the entry that matched, which the report gives as its line in the
+# list.
 hit() {
-	local key="$1:$2:$3"
+	local key="$1:$2:$listname:${entry_line[$3]}"
 	[[ -z "${seen[$key]:-}" ]] || return 0
 	seen[$key]=1
 	hits+=("$key")
@@ -147,19 +171,20 @@ for ((i = 0; i < ${#files[@]}; i += slice)); do
 	while IFS= read -r -d '' path; do
 		suspects+=("$path")
 	done < <(rg "${rg_flags[@]}" --files-with-matches --null \
-		--file <(printf '%s\n' "${entries[@]}") -- "${files[@]:i:slice}")
+		--file "$work/all" -- "${files[@]:i:slice}")
 	wait $! || status=$?
 	((status <= 1)) || die "the search failed (rg exit $status); see above"
 done
 
-for entry in "${entries[@]}"; do
+for i in "${!entries[@]}"; do
 	((${#suspects[@]} > 0)) || break
+	printf '%s\n' "${entries[i]}" >"$work/one"
 	status=0
 	while IFS= read -r -d '' path; do
 		IFS= read -r rest
-		hit "$path" "${rest%%:*}" "$entry"
+		hit "$path" "${rest%%:*}" "$i"
 	done < <(rg "${rg_flags[@]}" --line-number --with-filename --no-heading --null \
-		--only-matching --replace '' --regexp "$entry" -- "${suspects[@]}")
+		--only-matching --replace '' --file "$work/one" -- "${suspects[@]}")
 	wait $! || status=$?
 	((status <= 1)) || die "the search failed (rg exit $status); see above"
 done
@@ -174,15 +199,16 @@ check_strings() {
 	(($# > 0)) || return 0
 	status=0
 	printf '%s\0' "$@" | rg "${rg_flags[@]}" --null-data --quiet \
-		--file <(printf '%s\n' "${entries[@]}") || status=$?
+		--file "$work/all" || status=$?
 	((status != 1)) || return 0
 	((status == 0)) || die "the search failed (rg exit $status)"
-	for entry in "${entries[@]}"; do
+	for i in "${!entries[@]}"; do
+		printf '%s\n' "${entries[i]}" >"$work/one"
 		while IFS= read -r -d '' record; do
 			record="${record%%:*}"
-			hit "${shown_ref[record - 1]}" "$kind" "$entry"
+			hit "${shown_ref[record - 1]}" "$kind" "$i"
 		done < <(printf '%s\0' "$@" | rg "${rg_flags[@]}" --null-data --line-number \
-			--only-matching --replace '' --regexp "$entry" || true)
+			--only-matching --replace '' --file "$work/one" || true)
 	done
 }
 
@@ -197,10 +223,10 @@ check_strings link links "${targets[@]}"
 ((${#hits[@]} > 0)) || exit 0
 printf '%s\n' "${hits[@]}"
 if ((${#hits[@]} == 1)); then
-	printf '%s: 1 hit: a value from the deny list %s is in the files above\n' \
+	printf '%s: 1 hit: a value from the deny list %s is in the files above (the last number is its line in the list)\n' \
 		"$prog" "$list" >&2
 else
-	printf '%s: %d hits: values from the deny list %s are in the files above\n' \
+	printf '%s: %d hits: values from the deny list %s are in the files above (the last number is the line in the list)\n' \
 		"$prog" "${#hits[@]}" "$list" >&2
 fi
 exit 1

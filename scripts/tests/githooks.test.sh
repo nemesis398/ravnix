@@ -138,7 +138,7 @@ a_commit_with_a_staged_leak_is_refused() {
 	stage hosts.nix 'address = "198.51.100.7";'
 	commit -m 'add hosts'
 	expect_status 1
-	expect_said "hosts.nix:1:198.51.100."
+	expect_said "hosts.nix:1:deny-list.txt:2"
 	expect_head "$before"
 }
 
@@ -148,7 +148,7 @@ a_staged_leak_under_a_clean_work_tree_is_refused() {
 	printf 'address = "192.0.2.1";\n' >"$repo/hosts.nix"
 	commit -m 'add hosts'
 	expect_status 1
-	expect_said "hosts.nix:1:198.51.100."
+	expect_said "hosts.nix:1:deny-list.txt:2"
 }
 
 commit_all_with_an_unstaged_leak_is_refused() {
@@ -156,7 +156,7 @@ commit_all_with_an_unstaged_leak_is_refused() {
 	printf 'mail alice@example.org\n' >>"$repo/a.md"
 	commit -a -m 'edit a'
 	expect_status 1
-	expect_said "a.md:2:alice@example.org"
+	expect_said "a.md:2:deny-list.txt:1"
 }
 
 a_commit_of_named_paths_is_checked() {
@@ -164,7 +164,7 @@ a_commit_of_named_paths_is_checked() {
 	printf 'mail alice@example.org\n' >>"$repo/a.md"
 	commit -m 'edit a' -- a.md
 	expect_status 1
-	expect_said "a.md:2:alice@example.org"
+	expect_said "a.md:2:deny-list.txt:1"
 }
 
 without_a_deny_list_a_commit_goes_through_with_a_note() {
@@ -185,7 +185,7 @@ a_message_holding_an_entry_is_refused() {
 	stage b.md 'clean'
 	commit -m 'docs: write to Alice@Example.org'
 	expect_status 1
-	expect_said "message:1:alice@example.org"
+	expect_said "message:1:deny-list.txt:1"
 	expect_head "$before"
 }
 
@@ -194,7 +194,7 @@ an_entry_in_the_message_body_is_refused() {
 	stage b.md 'clean'
 	commit -m 'docs: add b' -m 'Reachable at 198.51.100.7.'
 	expect_status 1
-	expect_said "message:3:198.51.100."
+	expect_said "message:3:deny-list.txt:2"
 }
 
 a_clean_message_goes_through() {
@@ -219,7 +219,7 @@ an_entry_in_a_comment_above_the_scissors_line_is_refused() {
 	printf '%s\n' 'docs: add b' '# alice@example.org' >"$repo/msg"
 	capture in_repo .githooks/commit-msg msg
 	expect_status 1
-	expect_said "message:2:alice@example.org"
+	expect_said "message:2:deny-list.txt:1"
 }
 
 cut='# ------------------------ >8 ------------------------'
@@ -230,7 +230,7 @@ a_cut_line_with_another_comment_character_is_not_a_cut() {
 		'alice@example.org' >"$repo/msg"
 	capture in_repo .githooks/commit-msg msg
 	expect_status 1
-	expect_said "message:3:alice@example.org"
+	expect_said "message:3:deny-list.txt:1"
 	# With ; as git's comment character, the same line is the cut line.
 	git -C "$repo" config core.commentChar ';'
 	capture in_repo .githooks/commit-msg msg
@@ -271,8 +271,8 @@ a_value_below_a_forged_cut_line_is_refused_at_the_push() {
 	by_option="$(head_sha)"
 	pre_push "$by_option" "$zero"
 	expect_status 1
-	expect_said "messages/$by_file:4:alice@example.org"
-	expect_said "messages/$by_option:5:alice@example.org"
+	expect_said "messages/$by_file:4:deny-list.txt:1"
+	expect_said "messages/$by_option:5:deny-list.txt:1"
 	expect_no_gate
 }
 
@@ -282,7 +282,7 @@ a_pushed_ref_name_holding_an_entry_is_refused() {
 		< <(printf 'refs/heads/for-alice@example.org %s refs/heads/for-alice@example.org %s\n' \
 			"$(head_sha)" "$zero")
 	expect_status 1
-	expect_said "alice@example.org"
+	expect_said ":deny-list.txt:1"
 	expect_no_gate
 }
 
@@ -320,7 +320,7 @@ a_pushed_commit_with_a_leak_is_refused() {
 	leak="$(head_sha)"
 	pre_push "$leak" "$zero"
 	expect_status 1
-	expect_said "commits/$leak/hosts.nix:1:198.51.100."
+	expect_said "commits/$leak/hosts.nix:1:deny-list.txt:2"
 	expect_no_gate
 }
 
@@ -334,7 +334,7 @@ a_leak_added_and_removed_within_the_push_is_refused() {
 	commit_without_hooks -m 'fix hosts'
 	pre_push "$(head_sha)" "$zero"
 	expect_status 1
-	expect_said "commits/$leak/hosts.nix:1:198.51.100."
+	expect_said "commits/$leak/hosts.nix:1:deny-list.txt:2"
 }
 
 a_leak_in_a_pushed_message_is_refused() {
@@ -345,7 +345,7 @@ a_leak_in_a_pushed_message_is_refused() {
 	leak="$(head_sha)"
 	pre_push "$leak" "$zero"
 	expect_status 1
-	expect_said "messages/$leak:1:alice@example.org"
+	expect_said "messages/$leak:1:deny-list.txt:1"
 }
 
 commits_the_remote_has_are_not_checked_again() {
@@ -370,7 +370,7 @@ an_unknown_remote_sha_falls_back_to_the_remote_tracking_refs() {
 	commit_without_hooks -m 'add hosts'
 	pre_push "$(head_sha)" 1111111111111111111111111111111111111111
 	expect_status 1
-	expect_said "hosts.nix:1:198.51.100."
+	expect_said "hosts.nix:1:deny-list.txt:2"
 }
 
 a_push_to_a_url_checks_the_whole_history() {
@@ -382,7 +382,7 @@ a_push_to_a_url_checks_the_whole_history() {
 	commit_without_hooks -m 'add b'
 	pre_push "$(head_sha)" "$zero" "https://example.invalid/other.git"
 	expect_status 1
-	expect_said "hosts.nix:1:198.51.100."
+	expect_said "hosts.nix:1:deny-list.txt:2"
 }
 
 a_deletion_sends_nothing_to_check() {
@@ -407,7 +407,7 @@ a_merge_resolution_that_adds_a_leak_is_refused() {
 	merge="$(head_sha)"
 	pre_push "$merge" "$zero"
 	expect_status 1
-	expect_said "commits/$merge/a.md:1:alice@example.org"
+	expect_said "commits/$merge/a.md:1:deny-list.txt:1"
 }
 
 a_license_in_a_pushed_commit_passes() {
@@ -426,7 +426,7 @@ a_pushed_annotated_tag_with_a_leak_in_its_message_is_refused() {
 	capture in_repo .githooks/pre-push origin https://example.invalid/repo.git \
 		< <(printf 'refs/tags/v1 %s refs/tags/v1 %s\n' "$tag" "$zero")
 	expect_status 1
-	expect_said "alice@example.org"
+	expect_said ":deny-list.txt:1"
 }
 
 without_a_deny_list_the_push_check_is_skipped_and_the_gate_runs() {

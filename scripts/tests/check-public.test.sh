@@ -16,6 +16,7 @@ check="$here/../check-public.sh"
 # Set by new_tree for the test that is running.
 tree=""
 list=""
+fake_bin=""
 
 # Creates an empty fixture tree and a deny list holding the arguments, one
 # entry per line.
@@ -56,7 +57,7 @@ an_address_in_a_nix_file_is_a_hit() {
 	put a.nix 'address = "198.51.100.7";\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "a.nix:1:198.51.100."
+	expect_out "a.nix:1:deny-list.txt:1"
 }
 
 a_clean_tree_passes() {
@@ -95,7 +96,7 @@ a_regex_metacharacter_matches_literally() {
 	put exact.txt 'see a.b here\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "exact.txt:1:a.b"
+	expect_out "exact.txt:1:deny-list.txt:1"
 	expect_no_out "near.txt"
 }
 
@@ -106,7 +107,7 @@ matching_ignores_case() {
 	put a.md 'Mail ALICE@Example.ORG\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "a.md:1:alice@example.org"
+	expect_out "a.md:1:deny-list.txt:1"
 }
 
 matching_folds_the_case_of_non_ascii_letters() {
@@ -115,7 +116,7 @@ matching_folds_the_case_of_non_ascii_letters() {
 	# The hooks may run in the C locale; the folding must not depend on it.
 	capture in_tree env LC_ALL=C "$check" "$list" .
 	expect_status 1
-	expect_out "a.md:1:ölkännchen"
+	expect_out "a.md:1:deny-list.txt:1"
 }
 
 an_entry_keeps_its_inner_spaces() {
@@ -126,7 +127,7 @@ an_entry_keeps_its_inner_spaces() {
 	put spaced.md 'Hi Alice Example!\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "spaced.md:1:alice example"
+	expect_out "spaced.md:1:deny-list.txt:1"
 }
 
 an_entry_that_starts_with_a_dash_is_a_literal() {
@@ -137,7 +138,7 @@ an_entry_that_starts_with_a_dash_is_a_literal() {
 	put b.md 'run it with --files here\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "b.md:1:--files"
+	expect_out "b.md:1:deny-list.txt:1"
 }
 
 blank_lines_comments_and_outer_whitespace_in_the_list_are_ignored() {
@@ -150,7 +151,7 @@ blank_lines_comments_and_outer_whitespace_in_the_list_are_ignored() {
 	run_check "$list" .
 	expect_status 1
 	expect_lines 1
-	expect_out "b.md:1:alice@example.org"
+	expect_out "b.md:1:deny-list.txt:4"
 }
 
 a_list_of_only_comments_is_bad_usage() {
@@ -167,7 +168,7 @@ a_list_with_crlf_line_ends_works() {
 	put a.md 'to alice@example.org\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "a.md:1:alice@example.org"
+	expect_out "a.md:1:deny-list.txt:1"
 }
 
 a_list_without_a_final_newline_keeps_its_last_entry() {
@@ -184,10 +185,10 @@ every_hit_is_reported_with_its_line() {
 	put b.md 'alice\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "a.md:2:alice"
-	expect_out "a.md:3:alice"
-	expect_out "a.md:3:198.51.100."
-	expect_out "b.md:1:alice"
+	expect_out "a.md:2:deny-list.txt:1"
+	expect_out "a.md:3:deny-list.txt:1"
+	expect_out "a.md:3:deny-list.txt:2"
+	expect_out "b.md:1:deny-list.txt:1"
 	# Two matches on one line are one hit.
 	expect_lines 4
 	expect_err "4 hits"
@@ -201,8 +202,8 @@ hidden_files_are_searched() {
 	put .config/x.toml 'name = "alice"\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out ".env:1:alice"
-	expect_out ".config/x.toml:1:alice"
+	expect_out ".env:1:deny-list.txt:1"
+	expect_out ".config/x.toml:1:deny-list.txt:1"
 }
 
 ignored_files_are_searched() {
@@ -214,9 +215,9 @@ ignored_files_are_searched() {
 	put build/out.txt 'alice\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "secret.txt:1:alice"
-	expect_out "other.txt:1:alice"
-	expect_out "build/out.txt:1:alice"
+	expect_out "secret.txt:1:deny-list.txt:1"
+	expect_out "other.txt:1:deny-list.txt:1"
+	expect_out "build/out.txt:1:deny-list.txt:1"
 }
 
 a_binary_file_is_searched_as_text() {
@@ -224,7 +225,7 @@ a_binary_file_is_searched_as_text() {
 	put blob.bin 'head\0\001\002 alice \0tail\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "blob.bin:1:alice"
+	expect_out "blob.bin:1:deny-list.txt:1"
 }
 
 a_huge_file_is_searched_to_its_end() {
@@ -233,7 +234,7 @@ a_huge_file_is_searched_to_its_end() {
 	printf '\nalice@example.org\n' >>"$tree/big.txt"
 	run_check "$list" .
 	expect_status 1
-	expect_out "big.txt:2:alice@example.org"
+	expect_out "big.txt:2:deny-list.txt:1"
 }
 
 an_empty_file_passes() {
@@ -249,7 +250,7 @@ a_user_ripgrep_config_does_not_change_the_search() {
 	printf -- '--case-sensitive\n--max-filesize=1\n--type=rust\n' >"$scratch/rgrc"
 	capture in_tree env RIPGREP_CONFIG_PATH="$scratch/rgrc" "$check" "$list" .
 	expect_status 1
-	expect_out "a.md:1:alice"
+	expect_out "a.md:1:deny-list.txt:1"
 }
 
 # What is excluded, and only that.
@@ -265,11 +266,11 @@ only_license_and_authors_at_the_top_are_excluded() {
 	put AUTHORS.txt 'alice\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "docs/LICENSE-notes.md:1:alice"
-	expect_out "vendor/x/LICENSE:1:alice"
-	expect_out "vendor/x/AUTHORS:1:alice"
-	expect_out "LICENSE.md:1:alice"
-	expect_out "AUTHORS.txt:1:alice"
+	expect_out "docs/LICENSE-notes.md:1:deny-list.txt:1"
+	expect_out "vendor/x/LICENSE:1:deny-list.txt:1"
+	expect_out "vendor/x/AUTHORS:1:deny-list.txt:1"
+	expect_out "LICENSE.md:1:deny-list.txt:1"
+	expect_out "AUTHORS.txt:1:deny-list.txt:1"
 	expect_lines 5
 }
 
@@ -285,8 +286,123 @@ the_git_directory_is_excluded() {
 	put .gitignore 'alice\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out ".github/x.yml:1:alice"
-	expect_out ".gitignore:1:alice"
+	expect_out ".github/x.yml:1:deny-list.txt:1"
+	expect_out ".gitignore:1:deny-list.txt:1"
+}
+
+# What a hit shows. The output goes into logs, transcripts and reports, so a
+# hit names the entry by its line in the deny list and never prints its value,
+# and the values do not travel on a command line, where any local user could
+# read them.
+
+a_hit_names_the_list_line_and_never_prints_the_entry() {
+	new_tree '# a comment' 'first-made-up-entry' '' 'zq-made-up-token-7731'
+	put a.md 'x\nsee zq-made-up-token-7731 here\n'
+	run_check "$list" .
+	expect_status 1
+	expect_out "a.md:2:deny-list.txt:4"
+	expect_lines 1
+	expect_no_out "zq-made-up-token"
+	expect_no_err "zq-made-up-token"
+	expect_err "1 hit"
+}
+
+a_link_hit_names_the_list_line_and_never_prints_the_entry() {
+	new_tree 'zq-made-up-token-7731'
+	ln -s /home/zq-made-up-token-7731/notes "$tree/lnk"
+	run_check "$list" .
+	expect_status 1
+	expect_out "lnk:link:deny-list.txt:1"
+	expect_no_out "zq-made-up-token"
+	expect_no_err "zq-made-up-token"
+}
+
+a_name_hit_names_the_list_line() {
+	new_tree 'first-made-up-entry' 'zq-made-up-token-7731'
+	put 'notes/zq-made-up-token-7731.md' 'clean\n'
+	run_check "$list" .
+	expect_status 1
+	# The path is the file's own, and it is all the output says of the entry.
+	expect_out "notes/zq-made-up-token-7731.md:name:deny-list.txt:2"
+	expect_lines 1
+}
+
+# A made-up rg that records how it was called and then runs the real one, or
+# fails when RG_FAIL is set. For each --file it notes the directory of the
+# file and the modes of both. The caller puts fake_bin first on the PATH and
+# gives it RG_LOG, the file to write, and REAL_RG, the rg to run.
+fake_rg() {
+	fake_bin="$(mktemp -d -p "$scratch")"
+	{
+		printf '#!%s\n' "$BASH"
+		cat <<'SCRIPT'
+{ printf 'ARGV'; printf ' [%s]' "$@"; printf '\n'; } >>"$RG_LOG"
+prev=""
+for a in "$@"; do
+	if [[ "$prev" == --file ]]; then
+		printf 'FILE %s %s %s\n' "$(dirname "$a")" "$(stat -c %a "$a")" \
+			"$(stat -c %a "$(dirname "$a")")" >>"$RG_LOG"
+	fi
+	prev="$a"
+done
+[[ -z "${RG_FAIL:-}" ]] || exit 2
+exec "$REAL_RG" "$@"
+SCRIPT
+	} >"$fake_bin/rg"
+	chmod +x "$fake_bin/rg"
+}
+
+the_entries_stay_off_the_command_line_and_in_a_private_file() {
+	new_tree 'zq-made-up-token-7731' 'second-made-up-entry'
+	put a.md 'zq-made-up-token-7731\n'
+	ln -s /home/second-made-up-entry "$tree/lnk"
+	fake_rg
+	capture in_tree env PATH="$fake_bin:$PATH" RG_LOG="$scratch/rg.log" REAL_RG="$(command -v rg)" "$check" "$list" .
+	expect_status 1
+	# Every search ran, contents and links (a name that holds an entry is the
+	# file's own path, which any search of the file has to be given), and
+	# none was handed an entry as an argument.
+	local log
+	log="$(cat "$scratch/rg.log")"
+	[[ "$log" != *zq-made-up-token* && "$log" != *second-made-up-entry* ]] || {
+		echo "  an entry was on rg's command line: $log"
+		return 1
+	}
+	local files
+	files="$(grep -c '^FILE ' "$scratch/rg.log")"
+	((files >= 4)) || {
+		echo "  expected the entries to be read from files in every search, got $files: $log"
+		return 1
+	}
+	# Each file is the owner's alone, in a directory that is the owner's alone,
+	# and the directory is gone when the check ends.
+	[[ -z "$(grep '^FILE ' "$scratch/rg.log" | awk '$3 != "600" || $4 != "700"')" ]] || {
+		echo "  an entries file or its directory is open to others: $log"
+		return 1
+	}
+	local dir
+	while read -r dir; do
+		[[ ! -e "$dir" ]] || {
+			echo "  $dir is still there after the check"
+			return 1
+		}
+	done < <(grep '^FILE ' "$scratch/rg.log" | awk '{ print $2 }' | sort -u)
+}
+
+the_private_directory_is_removed_when_the_search_fails() {
+	new_tree 'zq-made-up-token-7731'
+	put a.md 'zq-made-up-token-7731\n'
+	fake_rg
+	capture in_tree env PATH="$fake_bin:$PATH" RG_LOG="$scratch/rg.log" REAL_RG="$(command -v rg)" RG_FAIL=1 "$check" "$list" .
+	expect_status 2
+	expect_err "the search failed"
+	expect_no_err "zq-made-up-token"
+	local dir
+	dir="$(grep '^FILE ' "$scratch/rg.log" | awk '{ print $2 }' | sort -u)"
+	[[ -n "$dir" && ! -e "$dir" ]] || {
+		echo "  the private directory '$dir' is still there after a failed search"
+		return 1
+	}
 }
 
 # Names and links.
@@ -297,8 +413,8 @@ a_file_name_holding_an_entry_is_a_hit() {
 	put alice/readme.md 'clean\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "notes-for-ALICE.md:name:alice"
-	expect_out "alice/readme.md:name:alice"
+	expect_out "notes-for-ALICE.md:name:deny-list.txt:1"
+	expect_out "alice/readme.md:name:deny-list.txt:1"
 }
 
 the_scanned_directory_own_name_is_not_checked() {
@@ -318,7 +434,7 @@ a_symlink_is_checked_by_its_target_not_followed() {
 	ln -s /home/alice/notes "$tree/home-link"
 	run_check "$list" .
 	expect_status 1
-	expect_out "home-link:link:alice"
+	expect_out "home-link:link:deny-list.txt:1"
 	expect_no_out "plain-link"
 }
 
@@ -327,7 +443,7 @@ a_dangling_symlink_is_checked_by_its_target() {
 	ln -s /nonexistent/alice "$tree/dangling"
 	run_check "$list" .
 	expect_status 1
-	expect_out "dangling:link:alice"
+	expect_out "dangling:link:deny-list.txt:1"
 }
 
 # Arguments.
@@ -339,7 +455,7 @@ files_can_be_named_one_by_one() {
 	put c.md 'alice\n'
 	run_check "$list" a.md b.md
 	expect_status 1
-	expect_out "a.md:1:alice"
+	expect_out "a.md:1:deny-list.txt:1"
 	expect_no_out "c.md"
 }
 
@@ -352,7 +468,7 @@ license_named_at_the_top_is_excluded_as_a_file_too() {
 	expect_status 0
 	run_check "$list" sub/LICENSE
 	expect_status 1
-	expect_out "sub/LICENSE:1:alice"
+	expect_out "sub/LICENSE:1:deny-list.txt:1"
 }
 
 a_file_inside_a_git_directory_named_by_hand_is_checked() {
@@ -360,7 +476,7 @@ a_file_inside_a_git_directory_named_by_hand_is_checked() {
 	put .git/COMMIT_EDITMSG 'alice\n'
 	run_check "$list" .git/COMMIT_EDITMSG
 	expect_status 1
-	expect_out ".git/COMMIT_EDITMSG:1:alice"
+	expect_out ".git/COMMIT_EDITMSG:1:deny-list.txt:1"
 }
 
 a_file_name_is_checked_only_inside_a_directory() {
@@ -375,7 +491,7 @@ paths_with_spaces_and_colons_are_reported_whole() {
 	put 'dir with space/a:b.md' 'x\nalice\n'
 	run_check "$list" .
 	expect_status 1
-	expect_out "dir with space/a:b.md:2:alice"
+	expect_out "dir with space/a:b.md:2:deny-list.txt:1"
 }
 
 several_directories_each_exclude_their_own_top() {
@@ -385,7 +501,7 @@ several_directories_each_exclude_their_own_top() {
 	put two/x.md 'alice\n'
 	run_check "$list" one two
 	expect_status 1
-	expect_out "two/x.md:1:alice"
+	expect_out "two/x.md:1:deny-list.txt:1"
 	expect_lines 1
 }
 
@@ -394,7 +510,7 @@ no_path_means_the_current_directory() {
 	put a.md 'alice\n'
 	run_check "$list"
 	expect_status 1
-	expect_out "a.md:1:alice"
+	expect_out "a.md:1:deny-list.txt:1"
 }
 
 an_absolute_directory_is_reported_with_its_path() {
@@ -402,7 +518,7 @@ an_absolute_directory_is_reported_with_its_path() {
 	put a.md 'alice\n'
 	run_check "$list" "$tree"
 	expect_status 1
-	expect_out "$tree/a.md:1:alice"
+	expect_out "$tree/a.md:1:deny-list.txt:1"
 }
 
 no_arguments_is_bad_usage() {
@@ -544,6 +660,11 @@ tests=(
 	an_unreadable_file_fails_closed
 	a_missing_ripgrep_fails_closed
 	concurrent_runs_do_not_disturb_each_other
+	a_hit_names_the_list_line_and_never_prints_the_entry
+	a_link_hit_names_the_list_line_and_never_prints_the_entry
+	a_name_hit_names_the_list_line
+	the_entries_stay_off_the_command_line_and_in_a_private_file
+	the_private_directory_is_removed_when_the_search_fails
 )
 
 run_tests "${tests[@]}"
