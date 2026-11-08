@@ -335,14 +335,18 @@
     };
 
     # Notifications that must reach you with the lid closed: one Matrix room
-    # and one bot per topic. The bots' tokens come from rbw.
+    # and one bot per topic (sessions, updates, backups, builds, services; no
+    # other). The bots' tokens come from rbw, from the Bitwarden item called
+    # "Matrix - access token (ravnix-TOPIC)" unless a topic sets tokenItem.
     matrix = {
       # Your homeserver's client API.
       homeserver = "https://matrix.example.org";
       # Your own account there, which iamb logs in as (null: iamb has no
       # profile). Not one of the bots below.
       userId = "@alice:example.org";
-      # roomId is null until the room exists, then its id ("!...").
+      # roomId is null until the room exists, then its id ("!..."). A topic
+      # without one is warned about at build time, and ravnix-notify exits
+      # with status 78 for it. botUser is only for the record.
       rooms = {
         sessions = {
           roomId = null;

@@ -218,6 +218,28 @@ let
     "a Matrix user without the leading @" = {
       ravnix.matrix.userId = "alice:example.org";
     };
+    # Complete but for its topic: only the unknown topic can refuse it.
+    "a Matrix room for a topic ravnix does not have" = {
+      ravnix.matrix.rooms.gossip = {
+        roomId = null;
+        botUser = "@ravnix-gossip:example.org";
+        tokenItem = "Matrix - access token (ravnix-gossip)";
+      };
+    };
+    "an empty Matrix token item" = {
+      ravnix.matrix.rooms.sessions.tokenItem = "";
+    };
+    "a Matrix token item with a line break" = {
+      ravnix.matrix.rooms.sessions.tokenItem = "Matrix\ntoken";
+    };
+    "a Matrix token item with a control character" = {
+      ravnix.matrix.rooms.sessions.tokenItem = "Matrix\ttoken";
+    };
+    "a room id with a quote" = room "!abc\"def:example.org" null;
+    "a room id with a backslash" = room "!abc\\def:example.org" null;
+    "a room id with a blank" = room "!abc def:example.org" null;
+    "a room id with a line break" = room "!abc\ndef:example.org" null;
+    "a room id that is only the !" = room "!" null;
     "a relative Remote Control directory" = server { remoteControlDir = "src/project"; };
     "a Remote Control directory given as a Nix path" = server { remoteControlDir = ./.; };
   };
@@ -270,6 +292,10 @@ let
       room "!Abc_123-xyz" "@ravnix-sessions:example.org";
     "a room id with a server part" = room "!abcdef:example.org" "@ravnix-sessions:example.org";
     "a room that does not exist yet" = room null "@ravnix-sessions:example.org";
+    "a bot that is left out" = room "!abc:example.org" null;
+    "a token item with blanks, brackets and an umlaut" = {
+      ravnix.matrix.rooms.sessions.tokenItem = "Matrix - Zugangstoken (ravnix-sessions) [Bot Ü]";
+    };
     "a kanshi output disabled, by description" = output {
       criteria = "Example Corp Monitor 0x00000000";
       status = "disable";
