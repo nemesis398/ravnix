@@ -54,11 +54,16 @@ These cannot be declared, because each one is a login or a secret.
    that merely exists is not enough either: ravnix itself makes one when it
    merges the MCP servers into it, and that file says nothing of a first run.
    Clone the repository named by `ravnix.server.remoteControlDir`, `cd` into it and
-   run `claude` once to accept the folder. Then `systemctl --user start
+   run `claude` once to accept the folder: `claude remote-control` refuses a folder
+   it does not trust, and the unit checks that `~/.claude.json` records the trust
+   for exactly that repository (trust on a folder above it is not honored). A
+   `~/.claude.json` copied from another machine has the trust for that machine's
+   paths, so do this step again after such a copy. Then `systemctl --user start
    claude-remote-control`; it starts by itself at every boot after that. Until the
-   login, the first run and the repository exist, the unit is skipped, not
-   restarted every half minute: `systemctl --user status claude-remote-control`
-   and `journalctl --user -u claude-remote-control` say which is missing.
+   login, the first run, the trusted folder and the repository exist, the unit is
+   skipped, not restarted every half minute: `systemctl --user status
+   claude-remote-control` and `journalctl --user -u claude-remote-control` say
+   which is missing.
 
 ## Updating
 

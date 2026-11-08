@@ -486,8 +486,28 @@ pkgs.testers.runNixOSTest (
             # Skipped before anything touched the file.
             assert as_user("cat ~/.claude.json") == before, as_user("cat ~/.claude.json")
 
-        with subtest("Remote Control starts once there is a login, a first run and a repository, as the development VM before it had it"):
-            as_user("echo '{\"numStartups\": 3, \"hasCompletedOnboarding\": true, \"projects\": {\"keep\": {\"me\": true}}}' > ~/.claude.json")
+        with subtest("a first run without the folder trusted is not enough, and a trusted parent of the repository does not count"):
+            # `claude remote-control` refuses a folder it does not trust and
+            # exits, which Restart=always would repeat every half minute.
+            # Claude Code 2.1.319 honors a folder above the working one only up
+            # to the git root, and the repository is the root here.
+            for projects in [
+                '{}',
+                '{"' + HOME + '/work": {"hasTrustDialogAccepted": false}}',
+                '{"' + HOME + '": {"hasTrustDialogAccepted": true}}',
+            ]:
+                as_user("echo " + shlex.quote('{"hasCompletedOnboarding": true, "projects": ' + projects + '}') + " > ~/.claude.json")
+                before = as_user("cat ~/.claude.json")
+                user_ctl("start claude-remote-control.service")
+                assert user_ctl("is-active claude-remote-control.service", False)[1].strip() == "inactive", projects
+                machine.sleep(3)
+                assert user_ctl("show -p NRestarts --value claude-remote-control.service").strip() == "0", projects
+                machine.fail("test -e " + HOME + "/remote-control.log")
+                assert as_user("cat ~/.claude.json") == before, projects
+            assert "not trusted" in user_journal("claude-remote-control.service"), user_journal("claude-remote-control.service")
+
+        with subtest("Remote Control starts once there is a login, a first run, a trusted folder and a repository, as the development VM before it had it"):
+            as_user("echo " + shlex.quote('{"numStartups": 3, "hasCompletedOnboarding": true, "projects": {"keep": {"me": true}, "' + HOME + '/work": {"allowedTools": [], "hasTrustDialogAccepted": true}}}') + " > ~/.claude.json")
             user_ctl("start claude-remote-control.service")
             machine.wait_until_succeeds("su - " + USER + " -c 'test -s ~/remote-control.log'", timeout=60)
             log = as_user("cat ~/remote-control.log").splitlines()
@@ -502,7 +522,8 @@ pkgs.testers.runNixOSTest (
             # answered in the file Claude Code keeps it in, and the rest of
             # the file is as it was.
             state = json.loads(as_user("cat ~/.claude.json"))
-            assert state["remoteDialogSeen"] is True and state["numStartups"] == 3 and state["hasCompletedOnboarding"] is True and state["projects"] == {"keep": {"me": True}}, state
+            assert state["remoteDialogSeen"] is True and state["numStartups"] == 3 and state["hasCompletedOnboarding"] is True, state
+            assert state["projects"] == {"keep": {"me": True}, HOME + "/work": {"allowedTools": [], "hasTrustDialogAccepted": True}}, state
             assert user_ctl("is-active claude-remote-control.service").strip() == "active"
 
         with subtest("a ~/.claude.json that is not JSON keeps Remote Control from starting and is left as it is"):

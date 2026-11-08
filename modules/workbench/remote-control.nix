@@ -45,11 +45,33 @@
 #     and Restart=always does not start it again, so nothing loops; the
 #     helper says why on stderr, which is the journal.
 #   - It must start in a project directory, never in $HOME: the trust dialog
-#     does not save trust for $HOME.
+#     does not save trust for $HOME. And Claude Code must trust that directory:
+#     `claude remote-control` checks it before it starts and exits with
+#     "Workspace not trusted: <dir>. Run `claude` in that directory first to
+#     accept the trust dialog" (and with CI set it refuses at once, with no
+#     dialog), which Restart=always would repeat every half minute. The same
+#     helper therefore requires projects[<dir>].hasTrustDialogAccepted to be
+#     true in ~/.claude.json. How 2.1.319 resolves it (read from the binary,
+#     nothing run): the project key is the git root of the working directory,
+#     as an absolute path with no trailing slash; trust is looked up for the
+#     working directory and each folder above it, but only up to the git root,
+#     and above the root only when there is no git root at all. The unit's
+#     directory has a .git (a condition), so it is its own root, and the key is
+#     the directory itself: trust on a parent folder is not honored, and the
+#     helper does not honor it either. The directory is checked as configured
+#     and as `realpath -m` resolves it, since Claude Code keys by the path the
+#     process has, which is the resolved one.
+#   - Which file Claude Code reads: ~/.claude/.config.json, when that legacy
+#     file exists and is not empty, and $CLAUDE_CONFIG_DIR/.claude.json when
+#     that variable is set, take the place of ~/.claude.json (2.1.319). The
+#     unit sets neither and the helpers read ~/.claude.json only, so a
+#     ~/.claude/ copied from a machine that has a legacy .config.json needs
+#     the helpers to follow it (Task 4.5 copies ~/.claude/).
 #   - It needs a claude.ai login; an API key or a setup token does not work.
 #     `claude auth login` is interactive, so it is a step by hand (README.md),
 #     and so is accepting the folder once (`cd` there and run `claude`). Until
-#     the login, the first run and the repository exist, the unit does not
+#     the login, the first run, the trusted folder and the repository exist,
+#     the unit does not
 #     start and says so (a failed condition, or the helper's message), instead
 #     of restarting every half minute behind an "active" that is not true.
 #     Once they exist, `systemctl --user start claude-remote-control` starts
@@ -71,6 +93,12 @@ let
   os = config;
   user = os.ravnix.user.username;
   dir = os.ravnix.server.remoteControlDir;
+  # The directory as Claude Code keys it: absolute, without a trailing slash.
+  dirKey =
+    let
+      m = builtins.match "(.*[^/])/*" dir;
+    in
+    if m == null then dir else builtins.head m;
   profile = "/etc/profiles/per-user/${user}/bin";
 in
 {
@@ -80,9 +108,13 @@ in
       let
         ready = pkgs.writeShellApplication {
           name = "ravnix-remote-control-ready";
-          runtimeInputs = [ pkgs.jq ];
+          runtimeInputs = [
+            pkgs.coreutils
+            pkgs.jq
+          ];
           text = ''
             file="$HOME/.claude.json"
+            dir=${lib.escapeShellArg dirKey}
             # Every way out but success is exit 1, a skip that systemd takes
             # for a unit that does not need to run; 255 would be a failure
             # that Restart=always retries.
@@ -93,9 +125,26 @@ in
             status=0
             jq -e '.hasCompletedOnboarding == true' "$file" >/dev/null 2>&1 || status=$?
             case "$status" in
-              0) exit 0 ;;
+              0) ;;
               1 | 4)
                 echo "$file does not say Claude Code finished its first run (hasCompletedOnboarding is not true), so Remote Control would ask its questions on no terminal; log in with claude auth login, then start this unit" >&2
+                exit 1
+                ;;
+              *)
+                echo "$file is not JSON that holds an object (jq exit $status); Remote Control does not start, and the file is as it was" >&2
+                exit 1
+                ;;
+            esac
+            # The folder: claude remote-control refuses one it does not trust.
+            physical=$(realpath -m -- "$dir")
+            status=0
+            jq -e --arg a "$dir" --arg b "$physical" \
+              '.projects[$a].hasTrustDialogAccepted == true or .projects[$b].hasTrustDialogAccepted == true' \
+              "$file" >/dev/null 2>&1 || status=$?
+            case "$status" in
+              0) exit 0 ;;
+              1 | 4)
+                echo "$dir is not trusted by Claude Code (projects.\"$dir\".hasTrustDialogAccepted is not true in $file), and claude remote-control refuses a folder it does not trust; run claude once in $dir, accept the folder, then start this unit" >&2
                 ;;
               *)
                 echo "$file is not JSON that holds an object (jq exit $status); Remote Control does not start, and the file is as it was" >&2

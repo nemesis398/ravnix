@@ -359,12 +359,15 @@ pkgs.runCommand "workbench-optional" { } (''
   ! grep -q -E '^vdirsyncer (discover|metasync|sync)$' "$vs" ||
     fail "the calendar sync runs vdirsyncer for every pair, feeds again after the guard"
   # The helper that decides whether Remote Control may start: exit 0 only for
-  # a ~/.claude.json that says Claude Code finished its first run. Anything
-  # else is a skip, exit 1, never 255 (a failure, which Restart=always
-  # retries every half minute). A file that holds only mcpServers, as other
-  # parts of ravnix make it, proves nothing.
+  # a ~/.claude.json that says Claude Code finished its first run and trusts
+  # the working folder. Anything else is a skip, exit 1, never 255 (a
+  # failure, which Restart=always retries every half minute). A file that
+  # holds only mcpServers, as other parts of ravnix make it, proves nothing,
+  # and neither does a first run without the folder: `claude remote-control`
+  # refuses an untrusted folder, and the unit would be retried forever.
   ready=${one (service everything "claude-remote-control").Service.ExecCondition}
   grep -q 'hasCompletedOnboarding' "$ready" || fail "Remote Control does not look for hasCompletedOnboarding"
+  grep -q 'hasTrustDialogAccepted' "$ready" || fail "Remote Control does not look for hasTrustDialogAccepted"
   home=$(mktemp -d)
   ready_case() {
     want=$1 content=$2 label=$3
@@ -374,6 +377,8 @@ pkgs.runCommand "workbench-optional" { } (''
     HOME=$home "$ready" >/dev/null 2>&1 || got=$?
     [ "$got" = "$want" ] || fail "the Remote Control condition gives $got, not $want, for $label"
   }
+  dir=${lib.escapeShellArg me.ravnix.server.remoteControlDir}
+  trusted='{"hasTrustDialogAccepted":true}'
   ready_case 1 MISSING "no ~/.claude.json"
   ready_case 1 "" "an empty file"
   ready_case 1 '{}' "an empty object"
@@ -384,8 +389,22 @@ pkgs.runCommand "workbench-optional" { } (''
   ready_case 1 'not json' "a file that is not JSON"
   ready_case 1 '[]' "a JSON array"
   ready_case 1 '"hasCompletedOnboarding"' "a JSON string"
-  ready_case 0 '{"hasCompletedOnboarding":true}' "completed onboarding"
-  ready_case 0 '{"mcpServers":{},"hasCompletedOnboarding":true,"numStartups":9}' "completed onboarding among other keys"
+  # Onboarding done is not enough: the folder has to be trusted, as Claude
+  # Code keys it, by the path of the repository.
+  ready_case 1 '{"hasCompletedOnboarding":true}' "completed onboarding and no projects"
+  ready_case 1 '{"hasCompletedOnboarding":true,"projects":{}}' "completed onboarding and an empty projects"
+  ready_case 1 '{"hasCompletedOnboarding":true,"projects":{"/home/else/other":'"$trusted"'}}' "completed onboarding and another folder trusted"
+  ready_case 1 '{"hasCompletedOnboarding":true,"projects":{"'"$dir"'":{"allowedTools":[]}}}' "completed onboarding and the folder known but not trusted"
+  ready_case 1 '{"hasCompletedOnboarding":true,"projects":{"'"$dir"'":{"hasTrustDialogAccepted":false}}}' "completed onboarding and the folder explicitly not trusted"
+  ready_case 1 '{"hasCompletedOnboarding":true,"projects":{"'"$dir"'":{"hasTrustDialogAccepted":"true"}}}' "trust as a string"
+  ready_case 1 '{"hasCompletedOnboarding":true,"projects":"'"$dir"'"}' "projects that is no object"
+  # Claude Code 2.1.319 honors a folder above the working one only up to the
+  # git root, and the unit's directory is a git root (its .git is a
+  # condition), so trust on a parent of it does not count.
+  ready_case 1 '{"hasCompletedOnboarding":true,"projects":{"'"$(dirname "$dir")"'":'"$trusted"'}}' "completed onboarding and trust on a parent of the repository"
+  ready_case 1 '{"projects":{"'"$dir"'":'"$trusted"'}}' "trust without onboarding"
+  ready_case 0 '{"hasCompletedOnboarding":true,"projects":{"'"$dir"'":'"$trusted"'}}' "completed onboarding and the folder trusted"
+  ready_case 0 '{"mcpServers":{},"hasCompletedOnboarding":true,"numStartups":9,"projects":{"/x":{},"'"$dir"'":{"allowedTools":[],"hasTrustDialogAccepted":true}}}' "completed onboarding and trust among other keys"
   rm -rf "$home"
   rc=${one (service everything "claude-remote-control").Service.ExecStartPre}
   grep -q 'remoteDialogSeen' "$rc" || fail "Remote Control does not answer its consent prompt"
