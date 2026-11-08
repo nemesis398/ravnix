@@ -35,6 +35,7 @@ in
     ./secrets.nix
     ./matrix.nix
     ./workbench.nix
+    ./backdrop.nix
     ./backup.nix
     ./dictionary.nix
     ./editor.nix

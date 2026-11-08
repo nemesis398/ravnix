@@ -1,0 +1,885 @@
+#!/usr/bin/env python3
+# backdrop: draws the desktop wallpaper and the swaylock image, Catppuccin Mocha.
+#
+#   backdrop wallpaper   render the full image per active output, hand it to swaybg
+#                        (through sway), then make sure each has its lock image cached
+#   backdrop lock-args   print swaylock's `-i output:path` args, one per line,
+#                        rendering a lock image first if its cache key changed;
+#                        also names every output seen before that is not connected
+#                        now, so one docked while locked gets its image too
+#   backdrop render KIND OUT.png WxH SCALE   one image to a file (KIND wall|lock),
+#                        for looking at a layout without touching the session
+#
+# The wallpaper is Base, or the user's own image scaled until it covers the
+# output. On it: the ravnix mark in the middle, the phyllon mark top left at the
+# same size, both in the accent; the fastfetch facts with the NixOS logo (in
+# Blue and Sapphire) top right; and, when the user lists any, their tool logos
+# in Surface grays, spread around the rest. The lock image is Base (or the same
+# image) and the ravnix mark alone, sized to sit inside swaylock's ring, so
+# nothing about the machine can be read on a locked screen. It never runs
+# fastfetch and never draws a logo.
+#
+# Until the ravnix mark ships (assets/ravnix-mark.svg), the wordmark "ravnix"
+# in the theme's font stands in for it, fitted to the same circle.
+#
+# Sizes are in logical px and multiplied by the output scale: images are drawn
+# at the physical resolution, and swaylock's indicator-radius is logical.
+#
+# Everything personal or themed comes from one JSON file, which
+# modules/desktop/backdrop.nix writes: BACKDROP_CONFIG, else
+# $XDG_CONFIG_HOME/backdrop/config.json.
+#   palette  the Catppuccin Mocha colors by name ("#rrggbb"); no color is
+#            written in this file
+#   accent   the name of the accent in the palette
+#   font     the family of the facts and the wordmark
+#   image    the user's image (absolute path) or null
+#   tools    SVG files of tool logos, in order, or []
+#
+# Other seams, for tests and for running from a checkout:
+#   BACKDROP_ASSETS  the directory of the marks (default: ../../assets of this file)
+#   BACKDROP_FACTS   a file holding what fastfetch prints, drawn instead of
+#                    running fastfetch
+#   BACKDROP_FASTFETCH_SECONDS   how long fastfetch gets (default 10)
+#   XDG_CACHE_HOME   where the images are kept (backdrop/ below it)
+#
+# Whatever is wrong with the image, a logo or the facts, the wallpaper is still
+# drawn and the problem is one line on stderr (the journal, under sway). Only a
+# broken config, bad arguments or a sway that refuses fail the command.
+#
+# Called by lock-screen (lock-args, then wallpaper after unlock) and by every
+# kanshi profile's exec (wallpaper), which runs at login, on each sway reload
+# (kanshi is exec_always) and when a monitor is plugged in or out.
+
+import fcntl
+import hashlib
+import json
+import math
+import os
+import random
+import re
+import shlex
+import signal
+import subprocess
+import sys
+import time
+import unicodedata
+from pathlib import Path
+
+import cairo
+import gi
+
+gi.require_version("Rsvg", "2.0")
+gi.require_version("Pango", "1.0")
+gi.require_version("PangoCairo", "1.0")
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf, GLib, Pango, PangoCairo, Rsvg  # noqa: E402
+
+CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "backdrop"
+
+# The palette entries this file reads; a config without one is refused, naming it.
+NEEDED = ("base", "text", "blue", "sapphire", "surface1", "surface2", "red", "green", "yellow",
+          "pink", "teal", "subtext0", "subtext1")
+
+# swaylock's indicator-radius is 110 and its thickness 10, so the ring's inner
+# edge is at 105 (modules/desktop/sway sets both). Both marks are drawn in a
+# square of MARK_SIZE; the phyllon spiral's dots reach 92.6 of the SVG's
+# 100-unit half-width, which puts them at about 95 from the center, clear of
+# the ring. The wordmark is fitted to that same reach.
+MARK_SIZE = 205
+MARK_REACH = 95
+MARK_FONT_SIZE = 100  # nominal, before the wordmark is fitted
+
+# Tool logos, one SVG each, spread by best-candidate sampling with a fixed
+# seed: each logo tries SPREAD_TRIES random spots and keeps the one farthest
+# from the logos already placed, so they come out evenly spaced and the same on
+# every render. The marks, the fastfetch panel and the screen edges count as
+# neighbours at 1/OBSTACLE_PULL of their real distance, which lets the logos
+# sit closer to them than to each other; no logo center comes nearer than
+# OBSTACLE_GAP px to any of them. Each logo fits a 44 px tall, 88 px wide box;
+# colors alternate between the two Surface grays.
+SPREAD_SEED, SPREAD_TRIES, OBSTACLE_PULL, OBSTACLE_GAP = 7, 400, 3, 72
+TOOL_H, TOOL_W = 44, 88
+
+# fastfetch panel: left edge and top as fractions, font size as a fraction of
+# the logical height (12.8 px on the laptop panel). The phyllon mark sits as
+# far from the left edge as the panel does from the top.
+PANEL_X, PANEL_Y, PANEL_FONT = 0.56, 0.07, 0.01
+# A line wider than the room between the panel's left edge and the screen's
+# right edge, less PANEL_RIGHT of the width, shrinks the whole panel's font
+# until it fits (to PANEL_MIN_FONT px at the least), and never grows it.
+PANEL_RIGHT, PANEL_MIN_FONT = 0.02, 6
+
+# What is read and drawn of the facts, so that a runaway command cannot make
+# the wallpaper slow or the panel huge.
+FACTS_BYTES, FACTS_LINES, FACTS_COLUMNS, FACTS_SECONDS = 1 << 20, 80, 240, 10
+
+# An image that would take more memory than this to decode is not used.
+MAX_IMAGE_PIXELS = 64_000_000
+# The largest output and scale that render() draws.
+MAX_SIDE, MAX_SCALE = 16384, 8
+
+USAGE = "usage: backdrop wallpaper | lock-args | render wall|lock OUT.png WxH SCALE"
+
+
+class Fail(Exception):
+    """Something the command cannot go on without; main() prints it and exits."""
+
+    def __init__(self, message, code=1):
+        super().__init__(message)
+        self.code = code
+
+
+_logged = set()
+
+
+def log(message):
+    # One line per problem and run, for the journal.
+    if message not in _logged:
+        _logged.add(message)
+        print(f"backdrop: {message}", file=sys.stderr, flush=True)
+
+
+def rgb(c, a=1.0):
+    return (c[0] / 255, c[1] / 255, c[2] / 255, a)
+
+
+class Theme:
+    # The colors and the font, from the config file.
+    def __init__(self, config):
+        palette = config.get("palette")
+        if not isinstance(palette, dict):
+            raise Fail("config: palette is missing or is not an object")
+        accent = config.get("accent")
+        if not isinstance(accent, str):
+            raise Fail("config: accent is missing or is not a name")
+        font = config.get("font")
+        if not isinstance(font, str) or not font:
+            raise Fail("config: font is missing or is not a name")
+        self.font = font
+        self.colors = {}
+        for name in (*NEEDED, accent):
+            if name not in palette:
+                raise Fail(f"config: the palette has no color {name!r}")
+            self.colors[name] = self.parse(name, palette[name])
+        self.accent_name = accent
+        self.accent = self.colors[accent]
+        c = self.colors
+        self.base, self.text = c["base"], c["text"]
+        self.blue, self.sapphire = c["blue"], c["sapphire"]
+        self.surface1, self.surface2 = c["surface1"], c["surface2"]
+        # The terminal's 16 colors, for the SGR colors fastfetch writes
+        # (docs/style.md, Color, Rules): black is Surface1, red Red, green
+        # Green, yellow Yellow, blue Blue, magenta Pink, cyan Teal, white
+        # Subtext1; the bright set is Surface2, Red, Green, Yellow, Blue, the
+        # accent, Teal, Subtext0.
+        self.ansi16 = [c[n] for n in ("surface1", "red", "green", "yellow", "blue", "pink",
+                                      "teal", "subtext1", "surface2", "red", "green", "yellow",
+                                      "blue")] + [self.accent, c["teal"], c["subtext0"]]
+
+    @staticmethod
+    def parse(name, value):
+        m = re.fullmatch(r"#([0-9a-fA-F]{6})", value) if isinstance(value, str) else None
+        if not m:
+            raise Fail(f"config: the color {name!r} is not #rrggbb")
+        v = int(m.group(1), 16)
+        return (v >> 16, v >> 8 & 255, v & 255)
+
+
+def config_path():
+    given = os.environ.get("BACKDROP_CONFIG")
+    if given:
+        return Path(given)
+    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(base) / "backdrop" / "config.json"
+
+
+def load_config():
+    path = config_path()
+    try:
+        config = json.loads(path.read_text())
+    except OSError as e:
+        raise Fail(f"cannot read the config {path}: {e.strerror or e}") from None
+    except ValueError as e:
+        raise Fail(f"the config {path} is not valid JSON: {e}") from None
+    if not isinstance(config, dict):
+        raise Fail(f"the config {path} is not a JSON object")
+    theme = Theme(config)
+    tools = config.get("tools", [])
+    if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+        raise Fail("config: tools is not a list of file names")
+    image = config.get("image")
+    if image is not None and not isinstance(image, str):
+        raise Fail("config: image is neither null nor a file name")
+    return theme, image, tools, config
+
+
+def assets_dir():
+    given = os.environ.get("BACKDROP_ASSETS")
+    return Path(given) if given else Path(__file__).resolve().parents[2] / "assets"
+
+
+# --- Drawing helpers ---------------------------------------------------------
+
+
+def svg_handle(data):
+    return Rsvg.Handle.new_from_data(data.encode() if isinstance(data, str) else data)
+
+
+def draw_svg(cr, handle, x, y, w, h):
+    rect = Rsvg.Rectangle()
+    rect.x, rect.y, rect.width, rect.height = x, y, w, h
+    handle.render_document(cr, rect)
+
+
+INK_UNIT = 500
+
+
+def ink_box(handle):
+    # (x, y, w, h) of the drawn pixels when the SVG fills an INK_UNIT square,
+    # or None when it draws nothing. Measured on pixels because Rsvg's ink rect
+    # is in the SVG's own user units, which differ from the viewport whenever a
+    # file sets width/height.
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, INK_UNIT, INK_UNIT)
+    draw_svg(cairo.Context(surf), handle, 0, 0, INK_UNIT, INK_UNIT)
+    surf.flush()
+    stride = surf.get_stride()
+    alpha = bytes(surf.get_data())[3 if sys.byteorder == "little" else 0::4]
+    per_row = stride // 4
+    top = bottom = None
+    left, right = INK_UNIT, 0
+    for y in range(INK_UNIT):
+        row = alpha[y * per_row:y * per_row + INK_UNIT]
+        body = row.lstrip(b"\0")
+        if not body:
+            continue
+        top = y if top is None else top
+        bottom = y
+        left = min(left, INK_UNIT - len(body))
+        right = max(right, len(row.rstrip(b"\0")))
+    if top is None:
+        return None
+    return left, top, right - left, bottom + 1 - top
+
+
+def fill_with_mask(cr, tmp, x, y, color):
+    # A logo's own fills (black, gray, brand colors) all come out in the one
+    # color: the logo is drawn into its own surface and used as a mask.
+    cr.set_source_rgba(*rgb(color))
+    cr.mask_surface(tmp, x, y)
+
+
+def draw_mark_svg(cr, handle, cx, cy, size, color):
+    d = int(math.ceil(size)) + 2
+    tmp = cairo.ImageSurface(cairo.FORMAT_ARGB32, d, d)
+    draw_svg(cairo.Context(tmp), handle, 1, 1, size, size)
+    fill_with_mask(cr, tmp, cx - size / 2 - 1, cy - size / 2 - 1, color)
+
+
+def draw_wordmark(cr, theme, cx, cy, reach, color):
+    # "ravnix" in the font, bold, with the corners of its ink on a circle of
+    # radius `reach` about (cx, cy): the same circle the phyllon dots reach.
+    layout = PangoCairo.create_layout(cr)
+    layout.set_font_description(Pango.FontDescription(f"{theme.font} Bold {MARK_FONT_SIZE}px"))
+    layout.set_text("ravnix", -1)
+    ink = layout.get_extents()[0]
+    x, y = ink.x / Pango.SCALE, ink.y / Pango.SCALE
+    w, h = ink.width / Pango.SCALE, ink.height / Pango.SCALE
+    if w <= 0 or h <= 0:
+        return
+    k = reach / math.hypot(w / 2, h / 2)
+    cr.save()
+    cr.translate(cx, cy)
+    cr.scale(k, k)
+    cr.translate(-(x + w / 2), -(y + h / 2))
+    cr.set_source_rgba(*rgb(color))
+    cr.move_to(0, 0)
+    PangoCairo.update_layout(cr, layout)
+    PangoCairo.show_layout(cr, layout)
+    cr.restore()
+
+
+def ravnix_mark(assets):
+    # The mark once it ships, else None and the wordmark.
+    path = assets / "ravnix-mark.svg"
+    if not path.exists():
+        return None
+    try:
+        return svg_handle(path.read_bytes())
+    except (OSError, GLib.Error) as e:
+        log(f"cannot use the ravnix mark {path}: {first_line(e)}; drawing the wordmark")
+        return None
+
+
+def draw_ravnix(cr, theme, cx, cy, scale, mark):
+    if mark is None:
+        draw_wordmark(cr, theme, cx, cy, MARK_REACH * scale, theme.accent)
+    else:
+        draw_mark_svg(cr, mark, cx, cy, MARK_SIZE * scale, theme.accent)
+
+
+def first_line(error):
+    return (str(error).strip().splitlines() or [type(error).__name__])[0]
+
+
+# --- The user's image ----------------------------------------------------------
+
+
+def pixbuf_surface(pixbuf):
+    # A cairo surface of the pixbuf's pixels. Returns the surface and the
+    # buffer it points into, which has to live as long as the surface does.
+    w, h, n, rowstride = (pixbuf.get_width(), pixbuf.get_height(), pixbuf.get_n_channels(),
+                          pixbuf.get_rowstride())
+    src = pixbuf.get_pixels()
+    stride = cairo.ImageSurface.format_stride_for_width(cairo.FORMAT_RGB24, w)
+    buf = bytearray(stride * h)
+    little = sys.byteorder == "little"
+    order = (2, 1, 0) if little else (0, 1, 2)
+    first = 0 if little else 1
+    for y in range(h):
+        row = src[y * rowstride:y * rowstride + w * n]
+        o = y * stride + first
+        for dst, ch in enumerate(order):
+            buf[o + dst:o + 4 * w:4] = row[ch::n]
+    return cairo.ImageSurface.create_for_data(buf, cairo.FORMAT_RGB24, w, h, stride), buf
+
+
+def load_image(path, theme):
+    # The user's image as (surface, buffer), or None with one line saying why.
+    if not os.path.isabs(path):
+        log(f"the image {path} is not an absolute path; using the default")
+        return None
+    try:
+        info, width, height = GdkPixbuf.Pixbuf.get_file_info(path)
+        if info is None:
+            raise ValueError("not an image gdk-pixbuf can read")
+        if width * height > MAX_IMAGE_PIXELS:
+            raise ValueError(f"{width}x{height} is too large: more than {MAX_IMAGE_PIXELS} pixels")
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+        oriented = pixbuf.apply_embedded_orientation()
+        pixbuf = oriented or pixbuf
+        if pixbuf.get_has_alpha():
+            b = theme.base
+            color = b[0] << 16 | b[1] << 8 | b[2]
+            pixbuf = pixbuf.composite_color_simple(pixbuf.get_width(), pixbuf.get_height(),
+                                                   GdkPixbuf.InterpType.NEAREST, 255, 1, color, color)
+        if pixbuf is None or pixbuf.get_width() < 1 or pixbuf.get_height() < 1:
+            raise ValueError("the image has no pixels")
+        return pixbuf_surface(pixbuf)
+    except (GLib.Error, OSError, ValueError, MemoryError) as e:
+        log(f"cannot use the image {path}: {first_line(e)}; using the default")
+        return None
+
+
+def draw_image(cr, surface, width, height):
+    # Scaled until it covers the output, centered, the overflow cropped.
+    iw, ih = surface.get_width(), surface.get_height()
+    k = max(width / iw, height / ih)
+    cr.save()
+    cr.translate((width - iw * k) / 2, (height - ih * k) / 2)
+    cr.scale(k, k)
+    cr.set_source_surface(surface, 0, 0)
+    cr.get_source().set_filter(cairo.Filter.BEST)
+    cr.get_source().set_extend(cairo.Extend.PAD)
+    cr.paint()
+    cr.restore()
+
+
+# --- Tool logos ----------------------------------------------------------------
+
+
+def load_tools(paths):
+    # (handle, ink box) of each logo that can be drawn; the others are skipped,
+    # each with one line.
+    found = []
+    for path in paths:
+        try:
+            handle = svg_handle(Path(path).read_bytes())
+            ink = ink_box(handle)
+        except (OSError, GLib.Error) as e:
+            log(f"skipping the tool logo {path}: {first_line(e)}")
+            continue
+        if ink is None:
+            log(f"skipping the tool logo {path}: it draws nothing")
+            continue
+        found.append((handle, ink))
+    return found
+
+
+def tool_spots(count, width, height, obstacles, panel, scale):
+    # One (x, y) in px per logo that fits, in order. obstacles are circles
+    # (x, y, r); panel is the fastfetch text as boxes (x0, y0, x1, y1), one per
+    # line, so the space under its logo stays free.
+    rnd = random.Random(SPREAD_SEED)
+    gap = OBSTACLE_GAP * scale
+
+    def clearance(x, y):
+        d = [math.hypot(max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)) for x0, y0, x1, y1 in panel]
+        d += [math.hypot(x - ox, y - oy) - r for ox, oy, r in obstacles]
+        return min(d + [x, y, width - x, height - y])
+
+    spots = []
+    for _ in range(count):
+        best, best_score = None, -1.0
+        for _ in range(SPREAD_TRIES):
+            x, y = rnd.uniform(0, width), rnd.uniform(0, height)
+            c = clearance(x, y)
+            if c < gap:
+                continue
+            score = min([c * OBSTACLE_PULL] + [math.hypot(x - px, y - py) for px, py in spots])
+            if score > best_score:
+                best, best_score = (x, y), score
+        if best is None:
+            break
+        spots.append(best)
+    return spots
+
+
+def draw_tool(cr, handle, ink, cx, cy, scale, color):
+    # Fit what the logo draws, not its canvas: Simple Icons puts every logo in
+    # a square, so a wide one like Cisco's would fill only a thin strip of it.
+    ix, iy, iw, ih = ink
+    k = min(TOOL_W * scale / iw, TOOL_H * scale / ih)
+    w, h = iw * k, ih * k
+    tmp = cairo.ImageSurface(cairo.FORMAT_ARGB32, int(w) + 2, int(h) + 2)
+    draw_svg(cairo.Context(tmp), handle, 1 - ix * k, 1 - iy * k, INK_UNIT * k, INK_UNIT * k)
+    fill_with_mask(cr, tmp, cx - w / 2 - 1, cy - h / 2 - 1, color)
+
+
+# --- The facts ------------------------------------------------------------------
+
+SGR = re.compile(r"\x1b\[([0-9;?]*)([A-Za-z])")
+# Operating system commands (a window title) and other escapes that carry text
+# or none of the colors; removed before the SGR runs are read.
+OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?")
+STRAY_ESC = re.compile(r"\x1b(?!\[)")
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]")
+
+
+def cells(text):
+    # How many terminal cells the text takes: wide characters take two.
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 0 if unicodedata.combining(ch) else 1
+               for ch in text)
+
+
+def parse_ansi(text, theme):
+    # fastfetch's colored output as lines of (column, text, color, bold) runs.
+    # It uses SGR colors (38;2;r;g;b, and 38;5;N or 30-37/90-97 for the
+    # Palette row), bold, and CSI n G to jump to the value column. Everything
+    # else is dropped. At most FACTS_LINES lines of FACTS_COLUMNS columns are
+    # kept, whatever comes in.
+    text = OSC.sub("", text).replace("\r", "").replace("\t", " ")
+    text = CONTROL.sub("", text)
+    lines = []
+    for raw in text.rstrip("\n").split("\n")[:FACTS_LINES]:
+        raw = STRAY_ESC.sub("", raw[:FACTS_COLUMNS * 16])
+        runs, col, color, bold, pos = [], 0, theme.text, False, 0
+        for m in list(SGR.finditer(raw)) + [None]:
+            chunk = raw[pos:m.start() if m else len(raw)]
+            chunk = chunk.replace("\x1b", "")
+            if chunk and col < FACTS_COLUMNS:
+                chunk = chunk[:FACTS_COLUMNS - col]
+                runs.append((col, chunk, color, bold))
+                col += cells(chunk)
+            if m is None:
+                break
+            pos = m.end()
+            args, cmd = m.group(1), m.group(2)
+            if cmd == "G":
+                col = min(max(int(args or 1) - 1 if args.isdigit() or not args else 0, col), FACTS_COLUMNS)
+            elif cmd == "m":
+                color, bold = apply_sgr(args, color, bold, theme)
+        lines.append(runs)
+    while lines and not any(r[1].strip() for r in lines[-1]):
+        lines.pop()
+    return lines
+
+
+def apply_sgr(args, color, bold, theme):
+    p = [int(x) for x in args.split(";") if x.isdigit()] or [0]
+    i = 0
+    while i < len(p):
+        if p[i] == 0:
+            color, bold = theme.text, False
+        elif p[i] == 1:
+            bold = True
+        elif p[i] == 22:
+            bold = False
+        elif p[i] == 39:
+            color = theme.text
+        elif 30 <= p[i] <= 37 or 90 <= p[i] <= 97:
+            color = theme.ansi16[p[i] - 30 if p[i] < 90 else p[i] - 82]
+        elif p[i] == 38 and i + 4 < len(p) and p[i + 1] == 2:
+            if max(p[i + 2:i + 5]) < 256:
+                color = tuple(p[i + 2:i + 5])
+            i += 4
+        elif p[i] == 38 and i + 2 < len(p) and p[i + 1] == 5:
+            color = theme.ansi16[p[i + 2]] if p[i + 2] < 16 else theme.text
+            i += 2
+        i += 1
+    return color, bold
+
+
+def run_group(cmd, seconds):
+    # (returncode, stdout, stderr) of cmd, or None when it ran out of time. cmd
+    # gets a process group of its own, which is killed with it: fastfetch is
+    # bash's child, and a child that outlives its parent keeps the pipes open
+    # and the caller waiting.
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        return None
+    return proc.returncode, out, err
+
+
+def fastfetch_text(theme):
+    # Run under bash, which stays alive as fastfetch's parent: the Shell row
+    # names the parent process, and would otherwise read "backdrop". The NixOS
+    # logo has six color slots, the odd ones for one set of its arms and the
+    # even ones for the other; a config that sets only the first two would
+    # leave the rest in the terminal's blue and cyan, which are Blue and Teal.
+    colors = [theme.blue, theme.sapphire] * 3
+    flags = " ".join(f"--logo-color-{i + 1} {shlex.quote('38;2;%d;%d;%d' % c)}" for i, c in enumerate(colors))
+    script = f"fastfetch --pipe false {flags}; s=$?; exit \"$s\""
+    try:
+        seconds = float(os.environ.get("BACKDROP_FASTFETCH_SECONDS") or FACTS_SECONDS)
+        done = run_group(["bash", "-c", script], seconds)
+    except (OSError, ValueError) as e:
+        log(f"fastfetch did not run: {first_line(e)}; no facts on the wallpaper")
+        return ""
+    if done is None:
+        log(f"fastfetch took more than {seconds:g} s; no facts on the wallpaper")
+        return ""
+    code, stdout, stderr = done
+    out = stdout[:FACTS_BYTES].decode("utf-8", "replace")
+    if code != 0 or not out.strip():
+        why = first_line(stderr.decode("utf-8", "replace")) if stderr.strip() else f"exit {code}"
+        log(f"fastfetch gave no facts ({why}); none on the wallpaper")
+        return ""
+    return out
+
+
+def facts(theme):
+    given = os.environ.get("BACKDROP_FACTS")
+    if given:
+        try:
+            with open(given, "rb") as f:
+                return parse_ansi(f.read(FACTS_BYTES).decode("utf-8", "replace"), theme)
+        except OSError as e:
+            log(f"cannot read the facts {given}: {e.strerror or e}; none on the wallpaper")
+            return []
+    return parse_ansi(fastfetch_text(theme), theme)
+
+
+def panel_layout(cr):
+    # Whole-pixel advances and line heights, so that the block characters of a
+    # logo meet without a seam of half-covered pixels between them.
+    layout = PangoCairo.create_layout(cr)
+    options = cairo.FontOptions()
+    options.set_hint_metrics(cairo.HintMetrics.ON)
+    options.set_antialias(cairo.Antialias.GRAY)
+    PangoCairo.context_set_font_options(layout.get_context(), options)
+    layout.context_changed()
+    return layout
+
+
+def panel_metrics(cr, theme, size):
+    # (column advance, line height) of the panel font, in px.
+    layout = panel_layout(cr)
+    layout.set_font_description(Pango.FontDescription(f"{theme.font} {size}px"))
+    layout.set_text("M", -1)
+    return layout.get_extents()[1].width / Pango.SCALE, round(size * 1.3)
+
+
+def fit_panel(cr, theme, lines, x, width, size):
+    # (size, column advance, line height) of the panel font: `size`, or the
+    # largest smaller one at which the widest line ends before the right
+    # margin. Advances are whole pixels, so the size is stepped down until the
+    # line fits.
+    cols = max([col + cells(chunk.rstrip()) for runs in lines for col, chunk, _, _ in runs if chunk.strip()]
+               + [1])
+    room = width * (1 - PANEL_RIGHT) - x
+    while True:
+        advance, line_h = panel_metrics(cr, theme, size)
+        if cols * advance <= room or size <= PANEL_MIN_FONT:
+            return size, advance, line_h
+        size = max(min(size - 0.25, size * room / (cols * advance)), PANEL_MIN_FONT)
+
+
+def draw_panel(cr, theme, lines, x, y, size):
+    layout = panel_layout(cr)
+    regular = Pango.FontDescription(f"{theme.font} {size}px")
+    bold = Pango.FontDescription(f"{theme.font} Bold {size}px")
+    advance, line_h = panel_metrics(cr, theme, size)
+    for row, runs in enumerate(lines):
+        for col, chunk, color, is_bold in runs:
+            layout.set_font_description(bold if is_bold else regular)
+            layout.set_text(chunk, -1)
+            cr.set_source_rgba(*rgb(color))
+            cr.move_to(round(x) + col * advance, round(y) + row * line_h)
+            PangoCairo.show_layout(cr, layout)
+
+
+def panel_boxes(lines, px, py, advance, line_h, width):
+    # Each line's box starts at its first character and runs to the right edge
+    # rather than to its last one, so changing values do not move the logos.
+    boxes = []
+    for row, runs in enumerate(lines):
+        cols = [col + len(chunk) - len(chunk.lstrip()) for col, chunk, _, _ in runs if chunk.strip()]
+        if cols:
+            boxes.append((px + min(cols) * advance, py + row * line_h, width, py + (row + 1) * line_h))
+    return boxes
+
+
+# --- One image -------------------------------------------------------------------
+
+
+def render(kind, path, width, height, scale, theme, image, tools, assets):
+    surface = cairo.ImageSurface(cairo.FORMAT_RGB24, width, height)
+    cr = cairo.Context(surface)
+    cr.set_source_rgba(*rgb(theme.base))
+    cr.paint()
+
+    # The image and the buffer behind it; both live until the surface is written.
+    loaded = load_image(image, theme) if image is not None else None
+    if loaded is not None:
+        draw_image(cr, loaded[0], width, height)
+
+    size = MARK_SIZE * scale
+    center = (width / 2, height / 2)
+    margin = PANEL_Y * height
+    corner = (margin + size / 2, margin + size / 2)
+    mark = ravnix_mark(assets)
+
+    if kind == "wall":
+        lines = facts(theme)
+        px, py, fsize = PANEL_X * width, PANEL_Y * height, PANEL_FONT * height
+        fsize, advance, line_h = fit_panel(cr, theme, lines, px, width, fsize)
+        usable = load_tools(tools)
+        if usable:
+            obstacles = [(*center, size / 2), (*corner, size / 2)]
+            panel = panel_boxes(lines, px, py, advance, line_h, width)
+            spots = tool_spots(len(usable), width, height, obstacles, panel, scale)
+            if len(spots) < len(usable):
+                log(f"no room for {len(usable) - len(spots)} of the {len(usable)} tool logos")
+            for i, ((handle, ink), (x, y)) in enumerate(zip(usable, spots, strict=False)):
+                draw_tool(cr, handle, ink, x, y, scale, theme.surface1 if i % 2 else theme.surface2)
+        try:
+            phyllon = svg_handle((assets / "phyllon-mark.svg").read_bytes())
+            draw_mark_svg(cr, phyllon, *corner, size, theme.accent)
+        except (OSError, GLib.Error) as e:
+            log(f"cannot draw the phyllon mark: {first_line(e)}")
+        draw_panel(cr, theme, lines, px, py, fsize)
+
+    draw_ravnix(cr, theme, *center, scale, mark)
+    surface.flush()
+    write_png(surface, Path(path))
+
+
+def write_png(surface, path):
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        surface.write_to_png(str(tmp))
+        tmp.replace(path)
+    except (OSError, cairo.Error) as e:
+        tmp.unlink(missing_ok=True)
+        raise Fail(f"cannot write {path}: {getattr(e, 'strerror', None) or e}") from None
+
+
+# --- Outputs and the cache --------------------------------------------------------
+
+
+def outputs():
+    try:
+        done = subprocess.run(["swaymsg", "-rt", "get_outputs"], capture_output=True, text=True,
+                              check=True, timeout=5)
+        data = json.loads(done.stdout)
+        return [(o["name"], round(o["rect"]["width"] * o["scale"]), round(o["rect"]["height"] * o["scale"]),
+                 o["scale"]) for o in data if o.get("active")]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as e:
+        raise Fail(f"swaymsg -t get_outputs gave no outputs: {first_line(e)}") from None
+
+
+def lock_key(width, height, scale, config, image, assets):
+    # Anything that changes the lock image: this script, the look, the user's
+    # image and the ravnix mark. Not the tools, the facts or the phyllon mark:
+    # the lock image holds none of them.
+    h = hashlib.sha256(f"{width}x{height}@{scale}".encode())
+    h.update(Path(__file__).read_bytes())
+    look = {k: config.get(k) for k in ("palette", "accent", "font", "image")}
+    h.update(json.dumps(look, sort_keys=True).encode())
+    if image and os.path.isabs(image):
+        try:
+            with open(image, "rb") as fh:
+                h.update(hashlib.file_digest(fh, "sha256").digest())
+        except OSError:
+            h.update(b"no image")
+    mark = assets / "ravnix-mark.svg"
+    if mark.exists():
+        try:
+            h.update(mark.read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:12]
+
+
+# Every output seen, by connector name, with its last size: swaylock picks its
+# images once, at lock time, so a monitor docked while the screen is locked
+# only gets its image if the lock already named it (2026-11-04: the ultrawide,
+# plugged in during a suspend, showed flat Base on the lock screen).
+SEEN = "lock-outputs.json"
+
+
+def seen_outputs():
+    try:
+        return {k: tuple(v) for k, v in json.loads((CACHE / SEEN).read_text()).items()}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def remember(active):
+    # Read, change and write the list under its own lock: lock-args and
+    # wallpaper may both be at it, and the first must not lose the other's
+    # entry.
+    with open(CACHE / "seen.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        seen = seen_outputs()
+        seen.update({name: (w, h, s) for name, w, h, s in active})
+        tmp = (CACHE / SEEN).with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(seen))
+        tmp.replace(CACHE / SEEN)
+    return seen
+
+
+def prepare_cache():
+    try:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        probe = CACHE / f".probe.{os.getpid()}"
+        probe.write_bytes(b"")
+        probe.unlink()
+    except OSError as e:
+        raise Fail(f"cannot write the cache {CACHE}: {e.strerror or e}") from None
+
+
+def prune_stale_temporaries():
+    # What a killed render left behind (lock-screen kills backdrop after 2 s).
+    cutoff = time.time() - 120
+    for old in CACHE.glob("*.tmp"):
+        try:
+            if old.stat().st_mtime < cutoff:
+                old.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+class Look:
+    # What the commands share: the config, read once.
+    def __init__(self):
+        self.theme, self.image, self.tools, self.config = load_config()
+        self.assets = assets_dir()
+
+    def render(self, kind, path, w, h, s):
+        render(kind, path, w, h, s, self.theme, self.image, self.tools, self.assets)
+
+    def lock_path(self, w, h, s):
+        return CACHE / f"lock-{lock_key(w, h, s, self.config, self.image, self.assets)}.png"
+
+    def lock_image(self, w, h, s):
+        path = self.lock_path(w, h, s)
+        if not path.exists():
+            self.render("lock", path, w, h, s)
+        return path
+
+
+def cmd_lock_args(look):
+    # Runs inside lock-screen's 2 s budget, so it renders only what an active
+    # output lacks and deletes nothing; cmd_wallpaper does the pruning.
+    prepare_cache()
+    active = outputs()
+    # Before the images exist, so a wallpaper run pruning at this moment keeps
+    # them.
+    seen = remember(active)
+    for name, w, h, s in active:
+        print("-i")
+        print(f"{name}:{look.lock_image(w, h, s)}")
+    names = {name for name, *_ in active}
+    for name, (w, h, s) in seen.items():
+        path = look.lock_path(w, h, s)
+        if name not in names and path.exists():
+            print("-i")
+            print(f"{name}:{path}")
+
+
+def prune_lock_images(look, seen):
+    # Keep the image of every output seen, connected or not; drop the rest
+    # (older layouts, older versions of this script).
+    keep = {look.lock_path(w, h, s) for w, h, s in seen.values()}
+    for old in CACHE.glob("lock-*.png"):
+        if old not in keep:
+            old.unlink(missing_ok=True)
+
+
+def cmd_wallpaper(look):
+    prepare_cache()
+    # kanshi and an unlock can call this at the same moment; one at a time, or
+    # one run's cleanup deletes the other's image before swaybg has read it.
+    with open(CACHE / "wallpaper.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        active = outputs()
+        for name, w, h, s in active:
+            # A new file name every time, so swaybg is sure to load the new image.
+            path = CACHE / f"wall-{name}-{os.getpid()}.png"
+            look.render("wall", path, w, h, s)
+            try:
+                subprocess.run(["swaymsg", "output", name, "bg", str(path), "fill"],
+                               capture_output=True, text=True, check=True, timeout=5)
+            except (OSError, subprocess.SubprocessError) as e:
+                raise Fail(f"swaymsg output {name} bg failed: {first_line(getattr(e, 'stderr', None) or e)}") from None
+            for old in CACHE.glob(f"wall-{name}-*.png"):
+                if old != path:
+                    old.unlink(missing_ok=True)
+        # kanshi runs this on every docking, so the lock image of a monitor
+        # exists before the next lock and lock-args never has to render it in
+        # its budget. After the wallpapers, so a docking shows its background
+        # without waiting.
+        seen = remember(active)
+        for _, w, h, s in active:
+            look.lock_image(w, h, s)
+        prune_lock_images(look, seen)
+        prune_stale_temporaries()
+
+
+def cmd_render(look, kind, out, size, scale):
+    m = re.fullmatch(r"([0-9]+)x([0-9]+)", size)
+    if not m or not all(0 < int(v) <= MAX_SIDE for v in m.groups()):
+        raise Fail(f"{size!r} is not WxH with both sides from 1 to {MAX_SIDE}\n{USAGE}", 2)
+    try:
+        s = float(scale)
+    except ValueError:
+        s = math.nan
+    if not (math.isfinite(s) and 0 < s <= MAX_SCALE):
+        raise Fail(f"{scale!r} is not a scale above 0 and up to {MAX_SCALE}\n{USAGE}", 2)
+    look.render(kind, Path(out), int(m.group(1)), int(m.group(2)), s)
+
+
+def main(argv):
+    if argv == ["wallpaper"]:
+        run, args = cmd_wallpaper, ()
+    elif argv == ["lock-args"]:
+        run, args = cmd_lock_args, ()
+    elif len(argv) == 5 and argv[0] == "render" and argv[1] in ("wall", "lock"):
+        run, args = cmd_render, tuple(argv[1:])
+    else:
+        raise Fail(USAGE, 2)
+    run(Look(), *args)
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except Fail as e:
+        print(f"backdrop: {e}", file=sys.stderr)
+        sys.exit(e.code)

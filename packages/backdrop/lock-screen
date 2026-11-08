@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# lock-screen: swaylock over the backdrop lock image; once unlocked, redraw the
+# wallpaper so its fastfetch panel is current. Called by keep-awake's swayidle
+# (lock, timeout, before-sleep) in place of a bare `swaylock -f`.
+#
+# Locking never waits on the image: backdrop gets 2 s, and if it fails, is
+# missing or is slow, swaylock starts without an image (flat Base). If swaylock
+# rejects the image arguments, it is tried once more without them. What
+# backdrop says on stderr goes to ours, which is the journal under sway.
+
+args=()
+if out=$(timeout 2 backdrop lock-args) && [[ -n $out ]]; then
+  mapfile -t args <<<"$out"
+fi
+
+swaylock -f "${args[@]}" || { ((${#args[@]})) && swaylock -f; } || exit 1
+
+# swaylock -f returns once the screen is locked; its daemon lives on until the
+# unlock. Wait for that in the background, so swayidle's before-sleep is not held.
+# Only a call that locked gets here (a second lock while locked fails above), so
+# one unlock redraws the wallpaper once.
+if backdrop=$(command -v backdrop) && pid=$(pgrep -nxu "$(id -u)" swaylock); then
+  # The single quotes are meant: the inner sh expands $1 and $2.
+  # shellcheck disable=SC2016
+  setsid -f sh -c 'tail --pid="$1" -f /dev/null; exec "$2" wallpaper' sh "$pid" "$backdrop" \
+    >/dev/null 2>&1 </dev/null
+fi

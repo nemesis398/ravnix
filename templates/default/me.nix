@@ -344,6 +344,18 @@
     # ''...''): a bare ${NAME} is Nix's own interpolation and fails.
     claude.mcpServers = { };
 
+    # The desktop's wallpaper and lock image. image is your own picture: a
+    # path in your flake (./wallpaper.jpg) or an absolute path as a string;
+    # null keeps ravnix's own wallpaper, Base with the ravnix mark in the
+    # middle. tools is a list of SVG logos of your tools, for example
+    # [ ./backdrop-logos/odin.svg ./backdrop-logos/rust.svg ], drawn on the
+    # wallpaper in two Surface grays; empty draws none. Mind each logo's
+    # license: ravnix ships no logo of a tool.
+    desktop.backdrop = {
+      image = null;
+      tools = [ ];
+    };
+
     # The one accent of the desktop: focus and place, never a state. One of
     # "mauve", "lavender", "pink", "flamingo", "rosewater", "teal", "sky" or
     # "sapphire". NixOS and home-manager both take it from here.

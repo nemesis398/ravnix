@@ -66,6 +66,17 @@ let
     self.nixosModules.glue
   ];
   alone = name: summary [ self.nixosModules.${name} ];
+  # One evaluation of the host per module, not one per use.
+  aloneOf = lib.genAttrs [
+    "desktop"
+    "glue"
+  ] alone;
+  # A module of the directory may add shared home-manager modules of its own,
+  # and many do, so what a host with a shape module alone has is what common
+  # gives it and perhaps more; overlays and pkgs.ravnix are common's alone.
+  # Together, the shared modules are those of each plus common's once: a
+  # module that brought a second copy of common would show as a surplus.
+  extra = name: aloneOf.${name}.value.shared - commonOnly.value.shared;
 
   failures =
     lib.optional
@@ -103,14 +114,19 @@ let
         (
           name:
           let
-            # One evaluation of the host per module, not one per use.
-            a = alone name;
+            a = aloneOf.${name};
           in
           lib.optional (
             self.nixosModules.${name}.key or null != "ravnix/nixosModules.${name}"
           ) "nixosModules.${name} has no key ravnix/nixosModules.${name}"
           ++
-            lib.optional (!a.success || a.value != commonOnly.value)
+            lib.optional
+              (
+                !a.success
+                || a.value.overlays != commonOnly.value.overlays
+                || !a.value.ravnix
+                || a.value.shared < commonOnly.value.shared
+              )
               "a host with nixosModules.${name} alone does not have what nixosModules.common gives it (home-manager.sharedModules, the overlay, pkgs.ravnix)"
         )
         [
@@ -121,8 +137,12 @@ let
       !commonOnly.success || !commonOnly.value.ravnix || commonOnly.value.shared == 0
     ) "a host with nixosModules.common has no home-manager.sharedModules or no pkgs.ravnix"
     ++ lib.optional (
-      !together.success || together.value != commonOnly.value
-    ) "importing nixosModules.common, desktop and glue together adds to what common alone gives";
+      !together.success
+      || together.value.overlays != commonOnly.value.overlays
+      || !together.value.ravnix
+      || !lib.all (name: aloneOf.${name}.success) [ "desktop" "glue" ]
+      || together.value.shared != commonOnly.value.shared + extra "desktop" + extra "glue"
+    ) "importing nixosModules.common, desktop and glue together adds to what common alone gives and what each module brings";
 in
 pkgs.runCommand "flake-desktop-imports"
   {

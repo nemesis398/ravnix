@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Stand-in for swaymsg in the backdrop tests. `-rt get_outputs` prints the
+# JSON that STUB_OUTPUTS names; every other command is appended to STUB_LOG,
+# and fails when STUB_SWAYMSG_FAIL is set.
+set -euo pipefail
+
+if [[ "$*" == "-rt get_outputs" ]]; then
+	cat -- "$STUB_OUTPUTS"
+	exit 0
+fi
+
+printf '%s\n' "$*" >>"$STUB_LOG"
+[[ -z "${STUB_SWAYMSG_FAIL:-}" ]]

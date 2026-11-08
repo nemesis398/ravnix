@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Stand-in for swaylock in the lock-screen tests. It appends its arguments to
+# STUB_LOG, and then
+#   - fails when STUB_SWAYLOCK_REJECT_IMAGES is set and it was given -i, or
+#     when STUB_SWAYLOCK_FAIL is set;
+#   - otherwise stays locked for STUB_LOCK_SECONDS in the background, as the
+#     daemon swaylock -f leaves, under the name swaylock: STUB_DAEMON is a copy
+#     of bash with that name, which lock-screen finds with pgrep. (Not of
+#     sleep: coreutils may be one multi-call binary that dispatches on its
+#     name.) The trailing `:` keeps bash from exec-ing sleep, which would
+#     lose the name.
+set -euo pipefail
+
+{
+	printf 'swaylock'
+	printf ' [%s]' "$@"
+	printf '\n'
+} >>"$STUB_LOG"
+[[ -z "${STUB_SWAYLOCK_FAIL:-}" ]] || exit 1
+if [[ -n "${STUB_SWAYLOCK_REJECT_IMAGES:-}" && " $* " == *" -i "* ]]; then
+	exit 1
+fi
+if [[ -n "${STUB_DAEMON:-}" ]]; then
+	"$STUB_DAEMON" -c "sleep ${STUB_LOCK_SECONDS:-1}; :" >/dev/null 2>&1 &
+fi
