@@ -20,10 +20,16 @@
 #               store path in the unit, so a new accent changes the unit and
 #               restarts the service. The program draws no color of its own.
 #
-# The unit's PATH and XDG_DATA_DIRS are the user's profile and the system's:
-# a user unit starts with neither, and the menu starts programs by name
-# (`desktop` items through gtk-launch, which looks the .desktop file up on
-# XDG_DATA_DIRS, and the program draws an item whose file it cannot find dim).
+# The apps it opens are Sway's, not the service's. A menu entry is started with
+# `swaymsg exec` (a `desktop` item as `gtk-launch ID`, with the gtk-launch the
+# package names), so Sway is the parent: the app is outside sway-radial.service's
+# cgroup and survives a restart of the unit, which every rebuild that changes
+# the unit, a new accent or a new menu does, and it gets the session's
+# environment (the PATH with /run/wrappers/bin) and none of the program's own
+# variables. The unit therefore sets no PATH; the one it has (NixOS's
+# environment.d file) is the session's, and the wrapper adds swaymsg behind it.
+# XDG_DATA_DIRS is set, because a user unit starts without it and the program
+# itself reads it: it draws an item whose .desktop file it cannot find dim.
 # WAYLAND_DISPLAY and SWAYSOCK come from the Sway session (NixOS's
 # sway-session integration imports them into the user manager).
 #
@@ -85,7 +91,6 @@
             ExecStart = lib.getExe package;
             Environment = [
               "SWAY_RADIAL_THEME=${themeFile}"
-              "PATH=${profile}/bin:/run/current-system/sw/bin"
               "XDG_DATA_DIRS=${profile}/share:/run/current-system/sw/share"
             ];
             Restart = "on-failure";

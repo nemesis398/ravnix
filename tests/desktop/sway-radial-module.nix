@@ -94,7 +94,9 @@ let
     ++ lib.optional (
       lib.toList (unitOf plain).Service.Restart != [ "on-failure" ]
     ) "the unit does not restart on failure"
-    ++ lib.optional (!has plain "PATH=${profile}/bin:") "the unit's PATH does not start with the profile"
+    # Apps are started by Sway, so the unit keeps the session's PATH (NixOS's
+    # environment.d file, with /run/wrappers/bin) and narrows nothing.
+    ++ lib.optional (has plain "PATH=") "the unit sets a PATH and narrows the session's"
     ++ lib.optional (!has plain "XDG_DATA_DIRS=${profile}/share:") "the unit's XDG_DATA_DIRS does not start with the profile"
     ++ lib.optional (
       (unitOf plain).Unit.X-Restart-Triggers != [ (menuOf plain) ]

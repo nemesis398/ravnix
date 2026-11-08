@@ -131,6 +131,7 @@ pkgs.runCommand "desktop-sway-radial"
     PYTHONDONTWRITEBYTECODE = "1";
     swayRadial = sway-radial;
     runtimePath = sway-radial.runtimePath;
+    gtkLaunch = sway-radial.gtkLaunch;
   }
   ''
     export HOME="$TMPDIR"
@@ -145,16 +146,19 @@ pkgs.runCommand "desktop-sway-radial"
     # The installed program starts, through its wrapper, and says its version.
     "$swayRadial/bin/sway-radial" --version | grep -qx 'sway-radial 0.1.0' || fail "--version"
 
-    # What the menu starts it with is on the PATH the wrapper adds.
-    for name in gtk-launch swaymsg; do
-      found=
-      IFS=: read -ra dirs <<< "$runtimePath"
-      for dir in "''${dirs[@]}"; do [ -x "$dir/$name" ] && found=1; done
-      [ -n "$found" ] || fail "$name is not on the wrapper's PATH"
-    done
+    # The swaymsg the daemon runs is on the PATH the wrapper adds, and the
+    # gtk-launch that Sway runs for a desktop entry is the one it names, by
+    # store path, in the variable the program reads.
+    found=
+    IFS=: read -ra dirs <<< "$runtimePath"
+    for dir in "''${dirs[@]}"; do [ -x "$dir/swaymsg" ] && found=1; done
+    [ -n "$found" ] || fail "swaymsg is not on the wrapper's PATH"
+    [ -x "$gtkLaunch" ] || fail "$gtkLaunch is not an executable"
+    grep -qxF "export SWAY_RADIAL_GTK_LAUNCH='$gtkLaunch'" "$swayRadial/bin/sway-radial" \
+      || fail "the wrapper does not set SWAY_RADIAL_GTK_LAUNCH to $gtkLaunch"
 
     # The three libraries are opened by store path, and the wrapper sets no
-    # LD_LIBRARY_PATH, which every program the menu starts would inherit.
+    # LD_LIBRARY_PATH, which would change the library lookup of swaymsg.
     for pattern in 'LIBINPUT_SONAME = "/nix/store/' 'LIBUDEV_SONAME = "/nix/store/'; do
       grep -q "$pattern" "$swayRadial/lib/sway-radial/sway_radial/libinput.py" || fail "libinput.py: $pattern"
     done

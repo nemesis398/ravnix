@@ -11,17 +11,22 @@
 #
 # Three libraries are not found through a typelib but opened by name with
 # ctypes (libinput, libudev and gtk4-layer-shell), and Python has no search
-# path for them in a Nix store. A LD_LIBRARY_PATH in the wrapper would reach
-# every program the menu starts, so the three names become store paths in the
-# installed copy instead (--replace-fail: a source that no longer holds the
-# string stops the build). The tests run on that copy.
+# path for them in a Nix store. A LD_LIBRARY_PATH in the wrapper would change
+# the library lookup of every process the daemon starts, swaymsg included, so
+# the three names become store paths in the installed copy instead
+# (--replace-fail: a source that no longer holds the string stops the build).
+# The tests run on that copy.
 #
 # The wrapper carries what the daemon runs:
 #   - GI_TYPELIB_PATH for GTK 4, gtk4-layer-shell and what those need;
-#   - gtk-launch (a menu entry of kind `desktop` is started with it, so that
-#     the flags of the .desktop file stay in one place) and swaymsg (every
-#     other entry goes through `swaymsg exec`), behind the PATH of the
-#     session (--suffix), so the session's sway is the one that answers.
+#   - swaymsg behind the PATH of the session (--suffix), so the session's sway
+#     is the one that answers. Every menu entry is started through
+#     `swaymsg exec`, so Sway is the parent of the app and the app sees none of
+#     the variables of this wrapper (GI_TYPELIB_PATH, PYTHONPATH, ...);
+#   - SWAY_RADIAL_GTK_LAUNCH, the gtk-launch of GTK 3, which Sway runs for an
+#     entry of kind `desktop` (so that the flags of the .desktop file stay in
+#     one place). It is named by store path because nothing here promises that
+#     the session's PATH holds GTK's tools.
 # `sway-unwrapped` is an argument so that a test can build the package with a
 # stand-in and not pull a compositor into a check.
 {
@@ -64,11 +69,11 @@ let
     ]
   );
 
-  # The PATH the wrapper adds behind the session's.
-  runtimePath = lib.makeBinPath [
-    gtk3
-    sway-unwrapped
-  ];
+  # The PATH the wrapper adds behind the session's: the swaymsg the daemon runs.
+  runtimePath = lib.makeBinPath [ sway-unwrapped ];
+
+  # What Sway runs for an entry of kind `desktop`.
+  gtkLaunch = "${gtk3}/bin/gtk-launch";
 in
 stdenvNoCC.mkDerivation {
   pname = "sway-radial";
@@ -109,6 +114,7 @@ stdenvNoCC.mkDerivation {
       --prefix PYTHONPATH : $out/lib/sway-radial \
       --set GI_TYPELIB_PATH ${typelibPath} \
       --set PYTHONDONTWRITEBYTECODE 1 \
+      --set SWAY_RADIAL_GTK_LAUNCH ${gtkLaunch} \
       --suffix PATH : ${runtimePath}
 
     runHook postInstall
@@ -116,8 +122,14 @@ stdenvNoCC.mkDerivation {
 
   passthru = {
     # What a test that imports the daemon's modules needs: the interpreter
-    # with its Python packages, the typelibs, and the PATH the wrapper adds.
-    inherit python typelibPath runtimePath;
+    # with its Python packages, the typelibs, the PATH the wrapper adds and
+    # the gtk-launch it names.
+    inherit
+      python
+      typelibPath
+      runtimePath
+      gtkLaunch
+      ;
   };
 
   meta = {

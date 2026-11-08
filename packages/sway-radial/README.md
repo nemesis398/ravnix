@@ -36,7 +36,7 @@ logs every gesture event.
 
 | File | Holds | Comes from |
 | --- | --- | --- |
-| `~/.config/sway-radial/menu.toml` | the menu: eight directions per ring, each a submenu or a leaf that runs a `.desktop` file (through `gtk-launch`) or a command (through `swaymsg exec`) | `ravnix.desktop.radial.menu`, else `menu.toml` in this directory |
+| `~/.config/sway-radial/menu.toml` | the menu: eight directions per ring, each a submenu or a leaf that runs a `.desktop` file (`swaymsg exec` runs `gtk-launch` on it) or a command (`swaymsg exec` runs it) | `ravnix.desktop.radial.menu`, else `menu.toml` in this directory |
 | `$SWAY_RADIAL_THEME`, else `~/.config/sway-radial/theme.json` | the colors (eight roles of the theme module), the font and the two line widths | the unit, from `config.ravnix.theme` |
 
 The default menu, `menu.toml` here, is built only from commands that ravnix's
@@ -79,8 +79,17 @@ behavior is unchanged except for the following.
   here. The default menu is a generic one, and a user's goes through the option.
 - **The three libraries opened by name** (libinput, libudev, gtk4-layer-shell)
   are opened by store path in the installed copy (`default.nix` patches the
-  three strings), instead of through a `LD_LIBRARY_PATH` that every program the
-  menu starts would inherit.
+  three strings), instead of through a `LD_LIBRARY_PATH` that would change the
+  library lookup of every process the daemon starts.
+- **Sway starts the apps.** The original ran `gtk-launch ID` itself, so a
+  `desktop` item was a child of the daemon: in the service's cgroup under
+  systemd, where a restart of the unit (every rebuild that changes it, a crash)
+  ends the app along with the menu, and with the wrapper's variables
+  (`GI_TYPELIB_PATH`, `PYTHONPATH`) in its environment. Both kinds of leaf now go
+  through `swaymsg exec`, as the commands always did: `gtk-launch ID` for a
+  `desktop` item, by the store path the wrapper names in
+  `SWAY_RADIAL_GTK_LAUNCH`, and nothing but a plain desktop id is run (it
+  reaches a shell, and Sway splits a command line at `;` and `,`).
 - **Three findings fixed**, found by the new tests of malformed menu files: a
   menu file that is not UTF-8 text, and one nested a few hundred levels deep,
   raised an exception out of the loader and stopped the daemon at start instead
@@ -133,7 +142,7 @@ commands and `.desktop` ids the menu may name) and `SWAY_RADIAL_TEST_LIBINPUT_H`
 ## Findings that are not fixed
 
 - A `desktop` item whose `.desktop` id does not resolve is drawn dim and still
-  runs `gtk-launch`, which fails with a log line. That is by design (hiding it
+  runs `gtk-launch` through Sway, which fails with a log line. That is by design (hiding it
   would move every other item), but a typo in an id is easy to miss; the
   `machine` test `test_every_desktop_id_resolves_on_this_machine` finds it on
   the machine that has the apps.

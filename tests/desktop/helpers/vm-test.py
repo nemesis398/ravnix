@@ -298,6 +298,44 @@ wait_for(
     20,
 )
 
+# An app opened from the ring is Sway's child and not the service's. The
+# program's own function runs in a transient unit with the service's Python,
+# library and launcher (read from the running daemon), the way the daemon runs
+# it; if it started the app itself, the app would sit in that unit's cgroup and
+# the unit's end, as a restart of sway-radial.service is, would kill it. Here the
+# app has to be there after the unit is gone, and in no cgroup of the radial
+# units.
+main_pid = as_user("systemctl --user show -p MainPID --value sway-radial.service").strip()
+assert main_pid not in ("", "0"), "sway-radial.service has no main process"
+service_env = dict(
+    line.split("=", 1)
+    for line in machine.succeed(f"tr '\\0' '\\n' < /proc/{main_pid}/environ").splitlines()
+    if "=" in line
+)
+radial_python = machine.succeed(f"readlink -f /proc/{main_pid}/exe").strip()
+radial_lib = service_env["PYTHONPATH"].split(":")[0]
+gtk_launch = service_env["SWAY_RADIAL_GTK_LAUNCH"]
+as_user(
+    "mkdir -p ~/.local/share/applications && printf '%s\\n' '[Desktop Entry]' 'Type=Application' "
+    "'Name=Radial probe' 'Exec=sleep 4711' > ~/.local/share/applications/radial-probe.desktop"
+)
+probe = (
+    "from sway_radial.actions import run_item; from sway_radial.model import MenuItem; "
+    "run_item(MenuItem(direction='n', label='Probe', desktop='radial-probe'))"
+)
+assert "SWAYSOCK=" in as_user("systemctl --user show-environment"), "the user manager does not know SWAYSOCK"
+as_user(
+    f"systemd-run --user --wait --collect --unit=radial-probe -E PYTHONPATH={radial_lib} "
+    f"-E PYTHONDONTWRITEBYTECODE=1 -E SWAY_RADIAL_GTK_LAUNCH={gtk_launch} "
+    f"{radial_python} -c {shlex.quote(probe)}"
+)
+wait_for("the app of the ring", lambda: machine.execute(f"pgrep -u {USER} -f '/sleep 4711$'")[0] == 0, 30)
+app_pid = machine.succeed(f"pgrep -u {USER} -f '/sleep 4711$'").split()[0]
+app_cgroup = machine.succeed(f"cat /proc/{app_pid}/cgroup")
+assert "radial" not in app_cgroup, f"the app of the ring is in the cgroup of a radial unit: {app_cgroup}"
+assert machine.succeed(f"ps -o ppid= -p {app_pid}").strip() != main_pid, "the app is a child of the daemon"
+machine.succeed(f"pkill -u {USER} -f '/sleep 4711$'; rm -f /home/{USER}/.local/share/applications/radial-probe.desktop")
+
 # ── the locked screen ─────────────────────────────────────────────────────────
 swaymsg("exec", "swaylock -f")
 # (swaylock is a wrapper too: the process is called .swaylock-wrapped)

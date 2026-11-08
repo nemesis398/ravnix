@@ -8,15 +8,22 @@ Electron flags stay defined in one place, the desktop file. A bare command is
 not equivalent: that is how ``exec helium`` quietly ran XWayland Helium for
 months.
 
-A raw command goes through ``swaymsg exec``, not a direct ``Popen``, so sway
-reparents the child. The daemon then inherits neither a zombie nor a
-controlling terminal.
+Every item, desktop or command, is started by Sway: the program asks for it
+with ``swaymsg exec`` and never runs an app itself. Sway becomes the parent, so
+the daemon inherits neither a zombie nor a controlling terminal, and, since the
+daemon is a user service, the app does not live in the service's cgroup, where
+a restart of the unit (a rebuild that changes it, a crash) would end it along
+with the menu. It also starts with the session's environment (its PATH, with
+``/run/wrappers/bin``), and none of the variables the wrapper of this program
+sets for itself.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -26,6 +33,16 @@ logger = logging.getLogger(__name__)
 
 #: The XDG default when ``XDG_DATA_DIRS`` is unset, per the basedir spec.
 _DEFAULT_DATA_DIRS = "/usr/local/share:/usr/share"
+
+#: The wrapper of the package names the gtk-launch it was built with here, so
+#: that the launch does not depend on the session's PATH holding GTK's tools.
+GTK_LAUNCH_ENV = "SWAY_RADIAL_GTK_LAUNCH"
+
+#: What a desktop id is made of. The id reaches a shell through Sway's ``exec``,
+#: which also splits a command line at ``;`` and ``,``, and ``gtk-launch`` reads
+#: a leading dash as an option. A real id (``helium``, ``md.obsidian.Obsidian``,
+#: ``webapp-claude``) has none of those.
+_DESKTOP_ID = re.compile(r"[A-Za-z0-9_+][A-Za-z0-9._+-]*")
 
 
 def _spawn(argv: list[str]) -> None:
@@ -59,18 +76,31 @@ def desktop_exists(desktop_id: str) -> bool:
     return any((base / "applications" / name).is_file() for base in _data_dirs())
 
 
+def _sway_exec(command: str) -> list[str]:
+    # The '--' keeps a command starting with a dash from being read as a
+    # swaymsg option.
+    return ["swaymsg", "exec", "--", command]
+
+
 def run_item(item: MenuItem) -> None:
-    """Launch a desktop item with gtk-launch, or run a command item through
-    'swaymsg exec'. Never raises; failures are logged."""
+    """Launch a desktop item with gtk-launch, or run a command item, both
+    through 'swaymsg exec' so that Sway starts them. Never raises; failures are
+    logged."""
     if item.is_submenu:
         return
 
     if item.desktop:
-        argv = ["gtk-launch", item.desktop]
+        if not _DESKTOP_ID.fullmatch(item.desktop):
+            logger.error(
+                "menu item %r: %r is not a desktop id, so nothing is run",
+                item.label,
+                item.desktop,
+            )
+            return
+        launcher = os.environ.get(GTK_LAUNCH_ENV) or "gtk-launch"
+        argv = _sway_exec(shlex.join([launcher, item.desktop]))
     elif item.command:
-        # The '--' keeps a command starting with a dash from being read as a
-        # swaymsg option.
-        argv = ["swaymsg", "exec", "--", item.command]
+        argv = _sway_exec(item.command)
     else:
         logger.warning("menu item %r has neither a desktop id nor a command", item.label)
         return
