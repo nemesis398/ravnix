@@ -254,6 +254,14 @@
         imports = [ ./hosts/server/images.nix ];
       };
 
+      # The server shape as an OCI image: systemd as PID 1, the home on a
+      # volume (hosts/server/oci.nix). It goes beside nixosModules.server, and
+      # a private flake builds config.system.build.ociImage from the two.
+      nixosModules.server-oci = {
+        key = "ravnix/nixosModules.server-oci";
+        imports = [ ./hosts/server/oci.nix ];
+      };
+
       packages.${system} =
         # A tool named claude-code is an error of lib/ravnix-packages.nix, which
         # packagesOf runs through.
