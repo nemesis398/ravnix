@@ -113,6 +113,14 @@ let
     ++ check nvidia.powerManagement.enable "no NVIDIA power management"
     ++ check nvidia.powerManagement.finegrained "no fine-grained runtime power management for the dGPU"
     ++ check (lib.hasInfix "NVreg_DynamicPowerManagement=0x02" c.boot.extraModprobeConfig) "the dGPU's runtime D3 is not on"
+    # The kernel and driver of the Fedora power baseline: 7.2 and 615.
+    ++ check (
+      lib.versions.majorMinor c.boot.kernelPackages.kernel.version == "7.2"
+    ) "the kernel is ${c.boot.kernelPackages.kernel.version}, not the 7.2 of the Fedora power baseline"
+    ++ check (
+      lib.versions.major nvidia.package.version == "615"
+    ) "the NVIDIA driver is ${nvidia.package.version}, not the 615 of the Fedora power baseline"
+    ++ check (lib.any (p: lib.hasPrefix "nvidia-open-615." (p.name or "")) c.boot.extraModulePackages) "the kernel does not get the open NVIDIA modules of 615"
     ++ check (has params "amdgpu.abmlevel=2") "no amdgpu.abmlevel=2"
     ++ check (has params "rd.driver.blacklist=nouveau") "no rd.driver.blacklist=nouveau"
     ++ check (has c.boot.blacklistedKernelModules "nouveau") "nouveau is not blacklisted"

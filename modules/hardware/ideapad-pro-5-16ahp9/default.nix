@@ -11,9 +11,22 @@
 # but TLP as a default, which would preempt Task 3.4's choice of the CPU
 # policy. The PRIME setup has to be written here anyway, with this laptop's
 # bus IDs.
-{ lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
+
+  # The kernel and the NVIDIA driver of the Fedora power baseline, the one
+  # stack measured on this laptop: kernel 7.2.15 and driver 615.78.08 (the
+  # open modules). Task 3.7 compares huginn against it, so the same pair
+  # leaves only the configuration to differ. 7.2 is no LTS kernel: when a
+  # nixpkgs bump drops linuxPackages_7_2, the evaluation fails, loudly, and
+  # the kernel is moved on purpose then, with the baseline measured again.
+  boot.kernelPackages = lib.mkDefault pkgs.linuxPackages_7_2;
 
   # The NVIDIA driver is unfree, and allowed by its name and nothing else.
   # allowUnfreePackages merges with the lists of other modules, unlike
@@ -30,6 +43,8 @@
     amdgpu.initrd.enable = true;
 
     nvidia = {
+      # NVIDIA's new-feature branch, 615 with this kernel (see above).
+      package = lib.mkDefault config.boot.kernelPackages.nvidiaPackages.latest;
       # The open kernel modules, which NVIDIA recommends for Ada GPUs such
       # as the RTX 4050, and which Fedora runs on this laptop today.
       open = true;
