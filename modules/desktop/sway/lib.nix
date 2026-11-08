@@ -10,22 +10,27 @@
 #   helpers.python { name; src; tokens; flakeIgnore; }
 { lib, pkgs }:
 rec {
-  # Replaces @name@ for every name in tokens. A token left over is an error
-  # that names it, so a typo in a data file fails the build instead of reaching
-  # a running session as a literal "@acent@" (tokens start with a lower-case
-  # letter, which is why pactl's @DEFAULT_SINK@ is left alone).
+  # Replaces @name@ for every name in tokens. A token of the file that nobody
+  # gives is an error that names it, so a typo in a data file fails the build
+  # instead of reaching a running session as a literal "@acent@" (tokens start
+  # with a lower-case letter, which is why pactl's @DEFAULT_SINK@ is left
+  # alone). Only the file is read for tokens, never the filled result: a value
+  # of a user may hold "@word@" (an item named key@work@x, a command) and is
+  # kept as it is. The replacement is one pass, so such a value is not filled
+  # a second time.
   fill =
     tokens: text:
     let
-      out = lib.replaceStrings (map (n: "@${n}@") (lib.attrNames tokens)) (lib.attrValues tokens) text;
-      left = lib.unique (
-        lib.concatMap (m: if lib.isList m then m else [ ]) (builtins.split "(@[a-z][A-Za-z0-9.]*@)" out)
+      known = map (n: "@${n}@") (lib.attrNames tokens);
+      wanted = lib.unique (
+        lib.concatMap (m: if lib.isList m then m else [ ]) (builtins.split "(@[a-z][A-Za-z0-9.]*@)" text)
       );
+      left = lib.filter (t: !(lib.elem t known)) wanted;
     in
     if left != [ ] then
       throw "modules/desktop: ${lib.concatStringsSep ", " left} is no token of this file (known: ${lib.concatStringsSep ", " (lib.attrNames tokens)})"
     else
-      out;
+      lib.replaceStrings known (lib.attrValues tokens) text;
 
   # The text of a script without its shebang: the builders add their own.
   body =
