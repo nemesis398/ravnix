@@ -42,8 +42,12 @@ let
   # nixosModules.common, whose home-manager, options and overlay the files of
   # their directories read (home-manager.sharedModules, pkgs.ravnix.NAME), and
   # the key of common keeps a second import from adding anything. A summary is
-  # whether the host evaluates, and how many shared home-manager modules and
-  # overlays it has and whether pkgs.ravnix exists.
+  # whether the host evaluates, how many copies of the common and theme home
+  # modules it loads (counted by key in home-manager.sharedModules, which gets
+  # one more for each copy of the module that is loaded), how many overlays it
+  # has, and whether pkgs.ravnix exists. The files of the directories add home
+  # modules of their own, so the length of sharedModules says nothing about
+  # copies of common.
   hostModules = import ./helpers/host-modules.nix { inherit lib; };
   summary =
     modules:
@@ -52,8 +56,12 @@ let
         inherit system;
         modules = hostModules ++ modules;
       };
+      copies =
+        key:
+        lib.count (m: builtins.isAttrs m && (m.key or null) == key) h.config.home-manager.sharedModules;
       facts = {
-        shared = lib.length h.config.home-manager.sharedModules;
+        common = copies "ravnix/homeModules.common";
+        theme = copies "ravnix/homeModules.theme";
         overlays = lib.length h.config.nixpkgs.overlays;
         ravnix = h.pkgs ? ravnix;
       };
@@ -66,17 +74,13 @@ let
     self.nixosModules.glue
   ];
   alone = name: summary [ self.nixosModules.${name} ];
-  # One evaluation of the host per module, not one per use.
-  aloneOf = lib.genAttrs [
-    "desktop"
-    "glue"
-  ] alone;
-  # A module of the directory may add shared home-manager modules of its own,
-  # and many do, so what a host with a shape module alone has is what common
-  # gives it and perhaps more; overlays and pkgs.ravnix are common's alone.
-  # Together, the shared modules are those of each plus common's once: a
-  # module that brought a second copy of common would show as a surplus.
-  extra = name: aloneOf.${name}.value.shared - commonOnly.value.shared;
+  # Common's inner module loaded once more without its key, as a common whose
+  # key stopped working would be: the count has to see the second copy, or the
+  # comparisons below cannot fail.
+  unkeyed = summary [
+    self.nixosModules.common
+    (import ../../modules/common/nixos.nix { inherit self; })
+  ];
 
   failures =
     lib.optional
@@ -114,35 +118,35 @@ let
         (
           name:
           let
-            a = aloneOf.${name};
+            # One evaluation of the host per module, not one per use.
+            a = alone name;
           in
           lib.optional (
             self.nixosModules.${name}.key or null != "ravnix/nixosModules.${name}"
           ) "nixosModules.${name} has no key ravnix/nixosModules.${name}"
           ++
-            lib.optional
-              (
-                !a.success
-                || a.value.overlays != commonOnly.value.overlays
-                || !a.value.ravnix
-                || a.value.shared < commonOnly.value.shared
-              )
+            lib.optional (!a.success || a.value != commonOnly.value)
               "a host with nixosModules.${name} alone does not have what nixosModules.common gives it (home-manager.sharedModules, the overlay, pkgs.ravnix)"
         )
         [
           "desktop"
           "glue"
         ]
+    ++
+      lib.optional
+        (
+          !commonOnly.success
+          || !commonOnly.value.ravnix
+          || commonOnly.value.common != 1
+          || commonOnly.value.theme != 1
+        )
+        "a host with nixosModules.common does not load the common and theme home modules once each, or has no pkgs.ravnix"
     ++ lib.optional (
-      !commonOnly.success || !commonOnly.value.ravnix || commonOnly.value.shared == 0
-    ) "a host with nixosModules.common has no home-manager.sharedModules or no pkgs.ravnix"
+      !unkeyed.success || unkeyed.value.common != 2
+    ) "a second, unkeyed copy of the common module does not count 2 (the count above cannot fail)"
     ++ lib.optional (
-      !together.success
-      || together.value.overlays != commonOnly.value.overlays
-      || !together.value.ravnix
-      || !lib.all (name: aloneOf.${name}.success) [ "desktop" "glue" ]
-      || together.value.shared != commonOnly.value.shared + extra "desktop" + extra "glue"
-    ) "importing nixosModules.common, desktop and glue together adds to what common alone gives and what each module brings";
+      !together.success || together.value != commonOnly.value
+    ) "importing nixosModules.common, desktop and glue together adds to what common alone gives";
 in
 pkgs.runCommand "flake-desktop-imports"
   {
