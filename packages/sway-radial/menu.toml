@@ -1,0 +1,362 @@
+# sway-radial default menu.
+#
+# Every command here is one that ravnix's Sway configuration runs itself
+# (modules/desktop/sway/config), so the menu and the keyboard cannot disagree,
+# and every application is one that the desktop module installs. A bare name
+# is looked up on the session's PATH; nothing here is an absolute path.
+# Applications go through `desktop` and are launched with gtk-launch, because
+# the whole point of that indirection is that the Wayland and Electron flags
+# stay defined in the .desktop file. A bare command is not equivalent.
+#
+# This is the menu for a user who set nothing. To use your own, point
+# ravnix.desktop.radial.menu at a file of this shape: copy this one and edit it.
+#
+# THE ONE RULE THAT WILL BITE YOU: Back is at "s" in every submenu, at every
+# depth, and "s" is RESERVED there. Nothing inside any submenu may sit at "s".
+# The loader refuses the file and names the menu and the direction, so you find
+# out at reload rather than by noticing an item that never appears. The top ring
+# has no parent and therefore has all eight slots, "s" included.
+#
+# Icons are single characters of the Nerd Font, written as \U escapes here so
+# that no editor can lose one. A label has to fit its sector: the font tests
+# (pytest -m font) measure every label of this file.
+
+# How long the fingers have to hold still before anything happens, in
+# milliseconds. This is the only way in: reaching further does nothing, because
+# a sector you cross on the way somewhere else must never open under your hand.
+# Everything waits it out. A submenu opens, a leaf runs, and Back pops, all on
+# the same clock, with no exceptions left.
+#
+# The same dwell is also the way out. Hold still in the middle and the menu
+# closes without running anything, at any depth, which is the exit Back cannot
+# be: at the top ring there is nothing above to go back to.
+#
+# Nothing counts down, and spreading commits nothing, until the fingers have
+# been out past the ring once in the current ring. A ring opens with one sector
+# already lit, so without that gate the menu would start counting down on it the
+# instant it appeared and you could never simply look at it.
+dwell_ms = 1000
+
+# ─── N: Apps ────────────────────────────────────────────── Back at "s" ───────
+[[items]]
+dir   = "n"
+label = "Apps"
+icon  = "\U000f003b"
+
+  [[items.items]]
+  dir     = "n"
+  label   = "Browser"
+  desktop = "helium.desktop"
+
+  [[items.items]]
+  dir   = "ne"
+  label = "Terminal"
+  exec  = "ghostty"
+
+  # The key $mod+Shift+f of the Sway config: a floating terminal with yazi.
+  [[items.items]]
+  dir   = "e"
+  label = "Files"
+  exec  = "ghostty-float -e yazi"
+
+  [[items.items]]
+  dir     = "se"
+  label   = "Notes"
+  desktop = "md.obsidian.Obsidian.desktop"
+
+  [[items.items]]
+  dir     = "sw"
+  label   = "Office"
+  desktop = "onlyoffice-desktopeditors.desktop"
+
+  [[items.items]]
+  dir     = "w"
+  label   = "Passwords"
+  desktop = "bitwarden.desktop"
+
+  [[items.items]]
+  dir     = "nw"
+  label   = "Claude"
+  desktop = "webapp-claude.desktop"
+
+# ─── NE: Workspace ─────────────────────────────────────── Back at "s" ────────
+# `swaymsg workspace number N` and not a bare `workspace number N`, because a
+# raw command is handed to `swaymsg exec`, which passes it to sh. sh has no
+# builtin called `workspace`. The extra swaymsg hop is one process and is
+# correct; special-casing sway commands inside the launcher would be folklore.
+[[items]]
+dir   = "ne"
+label = "Workspace"
+icon  = "\U000f0570"
+
+  [[items.items]]
+  dir   = "n"
+  label = "1"
+  exec  = "swaymsg workspace number 1"
+
+  [[items.items]]
+  dir   = "ne"
+  label = "2"
+  exec  = "swaymsg workspace number 2"
+
+  [[items.items]]
+  dir   = "e"
+  label = "3"
+  exec  = "swaymsg workspace number 3"
+
+  [[items.items]]
+  dir   = "se"
+  label = "4"
+  exec  = "swaymsg workspace number 4"
+
+  [[items.items]]
+  dir   = "sw"
+  label = "5"
+  exec  = "swaymsg workspace number 5"
+
+  [[items.items]]
+  dir   = "w"
+  label = "6"
+  exec  = "swaymsg workspace number 6"
+
+  # ─── Workspace > More ─────────────────────────────────── Back at "s" ───────
+  # 7 to 10 are one level deeper than 1 to 6. Eight sectors minus Back leaves
+  # seven, and six numbers plus a More reaches all ten. An eight-slot flat ring
+  # cannot.
+  [[items.items]]
+  dir   = "nw"
+  label = "More"
+  icon  = "\U000f01d8"
+
+    [[items.items.items]]
+    dir   = "n"
+    label = "7"
+    exec  = "swaymsg workspace number 7"
+
+    [[items.items.items]]
+    dir   = "ne"
+    label = "8"
+    exec  = "swaymsg workspace number 8"
+
+    [[items.items.items]]
+    dir   = "e"
+    label = "9"
+    exec  = "swaymsg workspace number 9"
+
+    [[items.items.items]]
+    dir   = "se"
+    label = "10"
+    exec  = "swaymsg workspace number 10"
+
+# ─── E: Clipboard ─────────────────────────────────────────────── leaf ────────
+[[items]]
+dir   = "e"
+label = "Clipboard"
+icon  = "\U000f014d"
+exec  = "sway-clipboard"
+
+# ─── SE: Capture ───────────────────────────────────────── Back at "s" ────────
+[[items]]
+dir   = "se"
+label = "Capture"
+icon  = "\U000f0100"
+
+  [[items.items]]
+  dir   = "n"
+  label = "Region"
+  exec  = "grimshot --notify savecopy area"
+
+  [[items.items]]
+  dir   = "ne"
+  label = "To clip"
+  exec  = "grimshot --notify copy area"
+
+  [[items.items]]
+  dir   = "e"
+  label = "Output"
+  exec  = "grimshot --notify savecopy output"
+
+  [[items.items]]
+  dir   = "se"
+  label = "Window"
+  exec  = "grimshot --notify savecopy active"
+
+# ─── S: System ──────────────────────────────────────────── Back at "s" ───────
+[[items]]
+dir   = "s"
+label = "System"
+icon  = "\U000f0493"
+
+  [[items.items]]
+  dir   = "n"
+  label = "Lock"
+  exec  = "loginctl lock-session"
+
+  # The same helper as $mod+Ctrl+n: auto -> day -> night -> auto, and a
+  # notification names the mode it landed on.
+  [[items.items]]
+  dir   = "ne"
+  label = "Night light"
+  exec  = "sway-nightlight"
+
+  [[items.items]]
+  dir   = "sw"
+  label = "Power"
+  exec  = "sway-powermenu"
+
+  [[items.items]]
+  dir   = "se"
+  label = "Reload sway"
+  exec  = "swaymsg reload"
+
+  [[items.items]]
+  dir   = "e"
+  label = "Waybar"
+  exec  = "waybar-mode"
+
+  [[items.items]]
+  dir   = "w"
+  label = "Cheatsheet"
+  exec  = "sway-keybindings"
+
+# ─── SW: Audio ─────────────────────────────────────────── Back at "s" ────────
+[[items]]
+dir   = "sw"
+label = "Audio"
+icon  = "\U000f057e"
+
+  [[items.items]]
+  dir   = "n"
+  label = "Vol +"
+  exec  = "sway-volume --limit 100 --increase 5"
+
+  [[items.items]]
+  dir   = "ne"
+  label = "Vol -"
+  exec  = "sway-volume --limit 100 --decrease 5"
+
+  [[items.items]]
+  dir   = "e"
+  label = "Mute"
+  exec  = "pactl set-sink-mute @DEFAULT_SINK@ toggle"
+
+  [[items.items]]
+  dir   = "w"
+  label = "Mic mute"
+  exec  = "pactl set-source-mute @DEFAULT_SOURCE@ toggle"
+
+  # The mixer is where an output is chosen: sink names belong to the machine,
+  # so no sink is named here.
+  [[items.items]]
+  dir   = "nw"
+  label = "Mixer"
+  exec  = "ghostty-float -e wiremix"
+
+  # ─── Audio > Player ───────────────────────────────────── Back at "s" ───────
+  [[items.items]]
+  dir   = "sw"
+  label = "Player"
+  icon  = "\U000f040a"
+
+    [[items.items.items]]
+    dir   = "n"
+    label = "Play/Pause"
+    exec  = "playerctl play-pause"
+
+    [[items.items.items]]
+    dir   = "e"
+    label = "Next"
+    exec  = "playerctl next"
+
+    [[items.items.items]]
+    dir   = "w"
+    label = "Previous"
+    exec  = "playerctl previous"
+
+    [[items.items.items]]
+    dir   = "se"
+    label = "Stop"
+    exec  = "playerctl stop"
+
+# ─── W: Tools ───────────────────────────────────────────── Back at "s" ───────
+[[items]]
+dir   = "w"
+label = "Tools"
+icon  = "\U000f1064"
+
+  [[items.items]]
+  dir   = "n"
+  label = "Calculator"
+  exec  = "sway-calc"
+
+  [[items.items]]
+  dir   = "ne"
+  label = "btop"
+  exec  = "ghostty -e btop-auto"
+
+# ─── NW: Display ───────────────────────────────────────── Back at "s" ────────
+[[items]]
+dir   = "nw"
+label = "Display"
+icon  = "\U000f0379"
+
+  [[items.items]]
+  dir   = "n"
+  label = "Bright +"
+  exec  = "brightnessctl -q set +5%"
+
+  [[items.items]]
+  dir   = "nw"
+  label = "Bright -"
+  exec  = "brightnessctl -q set 5%-"
+
+  [[items.items]]
+  dir   = "sw"
+  label = "Network"
+  exec  = "ghostty-float -e nmtui"
+
+  # ─── Display > Bluetooth ──────────────────────────────── Back at "s" ───────
+  [[items.items]]
+  dir   = "w"
+  label = "Bluetooth"
+  icon  = "\U000f00af"
+
+    [[items.items.items]]
+    dir   = "n"
+    label = "Manager"
+    exec  = "ghostty-float -e bluetui"
+
+    [[items.items.items]]
+    dir   = "ne"
+    label = "Power on"
+    exec  = "bluetoothctl power on"
+
+    [[items.items.items]]
+    dir   = "e"
+    label = "Power off"
+    exec  = "bluetoothctl power off"
+
+  # ─── Display > VPN ────────────────────────────────────── Back at "s" ───────
+  # A submenu and not a single leaf. netbird cannot be toggled blind: `netbird
+  # up` on an expired session starts an interactive SSO login, so a one-liner
+  # toggle would either hang with no window or appear to do nothing. Two
+  # explicit actions in a terminal are honest about that.
+  [[items.items]]
+  dir   = "ne"
+  label = "VPN"
+  icon  = "\U000f0582"
+
+    [[items.items.items]]
+    dir   = "n"
+    label = "Up"
+    exec  = "ghostty-float -e sh -c 'netbird up; read -n1 -s -p \"\"'"
+
+    [[items.items.items]]
+    dir   = "sw"
+    label = "Down"
+    exec  = "netbird down"
+
+    [[items.items.items]]
+    dir   = "e"
+    label = "Status"
+    exec  = "ghostty-float -e sh -c 'netbird status; read -n1 -s -p \"\"'"

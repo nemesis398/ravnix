@@ -1,0 +1,26 @@
+[project]
+name = "sway-radial"
+version = "0.1.0"
+description = "Radial trackpad launcher for sway"
+requires-python = ">=3.14"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers -m 'not hardware and not compositor and not font and not machine'"
+markers = [
+    "hardware: needs the real trackpad, deselected by default",
+    "compositor: needs a running sway session, deselected by default",
+    "font: needs JetBrainsMono Nerd Font installed, deselected by default",
+    "machine: needs the applications of the menu installed, deselected by default",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
