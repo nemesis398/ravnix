@@ -359,8 +359,11 @@ pkgs.runCommand "claude-mcp"
     # names: the user-scope servers in the config, sorted.
     names() { jq -r '.mcpServers // {} | keys | join(" ")' "$config"; }
 
-    # A server that Claude Code adds itself, with its own command.
+    # A server that Claude Code adds itself, with its own command. The time it
+    # takes is the yardstick of the lock test below.
+    t0=$(date +%s%N)
     added=$(claude mcp add --scope user --transport http added https://added.example.test/mcp 2>&1)
+    unlocked=$(( ($(date +%s%N) - t0) / 1000000 ))
     [ "$(names)" = added ]
     check "claude mcp add --scope user writes ~/.claude.json mcpServers ($added)" $?
     [ "$(rest | jq length)" -gt 3 ]
@@ -436,16 +439,21 @@ pkgs.runCommand "claude-mcp"
 
     # The lock the step takes is the one Claude Code takes: a directory
     # beside the file. If a bump of Claude Code changes that, this fails.
+    # Held for 6 s, which is under the 10 s after which a lock is stale and
+    # far over what an unlocked add takes, measured above: an add that is
+    # still running then is waiting for the lock, whatever the builder's speed.
     mkdir "$config.lock"
     claude mcp add --scope user --transport http held https://held.example.test/mcp >held.out 2>&1 &
     pid=$!
-    sleep 2
+    sleep 6
     kill -0 "$pid" 2>/dev/null && [ "$(names)" = "added later" ]
-    check "claude mcp add waits while $(basename "$config").lock is held, and writes nothing" $?
+    check "claude mcp add is still waiting after 6 s of a held $(basename "$config").lock, and has written nothing" $?
+    [ "$unlocked" -lt 3000 ]
+    check "the unlocked claude mcp add took $unlocked ms, so 6 s of waiting is the lock and not the work" $?
     rmdir "$config.lock"
     wait "$pid"
     [ "$(names)" = "added held later" ] && [ ! -e "$config.lock" ]
-    check "and writes once the lock is released, and leaves no lock" $?
+    check "and it writes once the lock is released, and leaves no lock" $?
 
     # Nothing declared and nothing put in before: no file, no state.
     rm -f "$config" "$statefile"

@@ -31,7 +31,10 @@
 #    all about 20 s) and then fails without writing. A stale lock is taken
 #    over. Two programs that both take a stale lock in the same moment can
 #    both hold it; the comparison below is for that and for writers that
-#    take no lock.
+#    take no lock. The step touches the lock at each try, only while it is
+#    still the one it made (the same inode and modification time); a lock
+#    that was removed or taken over meanwhile is left alone, never made again
+#    by the touch, and the run goes on with the comparison and says so.
 # 2. It reads a copy of the file and requires exactly one JSON document in
 #    it. A zero-byte file counts as {}; a file of whitespace, or of two
 #    documents, fails the step, since jq would otherwise read nothing, or
@@ -57,6 +60,7 @@
 cas_target=''
 cas_lock_dir=''
 cas_held=''
+cas_lock_stamp=''
 cas_copy=''
 cas_tmp=''
 
@@ -73,16 +77,43 @@ cas_resolve() {
     return 0
 }
 
-# Removes what cas_apply made, and the lock if this process holds it. Runs
+# cas_stamp: who made the lock and when it was last touched, as the inode and
+# the modification time to the nanosecond. A lock that someone removed and
+# made again has another one.
+cas_stamp() {
+    stat -c '%i %.9Y' -- "$cas_lock_dir" 2>/dev/null
+}
+
+# Whether the lock is still the one this run made and last touched.
+cas_still_ours() {
+    [[ -n $cas_held && -d $cas_lock_dir && $(cas_stamp) == "$cas_lock_stamp" ]]
+}
+
+# Refreshes the lock, so that a long run does not turn it stale, if it is
+# still this run's. If it is not (it went stale during a stall and was taken
+# over, or was removed), the run lets go of it: it neither touches nor
+# removes what is someone else's now, and goes on with the comparison alone.
+cas_keep() {
+    [[ -n $cas_held ]] || return 0
+    if cas_still_ours; then
+        touch -c -- "$cas_lock_dir" 2>/dev/null
+        cas_lock_stamp=$(cas_stamp)
+    else
+        printf 'ravnix: the lock %s was taken from this run; it goes on with the comparison of the file alone\n' "$cas_lock_dir" >&2
+        cas_held=''
+    fi
+}
+
+# Removes what cas_apply made, and the lock if it is still this run's. Runs
 # on exit, so a failure leaves nothing behind.
 cas_cleanup() {
     [[ -z $cas_copy ]] || rm -f -- "$cas_copy"
     [[ -z $cas_tmp ]] || rm -f -- "$cas_tmp" "$cas_tmp.err"
     cas_copy='' cas_tmp=''
-    if [[ -n $cas_held ]]; then
+    if cas_still_ours; then
         rmdir -- "$cas_lock_dir" 2>/dev/null
-        cas_held=''
     fi
+    cas_held=''
 }
 
 # Takes the lock, or fails after the waits.
@@ -93,6 +124,7 @@ cas_lock() {
         while :; do
             if mkdir -- "$cas_lock_dir" 2>/dev/null; then
                 cas_held=1
+                cas_lock_stamp=$(cas_stamp)
                 return 0
             fi
             [[ -d $cas_lock_dir ]] || fail "cannot make the lock $cas_lock_dir"
@@ -107,7 +139,7 @@ cas_lock() {
         [[ -n $delay ]] || break
         sleep "$delay"
     done
-    fail "the lock $cas_lock_dir is held by another program, such as a running Claude Code, and stayed held while it waited; nothing was written"
+    fail "the lock $cas_lock_dir is held by another program, such as a running Claude Code, and stayed held while it waited; the file was not written"
 }
 
 cas_apply() {
@@ -130,7 +162,7 @@ cas_apply() {
     for ((try = 0; try < 5; try++)); do
         if ((try > 0)); then sleep "${pauses[try - 1]:-0}"; fi
         # A lock that is held a long time must not turn stale.
-        touch -- "$cas_lock_dir" 2>/dev/null
+        cas_keep
 
         # The copy this try reads, with the file's mode; none when it is
         # missing.

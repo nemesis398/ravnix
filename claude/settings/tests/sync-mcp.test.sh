@@ -404,15 +404,19 @@ if [[ $RC -ne 0 && $ERR == *"$F.lock"* && -d $F.lock ]] && cmp -s "$F" "$D/befor
 else bad "expected a failure that names the lock, with the config as it was, the other writer's lock left and no temporary file"; fi
 
 setup '{"model": "x"}'
-export RAVNIX_CAS_LOCK_DELAYS="0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1"
-( mkdir "$F.lock" && sleep 0.4 && rmdir "$F.lock" ) &
+export RAVNIX_CAS_LOCK_DELAYS="0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1"
+# The holder has the lock before the step starts, and keeps it 500 ms.
+start=$(date +%s%N)
+mkdir "$F.lock"
+( sleep 0.5 && rmdir "$F.lock" ) &
 holder=$!
-sleep 0.1
 sync
+elapsed=$(( ($(date +%s%N) - start) / 1000000 ))
 wait "$holder"
 export RAVNIX_CAS_LOCK_DELAYS="0.02 0.02 0.02"
-CASE="a lock that is released while the step waits: the step goes on and writes"
-check '[[ $(servers | tr "\n" " ") == "alpha beta " && -z $(stray) ]]'
+CASE="a lock that is released while the step waits: the step waits for it (at least the 500 ms it was held, took ${elapsed} ms), then writes"
+if [[ $RC -eq 0 && $ERR == "" && $elapsed -ge 500 && $(servers | tr "\n" " ") == "alpha beta " && -z $(stray) ]]; then ok
+else bad "expected the step to write only after the holder let go, at least 500 ms in, with no lock left"; fi
 
 setup '{"model": "x"}'
 mkdir "$F.lock"; touch -d '1 minute ago' "$F.lock"
@@ -442,6 +446,44 @@ elapsed=$(( ($(date +%s%N) - start) / 1000000 ))
 export RAVNIX_CAS_TRY_DELAYS="0.01 0.01 0.01 0.01"
 CASE="the tries wait a little longer after each miss (four waits of 50 ms: at least 150 ms, took ${elapsed} ms), and no lock is left after the failure"
 if [[ $RC -ne 0 && $elapsed -ge 150 && ! -e $F.lock ]]; then ok; else bad "expected a failure after at least 150 ms with no lock left"; fi
+
+# A fake cmp for the CAS miss: it reports "different" on its first call
+# (so the step tries again), after $1 has run, then compares for real.
+fake_cmp() {
+    mkdir -p "$D/bin"
+    printf '#!%s\nn=$(cat "%s/cmps" 2>/dev/null || echo 0); echo $((n+1)) >"%s/cmps"\nif [ "$n" = 0 ]; then %s; exit 1; fi\nexec %s "$@"\n' \
+        "$BASH" "$D" "$D" "$1" "$(type -P cmp)" >"$D/bin/cmp"
+    chmod +x "$D/bin/cmp"
+}
+
+setup '{"model": "x"}'
+fake_cmp "rmdir '$F.lock'"
+PATH="$D/bin:$PATH" "$BASH" "$SYNC" "$F" "$T" "$S" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
+CASE="a lock removed under the step is not made again by its touch: the step goes on, writes, says so, and leaves no lock or file named like it"
+if [[ $RC -eq 0 && $ERR == *"taken from this run"* && $(servers | tr "\n" " ") == "alpha beta " && ! -e $F.lock && -z $(stray) ]]; then ok
+else bad "expected exit 0 with a message that the lock was taken, the servers written, and no $F.lock of any kind"; fi
+
+setup '{"model": "x"}'
+fake_cmp "rmdir '$F.lock'; mkdir '$F.lock'"
+PATH="$D/bin:$PATH" "$BASH" "$SYNC" "$F" "$T" "$S" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
+CASE="a lock that someone else took after the step lost its own is left alone: neither touched nor removed"
+if [[ $RC -eq 0 && $ERR == *"taken from this run"* && $(servers | tr "\n" " ") == "alpha beta " && -d $F.lock ]]; then ok
+else bad "expected exit 0, a message that the lock was taken, the servers written, and the other writer's lock still there"; fi
+
+echo "what it needs beside it"
+
+setup '{"model": "x"}'
+mkdir "$D/lonely"; cp "$SYNC" "$D/lonely/"
+cp "$F" "$D/before"
+"$BASH" "$D/lonely/sync-mcp.sh" "$F" "$T" "$S" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
+CASE="a step without cas.sh beside it fails and says so, instead of going on"
+if [[ $RC -ne 0 && $ERR == *"cannot load cas.sh"* ]] && cmp -s "$F" "$D/before" && [[ ! -e $T ]]; then ok
+else bad "expected a failure that says cas.sh cannot be loaded, with the config and the state untouched"; fi
+
+setup '{"model": "x"}'
+( cd "${SYNC%/*}" && "$BASH" sync-mcp.sh "$F" "$T" "$S" "$STORE" ) 2>"$D/err"; RC=$? ERR=$(<"$D/err")
+CASE="run by its bare name from inside its own directory, it finds cas.sh"
+check '[[ $(servers | tr "\n" " ") == "alpha beta " ]]'
 
 echo "what it says about a config Claude Code may not read"
 

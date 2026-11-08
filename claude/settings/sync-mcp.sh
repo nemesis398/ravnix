@@ -85,8 +85,16 @@ warn() {
     printf 'ravnix: %s\n' "$1" >&2
 }
 
+# cas.sh sits beside this file. ${BASH_SOURCE[0]%/*} is the name itself when
+# the step is run by its bare name from its own directory, hence the ".".
+here=${BASH_SOURCE[0]%/*}
+[[ $here != "${BASH_SOURCE[0]}" ]] || here=.
+# A failed `.` does not stop a script, and everything below needs cas.sh.
 # shellcheck source=claude/settings/cas.sh
-. "${BASH_SOURCE[0]%/*}/cas.sh"
+. "$here/cas.sh" || {
+    printf 'ravnix: cannot load cas.sh from %s\n' "$here" >&2
+    exit 1
+}
 
 jq -es 'length == 1 and (.[0] | type == "object" and all(.[]; type == "object"))' "$servers" >/dev/null 2>&1 ||
     fail "$servers holds something other than one JSON object of servers"

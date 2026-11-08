@@ -51,8 +51,16 @@ fail() {
     exit 1
 }
 
+# cas.sh sits beside this file. ${BASH_SOURCE[0]%/*} is the name itself when
+# the step is run by its bare name from its own directory, hence the ".".
+here=${BASH_SOURCE[0]%/*}
+[[ $here != "${BASH_SOURCE[0]}" ]] || here=.
+# A failed `.` does not stop a script, and everything below needs cas.sh.
 # shellcheck source=claude/settings/cas.sh
-. "${BASH_SOURCE[0]%/*}/cas.sh"
+. "$here/cas.sh" || {
+    printf 'ravnix: cannot load cas.sh from %s\n' "$here" >&2
+    exit 1
+}
 
 # shellcheck disable=SC2016  # the $ are jq's
 mine='def mine: type == "object" and ((.command? // "") | tostring | ltrimstr("'"'"'") | startswith($prefix));'

@@ -324,6 +324,35 @@ sync
 CASE="a stale lock is taken over, and removed after"
 check '[[ ! -e $F.lock && $(commands SessionStart | wc -l) == 2 ]]'
 
+export RAVNIX_CAS_LOCK_DELAYS="0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1"
+setup '{"model": "opus"}'
+start=$(date +%s%N)
+mkdir "$F.lock"
+( sleep 0.5 && rmdir "$F.lock" ) &
+holder=$!
+sync
+elapsed=$(( ($(date +%s%N) - start) / 1000000 ))
+wait "$holder"
+export RAVNIX_CAS_LOCK_DELAYS="0.02 0.02 0.02"
+CASE="a lock that is released while the step waits: it waits for it (at least the 500 ms it was held, took ${elapsed} ms), then writes"
+if [[ $RC -eq 0 && $ERR == "" && $elapsed -ge 500 && $(commands SessionStart | wc -l) == 2 && ! -e $F.lock ]]; then ok
+else bad "expected the step to write only after the holder let go, at least 500 ms in, with no lock left"; fi
+
+echo "what it needs beside it"
+
+setup '{"model": "opus"}'
+mkdir "$D/lonely"; cp "$SYNC" "$D/lonely/"
+cp "$F" "$D/before"
+"$BASH" "$D/lonely/sync-hooks.sh" "$F" "$P" "$E" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
+CASE="a step without cas.sh beside it fails and says so, and does not report success"
+if [[ $RC -ne 0 && $ERR == *"cannot load cas.sh"* ]] && cmp -s "$F" "$D/before"; then ok
+else bad "expected a failure that says cas.sh cannot be loaded, with the settings untouched"; fi
+
+setup '{"model": "opus"}'
+( cd "${SYNC%/*}" && "$BASH" sync-hooks.sh "$F" "$P" "$E" "$STORE" ) 2>"$D/err"; RC=$? ERR=$(<"$D/err")
+CASE="run by its bare name from inside its own directory, it finds cas.sh"
+check '[[ $(commands SessionStart | wc -l) == 2 ]]'
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

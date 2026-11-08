@@ -237,6 +237,10 @@ takes the same lock, on the path as given and not through a link, before it
 reads, and keeps it until the new file is in place. While a fresh lock stands
 (under 10 s old) it waits, 0.2 s and doubling up to 4 s, about 20 s in all,
 and then fails the activation without writing; a stale lock is taken over.
+The step touches the lock at each try only while it is still the one it
+made; a lock that was removed or taken over meanwhile is left alone (never
+made again by the touch), and the step goes on with the comparison below and
+says so on stderr.
 It also compares a copy: it builds the new file beside the old one and moves
 it into place only while the file is still byte for byte the copy it read;
 otherwise it reads again, up to five times with a growing pause, and then
@@ -297,7 +301,7 @@ refuses them), it fails and says so.
   switch puts them right; whether Claude Code reads first is untested for
   that file. For `~/.claude.json` it does read again under its lock.
 - A step that finds the lock held fails the activation after about 20 s,
-  with nothing written. Run the switch again.
+  with nothing written to the config. Run the switch again.
 - A settings link whose target does not exist is followed: the step creates
   the file it names, when there is something to add.
 - Only `headers` and `env` are checked for references. Every other field is
