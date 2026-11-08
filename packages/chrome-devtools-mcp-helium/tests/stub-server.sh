@@ -7,7 +7,11 @@
 #   crash    kill itself with SIGKILL, as a server whose browser took it down
 #   echo     answer every line of stdin with "got LINE"
 #   wait     say "ready" in the log, and wait for TERM; on TERM write "TERM"
-#            to the log and exit 143
+#            to the log and exit 143; gives up (exit 99) after ten seconds
+#            without a TERM, so that a test cannot hang
+#   parentstop  as wait, but first send TERM to its parent, the wrapper, as a
+#            stop that comes the moment the server starts; gives up (exit 99)
+#            after five seconds without a TERM
 
 log=${STUB_LOG:?the test sets STUB_LOG}
 
@@ -58,7 +62,15 @@ echo)
 wait)
 	trap 'echo TERM >>"$log"; exit 143' TERM
 	echo ready >>"$log"
-	while :; do sleep 0.05; done
+	for _ in $(seq 200); do sleep 0.05; done
+	exit 99
+	;;
+parentstop)
+	trap 'echo TERM >>"$log"; exit 143' TERM
+	kill -TERM "$PPID"
+	echo ready >>"$log"
+	for _ in $(seq 100); do sleep 0.05; done
+	exit 99
 	;;
 esac
 exit "${STUB_RC:-0}"

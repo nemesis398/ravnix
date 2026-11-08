@@ -64,6 +64,12 @@
 # is taken in the C locale). It says on stderr why it passes one over.
 # Directories in a place the wrapper passed over this time are not swept.
 #
+# A stop signal (TERM, INT, HUP) is recorded from the first line on, because
+# one that comes before the server exists would otherwise end the wrapper by
+# default, and the exit trap would remove the launch from under a server that
+# keeps running. It is passed to the server as soon as there is one, and the
+# wrapper then ends as it does for any stop, removing the launch.
+#
 # The browser's sandbox is not the caller's to switch off: the bundled
 # Puppeteer adds --no-sandbox when PUPPETEER_DANGEROUS_NO_SANDBOX is "true", as
 # a shell rc written for another project may have it exported, so the wrapper
@@ -88,6 +94,11 @@ readonly PREFIX=cdh.
 # 107 bytes of socket path with a spare byte, minus the singleton socket's
 # 46 bytes and the 21 of /cdh.PID.XXXXXX/t.
 readonly TMP_MAX=40
+
+# From here on a stop is only recorded; server is empty until there is one.
+stop=0
+server=
+trap 'stop=1; [[ -z $server ]] || kill -TERM "$server" 2>/dev/null || true' TERM INT HUP
 
 # The length of $1 in bytes: the limit is on bytes, and ${#1} counts characters
 # in a UTF-8 locale.
@@ -161,7 +172,11 @@ export TMPDIR=$launch/t
 "$SERVER" --executablePath "$browser" --userDataDir "$launch/profile" \
     --headless --no-usage-statistics --no-performance-crux "$@" <&0 &
 server=$!
-trap 'kill -TERM "$server" 2>/dev/null || true' TERM INT HUP
+# A stop that came before there was a server (during the sweep, or between the
+# fork and the line above) found none to pass it to: pass it on now.
+if ((stop)); then
+    kill -TERM "$server" 2>/dev/null || true
+fi
 
 # A trapped signal ends a wait early, so wait until the server is really gone.
 status=0

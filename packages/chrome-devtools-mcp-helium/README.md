@@ -75,8 +75,12 @@ directories of wrappers that were killed (their PID is in the name).
   and a directory that cannot be removed; a link or directory owned by another
   user needs a second account, which the sandbox of the checks does not have, so
   that case has no test.
-- Before the wrapper installs its signal trap, a signal kills it by default and
-  the server it just started is orphaned. The window is a few milliseconds.
+- A stop that arrives before the server exists is recorded by the handler that
+  the wrapper installs first, and passed on right after the server starts. The
+  tests show that the handler comes first (the order of a `bash -x` trace) and
+  that a stop during a long sweep reaches the server afterwards. The last case,
+  a signal between the fork and the assignment of `$!`, has a window of
+  nanoseconds and no test.
 - Only two variables are unset to keep the browser's sandbox on
   (`PUPPETEER_DANGEROUS_NO_SANDBOX` and `CHROME_DEVEL_SANDBOX`): they are the
   only ones that the code of server 1.12.0 and the bundled Puppeteer read for

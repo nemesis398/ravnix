@@ -7,7 +7,8 @@
 # paths, no npx; a directory of its own for every launch, with a TMPDIR in it)
 # and the edge cases that are cheap to hit: odd arguments and paths, a link or
 # a stuck directory among the old launches, two wrappers at once, every stop
-# signal, a server that is killed, a TMPDIR that is unusable in each way, an
+# signal (also one that comes before the server has started), a server that is
+# killed, a TMPDIR that is unusable in each way, an
 # environment that would switch the browser's sandbox off.
 #
 # The server is a stand-in (stub-server.sh) and so is the browser, because the
@@ -89,6 +90,15 @@ run() {
 	launch="${dir%/profile}"
 }
 
+# A PID that is gone: the PID of a process that has ended and been waited for.
+dead_pid() {
+	local pid
+	sleep 0 &
+	pid=$!
+	wait "$pid"
+	printf '%s' "$pid"
+}
+
 # The lines of the log that start with $1, without it.
 logged() { sed -n "s/^$1://p" "$log"; }
 
@@ -110,7 +120,7 @@ expect_args() {
 # Fails unless the directory $1 holds nothing.
 expect_empty() {
 	[[ -z "$(ls -A -- "$1")" ]] || {
-		echo "  $1 is not empty: $(ls -A -- "$1")"
+		echo "  $1 is not empty: $(find "$1" -mindepth 1 -maxdepth 1 -printf '%f ' | head -c 200) ..."
 		return 1
 	}
 }
@@ -643,6 +653,86 @@ the_environment_cannot_switch_the_browsers_sandbox_off() {
 	}
 }
 
+# A stop signal that comes before the handler is in place ends the wrapper by
+# default, and the exit trap then removes the launch from under a server that
+# keeps running. So the handler is installed before anything it protects is
+# made: the order of the trace is the proof.
+the_stop_handler_is_installed_before_the_launch_and_the_server() {
+	setup
+	wrapper_env
+	capture "${wenv[@]}" "$BASH" -x "$UNDER_TEST"
+	expect_status 0
+	local trap_line launch_line server_line
+	trap_line="$(grep -n 'trap .*TERM INT HUP' <<<"$err" | head -n 1 | cut -d: -f1)"
+	launch_line="$(grep -n 'mktemp -d' <<<"$err" | head -n 1 | cut -d: -f1)"
+	server_line="$(grep -n -e '--executablePath' <<<"$err" | head -n 1 | cut -d: -f1)"
+	[[ -n $trap_line && -n $launch_line && -n $server_line ]] || {
+		echo "  the trace lacks the trap ('$trap_line'), the launch ('$launch_line') or the server ('$server_line')"
+		return 1
+	}
+	((trap_line < launch_line && launch_line < server_line)) || {
+		echo "  the lines of the trace are: handler $trap_line, launch $launch_line, server $server_line"
+		return 1
+	}
+}
+
+# A stop that reaches the wrapper the moment the server has started is passed
+# on, whichever of the wrapper's next two statements it falls between.
+a_stop_that_comes_with_the_server_reaches_it() {
+	setup
+	run STUB_MODE=parentstop -- x
+	((status == 143)) || {
+		echo "  the wrapper exited with $status, not 143"
+		return 1
+	}
+	grep -qx TERM "$log" || {
+		echo "  the server never got the stop"
+		return 1
+	}
+	[[ -n $dir && ! -e "$launch" ]]
+}
+
+# The sweep of a big leftover takes a while, and a stop that comes during it
+# finds no server to pass it to. It is passed on once the server exists, and
+# the wrapper ends the way it does for any stop: the leftovers are swept, its
+# own launch is gone, it exits 143.
+a_stop_during_the_sweep_is_passed_on_when_the_server_exists() {
+	setup
+	local dead
+	dead="$(dead_pid)"
+	mkdir -p "$sb/t/${PREFIX}$dead".{1..4000}
+	wrapper_env STUB_MODE=wait
+	set -m
+	"${wenv[@]}" "$UNDER_TEST" </dev/null >/dev/null 2>"$sb/sweep.err" &
+	local wrapper_pid=$!
+	set +m
+	local _
+	# The sweep goes through the names in the order of the glob, ".1" first.
+	for _ in $(seq 500); do
+		[[ ! -e "$sb/t/${PREFIX}$dead.1" ]] && break
+		sleep 0.01
+	done
+	[[ ! -e "$sb/t/${PREFIX}$dead.1" ]] || {
+		echo "  the sweep never began"
+		kill -KILL "$wrapper_pid"
+		return 1
+	}
+	# The server cannot exist yet: 4000 leftovers are still to go.
+	[[ -e "$sb/t/${PREFIX}$dead.999" ]] || {
+		echo "  the sweep was over before the stop was sent"
+		kill -KILL "$wrapper_pid"
+		return 1
+	}
+	kill -TERM "$wrapper_pid"
+	local wrapper_status=0
+	wait "$wrapper_pid" || wrapper_status=$?
+	((wrapper_status == 143)) || {
+		echo "  the wrapper exited with $wrapper_status, not 143 (99 is a server that got no stop)"
+		return 1
+	}
+	expect_empty "$sb/t"
+}
+
 tests=(
 	the_server_gets_the_browser_the_profile_and_the_privacy_flags
 	every_launch_gets_a_fresh_directory_in_tmpdir_named_for_the_wrapper
@@ -681,5 +771,8 @@ tests=(
 	a_server_that_is_killed_leaves_nothing_behind_and_its_status_is_passed_on
 	a_wrapper_with_no_server_arguments_and_a_closed_stdin_still_works
 	the_environment_cannot_switch_the_browsers_sandbox_off
+	the_stop_handler_is_installed_before_the_launch_and_the_server
+	a_stop_that_comes_with_the_server_reaches_it
+	a_stop_during_the_sweep_is_passed_on_when_the_server_exists
 )
 run_tests "${tests[@]}"
