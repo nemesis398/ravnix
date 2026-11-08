@@ -1,10 +1,10 @@
 # The laptop shape, huginn: what every ravnix laptop is, whatever its model.
 # The common module (shell, user, home-manager), the disk layout of
 # ./disko.nix, the boot, and ./hide-other-disks.nix, which keeps the other
-# internal disks out of udisks. The desktop joins it with Task 3.2. A laptop's
-# hardware is a module of its own under modules/hardware/, which the private
-# flake imports beside this one, so a second model is a new directory there
-# and not a new shape:
+# internal disks out of udisks. flake.nix adds nixosModules.desktop beside
+# this file in nixosModules.laptop. A laptop's hardware is a module of its
+# own under modules/hardware/, which the private flake imports beside this
+# one, so a second model is a new directory there and not a new shape:
 #
 #   modules = [
 #     ravnix.nixosModules.laptop

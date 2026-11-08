@@ -1,6 +1,6 @@
 # The laptop shape and the IdeaPad Pro 5 16AHP9 module, evaluated as the
-# private flake will build huginn, with the template's values: the disk
-# layout as NixOS mounts it, the boot loader, the disk the shape names, the
+# private flake will build huginn, with the template's values: the desktop
+# module it brings, the disk layout as NixOS mounts it, the boot loader, the disk the shape names, the
 # rule that hides the other internal disks from udisks, and the graphics,
 # the kernel parameters and the initrd of the hardware. The
 # whole system must evaluate, its assertions and the NVIDIA driver's licence
@@ -43,6 +43,14 @@ let
   ];
 
   evaluates = s: (builtins.tryEval (builtins.unsafeDiscardStringContext s.config.system.build.toplevel.drvPath)).success;
+  # The key of every module in a system's module tree, as imported, before
+  # the keys deduplicate it.
+  keys =
+    s:
+    let
+      walk = lib.concatMap (m: lib.optional (!m.disabled) m.key ++ walk m.imports);
+    in
+    walk s.graph;
   fs = c.fileSystems;
   has = list: x: lib.elem x list;
   check = cond: msg: lib.optional (!cond) msg;
@@ -97,6 +105,15 @@ let
     check (evaluates huginn) "huginn (the shape and the hardware module) does not evaluate"
     ++ check (evaluates bare) "the shape without a hardware module does not evaluate"
     ++ check (evaluates twice) "the shape and the hardware module imported twice do not evaluate"
+
+    # The desktop comes with the shape, and the common module it brings as
+    # well is loaded once: the key deduplicates it, so its options have one
+    # declaration each.
+    ++ check (has (keys huginn) "ravnix/nixosModules.desktop") "the shape does not bring nixosModules.desktop"
+    ++ check (has (keys bare) "ravnix/nixosModules.desktop") "the shape without a hardware module does not bring nixosModules.desktop"
+    ++ check (
+      lib.length huginn.options.ravnix.user.name.declarations == 1
+    ) "the common module's options are declared more than once"
 
     # The disk the shape names: by model and serial, from the private flake.
     ++ check (lib.attrNames c.disko.devices.disk == [ "huginn" ]) "the shape describes other disks than huginn's one"
