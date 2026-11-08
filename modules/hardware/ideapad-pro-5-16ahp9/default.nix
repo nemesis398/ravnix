@@ -2,9 +2,71 @@
 # Radeon 780M drives the panel and the desktop, and its RTX 4050 renders
 # only what is started through `prime-run`, and is powered off (D3cold) the
 # rest of the time. The private flake imports this beside
-# nixosModules.laptop.
-# Task 3.4 adds the power, battery, panel and NVIDIA suspend modules of this
-# directory.
+# nixosModules.laptop. Beside this file, and imported by it:
+#
+#   power.nix    the CPU policy (tuned and its three laptop profiles behind
+#                the power-profiles API), the energy menu and its watcher,
+#                the RAPL counters for Waybar
+#   battery.nix  the battery safety net (UPower's PowerOff and the
+#                emergency poweroff timer) and the charge mode
+#   nvidia.nix   the dGPU around a suspend: no nvidia-powerd, where the
+#                video memory is saved
+#   panel.nix    the panel's ABM level, pinned
+#
+# Each file has the Fedora workaround it carries over and why it is still
+# needed. tests/hardware/power.nix runs the power parts in a VM, and
+# tests/laptop/shape.nix checks all of it on huginn's configuration.
+#
+# Task 3.7 checks, on the real laptop, what neither test can show. Each
+# reads without changing anything, except 4 (a suspend) and 9 (a mode
+# switch, set back after):
+#   1. The power draw: the median watts at idle and under light load, on
+#      battery, no higher than Fedora's (Task 0.1's baseline).
+#   2. The dGPU asleep at idle: /sys/bus/pci/devices/0000:01:00.0/power/
+#      runtime_status says `suspended` (read it before any nvidia-smi or
+#      lspci, which wake the card); no nvidia-powerd or nvidia-persistenced
+#      process.
+#   3. The driver's parameters, in /proc/driver/nvidia/params:
+#      PreserveVideoMemoryAllocations 1, UseKernelSuspendNotifiers 1,
+#      TemporaryFilePath "/var/lib/systemd/sleep", DynamicPowerManagement 2
+#      (Fedora runs 3, the driver's auto, which on this Ada laptop GPU means
+#      the same fine-grained mode).
+#   4. A suspend that completes: `rtcwake -m no -s 60; systemctl suspend`,
+#      then the journal shows a real gap between "PM: suspend entry" and
+#      "PM: suspend exit", no "Failed to put system to sleep", no Xid and no
+#      "NVRM: PM suspend notifier failed", and the dGPU is `suspended`
+#      again. Then the same once without SYSTEMD_SLEEP_FREEZE_USER_SESSIONS
+#      (nvidia.nix) by a runtime drop-in: if that suspend completes too, the
+#      setting may go.
+#   5. The panel: /sys/module/amdgpu/parameters/abmlevel is 2, the eDP
+#      connector has no amdgpu/panel_power_savings, and the panel's
+#      brightness does not change when the charger goes in or out.
+#      /sys/class/backlight/nvidia_wmi_ec_backlight exists.
+#   6. The CPU policy of each profile, from cpufreq's
+#      energy_performance_preference, scaling_governor and boost and
+#      /sys/firmware/acpi/platform_profile: on the charger balanced is
+#      laptop-ac (EPP performance); on battery laptop-battery (EPP
+#      balance_performance, boost 1), and performance laptop-performance-
+#      battery (governor powersave, EPP performance, platform profile
+#      performance); tuned-adm active names each.
+#   7. The safety net on BAT0: `upower -d` shows critical-action PowerOff,
+#      the timer is listed by `systemctl list-timers`, and after its first
+#      run `systemctl show -p ConditionResult
+#      battery-emergency-poweroff.service` says yes.
+#   8. The RAPL counter readable by the user: stat -c %a
+#      /sys/class/powercap/intel-rapl:0/energy_uj prints 444, and Waybar
+#      shows the CPU's watts.
+#   9. The charge mode: `charge-mode` prints the saved mode after a boot
+#      (Long_Life on a new install), and `charge-mode set Standard`, then
+#      `charge-mode set Long_Life`, work without a password.
+#  10. energy-watch active in the Sway session; an unplug switches
+#      keep-awake off, and `energy refresh` on power-saver puts the panel at
+#      60 Hz.
+#  11. The swap: `swapon --show` lists /dev/zram0 alone, 8 GiB, and
+#      /sys/block/zram0/comp_algorithm says lzo-rle.
+#  12. As on Fedora, with nothing set for it here: `iw dev <wlan> get
+#      power_save` says on (NetworkManager left at its default), and the
+#      s2idle drain overnight stays near 0.25 to 0.3 % per hour.
 #
 # nixos-hardware was checked first and is not used: it has no profile for
 # this model. Its lenovo/ideapad/16ahp9 is the IdeaPad 5 2-in-1 16AHP9, a
@@ -48,7 +110,13 @@ let
     };
 in
 {
-  imports = [ nixpkgsSettings ];
+  imports = [
+    nixpkgsSettings
+    ./power.nix
+    ./battery.nix
+    ./nvidia.nix
+    ./panel.nix
+  ];
 
   # The kernel and the NVIDIA driver of the Fedora power baseline, the one
   # stack measured on this laptop: kernel 7.2.15 and driver 615.78.08 (the
@@ -96,8 +164,8 @@ in
         # the driver powers the RTX 4050 off, and it reports `suspended`.
         # Task 3.7 measures that at idle.
         finegrained = true;
-        # Keep the dGPU's memory across suspend. Task 3.4 settles where the
-        # driver spills it.
+        # Keep the dGPU's memory across suspend; nvidia.nix has where the
+        # driver spills it, and why.
         enable = true;
       };
     };
@@ -109,9 +177,8 @@ in
   ];
 
   boot = {
+    # amdgpu.abmlevel=2 is panel.nix's.
     kernelParams = [
-      # Panel brightness management at level 2, as on Fedora.
-      "amdgpu.abmlevel=2"
       # As on Fedora. dracut reads it there; NixOS's initrd does not, and
       # holds no nouveau anyway. What keeps nouveau (and nova_core and
       # nvidiafb) out on NixOS is the NVIDIA module's

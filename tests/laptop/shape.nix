@@ -1,10 +1,13 @@
 # The laptop shape and the IdeaPad Pro 5 16AHP9 module, evaluated as the
 # private flake will build huginn, with the template's values: the desktop
-# module it brings, the disk layout as NixOS mounts it, the boot loader, the
-# disk the shape names, the rule that hides the other internal disks from
-# udisks, and the graphics, the kernel parameters and the initrd of the
-# hardware. The whole system must evaluate, its assertions and the NVIDIA
-# driver's licence included, without building anything.
+# module it brings, the disk layout as NixOS mounts it, the swap (zram
+# alone), the boot loader, the disk the shape names, the rule that hides the
+# other internal disks from udisks, and the graphics, the kernel parameters
+# and the initrd of the hardware, with its power parts: the NVIDIA suspend
+# settings, which no VM can run (tests/hardware/power.nix runs the rest),
+# and the CPU policy, the battery safety net and the charge mode as huginn
+# composes them. The whole system must evaluate, its assertions and the
+# NVIDIA driver's licence included, without building anything.
 {
   self,
   inputs,
@@ -112,6 +115,69 @@ let
   params = c.boot.kernelParams;
   nvidia = c.hardware.nvidia;
 
+  # The power parts of the hardware module (its power.nix, battery.nix,
+  # nvidia.nix and panel.nix).
+  imported = file: lib.any (k: lib.hasSuffix "/modules/hardware/ideapad-pro-5-16ahp9/${file}" (toString k)) (keys huginn);
+  tuned = c.services.tuned;
+  upower = c.services.upower;
+  zram = s: s.config.zramSwap;
+  zramAsFedora =
+    s:
+    (zram s).enable
+    && (zram s).memoryPercent == 100
+    && (zram s).memoryMax == 8 * 1024 * 1024 * 1024
+    && (zram s).algorithm == "lzo-rle"
+    && (zram s).priority == 100;
+  laptopProfiles = {
+    laptop-ac = {
+      main = {
+        summary = "Laptop on AC, balanced: tuned balanced with EPP performance (ravnix)";
+        include = "balanced";
+      };
+      cpu.energy_performance_preference = "performance";
+    };
+    laptop-battery = {
+      main = {
+        summary = "Laptop on battery, balanced: balanced-battery with EPP balance_performance (ravnix)";
+        include = "balanced-battery";
+      };
+      cpu = {
+        energy_performance_preference = "balance_performance";
+        boost = 1;
+      };
+    };
+    laptop-performance-battery = {
+      main = {
+        summary = "Laptop on battery, performance: EPP performance under the powersave governor (ravnix)";
+        include = "balanced";
+      };
+      cpu = {
+        governor = "powersave";
+        energy_performance_preference = "performance";
+        boost = 1;
+      };
+      acpi.platform_profile = "performance";
+    };
+  };
+  service = name: c.systemd.services.${name} or { };
+  rapl = lib.findFirst (p: (p.name or "") == "rapl-readable-udev-rules") null c.services.udev.packages;
+  chargeRule = lib.filter (
+    r:
+    r.users or [ ] == [ c.ravnix.user.username ]
+    && (r.runAs or null) == "root"
+    && lib.any (
+      cmd:
+      lib.hasSuffix "/bin/charge-mode-apply" (cmd.command or "") && (cmd.options or [ ]) == [ "NOPASSWD" ]
+    ) (r.commands or [ ])
+  ) c.security.sudo.extraRules;
+  modprobe = c.boot.extraModprobeConfig;
+  sleepUnits = [
+    "systemd-suspend"
+    "systemd-hibernate"
+    "systemd-hybrid-sleep"
+    "systemd-suspend-then-hibernate"
+  ];
+
   failures =
     # The whole system, and the shape alone and imported twice.
     check (evaluates huginn) "huginn (the shape and the hardware module) does not evaluate"
@@ -161,6 +227,10 @@ let
     ) "the initrd does not open cryptroot from the LUKS partition"
     ++ check (c.boot.initrd.luks.devices.cryptroot.allowDiscards or false) "cryptroot does not pass discards to the SSD"
     ++ check (c.swapDevices == [ ]) "huginn has a swap device; zram is its only swap"
+    # zram, as Fedora has it: the smaller of the RAM and 8 GiB, lzo-rle,
+    # priority 100; with or without a hardware module.
+    ++ check (zramAsFedora huginn) "huginn's zram is not on, or not min(RAM, 8 GiB) with lzo-rle at priority 100"
+    ++ check (zramAsFedora bare) "the shape without a hardware module has no zram as Fedora's"
 
     # The boot loader: systemd-boot on the ESP, and no write to the
     # firmware's boot entries; the install adds its entry on purpose.
@@ -196,11 +266,114 @@ let
       lib.versions.major nvidia.package.version == "615"
     ) "the NVIDIA driver is ${nvidia.package.version}, not the 615 of the Fedora power baseline"
     ++ check (lib.any (p: lib.hasPrefix "nvidia-open-615." (p.name or "")) c.boot.extraModulePackages) "the kernel does not get the open NVIDIA modules of 615"
-    ++ check (has params "amdgpu.abmlevel=2") "no amdgpu.abmlevel=2"
+    ++ check (lib.count (p: p == "amdgpu.abmlevel=2") params == 1) "amdgpu.abmlevel=2 is not on the command line once"
+    ++ check (!lib.any (p: lib.hasPrefix "amdgpu.abmlevel=" p && p != "amdgpu.abmlevel=2") params) "another amdgpu.abmlevel is on the command line"
     ++ check (has params "rd.driver.blacklist=nouveau") "no rd.driver.blacklist=nouveau"
     ++ check (has c.boot.blacklistedKernelModules "nouveau") "nouveau is not blacklisted"
     ++ check (!has initrdModules "nouveau") "nouveau is in the initrd"
     ++ check (has c.boot.kernelModules "kvm-amd") "no kvm-amd"
+
+    # The power parts: each file of the hardware module is imported.
+    ++ lib.concatMap (f: check (imported f) "the hardware module does not import its ${f}") [
+      "power.nix"
+      "battery.nix"
+      "nvidia.nix"
+      "panel.nix"
+    ]
+
+    # The CPU policy: tuned alone, with Fedora's three laptop profiles and
+    # its power-profiles mapping.
+    ++ check (tuned.enable && tuned.ppdSupport) "tuned and tuned-ppd are not on"
+    ++ check (!c.services.power-profiles-daemon.enable && !c.services.tlp.enable && !c.services.auto-cpufreq.enable) "a second owner of the CPU policy is on"
+    ++ check (lib.getAttrs (lib.attrNames laptopProfiles) tuned.profiles == laptopProfiles) "the laptop profiles are not Fedora's"
+    ++ check (tuned.ppdSettings.main.default == "balanced" && tuned.ppdSettings.main.battery_detection) "tuned-ppd does not start balanced with battery detection"
+    ++ check (
+      tuned.ppdSettings.profiles == {
+        power-saver = "powersave";
+        balanced = "laptop-ac";
+        performance = "throughput-performance";
+      }
+    ) "tuned-ppd's AC mapping is ${builtins.toJSON tuned.ppdSettings.profiles}"
+    ++ check (
+      tuned.ppdSettings.battery == {
+        balanced = "laptop-battery";
+        performance = "laptop-performance-battery";
+      }
+    ) "tuned-ppd's battery mapping is ${builtins.toJSON tuned.ppdSettings.battery}"
+    ++ check (!tuned.settings.dynamic_tuning) "tuned's dynamic tuning is on, which wakes it every 10 s"
+    ++ check (has c.environment.systemPackages c.services.tuned.package) "tuned-adm is not installed"
+    ++ check (lib.elem "sway-session.target" (c.systemd.user.services.energy-watch.wantedBy or [ ])) "energy-watch does not start with the Sway session"
+    ++ check (
+      rapl != null && (rapl.destination or null) == "/lib/udev/rules.d/99-rapl-readable.rules"
+    ) "no udev rule makes the RAPL counters readable"
+
+    # The battery safety net, both layers.
+    ++ check (upower.enable && upower.criticalPowerAction == "PowerOff") "UPower's critical action is not PowerOff"
+    ++ check (
+      upower.usePercentageForPolicy
+      && upower.percentageAction == 2
+      && upower.percentageCritical == 5
+      && upower.percentageLow == 20
+      && !upower.allowRiskyCriticalPowerAction
+    ) "UPower does not act at 2 % by the percentage"
+    ++ check (
+      has (c.systemd.timers.battery-emergency-poweroff.wantedBy or [ ]) "timers.target"
+      && (c.systemd.timers.battery-emergency-poweroff.timerConfig or { }) == {
+        OnBootSec = "2min";
+        OnUnitActiveSec = "2min";
+        AccuracySec = "30s";
+      }
+    ) "battery-emergency-poweroff.timer does not run every 2 minutes from boot"
+    ++ check (
+      ((service "battery-emergency-poweroff").unitConfig.ConditionPathExists or null)
+      == "/sys/class/power_supply/BAT0"
+      && lib.hasSuffix "/bin/battery-emergency-poweroff" (
+        (service "battery-emergency-poweroff").serviceConfig.ExecStart or ""
+      )
+    ) "battery-emergency-poweroff.service does not watch BAT0 with no argument"
+
+    # The charge mode.
+    ++ check (has ((service "charge-mode-restore").wantedBy or [ ]) "multi-user.target") "charge-mode-restore does not run at boot"
+    ++ check (lib.length chargeRule == 1) "the user has not exactly one sudo rule, NOPASSWD as root, for charge-mode-apply"
+    ++ check (
+      (c.systemd.tmpfiles.settings."10-charge-mode"."/var/lib/charge-mode".f.argument or null) == "Long_Life\n"
+    ) "a new install does not start from Long_Life"
+
+    # The dGPU around a suspend (nvidia.nix): no nvidia-powerd or
+    # nvidia-persistenced, the video memory saved by the kernel notifier
+    # into /var/lib/systemd/sleep, and the sessions not frozen.
+    ++ check (!nvidia.dynamicBoost.enable && !(c.systemd.services ? nvidia-powerd)) "nvidia-powerd is on, and holds the dGPU awake"
+    ++ check (!nvidia.nvidiaPersistenced && !(c.systemd.services ? nvidia-persistenced)) "nvidia-persistenced is on, which disables RTD3"
+    ++ check nvidia.powerManagement.kernelSuspendNotifier "the driver's kernel suspend notifier is off"
+    ++ lib.concatMap (p: check (lib.hasInfix p modprobe) "the NVIDIA module options lack ${p}") [
+      "NVreg_UseKernelSuspendNotifiers=1"
+      "NVreg_PreserveVideoMemoryAllocations=1"
+      "NVreg_TemporaryFilePath=/var/lib/systemd/sleep"
+    ]
+    ++ check (
+      !(c.systemd.services ? nvidia-suspend)
+      && !(c.systemd.services ? nvidia-resume)
+      && !(c.systemd.services ? nvidia-hibernate)
+    ) "the legacy nvidia-suspend services are on beside the kernel notifier"
+    ++ check (
+      lib.getAttrs [ "mode" "user" "group" ] (
+        c.systemd.tmpfiles.settings."10-nvidia-sleep"."/var/lib/systemd/sleep".d or {
+          mode = null;
+          user = null;
+          group = null;
+        }
+      ) == {
+        mode = "0700";
+        user = "root";
+        group = "root";
+      }
+    ) "/var/lib/systemd/sleep is not made root's alone"
+    ++ lib.concatMap (
+      u:
+      check (
+        ((service u).environment.SYSTEMD_SLEEP_FREEZE_USER_SESSIONS or null) == "false"
+      ) "${u} freezes the user sessions"
+    ) sleepUnits
 
     # The initrd finds the NVMe disk on the laptop and in QEMU, where the disk
     # is passed through as a virtio device.
