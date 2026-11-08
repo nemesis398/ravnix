@@ -57,7 +57,8 @@ let
         { system.stateVersion = "26.05"; }
         self.nixosModules.laptop
         self.nixosModules.hardware-ideapad-pro-5-16ahp9
-      ] ++ modules;
+      ]
+      ++ modules;
     };
   huginn = huginnOf [ ];
   # The iGPU's bus not given, given as Intel's, given wrongly, and the address set by hand.
@@ -94,54 +95,162 @@ let
           };
         }
         self.nixosModules.desktop
-      ] ++ modules;
+      ]
+      ++ modules;
     };
   bare = bareOf [ ];
   primeDesktop = bareOf [ { hardware.nvidia.prime.offload.enable = true; } ];
-  gpuWarnings = host: lib.filter (w: lib.hasInfix "ravnix.desktop.gpu.primary" w) host.config.warnings;
+  gpuWarnings =
+    host: lib.filter (w: lib.hasInfix "ravnix.desktop.gpu.primary" w) host.config.warnings;
 
   # NixOS's bus id (decimal, no domain) to the address udev matches.
   pci = import ../../lib/pci.nix { inherit lib; };
   pciCases = [
-    [ "PCI:54:0:0" "0000:36:00.0" ] # the 16AHP9's 780M
-    [ "PCI:1:0:0" "0000:01:00.0" ] # its RTX 4050
-    [ "PCI:0:2:0" "0000:00:02.0" ]
-    [ "PCI:9:0:0" "0000:09:00.0" ]
-    [ "PCI:10:0:0" "0000:0a:00.0" ] # a bus above 9: a hex letter, lower case
-    [ "PCI:15:0:0" "0000:0f:00.0" ]
-    [ "PCI:16:0:0" "0000:10:00.0" ] # above 15: two hex digits
-    [ "PCI:58:0:0" "0000:3a:00.0" ]
-    [ "PCI:255:0:0" "0000:ff:00.0" ]
-    [ "PCI:0:13:1" "0000:00:0d.1" ] # a device above 9
-    [ "PCI:0:31:7" "0000:00:1f.7" ] # the highest device and function
-    [ "PCI:054:0:0" "0000:36:00.0" ] # a leading zero is still decimal
-    [ "pci:54:0:0" "0000:36:00.0" ]
+    [
+      "PCI:54:0:0"
+      "0000:36:00.0"
+    ] # the 16AHP9's 780M
+    [
+      "PCI:1:0:0"
+      "0000:01:00.0"
+    ] # its RTX 4050
+    [
+      "PCI:0:2:0"
+      "0000:00:02.0"
+    ]
+    [
+      "PCI:9:0:0"
+      "0000:09:00.0"
+    ]
+    [
+      "PCI:10:0:0"
+      "0000:0a:00.0"
+    ] # a bus above 9: a hex letter, lower case
+    [
+      "PCI:15:0:0"
+      "0000:0f:00.0"
+    ]
+    [
+      "PCI:16:0:0"
+      "0000:10:00.0"
+    ] # above 15: two hex digits
+    [
+      "PCI:58:0:0"
+      "0000:3a:00.0"
+    ]
+    [
+      "PCI:255:0:0"
+      "0000:ff:00.0"
+    ]
+    [
+      "PCI:0:13:1"
+      "0000:00:0d.1"
+    ] # a device above 9
+    [
+      "PCI:0:31:7"
+      "0000:00:1f.7"
+    ] # the highest device and function
+    [
+      "PCI:054:0:0"
+      "0000:36:00.0"
+    ] # a leading zero is still decimal
+    [
+      "pci:54:0:0"
+      "0000:36:00.0"
+    ]
     # The domain form NixOS's bus-id type takes too: PCI:bus@domain:device:function.
-    [ "PCI:54@0:0:0" "0000:36:00.0" ]
-    [ "PCI:54@1:0:0" "0001:36:00.0" ]
-    [ "PCI:0@10:0:0" "000a:00:00.0" ] # a domain above 9
-    [ "PCI:0@16:2:0" "0010:00:02.0" ] # above 15
-    [ "PCI:0@255:0:0" "00ff:00:00.0" ]
-    [ "PCI:0@65535:31:7" "ffff:00:1f.7" ] # the highest of everything
-    [ "PCI:54@0001:0:0" "0001:36:00.0" ] # a leading zero is still decimal
-    [ "PCI:0@65536:0:0" null ]
-    [ "PCI:0@:0:0" null ]
-    [ "PCI:@0:0:0" null ]
-    [ "PCI:54@a:0:0" null ]
-    [ "PCI:54@0@0:0:0" null ]
-    [ "PCI:54@000000:0:0" null ]
-    [ "PCI:256:0:0" null ]
-    [ "PCI:0:32:0" null ]
-    [ "PCI:0:0:8" null ]
-    [ "PCI:a:0:0" null ]
-    [ "PCI:54:0" null ]
-    [ "PCI:1000:0:0" null ]
-    [ "pci@0000:36:00.0" null ]
-    [ "" null ]
+    [
+      "PCI:54@0:0:0"
+      "0000:36:00.0"
+    ]
+    [
+      "PCI:54@1:0:0"
+      "0001:36:00.0"
+    ]
+    [
+      "PCI:0@10:0:0"
+      "000a:00:00.0"
+    ] # a domain above 9
+    [
+      "PCI:0@16:2:0"
+      "0010:00:02.0"
+    ] # above 15
+    [
+      "PCI:0@255:0:0"
+      "00ff:00:00.0"
+    ]
+    [
+      "PCI:0@65535:31:7"
+      "ffff:00:1f.7"
+    ] # the highest of everything
+    [
+      "PCI:54@0001:0:0"
+      "0001:36:00.0"
+    ] # a leading zero is still decimal
+    [
+      "PCI:0@65536:0:0"
+      null
+    ]
+    [
+      "PCI:0@:0:0"
+      null
+    ]
+    [
+      "PCI:@0:0:0"
+      null
+    ]
+    [
+      "PCI:54@a:0:0"
+      null
+    ]
+    [
+      "PCI:54@0@0:0:0"
+      null
+    ]
+    [
+      "PCI:54@000000:0:0"
+      null
+    ]
+    [
+      "PCI:256:0:0"
+      null
+    ]
+    [
+      "PCI:0:32:0"
+      null
+    ]
+    [
+      "PCI:0:0:8"
+      null
+    ]
+    [
+      "PCI:a:0:0"
+      null
+    ]
+    [
+      "PCI:54:0"
+      null
+    ]
+    [
+      "PCI:1000:0:0"
+      null
+    ]
+    [
+      "pci@0000:36:00.0"
+      null
+    ]
+    [
+      ""
+      null
+    ]
   ];
   pciWrong = lib.filter (c: pci.fromBusId (lib.elemAt c 0) != lib.elemAt c 1) pciCases;
   pciNotAnAddress = lib.filter (
-    c: let got = pci.fromBusId (lib.elemAt c 0); in got != null && builtins.match "[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}[.][0-7]" got == null
+    c:
+    let
+      got = pci.fromBusId (lib.elemAt c 0);
+    in
+    got != null && builtins.match "[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}[.][0-7]" got == null
   ) pciCases;
 
   # A value of a user that looks like a token (a Bitwarden item, a command).
@@ -170,7 +279,11 @@ let
       };
     }
   ];
-  swayAsk = host: "${lib.findFirst (p: p.name == "sway-ask") (throw "no sway-ask") host.config.environment.systemPackages}/bin/sway-ask";
+  swayAsk =
+    host:
+    "${
+      lib.findFirst (p: p.name == "sway-ask") (throw "no sway-ask") host.config.environment.systemPackages
+    }/bin/sway-ask";
   # Every character a literal has to survive, line breaks included (the option
   # refuses white space, so only the helper can be shown them).
   hostileAll = "a\"b\\c\nd\re\tf'g\${h}#ié";
@@ -223,7 +336,9 @@ let
     host:
     lib.listToAttrs (
       map (p: lib.nameValuePair p.name "${p}/bin/${p.name}") (
-        lib.filter (p: builtins.match "waybar-[a-z]+|sway-volume|sway-wait-sni" p.name != null || p.name == "keep-awake") host.config.environment.systemPackages
+        lib.filter (
+          p: builtins.match "waybar-[a-z]+|sway-volume|sway-wait-sni" p.name != null || p.name == "keep-awake"
+        ) host.config.environment.systemPackages
       )
     );
   variant = host: {
@@ -341,42 +456,136 @@ let
       '';
 
   # ── the scripts ─────────────────────────────────────────────────────────────
-  scriptTests =
-    pkgs.runCommand "desktop-sway-scripts"
-      {
-        nativeBuildInputs = [
-          pkgs.jq
-          pkgs.coreutils
-          pkgs.gnugrep
-          pkgs.gawk
-          pkgs.python3
-          pkgs.procps
-        ];
-        scriptList = pkgs.writeText "scripts" (
-          lib.concatStringsSep "\n" (lib.mapAttrsToList (n: p: "${n} ${p}") (scriptsOf mauve)) + "\n"
-        );
-        kanshiConfig = source mauve "kanshi/config";
-      }
-      (builtins.readFile ./helpers/script-tests.sh);
+  scriptTests = pkgs.runCommand "desktop-sway-scripts" {
+    nativeBuildInputs = [
+      pkgs.jq
+      pkgs.coreutils
+      pkgs.gnugrep
+      pkgs.gawk
+      pkgs.python3
+      pkgs.procps
+    ];
+    scriptList = pkgs.writeText "scripts" (
+      lib.concatStringsSep "\n" (lib.mapAttrsToList (n: p: "${n} ${p}") (scriptsOf mauve)) + "\n"
+    );
+    kanshiConfig = source mauve "kanshi/config";
+  } (builtins.readFile ./helpers/script-tests.sh);
 
   # ── widths ──────────────────────────────────────────────────────────────────
   cases = [
-    { id = "custom-battery"; texts = [ "󰁹 5%" "󰁹 100%" ]; }
-    { id = "custom-peripherals"; texts = [ "󰂃 9%" "󰂃 15% (9)" ]; }
-    { id = "custom-powerdraw"; texts = [ "󱐋 --" "󱐋 123W+dGPU" ]; }
-    { id = "power-profiles-daemon"; texts = [ "󰾅" "󰓅" ]; }
-    { id = "window"; texts = [ "x" (lib.concatStrings (lib.replicate 28 "W")) ]; }
-    { id = "custom-clock"; texts = [ "Mon 9:05" "W36 30. September 2026" ]; }
-    { id = "custom-idle-inhibit"; texts = [ "󰅶" "󰛊" ]; }
-    { id = "custom-idle-pad"; texts = [ " " " " ]; }
-    { id = "network"; texts = [ "󰈂 down" "󰖩 ↑ 1023.9MB/s ↓ 1023.9MB/s" ]; }
-    { id = "bluetooth"; texts = [ "󰂯" "󰂱" ]; }
-    { id = "pulseaudio"; texts = [ "󰖁 5%" "󰕾 100%" ]; }
-    { id = "cpu"; texts = [ "󰻠 1%" "󰻠 100%" ]; }
-    { id = "temperature"; texts = [ "󰔏 5°C" "󰔏 100°C" ]; classes = [ "cpu" ]; }
-    { id = "memory"; texts = [ "󰍛 5%" "󰍛 100%" ]; }
-    { id = "custom-gpu"; texts = [ "󰢮 0%" "󰢮 100%" ]; }
-    { id = "custom-gputemp"; texts = [ "󱃂 5°C" "󱃂 100°C" ]; }
+    {
+      id = "custom-battery";
+      texts = [
+        "󰁹 5%"
+        "󰁹 100%"
+      ];
+    }
+    {
+      id = "custom-peripherals";
+      texts = [
+        "󰂃 9%"
+        "󰂃 15% (9)"
+      ];
+    }
+    {
+      id = "custom-powerdraw";
+      texts = [
+        "󱐋 --"
+        "󱐋 123W+dGPU"
+      ];
+    }
+    {
+      id = "power-profiles-daemon";
+      texts = [
+        "󰾅"
+        "󰓅"
+      ];
+    }
+    {
+      id = "window";
+      texts = [
+        "x"
+        (lib.concatStrings (lib.replicate 28 "W"))
+      ];
+    }
+    {
+      id = "custom-clock";
+      texts = [
+        "Mon 9:05"
+        "W36 30. September 2026"
+      ];
+    }
+    {
+      id = "custom-idle-inhibit";
+      texts = [
+        "󰅶"
+        "󰛊"
+      ];
+    }
+    {
+      id = "custom-idle-pad";
+      texts = [
+        " "
+        " "
+      ];
+    }
+    {
+      id = "network";
+      texts = [
+        "󰈂 down"
+        "󰖩 ↑ 1023.9MB/s ↓ 1023.9MB/s"
+      ];
+    }
+    {
+      id = "bluetooth";
+      texts = [
+        "󰂯"
+        "󰂱"
+      ];
+    }
+    {
+      id = "pulseaudio";
+      texts = [
+        "󰖁 5%"
+        "󰕾 100%"
+      ];
+    }
+    {
+      id = "cpu";
+      texts = [
+        "󰻠 1%"
+        "󰻠 100%"
+      ];
+    }
+    {
+      id = "temperature";
+      texts = [
+        "󰔏 5°C"
+        "󰔏 100°C"
+      ];
+      classes = [ "cpu" ];
+    }
+    {
+      id = "memory";
+      texts = [
+        "󰍛 5%"
+        "󰍛 100%"
+      ];
+    }
+    {
+      id = "custom-gpu";
+      texts = [
+        "󰢮 0%"
+        "󰢮 100%"
+      ];
+    }
+    {
+      id = "custom-gputemp";
+      texts = [
+        "󱃂 5°C"
+        "󱃂 100°C"
+      ];
+    }
   ];
   fontsConf = pkgs.writeText "fonts.conf" ''
     <?xml version="1.0"?>
@@ -436,12 +645,16 @@ let
             echo "row Fixed widths: the floor of $id is $((wide - natural)) px wider than its widest value needs (more than one character)" >&2; bad=1
           fi
         done
-        test "$(jq 'keys | length' widths.json)" = ${toString (lib.length cases + 1)} || { echo "not every module was measured" >&2; bad=1; }
+        test "$(jq 'keys | length' widths.json)" = ${
+          toString (lib.length cases + 1)
+        } || { echo "not every module was measured" >&2; bad=1; }
         exit $bad
       '';
 
   # ── a bad fragment must stop the build ──────────────────────────────────────
-  badFragmentFails = pkgs.testers.testBuildFailure (homeOf badFragment).xdg.configFile."sway/config".source;
+  badFragmentFails =
+    pkgs.testers.testBuildFailure
+      (homeOf badFragment).xdg.configFile."sway/config".source;
   seamConfig = (files seam)."sway/config".source;
 
   # ── udev accepts the rule that links the GPU ────────────────────────────────
@@ -451,49 +664,89 @@ let
   '';
 
   # What the module refuses, and what it takes, decided by evaluation alone.
-  refused =
-    host: lib.any (a: !a.assertion) host.config.assertions;
+  refused = host: lib.any (a: !a.assertion) host.config.assertions;
   evaluates = expr: (builtins.tryEval (builtins.deepSeq expr expr)).success;
   equals = expr: want: evaluates expr && expr == want;
   failures =
-    map (c: "pci.fromBusId \"${lib.elemAt c 0}\" is \"${toString (pci.fromBusId (lib.elemAt c 0))}\", not \"${toString (lib.elemAt c 1)}\"") pciWrong
+    map (
+      c:
+      "pci.fromBusId \"${lib.elemAt c 0}\" is \"${toString (pci.fromBusId (lib.elemAt c 0))}\", not \"${toString (lib.elemAt c 1)}\""
+    ) pciWrong
     ++ map (c: "pci.fromBusId \"${lib.elemAt c 0}\" is no address udev matches") pciNotAnAddress
     # The tokens of a data file are filled, and only they are checked: what a
     # user's value holds is the user's.
-    ++ lib.optional (!equals (swayLib.fill { a = "x@word@y"; } "v=@a@") "v=x@word@y") "fill refuses, or changes, a value that holds @word@"
-    ++ lib.optional (!equals (swayLib.fill {
-      a = "@b@";
-      b = "B";
-    } "@a@") "@b@") "fill fills again a token that a value brought in, or throws on it"
-    ++ lib.optional (evaluates (swayLib.fill { a = "x"; } "v=@a@ @typo@")) "fill accepts a token of the file that nobody gives"
-    ++ lib.optional (!evaluates ((files atHost)."sway/config".source.drvPath)) "a terminal command with @b@ in it makes the Sway config throw"
-    ++ lib.optional (!evaluates (map (p: p.drvPath) (lib.filter (p: p.name == "sway-ask") atHost.config.environment.systemPackages))) "a Bitwarden item with @work@ in it makes the sway-ask script throw"
+    ++ lib.optional (
+      !equals (swayLib.fill { a = "x@word@y"; } "v=@a@") "v=x@word@y"
+    ) "fill refuses, or changes, a value that holds @word@"
+    ++ lib.optional (
+      !equals (swayLib.fill {
+        a = "@b@";
+        b = "B";
+      } "@a@") "@b@"
+    ) "fill fills again a token that a value brought in, or throws on it"
+    ++ lib.optional (evaluates (
+      swayLib.fill { a = "x"; } "v=@a@ @typo@"
+    )) "fill accepts a token of the file that nobody gives"
+    ++ lib.optional (
+      !evaluates ((files atHost)."sway/config".source.drvPath)
+    ) "a terminal command with @b@ in it makes the Sway config throw"
+    ++ lib.optional (
+      !evaluates (
+        map (p: p.drvPath) (lib.filter (p: p.name == "sway-ask") atHost.config.environment.systemPackages)
+      )
+    ) "a Bitwarden item with @work@ in it makes the sway-ask script throw"
     # GPU: where the address comes from.
-    ++ lib.optional (huginn.config.ravnix.desktop.gpu.primary != "0000:36:00.0") "huginn: gpu.primary is not taken from amdgpuBusId PCI:54:0:0 (it is ${toString huginn.config.ravnix.desktop.gpu.primary})"
-    ++ lib.optional (gpuWarnings huginn != [ ]) "huginn: the GPU warning is shown though the address is known"
-    ++ lib.optional (huginnIntel.config.ravnix.desktop.gpu.primary != "0000:00:02.0") "gpu.primary is not taken from intelBusId when there is no amdgpuBusId"
-    ++ lib.optional (huginnDomain.config.ravnix.desktop.gpu.primary != "0000:36:00.0" || gpuWarnings huginnDomain != [ ]) "gpu.primary is not taken from a bus id in the domain form PCI:54@0:0:0, or warns about it"
-    ++ lib.optional (huginnNoIds.config.ravnix.desktop.gpu.primary != null) "gpu.primary is set without a bus id"
-    ++ lib.optional (gpuWarnings huginnNoIds == [ ]) "PRIME is on and gpu.primary is null, and nothing warns"
-    ++ lib.optional (huginnBadId.config.ravnix.desktop.gpu.primary != null || gpuWarnings huginnBadId == [ ]) "a bus id out of range is taken or not warned about"
-    ++ lib.optional (huginnByHand.config.ravnix.desktop.gpu.primary != "0000:05:00.0") "a gpu.primary set by hand does not win over the bus id"
-    ++ lib.optional (gpuWarnings primeDesktop == [ ]) "PRIME on with no bus id on the desktop host warns of nothing"
+    ++
+      lib.optional (huginn.config.ravnix.desktop.gpu.primary != "0000:36:00.0")
+        "huginn: gpu.primary is not taken from amdgpuBusId PCI:54:0:0 (it is ${toString huginn.config.ravnix.desktop.gpu.primary})"
+    ++ lib.optional (
+      gpuWarnings huginn != [ ]
+    ) "huginn: the GPU warning is shown though the address is known"
+    ++ lib.optional (
+      huginnIntel.config.ravnix.desktop.gpu.primary != "0000:00:02.0"
+    ) "gpu.primary is not taken from intelBusId when there is no amdgpuBusId"
+    ++ lib.optional (
+      huginnDomain.config.ravnix.desktop.gpu.primary != "0000:36:00.0" || gpuWarnings huginnDomain != [ ]
+    ) "gpu.primary is not taken from a bus id in the domain form PCI:54@0:0:0, or warns about it"
+    ++ lib.optional (
+      huginnNoIds.config.ravnix.desktop.gpu.primary != null
+    ) "gpu.primary is set without a bus id"
+    ++ lib.optional (
+      gpuWarnings huginnNoIds == [ ]
+    ) "PRIME is on and gpu.primary is null, and nothing warns"
+    ++ lib.optional (
+      huginnBadId.config.ravnix.desktop.gpu.primary != null || gpuWarnings huginnBadId == [ ]
+    ) "a bus id out of range is taken or not warned about"
+    ++ lib.optional (
+      huginnByHand.config.ravnix.desktop.gpu.primary != "0000:05:00.0"
+    ) "a gpu.primary set by hand does not win over the bus id"
+    ++ lib.optional (
+      gpuWarnings primeDesktop == [ ]
+    ) "PRIME on with no bus id on the desktop host warns of nothing"
     ++ lib.optional (gpuWarnings bare != [ ]) "a host without PRIME is warned about the GPU"
     # --unsupported-gpu: with the proprietary driver and only then.
-    ++ lib.optional (huginn.config.programs.sway.extraOptions != [ "--unsupported-gpu" ]) "huginn (driver nvidia) does not start Sway with --unsupported-gpu"
-    ++ lib.optional (nvidiaDesktop.config.programs.sway.extraOptions != [ "--unsupported-gpu" ]) "a host with the nvidia driver does not start Sway with --unsupported-gpu"
-    ++ lib.optional (mauve.config.programs.sway.extraOptions != [ ]) "a host without the nvidia driver starts Sway with ${toString mauve.config.programs.sway.extraOptions}"
+    ++ lib.optional (
+      huginn.config.programs.sway.extraOptions != [ "--unsupported-gpu" ]
+    ) "huginn (driver nvidia) does not start Sway with --unsupported-gpu"
+    ++ lib.optional (
+      nvidiaDesktop.config.programs.sway.extraOptions != [ "--unsupported-gpu" ]
+    ) "a host with the nvidia driver does not start Sway with --unsupported-gpu"
+    ++
+      lib.optional (mauve.config.programs.sway.extraOptions != [ ])
+        "a host without the nvidia driver starts Sway with ${toString mauve.config.programs.sway.extraOptions}"
     ++ lib.optional (!mauve.config.programs.sway.enable) "programs.sway is not enabled"
     ++ lib.optional (!mauve.config.services.greetd.enable) "greetd is not enabled"
     ++ lib.optional (!(homeOf mauve).services.dunst.enable) "dunst is not enabled"
-    ++ lib.optional (
-      !(files mauve) ? "systemd/user/graphical-session.target.wants/dunst.service"
-    ) "dunst is not linked into graphical-session.target.wants, so nothing starts it (dbus-broker refuses its D-Bus service file)"
+    ++
+      lib.optional (!(files mauve) ? "systemd/user/graphical-session.target.wants/dunst.service")
+        "dunst is not linked into graphical-session.target.wants, so nothing starts it (dbus-broker refuses its D-Bus service file)"
     ++ lib.optional (!(homeOf mauve).programs.fuzzel.enable) "fuzzel is not enabled"
     ++ lib.optional (!(homeOf mauve).programs.swaylock.enable) "swaylock is not enabled"
     ++ lib.optional (!mauve.config.security.pam.services ? swaylock) "swaylock has no PAM service"
     ++ lib.optional mauve.config.boot.plymouth.enable "Plymouth is on"
-    ++ lib.optional (lib.length mauve.config.console.colors != 16) "console.colors is not the 16 colors of the console"
+    ++ lib.optional (
+      lib.length mauve.config.console.colors != 16
+    ) "console.colors is not the 16 colors of the console"
     ++ lib.optional (refused mauve) "the default host is refused by an assertion"
     ++ lib.optional (!refused badToken) "a main terminal command with a line break is not refused"
     ++ lib.optional (
@@ -536,30 +789,34 @@ let
         }
       ]).config.ravnix.desktop.workspaceOutputs
     ) "workspace 11 is accepted, though the bar shows ten"
-    ++ lib.optional (!refused (hostOf [
-      {
-        ravnix.laptop.kanshiProfiles = [
-          {
-            name = "ravnix-fallback";
-            outputs = [ { criteria = "eDP-1"; } ];
-          }
-        ];
-      }
-    ])) "a profile named like the fallback is not refused"
-    ++ lib.optional (!refused (hostOf [
-      {
-        ravnix.laptop.kanshiProfiles = [
-          {
-            name = "a";
-            outputs = [ { criteria = "eDP-1"; } ];
-          }
-          {
-            name = "a";
-            outputs = [ { criteria = "DP-1"; } ];
-          }
-        ];
-      }
-    ])) "a kanshi profile listed twice is not refused";
+    ++ lib.optional (
+      !refused (hostOf [
+        {
+          ravnix.laptop.kanshiProfiles = [
+            {
+              name = "ravnix-fallback";
+              outputs = [ { criteria = "eDP-1"; } ];
+            }
+          ];
+        }
+      ])
+    ) "a profile named like the fallback is not refused"
+    ++ lib.optional (
+      !refused (hostOf [
+        {
+          ravnix.laptop.kanshiProfiles = [
+            {
+              name = "a";
+              outputs = [ { criteria = "eDP-1"; } ];
+            }
+            {
+              name = "a";
+              outputs = [ { criteria = "DP-1"; } ];
+            }
+          ];
+        }
+      ])
+    ) "a kanshi profile listed twice is not refused";
 
   # What evaluation alone decides (the list above), as a stage of its own so
   # that it builds without the VM.
@@ -615,8 +872,15 @@ let
 
     # The test framework fixes the node's package set, so the overlay that
     # gives modules/desktop pkgs.ravnix (the backdrop module reads it) has to
-    # be applied to that set here, as tests/desktop/printing.nix does.
-    node.pkgs = lib.mkForce (pkgs.extend self.overlays.default);
+    # be applied to that set here, and the unfree packages the desktop's apps
+    # name (lib/unfree.nix) allowed, as tests/desktop/vm-node.nix does.
+    node.pkgs = lib.mkForce (
+      import inputs.nixpkgs {
+        inherit system;
+        config.allowUnfreePredicate = (import ../../lib/unfree.nix { inherit lib; }).predicate { };
+        overlays = [ self.overlays.default ];
+      }
+    );
 
     nodes.machine =
       { ... }:
@@ -641,7 +905,9 @@ let
         # WLR_DRM_DEVICES=/dev/dri/primary-gpu has to find it there.
         ravnix.desktop.gpu.primary = "${gpuAddress}";
         # A variable of home-manager's, to see in a process that Sway starts.
-        home-manager.sharedModules = [ { home.sessionVariables.RAVNIX_TEST_HM_VAR = "from-home-manager"; } ];
+        home-manager.sharedModules = [
+          { home.sessionVariables.RAVNIX_TEST_HM_VAR = "from-home-manager"; }
+        ];
         virtualisation = {
           qemu.options = [ "-vga none -device virtio-gpu-pci,bus=pcie.0,addr=0x10" ];
           memorySize = 3072;
@@ -658,7 +924,8 @@ let
       MANTLE = "${palette.mantle}"
       ACCENT = "${mauve.config.ravnix.theme.roles.accent}"
       GPU_ADDRESS = "${gpuAddress}"
-    '' + builtins.readFile ./helpers/vm-test.py;
+    ''
+    + builtins.readFile ./helpers/vm-test.py;
   };
 in
 pkgs.runCommand "desktop-sway"
@@ -682,10 +949,10 @@ pkgs.runCommand "desktop-sway"
     };
   }
   ''
-  cat ${evalChecks} ${static} ${styleCheck} ${scriptTests} ${widths} ${udevRules} ${seamCheck} ${unsupportedGpu} ${tokenProbe} > $out
-  grep -q "frobnicate" ${badFragmentFails}/testBuildFailure.log || {
-    echo "the build of a Sway config with a bad fragment did not fail because of the fragment" >&2
-    exit 1
-  }
-  : ${vm}
-''
+    cat ${evalChecks} ${static} ${styleCheck} ${scriptTests} ${widths} ${udevRules} ${seamCheck} ${unsupportedGpu} ${tokenProbe} > $out
+    grep -q "frobnicate" ${badFragmentFails}/testBuildFailure.log || {
+      echo "the build of a Sway config with a bad fragment did not fail because of the fragment" >&2
+      exit 1
+    }
+    : ${vm}
+  ''
