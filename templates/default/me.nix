@@ -210,7 +210,7 @@
     # from your Bitwarden when it starts: the variable's name (capital
     # letters, digits and underscores) and the name or id of the item whose
     # password is its value (an id is the safer one: renaming the item never
-    # breaks it). Only item names go into this flake; rbw reads the values
+    # breaks it). Only item names or ids go into this flake; rbw reads the values
     # at the moment `claude` starts, and no other program sees them. For
     # example:
     #   secretEnv = { SERVICE_API_TOKEN = "Service - API token"; };

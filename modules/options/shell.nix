@@ -67,7 +67,7 @@ in
         in an interactive bash, a function reads the items and starts Claude
         Code with them in its environment, so Claude Code and the programs it
         starts see them and nothing else does. `ai-unlock` unlocks the
-        vault first. Only the item names are in your flake; the values come
+        vault first. Only the item names or ids are in your flake; the values come
         from rbw at the moment `claude` starts and are never written down.
       '';
     };
