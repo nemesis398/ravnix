@@ -33,8 +33,12 @@ None. The settings live in `$XDG_STATE_HOME/energy`, else
 - the header names no person and no path under a home directory.
 
 The unit is Fedora's: started by `sway-session.target`, part of and after
-`graphical-session.target`, `Restart=always` after 5 s. Its PATH is the
-user's and the system's profile, for keep-awake and waybar-launch.
+`graphical-session.target`, `Restart=always` after 5 s. It sets no PATH
+(`enableDefaultPath = false` too), so it keeps the user manager's, from
+`/etc/environment.d`: `/run/wrappers/bin` first, then the user's and the
+system's profiles, for keep-awake and waybar-launch. A PATH of the unit's
+own would replace that one whole, and a Waybar the watcher relaunches would
+then find no setuid sudo for `charge-mode`.
 
 ## Tests
 

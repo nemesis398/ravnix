@@ -109,18 +109,22 @@ in
   # run `energy refresh`, and keep-awake's swayidle `energy idle-suspend`.
   environment.systemPackages = [ energy ];
 
-  # As on Fedora: started with the Sway session and stopped with it. Its
-  # PATH is the session's, for keep-awake and waybar-launch, which the
-  # desktop installs; the rest the package brings.
+  # As on Fedora: started with the Sway session and stopped with it. The
+  # unit sets no PATH, so it keeps the user manager's, from
+  # /etc/environment.d: the setuid wrappers first (/run/wrappers/bin), then
+  # the user's and the system's profiles, where the desktop installs
+  # keep-awake and waybar-launch; the rest the package brings. A PATH of
+  # the unit's own replaces that one whole, and NixOS gives a user unit one
+  # even without `path` (systemd.defaultPath: coreutils and a few more),
+  # hence enableDefaultPath = false. Without the wrappers, the Waybar that
+  # the watcher relaunches on an unplug would find the store's sudo, which
+  # is not setuid, and charge-mode would fail from its battery click.
   systemd.user.services.energy-watch = {
     description = "Energy settings watcher (refresh rate, keep-awake, focus bar)";
     partOf = [ "graphical-session.target" ];
     after = [ "graphical-session.target" ];
     wantedBy = [ "sway-session.target" ];
-    path = [
-      "/etc/profiles/per-user/%u"
-      "/run/current-system/sw"
-    ];
+    enableDefaultPath = false;
     serviceConfig = {
       Type = "simple";
       ExecStart = "${lib.getExe energy} watch";

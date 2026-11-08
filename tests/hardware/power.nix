@@ -214,6 +214,16 @@ pkgs.testers.runNixOSTest {
         user_systemctl("start energy-watch.service")
         machine.wait_until_succeeds(f"pgrep -u {user} -f 'gdbus monitor --system --dest org.freedesktop.UPower'")
         machine.wait_until_succeeds(f"pgrep -u {user} -f 'gdbus monitor --system --dest net.hadess.PowerProfiles'")
+        # Its PATH is the user manager's, from environment.d, which puts the
+        # setuid wrappers first: a Waybar the watcher relaunches finds the
+        # setuid sudo that charge-mode needs, and the session's tools.
+        pid = user_systemctl("show -p MainPID --value energy-watch.service").strip()
+        environ = machine.succeed(f"tr '\\0' '\\n' < /proc/{pid}/environ").splitlines()
+        path = next((line[5:] for line in environ if line.startswith("PATH=")), "")
+        for directory in ["/run/wrappers/bin", f"/etc/profiles/per-user/{user}/bin", "/run/current-system/sw/bin"]:
+            assert directory in path.split(":"), f"energy-watch's PATH lacks {directory}: {path}"
+        sudo = machine.succeed(f"env -i PATH={shlex.quote(path)} sh -c 'command -v sudo'").strip()
+        assert sudo == "/run/wrappers/bin/sudo", f"energy-watch's PATH finds {sudo}, not the setuid sudo"
 
     with subtest("energy picks the profiles on the charger"):
         machine.wait_until_tty_matches("1", f"{user}@machine")

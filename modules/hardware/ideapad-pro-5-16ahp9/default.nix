@@ -61,7 +61,9 @@
 #      `charge-mode set Long_Life`, work without a password.
 #  10. energy-watch active in the Sway session; an unplug switches
 #      keep-awake off, and `energy refresh` on power-saver puts the panel at
-#      60 Hz.
+#      60 Hz. With Focus bar on, unplug (the watcher relaunches Waybar), then
+#      click Waybar's battery: the charge mode changes without an error, so
+#      the relaunched Waybar found the setuid sudo.
 #  11. The swap: `swapon --show` lists /dev/zram0 alone, 8 GiB, and
 #      /sys/block/zram0/comp_algorithm says lzo-rle.
 #  12. As on Fedora, with nothing set for it here: `iw dev <wlan> get

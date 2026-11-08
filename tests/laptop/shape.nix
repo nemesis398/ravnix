@@ -303,6 +303,7 @@ let
     ++ check (!tuned.settings.dynamic_tuning) "tuned's dynamic tuning is on, which wakes it every 10 s"
     ++ check (has c.environment.systemPackages c.services.tuned.package) "tuned-adm is not installed"
     ++ check (lib.elem "sway-session.target" (c.systemd.user.services.energy-watch.wantedBy or [ ])) "energy-watch does not start with the Sway session"
+    ++ check (!(c.systemd.user.services.energy-watch.environment ? PATH)) "energy-watch sets a PATH of its own, which drops the user manager's /run/wrappers/bin, so a Waybar it starts finds no setuid sudo"
     ++ check (
       rapl != null && (rapl.destination or null) == "/lib/udev/rules.d/99-rapl-readable.rules"
     ) "no udev rule makes the RAPL counters readable"
