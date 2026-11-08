@@ -41,6 +41,11 @@ let
   byId = "/dev/disk/by-id/nvme-${udevName diskModel}_${udevName diskSerial}";
 in
 {
+  # The shape is a module a function returns, so without this its
+  # definitions would carry the file of the caller, nixpkgs' flake.nix, and an
+  # error such as the conflict of two shapes would name that file.
+  _file = ./default.nix;
+
   imports = [
     inputs.disko.nixosModules.disko
     self.nixosModules.common
