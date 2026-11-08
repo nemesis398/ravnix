@@ -191,6 +191,17 @@ pkgs.testers.runNixOSTest (
           # Short, so that the test can see in seconds that a skipped start is
           # not tried again (it is half a minute on a server).
           systemd.user.services.claude-remote-control.Service.RestartSec = lib.mkForce 1;
+          # The sync timers fire on the clock of the VM, which is real time,
+          # in the middle of subtests that count runs and look for what a
+          # locked run did not do. Here they cannot fire (a calendar time far
+          # ahead and a boot offset of a year), so a run is only one the test
+          # starts; workbench-optional pins the schedule they have on a server.
+          systemd.user.timers = lib.genAttrs [ "nextcloud-sync" "vdirsyncer" ] (_: {
+            Timer = {
+              OnCalendar = lib.mkForce "2099-01-01 00:00:00";
+              OnBootSec = lib.mkForce "1y";
+            };
+          });
         };
         ravnix.workbench.nextcloudSync.package = fakeNextcloudPackage;
 
@@ -323,14 +334,11 @@ pkgs.testers.runNixOSTest (
             assert user_ctl("is-active nextcloud-sync.timer").strip() == "active"
             assert user_ctl("is-enabled vdirsyncer.timer").strip() == "enabled"
             assert user_ctl("is-active vdirsyncer.timer").strip() == "active"
-            # Both timers fire on the clock of the VM, which is real time, in
-            # the middle of subtests that count runs and look for what a
-            # locked run did not do. They are stopped (they stay enabled), so
-            # a run is only one the test starts.
-            user_ctl("stop nextcloud-sync.timer vdirsyncer.timer")
-            assert user_ctl("is-active nextcloud-sync.timer", False)[1].strip() == "inactive"
-            assert user_ctl("is-active vdirsyncer.timer", False)[1].strip() == "inactive"
-            assert user_ctl("is-enabled vdirsyncer.timer").strip() == "enabled"
+            # They are enabled and waiting, and what they wait for is a time
+            # the test does not reach (see the node's configuration).
+            for timer in ["nextcloud-sync.timer", "vdirsyncer.timer"]:
+                text = user_ctl("cat " + timer)
+                assert "OnCalendar=2099-01-01 00:00:00" in text and "OnBootSec=1y" in text, text
             unit = user_ctl("cat nextcloud-sync.service")
             # The password is handed over in the environment of the one
             # process, never in the unit.

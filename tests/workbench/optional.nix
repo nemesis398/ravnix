@@ -132,6 +132,7 @@ let
   aercAccounts = h: (hmOf h).home.file."${(hmOf h).xdg.configHome}/aerc/accounts.conf".text;
   vdirsyncerConfig = h: (hmOf h).xdg.configFile."vdirsyncer/config".text;
   service = h: name: (hmOf h).systemd.user.services.${name};
+  timer = h: name: (hmOf h).systemd.user.timers.${name};
   # A unit entry that may be given once or repeated: home-manager keeps the
   # repeated ones as a list.
   one = v: if lib.isList v then lib.head v else v;
@@ -272,6 +273,27 @@ let
     (lib.optional (
       (service everything "vdirsyncer").Unit.X-SwitchMethod != "keep-old"
     ) "a switch can start a calendar sync")
+    # The schedule on a server. The VM test gives these timers a time they do
+    # not reach, so this is where the real one is held.
+    (lib.optional (
+      (timer everything "nextcloud-sync").Timer.OnCalendar != "*:0/5"
+    ) "the Nextcloud sync does not run every five minutes")
+    (lib.optional (
+      (timer everything "vdirsyncer").Timer.OnCalendar != "*:0/15"
+    ) "the calendar sync does not run every quarter hour")
+    (lib.concatMap
+      (
+        name:
+        lib.optional (
+          (timer everything name).Timer.OnBootSec != "2min"
+          || (timer everything name).Timer.Persistent != true
+        ) "the timer ${name} does not run two minutes after boot, or does not catch up a missed run"
+      )
+      [
+        "nextcloud-sync"
+        "vdirsyncer"
+      ]
+    )
 
     # The vdirsyncer configuration: the vault, never a password.
     (lib.optional (
