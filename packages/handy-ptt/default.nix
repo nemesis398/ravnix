@@ -63,7 +63,9 @@
 let
   # The name of Handy's process (see above); `handy` is the unwrapped build.
   # pgrep -x takes the whole name, so `handy-launch`, `handy-ptt` and the
-  # WebKit processes do not match.
+  # WebKit processes do not match. pgrep is told the user (-u): another user's
+  # Handy on the same machine is not the one to signal (kill would fail with
+  # EPERM, and the take would never start).
   handyProcess = "\\.handy-wrapped|handy";
 in
 writeShellApplication {
@@ -90,7 +92,7 @@ writeShellApplication {
 
     state=''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/handy-ptt.mode
 
-    pid=$(pgrep -o -x -- ${lib.escapeShellArg handyProcess})
+    pid=$(pgrep -o -x -u "$(id -u)" -- ${lib.escapeShellArg handyProcess})
     if [ -z "$pid" ]; then
         [ "$1" = down ] || exit 0
         notify-send -a Handy "Handy was not running" "Starting it now; hold the key again in a few seconds."
