@@ -140,6 +140,30 @@ def swatch_row(right):
     return teal
 
 
+def test_the_glyph_blocks_meet_without_a_seam(wall):
+    # The logo and the swatches are block glyphs, drawn as the terminal draws
+    # them: whole cells with edges on whole pixels. A seam between two blocks,
+    # or a ragged edge, is a pixel that is neither a color nor Base but a blend.
+    right = facts_area(wall)
+    # The logo is everything left of the frame, whose strokes are the leftmost
+    # accent of the facts.
+    logo = right[:, : bbox(tinted(right, rgb("mauve"), rgb("base"), least=0.3))[0]]
+    assert logo.shape[1] > 200
+    for name in ("blue", "sapphire"):
+        blend = tinted(logo, rgb(name), rgb("base"), least=0.05, slack=6) & ~where(logo, rgb(name))
+        assert not blend.any(), "%s: %d blended pixels" % (name, blend.sum())
+    # The swatches: one solid rectangle each, one line tall, with Base above
+    # and below, and on both sides of the row.
+    x0, y0, x1, y1 = swatch_row(right)
+    advance = (x1 - x0) / 3
+    first, last = int(x0 - 9 * advance), int(x0 + 6 * advance)
+    row = right[y0:y1, first - 1 : last + 1]
+    assert (row == row[len(row) // 2]).all(), "a seam row inside the swatches"
+    assert {tuple(p) for p in row[0]} == {rgb(n) for n in ("base", "surface1", "blue", "pink", "teal", "subtext1")}
+    for edge in (right[y0 - 1], right[y1]):
+        assert (edge[first - 1 : last + 1] == rgb("base")).all(), "a ragged edge"
+
+
 def test_the_swatch_row_has_no_state_hue(wall):
     # Style rule 4: warm hues are for warnings and errors. The Palette row is
     # decoration, so the swatches that are Red, Yellow or Green are left out;

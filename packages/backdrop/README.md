@@ -29,7 +29,12 @@ physical resolution (the lock ring's radius is logical too).
 | lock image | Base, or the same picture, and the ravnix mark alone, sized to sit inside the 110 px lock ring (its inner edge is at 105 px). It never runs fastfetch and never draws a logo, so nothing about the machine can be read on a locked screen |
 
 The NixOS logo is fastfetch's own, made of block glyphs by design, and is drawn
-as the terminal shows it, not redrawn as a vector.
+as the terminal shows it, not redrawn as a vector. The block elements (U+2580 to
+U+259F, but not the three shades) of the facts, in the logo and in the swatches,
+are not drawn from the font: a font's block is as tall as its ascent plus
+descent, not the panel's line height, and blocks above one another meet at a
+blended pixel. They are rectangles with every edge on a whole pixel, as
+terminals draw them, so they meet without a seam.
 
 The Palette row of the facts shows the terminal's eight colors on the
 terminal. On the wallpaper the swatches of the terminal's Red, Green and Yellow,
@@ -106,8 +111,9 @@ The facts the tests draw (`tests/fastfetch.ansi`) are a capture of the real
 fastfetch with ravnix's config, the personal values replaced by invented ones
 and the colors by names that `conftest.py` fills in from the theme. The one
 test that runs the real fastfetch also checks that the Palette row starts in
-the value column. `test_swatches.py` holds the checks of the swatches that are
-left out. `tests/pytest.ini` filters the one deprecation warning of the
+the value column. `test_blocks.py` holds the checks of the block
+elements, and `test_swatches.py` those of the swatches that are left out.
+`tests/pytest.ini` filters the one deprecation warning of the
 run: PyGObject itself raises it while it loads its GLib override.
 
 From a checkout:

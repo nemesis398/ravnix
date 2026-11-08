@@ -16,9 +16,11 @@
 # Blue and Sapphire) top right; and, when the user lists any, their tool logos
 # in Surface grays, spread around the rest. The NixOS logo is fastfetch's own
 # and is made of block glyphs by design: it is drawn as the terminal shows it,
-# not redrawn as a vector. The terminal's Red, Green and Yellow swatches are
-# left out of the Palette row, because warm hues are for warnings and errors
-# only (docs/style.md, rule 4). The lock image is Base (or the same
+# not redrawn as a vector, and its blocks, like the swatches of the Palette
+# row, are rectangles on whole pixels (draw_block) so that they meet without a
+# seam. The terminal's Red, Green and Yellow swatches are left out of that
+# row, because warm hues are for warnings and errors only (docs/style.md,
+# rule 4). The lock image is Base (or the same
 # image) and the ravnix mark alone, sized to sit inside swaylock's ring, so
 # nothing about the machine can be read on a locked screen. It never runs
 # fastfetch and never draws a logo.
@@ -642,9 +644,31 @@ def facts(theme):
     return parse_ansi(fastfetch_text(theme), theme)
 
 
+# Block Elements (U+2580 to U+259F) as rectangles in eighths of a cell, (left,
+# top, right, bottom). The font's own glyph for a block is as tall as its
+# ascent plus descent, which is not the line height of the panel, so two
+# blocks above one another meet at a pixel it half covers. Terminals draw these
+# characters themselves for that reason, and so does the panel. The shades
+# (U+2591 to U+2593) are dots, not rectangles: they stay with the font.
+_UL, _UR, _LL, _LR = (0, 0, 4, 4), (4, 0, 8, 4), (0, 4, 4, 8), (4, 4, 8, 8)
+BLOCK_ELEMENTS = {
+    "\u2580": [(0, 0, 8, 4)],
+    **{chr(0x2580 + n): [(0, 8 - n, 8, 8)] for n in range(1, 8)},
+    "\u2588": [(0, 0, 8, 8)],
+    **{chr(0x2588 + n): [(0, 0, 8 - n, 8)] for n in range(1, 8)},
+    "\u2590": [(4, 0, 8, 8)],
+    "\u2594": [(0, 0, 8, 1)],
+    "\u2595": [(7, 0, 8, 8)],
+    "\u2596": [_LL], "\u2597": [_LR], "\u2598": [_UL],
+    "\u2599": [_UL, _LL, _LR], "\u259a": [_UL, _LR], "\u259b": [_UL, _UR, _LL],
+    "\u259c": [_UL, _UR, _LR], "\u259d": [_UR], "\u259e": [_UR, _LL],
+    "\u259f": [_UR, _LL, _LR],
+}
+
+
 def panel_layout(cr):
-    # Whole-pixel advances and line heights, so that the block characters of a
-    # logo meet without a seam of half-covered pixels between them.
+    # Whole-pixel advances and line heights, so that text sits on the pixel
+    # grid (the block characters are not text: see draw_block).
     layout = PangoCairo.create_layout(cr)
     options = cairo.FontOptions()
     options.set_hint_metrics(cairo.HintMetrics.ON)
@@ -677,18 +701,52 @@ def fit_panel(cr, theme, lines, x, width, size):
         size = max(min(size - 0.25, size * room / (cols * advance)), PANEL_MIN_FONT)
 
 
+def draw_block(cr, ch, cx, cy, advance, line_h):
+    # One block element in the cell whose top left corner is (cx, cy). Every
+    # edge is rounded to a whole pixel by the same rule for both neighbours,
+    # and nothing is antialiased, so cells meet without a seam.
+    cr.save()
+    cr.set_antialias(cairo.Antialias.NONE)
+    for left, top, right, bottom in BLOCK_ELEMENTS[ch]:
+        x0, x1 = cx + round(advance * left / 8), cx + round(advance * right / 8)
+        y0, y1 = cy + round(line_h * top / 8), cy + round(line_h * bottom / 8)
+        cr.rectangle(x0, y0, x1 - x0, y1 - y0)
+    cr.fill()
+    cr.restore()
+
+
 def draw_panel(cr, theme, lines, x, y, size):
     layout = panel_layout(cr)
     regular = Pango.FontDescription(f"{theme.font} {size}px")
     bold = Pango.FontDescription(f"{theme.font} Bold {size}px")
     advance, line_h = panel_metrics(cr, theme, size)
+    advance = round(advance)
+    px, py = round(x), round(y)
+
+    def show(text, at, row, color, is_bold):
+        layout.set_font_description(bold if is_bold else regular)
+        layout.set_text(text, -1)
+        cr.set_source_rgba(*rgb(color))
+        cr.move_to(px + at * advance, py + row * line_h)
+        PangoCairo.show_layout(cr, layout)
+
     for row, runs in enumerate(lines):
         for col, chunk, color, is_bold in runs:
-            layout.set_font_description(bold if is_bold else regular)
-            layout.set_text(chunk, -1)
-            cr.set_source_rgba(*rgb(color))
-            cr.move_to(round(x) + col * advance, round(y) + row * line_h)
-            PangoCairo.show_layout(cr, layout)
+            # The text between block elements is one piece of text, and each
+            # block element is a rectangle in its own cell.
+            start, piece, at = col, "", col
+            for ch in chunk:
+                if ch in BLOCK_ELEMENTS:
+                    if piece:
+                        show(piece, start, row, color, is_bold)
+                    cr.set_source_rgba(*rgb(color))
+                    draw_block(cr, ch, px + at * advance, py + row * line_h, advance, line_h)
+                    piece, start = "", at + 1
+                else:
+                    piece += ch
+                at += cells(ch)
+            if piece:
+                show(piece, start, row, color, is_bold)
 
 
 def panel_boxes(lines, px, py, advance, line_h, width):
