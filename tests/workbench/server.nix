@@ -66,7 +66,6 @@ let
       {
         echo "cwd:$PWD"
         printf 'arg:%s\n' "$@"
-        echo "disable-autoupdater:''${DISABLE_AUTOUPDATER-unset}"
         echo "api-key:''${ANTHROPIC_API_KEY-unset}"
       } >"$HOME/remote-control.log"
       exec ${pkgs.coreutils}/bin/sleep infinity
@@ -106,6 +105,21 @@ let
     "onlyoffice-desktopeditors"
     "steam"
   ];
+
+  # A calendar published as a file, which the module's feeds read over http.
+  feedDir = pkgs.writeTextDir "class.ics" ''
+    BEGIN:VCALENDAR
+    VERSION:2.0
+    PRODID:-//ravnix//workbench-server-feed//EN
+    BEGIN:VEVENT
+    UID:workbench-server-feed-1@example.org
+    DTSTAMP:20300101T000000Z
+    DTSTART:20300616T090000Z
+    DTEND:20300616T093000Z
+    SUMMARY:Lesson of the class feed
+    END:VEVENT
+    END:VCALENDAR
+  '';
 
   event = pkgs.writeText "standup.ics" ''
     BEGIN:VCALENDAR
@@ -150,7 +164,18 @@ pkgs.testers.runNixOSTest (
         ravnix.calendar = {
           caldavUrl = lib.mkForce "http://127.0.0.1:5232/";
           carddavUrl = lib.mkForce "http://127.0.0.1:5232/";
-          feeds = lib.mkForce { };
+          # A name with a dot and a dash, which vdirsyncer's own names cannot
+          # have; the feed needs no password.
+          feeds = lib.mkForce {
+            "class-2.0" = {
+              url = "http://127.0.0.1:8099/class.ics";
+              color = "light magenta";
+            };
+          };
+        };
+        systemd.services.calendar-feed = {
+          wantedBy = [ "multi-user.target" ];
+          serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 8099 --bind 127.0.0.1 --directory ${feedDir}";
         };
         services.radicale = {
           enable = true;
@@ -259,20 +284,6 @@ pkgs.testers.runNixOSTest (
             ]:
                 as_user(command)
 
-        with subtest("the real nextcloudcmd starts with no display, and fails on a server that is not there"):
-            # The stand-in below replaces it for the sync unit; this is the
-            # package the module installs by default (a Qt program, which must
-            # not ask for a display or a platform plugin to run its command
-            # line).
-            code, out = as_user(
-                "mkdir -p ~/nc-headless && NC_USER=nobody NC_PASSWORD=x "
-                "${pkgs.nextcloud-client}/bin/nextcloudcmd --non-interactive ~/nc-headless http://127.0.0.1:9 2>&1",
-                False,
-            )
-            assert code != 0, out
-            for bad in ["xcb", "qt.qpa", "platform plugin", "display"]:
-                assert bad not in out.lower(), bad + " in:\n" + out
-
         with subtest("there is one Odin, the one the tools are built with"):
             resolved = as_user("readlink -f $(command -v odin)").strip()
             assert resolved.startswith("${odin}/"), resolved
@@ -333,12 +344,43 @@ pkgs.testers.runNixOSTest (
             args = [l for l in log if l.startswith("arg:")]
             assert not [a for a in args if "secret" in a], args
             assert "arg:--non-interactive" in args, args
+            # Hidden files are part of the copy (the vault holds .obsidian,
+            # .claude and .agents), and .git is still kept out.
+            assert "arg:-h" in args, args
+            assert "arg:--exclude-anchored" in args, args
             assert "arg:${me.ravnix.nextcloud.url}" in args, args
             for folder in ${builtins.toJSON me.ravnix.nextcloud.folders}:
                 assert "arg:" + folder in args, (folder, args)
                 assert "arg:" + HOME + "/Nextcloud" + folder in args, (folder, args)
             # The item was read once for the whole run, from the vault.
             assert as_user("cat ~/rbw.log").splitlines() == ["${me.ravnix.nextcloud.passwordItem}"]
+
+        with subtest("the real nextcloudcmd takes the command line the sync unit gives it, with no display"):
+            # The stand-in replaced the client for the unit; this is the package
+            # the module installs by default (a Qt program, which must not ask
+            # for a display or a platform plugin). It gets each argv the unit
+            # built, word for word, except the local folder and the server: the
+            # server is a port nobody listens on. A flag it does not know makes
+            # it print its usage, which the assertion below would show.
+            runs = []
+            for line in as_user("cat ~/nextcloudcmd.log").splitlines():
+                if line == "RUN":
+                    runs.append([])
+                elif line.startswith("arg:"):
+                    runs[-1].append(line[len("arg:"):])
+            assert len(runs) == len(${builtins.toJSON me.ravnix.nextcloud.folders}), runs
+            for argv in runs:
+                assert "-h" in argv and "--path" in argv and "--exclude-anchored" in argv, argv
+                argv = argv[:-2] + [HOME + "/nc-headless", "http://127.0.0.1:9"]
+                code, out = as_user(
+                    "mkdir -p ~/nc-headless && NC_USER=nobody NC_PASSWORD=x "
+                    "${pkgs.nextcloud-client}/bin/nextcloudcmd " + " ".join(map(shlex.quote, argv)) + " 2>&1",
+                    False,
+                )
+                assert code != 0, out
+                assert "Error connecting to server" in out, out
+                for bad in ["Usage:", "--help", "xcb", "qt.qpa", "platform plugin", "display"]:
+                    assert bad not in out, bad + " in:\n" + out
 
         with subtest("the calendar syncs from a CalDAV server into khal"):
             machine.wait_for_unit("radicale.service")
@@ -354,16 +396,27 @@ pkgs.testers.runNixOSTest (
                 "curl -sf -X PUT -u ${me.ravnix.calendar.user}:x -H 'Content-Type: text/calendar' "
                 "--data-binary @${event} " + base + "/personal/standup.ics"
             )
-            # Locked first: the unit fails and says so, and syncs nothing.
+            machine.wait_for_unit("calendar-feed.service")
+            machine.wait_for_open_port(8099)
+            # Locked first: the unit fails and says so, and the account's
+            # calendars stay where they are, on the server.
             as_user("touch ~/rbw-locked")
             code, _ = machine.execute("su - " + USER + " -c 'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start vdirsyncer.service'")
             assert code != 0
             assert "locked" in user_journal("vdirsyncer.service")
-            assert as_user("khal list 2030-06-15 1d", False)[1].find("Standup") < 0
+            machine.fail("test -e " + HOME + "/.local/share/calendars/personal")
+            status = as_user("ls ~/.local/share/vdirsyncer/status 2>/dev/null || true").split()
+            assert not [n for n in status if n.startswith(("calendars", "contacts"))], status
+            # The feed needs no password, so it was copied before the vault
+            # was asked, and does not wait for an unlock.
+            feed = as_user("cat ~/.local/share/calendars-readonly/class-2.0/*.ics")
+            assert "Lesson of the class feed" in feed, feed
             as_user("rm -f ~/rbw-locked")
             user_ctl("start vdirsyncer.service")
             listed = as_user("khal list 2030-06-15 1d")
             assert "Standup of the workbench" in listed, listed
+            listed = as_user("khal list 2030-06-16 1d")
+            assert "Lesson of the class feed" in listed, listed
             assert user_ctl("is-enabled vdirsyncer.timer").strip() == "enabled"
 
         with subtest("iamb and aerc have their accounts"):
@@ -371,8 +424,14 @@ pkgs.testers.runNixOSTest (
             assert "${me.ravnix.matrix.userId}" in iamb and "${me.ravnix.matrix.homeserver}" in iamb, iamb
             accounts = as_user("cat ~/.config/aerc/accounts.conf")
             assert "${me.ravnix.mail.main.imap.host}" in accounts and "${me.ravnix.mail.main.smtp.host}" in accounts, accounts
-            assert "rbw get" in accounts, accounts
-            assert "secret" not in accounts, accounts
+            # The password is whatever the credential commands print. They are
+            # run here against the stand-in vault, which answers with the name
+            # of the item it was asked for: the item is the one named in the
+            # option, whatever its spelling, and rbw is what answers.
+            commands = re.findall(r"^(?:source|outgoing)-cred-cmd\s*=\s*(.+)$", accounts, re.M)
+            assert len(commands) == 2, accounts
+            for command in commands:
+                assert as_user(command).strip() == "secret-for:${me.ravnix.mail.main.passwordItem}", command
 
         with subtest("Claude Code's Remote Control is enabled, and waits for a login"):
             assert user_ctl("is-enabled claude-remote-control.service").strip() == "enabled"
@@ -383,8 +442,19 @@ pkgs.testers.runNixOSTest (
             assert user_ctl("show -p ConditionResult --value claude-remote-control.service").strip() == "no"
             machine.fail("test -e " + HOME + "/remote-control.log")
 
-        with subtest("Remote Control starts once there is a login and a repository, as the development VM before it had it"):
-            as_user("mkdir -p ~/.claude ~/work && git init -q ~/work && echo '{}' > ~/.claude/.credentials.json")
+        with subtest("Remote Control waits for the state file as well: a login without ~/.claude.json is not enough"):
+            # What copying ~/.claude/ to a new machine leaves behind: the
+            # login and the repository, and not the file next to ~/.claude/
+            # that holds the answers to the first-run dialogs. Started like
+            # this, Claude Code would ask on a terminal that is not there.
+            as_user("mkdir -p ~/.claude ~/work && git init -q ~/work && echo '{}' > ~/.claude/.credentials.json && rm -f ~/.claude.json")
+            machine.execute("su - " + USER + " -c 'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start claude-remote-control.service'")
+            assert user_ctl("is-active claude-remote-control.service", False)[1].strip() == "inactive"
+            assert user_ctl("show -p ConditionResult --value claude-remote-control.service").strip() == "no"
+            machine.fail("test -e " + HOME + "/remote-control.log")
+            machine.fail("test -e " + HOME + "/.claude.json")
+
+        with subtest("Remote Control starts once there is a login, its state file and a repository, as the development VM before it had it"):
             as_user("echo '{\"numStartups\": 3, \"projects\": {\"keep\": {\"me\": true}}}' > ~/.claude.json")
             user_ctl("start claude-remote-control.service")
             machine.wait_until_succeeds("su - " + USER + " -c 'test -s ~/remote-control.log'", timeout=60)
@@ -392,6 +462,10 @@ pkgs.testers.runNixOSTest (
             assert "cwd:" + HOME + "/work" in log, log
             assert log[1:6] == ["arg:remote-control", "arg:--name", "arg:machine", "arg:--spawn", "arg:worktree"], log
             assert "api-key:unset" in log, log
+            # Nix does the updating: the setting that keeps Claude Code from
+            # replacing itself is in the settings file the unit's claude reads.
+            settings = json.loads(as_user("cat ~/.claude/settings.json"))
+            assert settings["env"]["DISABLE_AUTOUPDATER"] == "1", settings
             # The consent prompt that cannot be answered under systemd is
             # answered in the file Claude Code keeps it in, and the rest of
             # the file is as it was.

@@ -9,11 +9,13 @@
 # modules/workbench/default.nix). It runs `claude` through the user's profile,
 # so it is the Claude Code of the host, with the wrapper that sets
 # DISABLE_AUTOUPDATER=1: Nix does the updating. The unit's text does not change
-# with a new Claude Code, so a switch does not end the phone's sessions. A
-# running Remote Control stays on the version it started with until it is
-# restarted (`systemctl --user restart claude-remote-control`), because
-# the claude-roll tool (Task 6.2) restarts the sessions in herdr's panes and
-# this one is not in a pane; Task 6.1 must include it in a Claude Code update.
+# with a new Claude Code, so a switch to a system that differs only in Claude
+# Code does not end the phone's sessions (a change of the helper below, or of
+# the programs it uses, does restart the unit). A running Remote Control stays
+# on the version it started with until it is restarted
+# (`systemctl --user restart claude-remote-control`), because the claude-roll
+# tool (Task 6.2) restarts the sessions in herdr's panes and this one is not
+# in a pane; Task 6.1 must include it in a Claude Code update.
 #
 # What that VM learned, and what is done about it:
 #   - The first run asks "Enable Remote Control? (y/n)" on a terminal, which a
@@ -21,16 +23,21 @@
 #     minute while `systemctl --user is-active` said "active". The answer is a
 #     flag in ~/.claude.json (remoteDialogSeen), which ExecStartPre sets before
 #     each start, in the file as it is. A ~/.claude.json that is not JSON stops
-#     the start and is left alone.
+#     the start and is left alone. The file has to exist: it is where Claude
+#     Code keeps the answers to every first-run dialog, and it lives in $HOME
+#     beside ~/.claude/, so copying ~/.claude/ to a new machine leaves it
+#     behind. Without it Claude Code would ask on a terminal that is not there,
+#     which is the same loop, so the unit's condition names it too.
 #   - It must start in a project directory, never in $HOME: the trust dialog
 #     does not save trust for $HOME.
 #   - It needs a claude.ai login; an API key or a setup token does not work.
 #     `claude auth login` is interactive, so it is a step by hand (README.md),
 #     and so is accepting the folder once (`cd` there and run `claude`). Until
-#     the login and the repository exist, the unit does not start and says so
-#     (a failed condition), instead of restarting every half minute behind an
-#     "active" that is not true. Once they exist, `systemctl --user start
-#     claude-remote-control` starts it, and it comes up by itself at every boot.
+#     the login, the state file and the repository exist, the unit does not
+#     start and says so (a failed condition), instead of restarting every half
+#     minute behind an "active" that is not true. Once they exist,
+#     `systemctl --user start claude-remote-control` starts it, and it comes up
+#     by itself at every boot.
 #   - ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are unset for it, so the login
 #     is the one that counts.
 #
@@ -63,9 +70,13 @@ in
           ];
           text = ''
             file="$HOME/.claude.json"
-            # No file: the login has not been made, and the unit's condition
-            # says so before this runs.
-            [ -f "$file" ] || exit 0
+            # The unit's condition has checked the file; if it is gone since,
+            # the start stops here and says so, because Claude Code would
+            # ask its first-run questions on a terminal that is not there.
+            [ -f "$file" ] || {
+              echo "$file is gone; Remote Control does not start" >&2
+              exit 1
+            }
             seen=$(jq -r '.remoteDialogSeen // false' "$file") || {
               echo "$file is not JSON; Remote Control does not start, and the file is as it was" >&2
               exit 1
@@ -85,11 +96,12 @@ in
         systemd.user.services.claude-remote-control = {
           Unit = {
             Description = "Claude Code Remote Control session";
-            # Not started until the login and the repository exist (see the
-            # header); the condition fails quietly and `systemctl --user
-            # status` says which one.
+            # Not started until the login, the state file and the repository
+            # exist (see the header); the condition fails quietly and
+            # `systemctl --user status` says which one.
             ConditionPathExists = [
               "%h/.claude/.credentials.json"
+              "%h/.claude.json"
               "${dir}/.git"
             ];
           };

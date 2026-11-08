@@ -6,6 +6,12 @@
 # laptop, so the two sides see each other's changes the same way, and a
 # conflict leaves a "conflicted copy" file as it does there.
 #
+# Hidden files are part of the copy (`-h`). The command-line client leaves
+# them out unless it is told, while a desktop client set to sync them copies
+# them, so without -h the copy here would lack the dot directories of a
+# folder, such as the .obsidian, .claude and .agents of a notes vault, and a
+# commit made from the copy would record them as deleted.
+#
 # The password. It is the app password named by ravnix.nextcloud.passwordItem
 # and it is read from the vault by rbw at the moment of each run. It goes to
 # nextcloudcmd in the NC_PASSWORD variable of that one process (the client
@@ -24,8 +30,11 @@
 # design.
 #
 # Git repositories are not synced through Nextcloud (the design: two machines
-# in one synced .git corrupt it), so a `.git` directory is excluded. The
-# client's own list (lock files, temporary files) applies as well.
+# in one synced .git corrupt it), so a `.git` directory is excluded. Since
+# hidden files are synced, that exclusion is the only thing that keeps `.git`
+# out, and it must match at every depth (README.md says it is not yet checked
+# against a real server). The client's own list (lock files, temporary files)
+# applies as well.
 {
   config,
   lib,
@@ -71,7 +80,7 @@ in
           ''
             mkdir -p -- ${lib.escapeShellArg local}
             NC_USER=${lib.escapeShellArg cfg.user} NC_PASSWORD=$password \
-              ${nextcloudcmd} --non-interactive --exclude-anchored ${exclude} \
+              ${nextcloudcmd} --non-interactive -h --exclude-anchored ${exclude} \
               --path ${lib.escapeShellArg folder} ${lib.escapeShellArg local} ${lib.escapeShellArg cfg.url} ||
               status=1
           '';

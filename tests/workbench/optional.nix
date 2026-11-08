@@ -95,6 +95,20 @@ let
       };
     };
   };
+  # vdirsyncer takes only letters, digits and _ in the name of a pair or a
+  # storage; a feed's name may have a dot and a dash as well.
+  feed = url: { inherit url; };
+  dottedFeed = host {
+    ravnix.calendar.feeds = lib.mkForce {
+      "class-2.0" = feed "http://calendar.example.org/class.ics";
+    };
+  };
+  alikeFeeds = host {
+    ravnix.calendar.feeds = lib.mkForce {
+      "a-b" = feed "http://calendar.example.org/a.ics";
+      "a.b" = feed "http://calendar.example.org/b.ics";
+    };
+  };
   alone = host { ravnix.mail = lib.mkForce { only = mail "only"; }; };
   badName = host { ravnix.mail = lib.mkForce { "two words" = mail "x"; }; };
   starttls = host {
@@ -235,9 +249,10 @@ let
     (lib.optional (
       (service everything "claude-remote-control").Unit.ConditionPathExists != [
         "%h/.claude/.credentials.json"
+        "%h/.claude.json"
         "${me.ravnix.server.remoteControlDir}/.git"
       ]
-    ) "Remote Control starts without its login and its repository")
+    ) "Remote Control starts without its login, its state file and its repository")
     (lib.optional (
       (service everything "nextcloud-sync").Unit.X-SwitchMethod != "keep-old"
     ) "a switch can start a Nextcloud sync")
@@ -259,6 +274,19 @@ let
     (lib.optional (
       !lib.hasInfix "collections = null" (vdirsyncerConfig everything)
     ) "a feed is discovered like an account")
+    (lib.optional (
+      !lib.hasInfix "[pair feed_class_2_0]" (vdirsyncerConfig dottedFeed)
+    ) "a feed named class-2.0 has no pair that vdirsyncer accepts: ${vdirsyncerConfig dottedFeed}")
+    (lib.optional (lib.any
+      (l: lib.hasPrefix "[" l && builtins.match "\\[(general|(pair|storage) [A-Za-z0-9_]+)]" l == null)
+      (lib.splitString "\n" (vdirsyncerConfig dottedFeed))
+    ) "a section of vdirsyncer's config has a name with a character vdirsyncer refuses")
+    (lib.optional (
+      !lib.any (lib.hasInfix "the same name in vdirsyncer") (failed alikeFeeds)
+    ) "two feeds that vdirsyncer would see under one name are accepted")
+    (lib.optional (
+      failed dottedFeed != [ ]
+    ) "a feed with a dot and a dash in its name is refused: ${toString (failed dottedFeed)}")
     (lib.optional (lib.hasInfix "contacts" (
       vdirsyncerConfig (host {
         ravnix.calendar.carddavUrl = lib.mkForce null;
@@ -286,10 +314,34 @@ pkgs.runCommand "workbench-optional" { } (''
   ! grep -q -e 'set -x' -e 'xtrace' -e 'set -o verbose' "$nc" || fail "the Nextcloud sync traces its commands"
   ! grep -q -E 'export +(NC_)?PASSWORD' "$nc" || fail "the Nextcloud sync exports the password to every command"
   grep -q 'exit 75' "$nc" || fail "the Nextcloud sync does not stop on a locked vault"
+  # Hidden files are part of the copy (the desktop client on the laptop syncs
+  # them, and the vault holds .obsidian, .claude and .agents): -h on every
+  # run of the client, with the exclusion of .git still given.
+  [ "$(grep -c -F -e ' -h ' "$nc")" = ${toString (lib.length me.ravnix.nextcloud.folders)} ] ||
+    fail "nextcloudcmd is not given -h for every folder, so hidden files stay out of the copy"
+  [ "$(grep -c -F -e '--exclude-anchored' "$nc")" = ${toString (lib.length me.ravnix.nextcloud.folders)} ] ||
+    fail "nextcloudcmd is not given the exclusion of .git for every folder"
   vs=${script "vdirsyncer"}
   grep -q 'exit 75' "$vs" || fail "the calendar sync does not stop on a locked vault"
   grep -q 'vdirsyncer discover' "$vs" || fail "the calendar sync does not discover"
   ! grep -q -e 'set -x' -e 'xtrace' "$vs" || fail "the calendar sync traces its commands"
+  # A feed is a file on the web that needs no password: it is copied before
+  # the vault is asked, so it does not wait for an unlock. The account's
+  # pairs are named, so the feed is not synced a second time after the guard.
+  at() { grep -n -F -e "$2" "$1" | head -n 1 | cut -d: -f1 || true; }
+  guard=$(at "$vs" 'exit 75')
+  feed=$(at "$vs" 'vdirsyncer discover feed_class && vdirsyncer sync feed_class')
+  accountDiscover=$(at "$vs" 'vdirsyncer discover calendars')
+  accountSync=$(at "$vs" 'vdirsyncer sync calendars')
+  if [ -z "$guard" ] || [ -z "$feed" ] || [ -z "$accountDiscover" ] || [ -z "$accountSync" ]; then
+    fail "the calendar sync lacks a step (guard '$guard', feed '$feed', account discover '$accountDiscover', account sync '$accountSync')"
+  else
+    [ "$feed" -lt "$guard" ] || fail "the feed is not copied before the vault guard"
+    [ "$guard" -lt "$accountDiscover" ] && [ "$accountDiscover" -lt "$accountSync" ] ||
+      fail "the account is synced before the vault guard"
+  fi
+  ! grep -q -E '^vdirsyncer (discover|metasync|sync)$' "$vs" ||
+    fail "the calendar sync runs vdirsyncer for every pair, feeds again after the guard"
   rc=${one (service everything "claude-remote-control").Service.ExecStartPre}
   grep -q 'remoteDialogSeen' "$rc" || fail "Remote Control does not answer its consent prompt"
   grep -q 'is not JSON' "$rc" || fail "Remote Control does not refuse a ~/.claude.json that is not JSON"

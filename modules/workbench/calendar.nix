@@ -15,11 +15,19 @@
 #
 # The sync is a user unit that a timer starts every fifteen minutes, on the
 # quarter hours, two minutes after boot, and once when the server was off at
-# a quarter. Each run discovers first, so a calendar made on the phone appears
-# here by itself (`implicit = "create"` makes its directory without asking),
-# then syncs the colors and names, then the events. With the vault locked the
-# unit stops with a message and status 75 (./unlocked.nix) and the next run
-# tries again.
+# a quarter. Each run copies the feeds first, which need no password. Then it
+# asks the vault and discovers, so a calendar made on the phone appears here
+# by itself (`implicit = "create"` makes its directory without asking), syncs
+# the colors and names, and then the events. With the vault locked the unit
+# stops with a message and status 75 (./unlocked.nix) after the feeds, and the
+# next run tries again. khal reads the account's calendars, so it works from
+# the first run that found the vault unlocked; until then it reports that its
+# default calendar does not exist.
+#
+# vdirsyncer takes only letters, digits and _ in the name of a pair or a
+# storage, and a feed's name may have a dot and a dash as well (it is a
+# directory and a khal calendar), so the pair is named with those spelled _.
+# Two feeds that would end up under one name are refused by an assertion.
 #
 # Style (docs/style.md, rule 9, an exception): khal draws with the terminal's
 # 16 ANSI colors, which the terminal sets to Catppuccin Mocha; its dates and
@@ -29,8 +37,23 @@ let
   os = config;
   user = os.ravnix.user.username;
   calendar = os.ravnix.calendar;
+  # A feed's name as vdirsyncer can have it in a section name.
+  spelled = name: lib.replaceStrings [ "." "-" ] [ "_" "_" ] name;
+  # The feeds that vdirsyncer would see under one name.
+  alike = lib.filterAttrs (_: names: lib.length names > 1) (
+    lib.groupBy spelled (lib.optionals (calendar != null) (lib.attrNames calendar.feeds))
+  );
 in
 {
+  assertions = [
+    {
+      assertion = alike == { };
+      message = "ravnix.calendar.feeds has names that are the same name in vdirsyncer (it takes only letters, digits and _, so . and - count as _): ${
+        lib.concatStringsSep "; " (lib.mapAttrsToList (_: names: lib.concatStringsSep ", " names) alike)
+      }.";
+    }
+  ];
+
   home-manager.users.${user} =
     { config, pkgs, ... }:
     let
@@ -77,6 +100,10 @@ in
       ];
 
       feedNames = lib.attrNames calendar.feeds;
+      pairOf = name: "feed_${spelled name}";
+      accountPairs = lib.concatStringsSep " " (
+        [ "calendars" ] ++ lib.optional (calendar.carddavUrl != null) "contacts"
+      );
       vdirsyncerConfig = lib.concatStringsSep "\n" (
         [
           ''
@@ -112,13 +139,13 @@ in
           (storage "contacts_remote" (remote "carddav" calendar.carddavUrl))
         ]
         ++ lib.concatMap (name: [
-          (pair "feed_${name}" { collections = null; })
-          (storage "feed_${name}_local" {
+          (pair (pairOf name) { collections = null; })
+          (storage "${pairOf name}_local" {
             type = "filesystem";
             path = "${readonly}/${name}/";
             fileext = ".ics";
           })
-          (storage "feed_${name}_remote" {
+          (storage "${pairOf name}_remote" {
             type = "http";
             inherit (calendar.feeds.${name}) url;
           })
@@ -129,13 +156,24 @@ in
         name = "ravnix-calendar-sync";
         runtimeInputs = [ pkgs.vdirsyncer ];
         text = ''
+          ${lib.optionalString (feedNames != [ ]) ''
+            # A feed that cannot be fetched does not keep the account from
+            # syncing; the unit fails at the end if one could not.
+            feeds=0
+            ${lib.concatMapStrings (name: ''
+              if ! { vdirsyncer discover ${pairOf name} && vdirsyncer sync ${pairOf name}; }; then
+                feeds=1
+              fi
+            '') feedNames}
+          ''}
           ${import ./unlocked.nix {
             inherit rbw;
             what = "the calendar's password";
           }}
-          vdirsyncer discover
-          vdirsyncer metasync
-          vdirsyncer sync
+          vdirsyncer discover ${accountPairs}
+          vdirsyncer metasync ${accountPairs}
+          vdirsyncer sync ${accountPairs}
+          ${lib.optionalString (feedNames != [ ]) ''exit "$feeds"''}
         '';
       };
     in
