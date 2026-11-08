@@ -923,6 +923,8 @@ let
       BASE = "${palette.base}"
       MANTLE = "${palette.mantle}"
       ACCENT = "${mauve.config.ravnix.theme.roles.accent}"
+      WASH = "${mauve.config.ravnix.theme.roles.wash}"
+      DEEPEST = "${mauve.config.ravnix.theme.roles.deepest}"
       GPU_ADDRESS = "${gpuAddress}"
     ''
     + builtins.readFile ./helpers/vm-test.py;

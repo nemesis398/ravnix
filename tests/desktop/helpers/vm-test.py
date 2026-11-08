@@ -257,6 +257,47 @@ wait_for("a notification on screen", lambda: as_user("dunstctl count displayed")
 machine.screenshot("notification")
 as_user("dunstctl close-all")
 
+# ── the radial menu ───────────────────────────────────────────────────────────
+# sway-radial is a user service of the session. It reads the trackpad, which the
+# VM has none of: it says so in the journal and carries on. SIGUSR1 opens the
+# ring for the pointer, as the mouse's button does through sway-mouse, and a
+# screenshot shows what it draws: the lit sector in the accent, the others in
+# the wash, the hub in Crust, all opaque and drawn at once; and the same signal
+# again takes it away at once.
+wait_for("sway-radial", lambda: as_user("systemctl --user is-active sway-radial", check=False)[0] == 0, 60)
+
+
+def grab(name):
+    as_user(f"grim /tmp/{name}.png")
+    machine.copy_from_machine(f"/tmp/{name}.png", "")
+    return Counter(png_pixels(machine.out_dir / f"{name}.png"))
+
+
+def radial_signal():
+    as_user("systemctl --user kill --kill-whom=main --signal=SIGUSR1 sway-radial.service")
+
+
+wash, deepest = rgb(WASH), rgb(DEEPEST)
+closed = grab("radial-closed")
+radial_signal()
+wait_for(
+    "the ring on screen",
+    lambda: (lambda c: c[accent] - closed[accent] > 3000 and c[wash] - closed[wash] > 20000)(grab("radial-open")),
+    60,
+)
+machine.screenshot("radial-open")
+opened = grab("radial-shot")
+assert opened[deepest] - closed[deepest] > 3000, "the hub of the ring is not drawn in Crust"
+# Opaque: the ring is drawn in the colors of the roles and in no blend of them.
+# A translucent wedge would show the screen through it and be a color of its own.
+assert opened[wash] - closed[wash] > 20000, "the wedges are not the wash"
+radial_signal()
+wait_for(
+    "the ring to be gone at once",
+    lambda: (lambda c: c[wash] - closed[wash] < 200 and c[accent] - closed[accent] < 200)(grab("radial-gone")),
+    20,
+)
+
 # ── the locked screen ─────────────────────────────────────────────────────────
 swaymsg("exec", "swaylock -f")
 # (swaylock is a wrapper too: the process is called .swaylock-wrapped)
