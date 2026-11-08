@@ -323,6 +323,9 @@ pkgs.testers.runNixOSTest {
           until(what + ": herdr to attach again by itself", new_clients, budget + 50)
           attached = time.monotonic() - since
           # Past the budget, keep looking a while so a failure says how late it was.
+          # The attach itself may have used the whole time, so the loop may not
+          # run at all, and the failure below still has a text to show.
+          text = ""
           while time.monotonic() - since < budget + 50:
               text = screen()
               if "ravnix-before-" + n in text and "ravnix-after-" + n in text:
