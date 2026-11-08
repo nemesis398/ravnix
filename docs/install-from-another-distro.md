@@ -155,10 +155,13 @@ The grep path appears in all six shell hooks, the fish one included. If `/etc/ba
 
 On the laptop, home-manager writes `~/.ssh/config`. It begins with the block that reaches the server, for the main terminal key and the main connection (`modules/glue/terminal.nix`). home-manager does not replace a file it did not write, so a `~/.ssh/config` that is already in your home, from this distribution or from a backup you restore, gets in the way:
 
-- Without `home-manager.backupFileExtension` in your private flake, the switch stops with `Existing file '/home/<you>/.ssh/config' is in the way`.
-- With it, the switch renames the file to `~/.ssh/config.<extension>` and says nothing. From then on nothing reads it.
+- Without `home-manager.backupFileExtension` or `home-manager.backupCommand` in your private flake, the switch stops before it changes anything. The `home-manager-<you>` unit fails with `Existing file '/home/<you>/.ssh/config' would be clobbered`.
+- With `home-manager.backupFileExtension`, the switch renames the file to `~/.ssh/config.<extension>`. It logs a warning first (`Existing file ... is in the way of ..., will be moved to ...`), and the warning is in the journal of the `home-manager-<you>` unit, not on the terminal where you ran the switch. From then on nothing reads the renamed file.
+- If `~/.ssh/config.<extension>` exists already, the switch stops again, with `Existing file '/home/<you>/.ssh/config.<extension>' would be clobbered by backing up '/home/<you>/.ssh/config'`, and the file stays where it is. Move the old backup away, or set `home-manager.overwriteBackup = true`, which replaces it.
+- With `home-manager.backupCommand`, the switch runs that command with the file's path as its argument, in place of the rename (and ahead of `backupFileExtension`, if you set both). The command has to move or copy the file itself. If it fails, the switch says so and goes on, and the new `~/.ssh/config` replaces whatever is left.
+- A `~/.ssh/config` that is a symlink is never backed up, whichever of these you set. Unless it points into a home-manager generation, the switch stops with `would be clobbered`. Remove the link first, after you have kept what it points to.
 
-Either way, the hosts that file named lose their settings. That matters most for the git hosts. A block that says `IdentityAgent none` and names the security key's handle keeps the agent of `SSH_AUTH_SOCK`, Bitwarden's, away from that host. Without the block, ssh offers the host every key of that agent.
+Whichever way you go, the hosts that file named lose their settings. That matters most for the git hosts. A block that says `IdentityAgent none` and names the security key's handle keeps the agent of `SSH_AUTH_SOCK`, rbw's, away from that host. Without the block, ssh offers the host every key of that agent.
 
 Before the first switch, move each block into your private flake, as `programs.ssh.matchBlocks` of the laptop's home-manager configuration:
 

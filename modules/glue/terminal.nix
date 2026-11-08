@@ -12,7 +12,7 @@
 #             `Host ravnix-server`: the server's NetBird address, the user's
 #             account (the same on both hosts), and the key of
 #             serverAccess.identityFile with no agent, so neither the YubiKey
-#             nor Bitwarden's agent is asked and a reconnect after a suspend
+#             nor rbw's agent is asked and a reconnect after a suspend
 #             finds nothing locked. The host key is always checked
 #             (StrictHostKeyChecking yes): against serverAccess.hostKey,
 #             pinned, or, without one, against what ~/.ssh/known_hosts holds
@@ -29,15 +29,20 @@
 #   ~/.ssh/config is home-manager's on the laptop (programs.ssh), so that
 #             the Include above comes first. home-manager replaces no file
 #             it did not write: an existing ~/.ssh/config stops the switch
-#             ("Existing file ... is in the way"), or, where the private
-#             flake sets home-manager.backupFileExtension, is renamed
-#             without a word, and nothing reads the hosts it named from
-#             then on. That matters most for the git hosts: their blocks
-#             say IdentityAgent none and name the security key's handle, and
-#             without them ssh offers those hosts the keys of SSH_AUTH_SOCK,
-#             Bitwarden's agent. Such blocks go into programs.ssh.matchBlocks
-#             of the private flake, before the first switch
-#             (docs/install-from-another-distro.md, the last section).
+#             ("Existing file ... would be clobbered"), or, where the
+#             private flake sets home-manager.backupFileExtension, is renamed
+#             to ~/.ssh/config.<extension>, with a warning in the journal of
+#             the home-manager-<user> unit, and nothing reads the hosts it
+#             named from then on. A backup file that exists already stops the
+#             switch too (home-manager.overwriteBackup replaces it);
+#             home-manager.backupCommand runs a command on the file instead
+#             of renaming it, and the switch goes on if the command fails; a
+#             symlink is never backed up. That matters most for the git
+#             hosts: their blocks say IdentityAgent none and name the
+#             security key's handle, and without them ssh offers those hosts
+#             the keys of SSH_AUTH_SOCK, rbw's agent. Such blocks go into
+#             programs.ssh.matchBlocks of the private flake, before the first
+#             switch (docs/install-from-another-distro.md, the last section).
 #   the main key ($mod+Return; ravnix.desktop.terminal.main, which the Sway
 #             config and its session layout read) opens ghostty running
 #             ravnix-terminal: herdr's own remote attach, `herdr --remote
