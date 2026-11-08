@@ -321,6 +321,16 @@ pkgs.testers.runNixOSTest (
             user_ctl("cat nextcloud-sync.service")
             assert user_ctl("is-enabled nextcloud-sync.timer").strip() == "enabled"
             assert user_ctl("is-active nextcloud-sync.timer").strip() == "active"
+            assert user_ctl("is-enabled vdirsyncer.timer").strip() == "enabled"
+            assert user_ctl("is-active vdirsyncer.timer").strip() == "active"
+            # Both timers fire on the clock of the VM, which is real time, in
+            # the middle of subtests that count runs and look for what a
+            # locked run did not do. They are stopped (they stay enabled), so
+            # a run is only one the test starts.
+            user_ctl("stop nextcloud-sync.timer vdirsyncer.timer")
+            assert user_ctl("is-active nextcloud-sync.timer", False)[1].strip() == "inactive"
+            assert user_ctl("is-active vdirsyncer.timer", False)[1].strip() == "inactive"
+            assert user_ctl("is-enabled vdirsyncer.timer").strip() == "enabled"
             unit = user_ctl("cat nextcloud-sync.service")
             # The password is handed over in the environment of the one
             # process, never in the unit.
@@ -424,7 +434,6 @@ pkgs.testers.runNixOSTest (
             assert "Standup of the workbench" in listed, listed
             listed = as_user("khal list 2030-06-16 1d")
             assert "Lesson of the class feed" in listed, listed
-            assert user_ctl("is-enabled vdirsyncer.timer").strip() == "enabled"
 
         with subtest("iamb and aerc have their accounts"):
             iamb = as_user("cat ~/.config/iamb/config.toml")
