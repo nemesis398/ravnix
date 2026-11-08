@@ -168,16 +168,17 @@ let
       (byte 2)
       (byte 4)
     ];
-  # The Catppuccin theme of the browser, in the roles: the frame is Crust, the
-  # toolbar Base, and the accent is on the icons and the address.
+  # The Catppuccin theme of the browser, in the roles: the strip that frames the
+  # work (the frame, the address bar and the buttons) is Mantle (style rule 1),
+  # the toolbar Base, and the accent is on the icons and the address.
   heliumTheme = builtins.toJSON {
     manifest_version = 3;
     name = "Ravnix";
     description = "Catppuccin Mocha in the accent of ravnix";
     version = "1.0.0";
     theme.colors = lib.mapAttrs (_: rgb) {
-      frame = roles.deepest;
-      frame_inactive = roles.deepest;
+      frame = roles.dock;
+      frame_inactive = roles.dock;
       frame_incognito = roles.selected;
       frame_incognito_inactive = roles.selected;
       bookmark_text = roles.text;
@@ -189,11 +190,11 @@ let
       toolbar = roles.canvas;
       toolbar_button_icon = roles.accent;
       omnibox_text = roles.accent;
-      omnibox_background = roles.deepest;
+      omnibox_background = roles.dock;
       ntp_background = roles.canvas;
       ntp_link = roles.accent;
       ntp_text = roles.text;
-      button_background = roles.deepest;
+      button_background = roles.dock;
     };
   };
 
@@ -247,30 +248,34 @@ in
     # XWayland, with a blurred window at a fractional scale.
     NIXOS_OZONE_WL = "1";
     # nmtui's color scheme, in the colors of the terminal's palette: newt names
-    # the 16 ANSI colors, which ghostty maps onto Catppuccin Mocha (black is
-    # Surface1, white Subtext1, the bright magenta slot is the accent).
+    # the 16 ANSI slots, which ghostty maps onto Catppuccin Mocha (the theme
+    # module's palette). black is slot 0, Surface1, so the background is that
+    # and not Base: newt cannot ask for the terminal's own background. lightgray
+    # is slot 7, Subtext1, the nearest slot to Text (white is slot 15, which is
+    # Subtext0, and dimmer); gray is slot 8, Surface2; brightmagenta is slot 13,
+    # the accent. Not seen on screen.
     NEWT_COLORS = lib.concatStringsSep " " [
-      "root=white,black"
-      "window=white,black"
+      "root=lightgray,black"
+      "window=lightgray,black"
       "border=brightmagenta,black"
       "title=brightmagenta,black"
       "button=black,brightmagenta"
       "actbutton=black,brightmagenta"
-      "compactbutton=white,black"
-      "checkbox=white,black"
+      "compactbutton=lightgray,black"
+      "checkbox=lightgray,black"
       "actcheckbox=black,brightmagenta"
-      "entry=white,black"
+      "entry=lightgray,black"
       "disentry=gray,black"
-      "label=white,black"
-      "listbox=white,black"
+      "label=lightgray,black"
+      "listbox=lightgray,black"
       "actlistbox=black,brightmagenta"
-      "sellistbox=white,black"
+      "sellistbox=lightgray,black"
       "actsellistbox=black,brightmagenta"
-      "textbox=white,black"
+      "textbox=lightgray,black"
       "acttextbox=black,brightmagenta"
-      "helpline=white,black"
-      "roottext=white,black"
-      "emptyscale=white,black"
+      "helpline=lightgray,black"
+      "roottext=lightgray,black"
+      "emptyscale=lightgray,black"
       "fullscale=brightmagenta,black"
       "shadow=black,black"
     ];
@@ -412,7 +417,7 @@ in
           ];
           ram = true;
           ram_color = bare palette.pink;
-          engine_color = bare palette.red;
+          engine_color = bare roles.label;
           fps = true;
           fps_color_change = [
             (bare palette.red)
@@ -420,7 +425,7 @@ in
             (bare palette.green)
           ];
           wine = true;
-          wine_color = bare palette.red;
+          wine_color = bare roles.label;
           winesync = true;
           frame_timing = true;
           frametime_color = bare roles.accent;

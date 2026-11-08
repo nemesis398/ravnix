@@ -6,8 +6,10 @@
 # for them; the wtype is 0.5 or later; Handy is pinned to the iGPU; MangoHud
 # has no transparent background; and Helium gets its policies.
 #
-# The rows of the table that belong to other tasks (CUPS, scanning, NetBird,
-# NordVPN, logiops and the udev rules) are Task 3.6's checks (desktop-printing).
+# The rows of the table that belong to other tasks are not checked here: CUPS,
+# scanning, NetBird, NordVPN, logiops and the udev rules are Task 3.6's
+# (desktop-printing), and the CCNA deck tooling of the Study row is Task 3.2b's
+# (packages/ccna-deck). Packet Tracer, the other Study tool, is here.
 #
 # Packet Tracer cannot be built without Cisco's download, which no build can
 # fetch. The system under test gets an empty package of the same name for it, so
@@ -233,6 +235,15 @@ let
     MakeMKV = [ "makemkv" ];
     FreeRDP = [ "freerdp" ];
     Flatpak = [ "flatpak" ];
+    # From the spec's longer list of what the laptop no longer carries.
+    xarchiver = [ "xarchiver" ];
+    mkvtoolnix = [ "mkvtoolnix" ];
+    llama-cpp = [ "llama-cpp" ];
+    networkmanager-openvpn = [ "NetworkManager-openvpn" ];
+    borgbackup = [ "borgbackup" ];
+    snapper = [ "snapper" ];
+    sddm = [ "sddm" ];
+    plymouth = [ "plymouth" ];
   };
   droppedPatterns = lib.concatStringsSep "\n" (
     lib.concatLists (lib.mapAttrsToList (label: names: map (n: "${label}\t${n}") names) dropped)
@@ -258,11 +269,7 @@ let
   );
   mango = (hm.xdg.configFile."MangoHud/MangoHud.conf" or { text = ""; }).text;
   mangoColor = hex: lib.removePrefix "#" hex;
-  handyLaunch =
-    if self.packages.${system} ? handy-launch then
-      builtins.readFile "${self.packages.${system}.handy-launch}/bin/handy-launch"
-    else
-      "";
+  handyLaunch = host.pkgs.ravnix.handy-launch;
 
   evalFailures =
     lib.optional config.services.flatpak.enable "Flatpak is enabled"
@@ -334,15 +341,21 @@ let
     ++ lib.optional (
       !(lib.hasInfix "frametime_color=${mangoColor roles.accent}" mango)
     ) "MangoHud frametime graph is not the accent"
+    # The engine and the Wine version are labels, not warnings: no warm hue.
     ++ lib.optional (
-      builtins.match ".*card[0-9].*" handyLaunch != null
-    ) "handy-launch names a GPU by cardN"
+      !(lib.hasInfix "engine_color=${mangoColor roles.label}" mango)
+    ) "MangoHud's engine label is not the label role"
     ++ lib.optional (
-      builtins.match ".*50_mesa[.]json.*" handyLaunch == null
-    ) "handy-launch does not pin the EGL vendor to Mesa"
+      !(lib.hasInfix "wine_color=${mangoColor roles.label}" mango)
+    ) "MangoHud's Wine label is not the label role"
+    # nmtui: newt's `lightgray` is ANSI 7 and `white` ANSI 15; ghostty's palette
+    # makes 7 the label role (Subtext1), the nearest slot to Text.
     ++ lib.optional (
-      builtins.match ".*radeon_icd[.]x86_64[.]json.*" handyLaunch == null
-    ) "handy-launch does not pin Vulkan to RADV"
+      !lib.elem "7=${roles.label}" hm.programs.ghostty.settings.palette
+    ) "ghostty's palette slot 7 is not the label role: the nmtui colors assume it"
+    ++ lib.optional (
+      !(lib.hasInfix "root=lightgray,black" config.environment.sessionVariables.NEWT_COLORS)
+    ) "nmtui's text is not lightgray (ANSI 7, the label role)"
     ++ lib.optional (
       !lib.elem "clngdbkpkpeebahjckkjfobafhncgmne" (policy.ExtensionInstallForcelist or [ ])
     ) "Stylus is not force-installed in Helium"
@@ -384,18 +397,35 @@ let
       (builtins.fromJSON h.config.environment.etc."chromium/policies/managed/extra.json".text)
       .ManagedBookmarks or [ ]
     );
+  rgbOf =
+    hex:
+    map (i: lib.fromHexString (builtins.substring i 2 (lib.removePrefix "#" hex))) [
+      0
+      2
+      4
+    ];
   themeFailures =
-    lib.optional
-      (
-        (themeOf host).toolbar_button_icon or null != [
-          203
-          166
-          247
-        ]
-      )
-      "the browser theme's icons are not Mauve, the default accent: ${
-        builtins.toJSON ((themeOf host).toolbar_button_icon or null)
+    # The strip that frames the work is Mantle (style rule 1), and text on a
+    # fill takes Crust only inside a role that says so.
+    lib.optional ((themeOf host).frame or null != rgbOf roles.dock)
+      "the browser's frame is not the dock role (Mantle): ${
+        builtins.toJSON ((themeOf host).frame or null)
       }"
+    ++ lib.optional (
+      (themeOf host).omnibox_background or null != rgbOf roles.dock
+    ) "the browser's address bar is not the dock role (Mantle)"
+    ++
+      lib.optional
+        (
+          (themeOf host).toolbar_button_icon or null != [
+            203
+            166
+            247
+          ]
+        )
+        "the browser theme's icons are not Mauve, the default accent: ${
+          builtins.toJSON ((themeOf host).toolbar_button_icon or null)
+        }"
     ++
       lib.optional
         (
@@ -447,7 +477,7 @@ pkgs.runCommand "desktop-apps"
       ) "Packet Tracer's hash changed: ${realPacketTracer.outputHash or "none"}"
     );
     inherit droppedPatterns;
-    inherit profile;
+    inherit profile handyLaunch;
     closureStorePaths = "${closure}/store-paths";
     appLines = lib.concatMapStrings (a: "${appLine a}\n") apps;
     webappFiles = lib.concatStringsSep " " webapps;
@@ -479,6 +509,14 @@ pkgs.runCommand "desktop-apps"
         fi
       done
     done < <(printf '%s' "$appLines")
+
+    # Handy's launcher pins the iGPU through Mesa's EGL vendor file and RADV's
+    # ICD file, and names no GPU by cardN (the numbers can swap between boots).
+    # The script is read here, in the build, and not at evaluation.
+    script=$handyLaunch/bin/handy-launch
+    ! grep -Eq 'card[0-9]' "$script" || fail "handy-launch names a GPU by cardN"
+    grep -q '50_mesa[.]json' "$script" || fail "handy-launch does not pin the EGL vendor to Mesa"
+    grep -q 'radeon_icd[.]x86_64[.]json' "$script" || fail "handy-launch does not pin Vulkan to RADV"
 
     # NixOS's offload command is prime-run (the hardware module); a second one
     # from here would collide with it.
