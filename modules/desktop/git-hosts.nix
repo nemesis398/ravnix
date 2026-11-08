@@ -46,7 +46,11 @@
 # touch:
 #   GIT_SSH_COMMAND="ssh -o IdentityAgent=$SSH_AUTH_SOCK -o IdentitiesOnly=no -o ControlPath=none" git push
 # A fallback alias (HostName github.com and an IdentityAgent of its own)
-# needs `ControlPath none` for the same reason (tests/laptop/git-hosts.nix).
+# needs `ControlPath none` for the same reason, and `IdentitiesOnly no` as the
+# command line has it: the pin's `identitiesonly yes` reaches the alias too,
+# and with it ssh offers only the security key's handles, so the alias still
+# asks for the touch. That fails closed, but it is no fallback
+# (tests/laptop/git-hosts.nix).
 {
   config,
   lib,
