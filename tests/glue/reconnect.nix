@@ -7,9 +7,13 @@
 #     huginn reaches a pane there, and every window of it shows the one
 #     session of muninn's herdr server.
 #   - A killed TCP connection, an IP change of huginn, and a suspend of
-#     huginn's VM for 60 s: each time, within 10 s, what is typed in the same
-#     window reaches the same pane, run by the same shell, and muninn still
-#     has exactly one herdr session, served by the same server process.
+#     huginn's VM for 60 s: each time, with no key pressed, herdr attaches
+#     again by itself, and within 10 s the window shows the session as it
+#     is now: the line a program in the pane printed before the drop, and
+#     the one it printed after it, while huginn was away. Only then is
+#     anything typed, and it reaches the same pane, run by the same shell;
+#     muninn still has exactly one herdr session, served by the same server
+#     process.
 #   - The main connection forwards the glue's sockets, the link's and the
 #     security key agent's, to muninn's runtime directory, and has them
 #     there again after each of those, as one connection.
@@ -18,10 +22,15 @@
 #   - A detach (prefix+d) closes the window and leaves the session.
 #   - The second key ($mod+Alt+Return) opens a bash on huginn itself.
 #
-# The time limit is measured from the moment of the drop to the moment
-# muninn has the typed line, by a clock of the driver; nothing waits a fixed
-# time for something to happen. Keys are typed in the layout of the Sway
-# config, German, so the typed words are letters other than y and z.
+# What the window shows is read from ghostty itself: a key that ghostty
+# takes (write_screen_file, bound in the test node only) writes the screen
+# into a file and its path into the clipboard. herdr never sees that key, so
+# reading the screen is no input that could make herdr attach or draw. The
+# time limit is measured from the drop (for the suspend, from the moment
+# huginn runs again) to the moment the window shows the new line, by a
+# clock of the driver; nothing waits a fixed time for something to happen.
+# Keys are typed in the layout of the Sway config, German, so the typed
+# words are letters other than y and z.
 {
   self,
   pkgs,
@@ -46,6 +55,17 @@ let
   # shell ran it, `clipmark` copies the token with OSC 52.
   marker = pkgs.writeShellScriptBin "marker" ''
     printf '%s %s\n' "$HERDR_PANE_ID" "$PPID" >>"$HOME/marks"
+  '';
+  # `screenmark` prints one line, waits until the test lets it go, which the
+  # test does once huginn has dropped the connection, and prints another.
+  screenmark = pkgs.writeShellScriptBin "screenmark" ''
+    n=$(( $(cat "$HOME/screen-n" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "$n" >"$HOME/screen-n"
+    printf 'ravnix-before-%s\n' "$n"
+    : >"$HOME/screen-waiting-$n"
+    while [ ! -e "$HOME/screen-release-$n" ]; do ${pkgs.coreutils}/bin/sleep 0.2; done
+    printf 'ravnix-after-%s\n' "$n"
+    : >"$HOME/screen-done-$n"
   '';
   clipmark = pkgs.writeShellScriptBin "clipmark" ''
     printf '\033]52;c;%s\007' "$(printf %s ${token} | ${pkgs.coreutils}/bin/base64 -w0)"
@@ -114,6 +134,7 @@ pkgs.testers.runNixOSTest {
       ];
       environment.systemPackages = [
         marker
+        screenmark
         clipmark
       ];
       virtualisation = {
@@ -159,6 +180,10 @@ pkgs.testers.runNixOSTest {
             Name=Apple Music
             Exec=true
           '';
+          # The test reads what the focused window shows from ghostty: this
+          # key writes the screen into a file and its path into the
+          # clipboard, and ghostty takes it, so herdr never sees it.
+          programs.ghostty.settings.keybind = [ "ctrl+shift+f9=write_screen_file:copy" ];
         }
       ];
       environment.systemPackages = [
@@ -262,6 +287,54 @@ pkgs.testers.runNixOSTest {
           return False
 
 
+      def screen():
+          """What the focused ghostty window shows, as ghostty writes it: a key herdr never sees."""
+          as_user(huginn, "wl-copy --clear || true")
+          huginn.send_key("ctrl-shift-f9")
+          status, text = as_user(
+              huginn,
+              'for i in $(seq 30); do p=$(timeout 1 wl-paste --no-newline 2>/dev/null) && [ -f "$p" ] && exec cat -- "$p"; sleep 0.1; done; exit 1',
+              check=False,
+          )
+          return text if status == 0 else ""
+
+
+      def plant():
+          """Before a drop: `screenmark` in the main key's pane, its first line on the screen."""
+          n = str(int(as_user(muninn, "cat ~/screen-n 2>/dev/null || echo 0").strip()) + 1)
+          huginn.send_chars("screenmark\n")
+          until("screenmark " + n + " to wait on muninn", lambda: as_user(muninn, "test -e ~/screen-waiting-" + n, check=False)[0] == 0)
+          until("ravnix-before-" + n + " in the window", lambda: "ravnix-before-" + n in screen(), 30)
+          return n
+
+
+      def release(n):
+          """The pane prints its second line now, whether huginn is there or not."""
+          as_user(muninn, "touch ~/screen-release-" + n)
+          until("screenmark " + n + " to print its second line", lambda: as_user(muninn, "test -e ~/screen-done-" + n, check=False)[0] == 0)
+
+
+      def reattached(what, n, since, clients, budget=10):
+          """With no key pressed: herdr attaches again by itself, and the window shows the session as it is now."""
+          def new_clients():
+              now = pids(CLIENTS)
+              return len(now) == len(clients) and not (now & clients)
+
+          until(what + ": herdr to attach again by itself", new_clients, budget + 50)
+          attached = time.monotonic() - since
+          # Past the budget, keep looking a while so a failure says how late it was.
+          while time.monotonic() - since < budget + 50:
+              text = screen()
+              if "ravnix-before-" + n in text and "ravnix-after-" + n in text:
+                  took = time.monotonic() - since
+                  break
+          else:
+              diagnose(what)
+              raise AssertionError(what + ": the window never showed what the pane printed while huginn was away: " + repr(text))
+          print(what + ": herdr ran again after %.1f s, and the window showed the session after %.1f s, with no key pressed" % (attached, took))
+          assert took <= budget, what + ": the window showed the session only after %.1f s" % took
+
+
       def type_marker_until_seen(what, budget):
           """Type `marker` on huginn until muninn has a new line; return the seconds it took."""
           before = len(marks())
@@ -299,11 +372,11 @@ pkgs.testers.runNixOSTest {
           until("the link to deliver " + target, lambda: target in as_user(huginn, "cat ~/opened 2>/dev/null || true"))
 
 
-      def same_session(what, budget=10):
-          took, lines = type_marker_until_seen(what, budget)
-          print(what + ": typed text reached muninn after %.1f s" % took)
+      def same_session(what):
+          """Once the window shows the session: what is typed reaches the same pane and shell."""
+          took, lines = type_marker_until_seen(what, 10)
+          print(what + ": typed text reached muninn after %.1f s more" % took)
           assert all(line == FIRST for line in lines), what + ": another pane or shell: " + repr(lines) + " != " + FIRST
-          assert took <= budget, what + ": the window showed the session again only after %.1f s" % took
           assert len(sessions()) == 1, what + ": " + repr(sessions())
           assert herdr_server_pid() == SERVER, what + ": herdr's server is another process"
 
@@ -366,28 +439,46 @@ pkgs.testers.runNixOSTest {
           until("clipmark to run on muninn", lambda: len(as_user(muninn, "cat ~/clipmarks 2>/dev/null || true").splitlines()) > clips)
           until("the token in huginn's clipboard", lambda: as_user(huginn, "timeout 5 wl-paste --no-newline", check=False)[1] == TOKEN, 30)
 
-      with subtest("a killed TCP connection: the same session within 10 s"):
+      with subtest("a killed TCP connection: the same session within 10 s, with no key pressed"):
+          n = plant()
+          clients = pids(CLIENTS)
           huginn.succeed("ss -K dst " + MUNINN_IP + " dport = :22")
+          since = time.monotonic()
+          release(n)
+          reattached("after the killed connection", n, since, clients)
           same_session("after the killed connection")
           until("the forwards after the killed connection", forwarded)
           link_delivers(2)
 
-      with subtest("an IP change of huginn: the same session within 10 s"):
+      with subtest("an IP change of huginn: the same session within 10 s, with no key pressed"):
           old = huginn.succeed("ip -4 -o addr show dev eth1 | awk '{print $4}'").strip()
           new = "192.168.1.77/24"
           assert old != new, old
+          n = plant()
+          clients = pids(CLIENTS)
           huginn.succeed("ip addr add " + new + " dev eth1 && ip addr del " + old + " dev eth1")
+          since = time.monotonic()
+          release(n)
+          reattached("after the IP change", n, since, clients)
           same_session("after the IP change")
           until("the forwards after the IP change", forwarded)
           # The new connections come from the new address.
           muninn.succeed("ss -tn state established '( sport = :22 )' | grep -F 192.168.1.77:")
           link_delivers(3)
 
-      with subtest("huginn suspended for 60 s: the same session within 10 s"):
+      with subtest("huginn suspended for 60 s: the same session within 10 s, with no key pressed"):
+          n = plant()
+          clients = pids(CLIENTS)
           huginn.send_monitor_command("stop")
+          stopped = time.monotonic()
+          # While huginn stands still, the pane prints the line the window
+          # must show once huginn is back.
+          release(n)
           # The driver's clock, not huginn's, which stands still.
-          time.sleep(60)
+          time.sleep(max(0, 60 - (time.monotonic() - stopped)))
           huginn.send_monitor_command("cont")
+          since = time.monotonic()
+          reattached("after the suspend", n, since, clients)
           same_session("after the suspend")
           until("the forwards after the suspend", forwarded)
           link_delivers(4)
