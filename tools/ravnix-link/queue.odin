@@ -62,7 +62,7 @@ Config :: struct {
 	notify_send:        string, // the daemon's, and the real one under the wrapper
 	obsidian:           string,
 	systemd_run:        string, // the daemon starts each program in a scope of its own with it; "" starts them directly
-	user_bus:           string, // the user manager's bus, which systemd-run needs; checked before a scope
+	user_manager:       string, // the user manager's socket, which systemd-run needs; checked before a scope
 	now:                time.Time, // the clock, for tests; zero is the real one
 	stderr:             ^os.File, // where reports go; nil is the process's own
 	open_wait_ms:       int,
@@ -325,32 +325,33 @@ Commit_Result :: enum u8 {
 	Nothing, // nothing to commit: the paths are as committed already
 	Failed, // for a reason another attempt may not have: it runs again
 	Refused, // git refused it for a reason another attempt has as well
+	Missing, // a path git does not know: for good, unless a sync may bring it
 }
 
 // transient says whether git's output names a failure that another attempt
-// may not have: a lock another git holds, an agent that is not there or
-// locked, a signature that failed, a full or read-only disk. Anything else
-// git exits non-zero for (a path it does not know, a hook that rejects the
-// commit, an ignored path) comes again on every attempt.
+// may not have, in git's and ssh's own words: a lock another git holds, a
+// signature that failed (git ends every one with "failed to write commit
+// object", whatever the agent said), an index or object it could not
+// write, a rebase or merge under way, a file the sync replaced while git
+// read it. Anything else git exits non-zero for (a hook that rejects the
+// commit, an ignored path) comes again on every attempt; a hook's own
+// words, which may name an agent or a signature, do not count.
 transient :: proc(output: string) -> bool {
 	o := strings.to_lower(output, context.temp_allocator)
-	for word in ([]string {
-			".lock",
-			"unable to create",
-			"agent",
-			"ssh_auth_sock",
-			"ssh-keygen",
-			"signing",
-			"signature",
-			"to sign",
-			"gpg",
+	for phrase in ([]string {
+			".lock': file exists",
+			"cannot lock ref",
 			"failed to write commit object",
-			"could not open a connection",
-			"no space left",
+			"unable to write new index file",
+			"unable to write file",
+			"unable to index file",
+			"adding files failed",
+			"no space left on device",
 			"read-only file system",
-			"resource temporarily unavailable",
+			"during a rebase",
+			"during a merge",
 		}) {
-		if strings.contains(o, word) {
+		if strings.contains(o, phrase) {
 			return true
 		}
 	}
@@ -366,7 +367,7 @@ transient :: proc(output: string) -> bool {
 // git commit -- PATH, which takes its removal: git add refuses a path that
 // is in neither the work tree nor the index, as the old path of a rename
 // is once an attempt before has staged its removal. A path git does not
-// know at all fails the commit, and it runs again later.
+// know at all is Missing, which commit_step judges.
 run_git_commit :: proc(cfg: Config, vault: string, r: Request) -> (Commit_Result, string) {
 	git := cfg.git if cfg.git != "" else "git"
 	timeout := or_default(cfg.commit_timeout_ms, DEFAULT_COMMIT_TIMEOUT)
@@ -389,7 +390,7 @@ run_git_commit :: proc(cfg: Config, vault: string, r: Request) -> (Commit_Result
 		ran := run_program(argv[:], timeout, env, allocator = context.temp_allocator, die_with_parent = true)
 		if !ran.success {
 			if ran.exited && missing(ran.output) {
-				return .Refused, fmt.tprintf("a path is not in the vault: %s", first_lines(ran.output, 1))
+				return .Missing, fmt.tprintf("a path is not in the vault: %s", first_lines(ran.output, 1))
 			}
 			if ran.exited && !ran.signaled && !transient(ran.output) {
 				return .Refused, program_failure("git add", ran)
@@ -413,7 +414,7 @@ run_git_commit :: proc(cfg: Config, vault: string, r: Request) -> (Commit_Result
 			return .Nothing, ""
 		}
 		if missing(o) {
-			return .Refused, fmt.tprintf("a path is not in the vault: %s", first_lines(o, 1))
+			return .Missing, fmt.tprintf("a path is not in the vault: %s", first_lines(o, 1))
 		}
 	}
 	if ran.exited && !ran.signaled && !transient(ran.output) {
@@ -510,7 +511,13 @@ commit_step :: proc(cfg: Config, r: Request, rec: Record, has: bool, expects: ^[
 		out.done += 1
 		note_outcome(cfg, out, Record{id = r.id, status = .Done})
 		return true
-	case .Refused:
+	case .Refused, .Missing:
+		// A path an Obsidian operation was to bring may come with a late
+		// sync (a laptop that suspended before it uploaded the rename):
+		// tried again, with the bound of a day.
+		if result == .Missing && brought_by_sync(vault, r, expects^) {
+			break
+		}
 		// With HEAD where it was, nothing happened, and nothing will on
 		// another attempt: it fails now, and the vault's stream goes on.
 		if after, awhy := git_head(cfg, vault); awhy == "" && after == head {
@@ -594,6 +601,23 @@ expectation_of :: proc(r: Request, done: string, allocator: runtime.Allocator) -
 	return x
 }
 
+// brought_by_sync says whether a path of the commit r that the vault does
+// not have is one an Obsidian operation leaves, so the sync may bring it.
+brought_by_sync :: proc(vault: string, r: Request, expects: [dynamic]Expectation) -> bool {
+	for p in r.paths {
+		st: linux.Stat
+		if linux.lstat(cstr(fmt.tprintf("%s/%s", vault, p)), &st) == .NONE {
+			continue
+		}
+		for x in expects {
+			if x.created <= r.created && (p == x.present || x.alt != "" && p == x.alt) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // synced says whether the vault shows x.
 synced :: proc(vault: string, x: Expectation) -> bool {
 	there :: proc(vault, p: string) -> bool {
@@ -619,6 +643,7 @@ encode_expectation :: proc(x: Expectation, allocator: runtime.Allocator) -> stri
 		{"gone", x.gone},
 		{"present", x.present},
 		{"alt", x.alt},
+		{"dropped", "yes" if x.dropped else ""},
 	}
 	strings.write_byte(&b, '{')
 	for f, i in fields {
@@ -643,16 +668,18 @@ decode_expectation :: proc(line: string, allocator: runtime.Allocator) -> (x: Ex
 	if obj, why = parse_object(line, &arena); why != "" {
 		return
 	}
-	if extra := only_keys(obj, "id", "created", "done", "what", "gone", "present", "alt"); extra != "" {
+	if extra := only_keys(obj, "id", "created", "done", "what", "gone", "present", "alt", "dropped"); extra != "" {
 		return {}, fmt.tprintf("no field %q", extra)
 	}
-	targets := [?]^string{&x.id, &x.created, &x.done, &x.what, &x.gone, &x.present, &x.alt}
-	names := [?]string{"id", "created", "done", "what", "gone", "present", "alt"}
+	dropped: string
+	targets := [?]^string{&x.id, &x.created, &x.done, &x.what, &x.gone, &x.present, &x.alt, &dropped}
+	names := [?]string{"id", "created", "done", "what", "gone", "present", "alt", "dropped"}
 	for name, i in names {
 		if targets[i]^, why = string_field(obj, name, i < 3, allocator); why != "" {
 			return {}, why
 		}
 	}
+	x.dropped = dropped == "yes"
 	return
 }
 
@@ -818,6 +845,10 @@ flush :: proc(cfg: Config) -> (out: Flushed, why: string) {
 		report(cfg, "%s; the commits do not wait for the sync", rwhy)
 	}
 	known := len(expects)
+	known_dropped := 0
+	for x in expects {
+		known_dropped += 1 if x.dropped else 0
+	}
 	conn: linux.Fd = -1
 	defer hang_up(conn)
 	reader := Line_Reader {
@@ -945,17 +976,23 @@ flush :: proc(cfg: Config) -> (out: Flushed, why: string) {
 			}
 		}
 	}
-	// What the vault shows now, or was waited for too long, is no longer
-	// waited for.
+	// What the vault shows now is no longer waited for. What it does not
+	// show after SYNC_WAIT is not waited for either, but kept for a day, so
+	// a commit that misses its path knows a sync may still bring it.
 	keep := make([dynamic]Expectation, a)
 	now := clock(cfg)
-	for x in expects {
+	kept_dropped := 0
+	for &x in expects {
 		done, ok := parse_timestamp(x.done)
-		if !x.dropped && ok && time.diff(done, now) < SYNC_WAIT && cfg.vault != "" && !synced(cfg.vault, x) {
+		if ok && time.diff(done, now) < COMMIT_GIVE_UP && cfg.vault != "" && !synced(cfg.vault, x) {
+			if !x.dropped && time.diff(done, now) >= SYNC_WAIT {
+				x.dropped = true
+			}
 			append(&keep, x)
+			kept_dropped += 1 if x.dropped else 0
 		}
 	}
-	if len(keep) != known || len(expects) != known {
+	if len(keep) != known || len(expects) != known || kept_dropped != known_dropped {
 		b := strings.builder_make(a)
 		for x in keep {
 			strings.write_string(&b, encode_expectation(x, a))

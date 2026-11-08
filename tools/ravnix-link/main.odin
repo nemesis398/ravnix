@@ -62,29 +62,12 @@ Environment :: struct {
 	home:          string, // HOME
 	cwd:           string, // the working directory
 	daemon_marker: string, // RAVNIX_LINK_DAEMON
-	bus_address:   string, // DBUS_SESSION_BUS_ADDRESS
 }
 
-// user_bus is the socket of the user manager's bus that the address names
-// (its first unix:path=), or $XDG_RUNTIME_DIR/bus without one; "" when it
-// is no file to look for, such as an abstract socket.
-user_bus :: proc(env: Environment, allocator := context.allocator) -> string {
-	if env.bus_address == "" {
-		return strings.concatenate({env.runtime_dir, "/bus"}, allocator) if env.runtime_dir != "" else ""
-	}
-	rest := env.bus_address
-	for entry in strings.split_iterator(&rest, ";") {
-		if !strings.has_prefix(entry, "unix:") {
-			continue
-		}
-		params := entry[len("unix:"):]
-		for kv in strings.split_iterator(&params, ",") {
-			if strings.has_prefix(kv, "path=") {
-				return strings.clone(kv[len("path="):], allocator)
-			}
-		}
-	}
-	return ""
+// user_manager is the user manager's own socket, where systemd-run --user
+// connects; "" without XDG_RUNTIME_DIR, when nothing is checked.
+user_manager :: proc(env: Environment, allocator := context.allocator) -> string {
+	return strings.concatenate({env.runtime_dir, "/systemd/private"}, allocator) if env.runtime_dir != "" else ""
 }
 
 // config_from is the configuration the environment gives, before options.
@@ -92,7 +75,7 @@ config_from :: proc(env: Environment, allocator := context.allocator) -> (cfg: C
 	if env.runtime_dir != "" {
 		cfg.socket = strings.concatenate({env.runtime_dir, "/", SOCKET_NAME}, allocator)
 	}
-	cfg.user_bus = user_bus(env, allocator)
+	cfg.user_manager = user_manager(env, allocator)
 	switch {
 	case strings.has_prefix(env.state_home, "/"):
 		cfg.state = strings.concatenate({env.state_home, "/ravnix-link"}, allocator)
@@ -682,7 +665,7 @@ run_status :: proc(cfg: Config, out, errf: ^os.File) -> int {
 			continue
 		}
 		for x in expects {
-			if x.created <= r.created && !synced(cfg.vault, x) {
+			if !x.dropped && x.created <= r.created && !synced(cfg.vault, x) {
 				fmt.fprintfln(out, "      waits until the vault here shows %s (done on the laptop at %s)", x.what, x.done)
 			}
 		}
@@ -712,7 +695,6 @@ main :: proc() {
 		state_home    = os.get_env("XDG_STATE_HOME", context.allocator),
 		home          = os.get_env("HOME", context.allocator),
 		daemon_marker = os.get_env(DAEMON_MARKER, context.allocator),
-		bus_address   = os.get_env("DBUS_SESSION_BUS_ADDRESS", context.allocator),
 	}
 	env.cwd, _ = os.get_working_directory(context.allocator)
 	os.exit(run(os.args[1:], env, os.stdout, os.stderr))

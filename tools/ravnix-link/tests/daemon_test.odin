@@ -208,8 +208,8 @@ the_programs_start_in_a_scope_of_their_own :: proc(t: ^testing.T) {
 	testing.expect_value(t, os.symlink(STUB, join(f, "bin", "systemd-run")), nil)
 	set_case(f, `[ "$n" = systemd-run ] && { while [ "$1" != -- ]; do shift; done; shift; exec "$@"; }` + "\n")
 	f.server.systemd_run = join(f, "bin", "systemd-run")
-	// A socket stands in for the user manager's bus.
-	f.server.user_bus = f.socket
+	// A socket stands in for the user manager's own.
+	f.server.user_manager = f.socket
 	start_daemon(f)
 	outcome, _ := link.submit(f.client, open_request(f, "https://example.org/"))
 	testing.expect_value(t, outcome, link.Outcome.Done)
@@ -249,21 +249,22 @@ slice_equal :: proc(a, b: []string) -> bool {
 	return true
 }
 
-// Without the user manager's bus, systemd-run cannot make a scope: the
-// request waits, as for a missing program, and nothing runs.
+// Without the user manager's socket ($XDG_RUNTIME_DIR/systemd/private),
+// systemd-run cannot make a scope: the request waits, as for a missing
+// program, and nothing runs.
 @(test)
-without_the_user_bus_a_request_waits :: proc(t: ^testing.T) {
+without_the_user_manager_a_request_waits :: proc(t: ^testing.T) {
 	f := fixture(t)
 	defer fixture_destroy(f)
 	testing.expect_value(t, os.symlink(STUB, join(f, "bin", "systemd-run")), nil)
 	f.server.systemd_run = join(f, "bin", "systemd-run")
-	f.server.user_bus = join(f, "no-bus")
+	f.server.user_manager = join(f, "no-manager")
 	start_daemon(f)
 	expect_enqueued(f, open_request(f, "https://example.org/"))
 	result, _ := link.flush(f.client)
 	testing.expect_value(t, result.pending, 1)
 	testing.expect_value(t, len(runs(f)), 0)
-	testing.expect(t, contains(stderr_text(f), "bus"), stderr_text(f))
+	testing.expect(t, contains(stderr_text(f), "user manager"), stderr_text(f))
 }
 
 // obsidian may start Obsidian, which keeps the CLI's output open for its
@@ -295,6 +296,34 @@ an_obsidian_that_leaves_a_process_on_its_output_is_answered_when_it_ends :: proc
 	flags, ok := strconv.parse_uint(strings.trim_space(read_file(f, join(f, "bin", "flags"))), 8)
 	testing.expect(t, ok, read_file(f, join(f, "bin", "flags")))
 	testing.expectf(t, flags & 0o4000 == 0, "the CLI's output is non-blocking: flags %o", flags)
+}
+
+// The daemon keeps obsidian's output only while something holds it: once
+// the CLI and what it started have let go, the daemon closes its end.
+@(test)
+a_kept_output_is_closed_at_its_end :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	set_case(f, `[ "$n" = obsidian ] && { ( sleep 0.2; echo spaet ) & echo ok; exit 0; }` + "\n")
+	start_daemon(f)
+	for _ in 0 ..< 3 {
+		outcome, _ := link.submit(f.client, obsidian_request(f, .Delete, "Notizen/a.md"))
+		testing.expect_value(t, outcome, link.Outcome.Done)
+	}
+	for _ in 0 ..< 100 {
+		if strings.count(stderr_text(f), "spaet") == 3 {
+			break
+		}
+		time.sleep(20 * time.Millisecond)
+	}
+	// One more poll of the daemon's, after the last writer let go.
+	time.sleep(100 * time.Millisecond)
+	sync.atomic_store(&f.stop, true)
+	thread.join(f.worker)
+	thread.destroy(f.worker)
+	f.worker = nil
+	testing.expect_value(t, strings.count(stderr_text(f), "spaet"), 3)
+	testing.expect_value(t, len(f.daemon.drains), 0)
 }
 
 Spawner :: struct {

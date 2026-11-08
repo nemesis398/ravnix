@@ -409,15 +409,15 @@ handle :: proc(d: ^Daemon, line: string, allocator: runtime.Allocator) -> Reply 
 				error  = fmt.aprintf("%s is not installed on the laptop, so no program can get a scope of its own", d.cfg.systemd_run, allocator = allocator),
 			}
 		}
-		// systemd-run needs the user manager's bus; without it, it would
-		// fail and the request be lost, so the request waits.
-		if bus := d.cfg.user_bus; bus != "" {
+		// systemd-run --user needs the user manager's socket; without it, it
+		// would fail and the request be lost, so the request waits.
+		if sock := d.cfg.user_manager; sock != "" {
 			st: linux.Stat
-			if linux.lstat(cstr(bus), &st) != .NONE || !linux.S_ISSOCK(st.mode) {
+			if linux.lstat(cstr(sock), &st) != .NONE || !linux.S_ISSOCK(st.mode) {
 				return Reply {
 					id     = r.id,
 					status = .Retry,
-					error  = fmt.aprintf("the user manager's bus (%s) is not there, so systemd-run cannot give a program a scope", bus, allocator = allocator),
+					error  = fmt.aprintf("the user manager's socket (%s) is not there, so systemd-run cannot give a program a scope", sock, allocator = allocator),
 				}
 			}
 		}

@@ -220,7 +220,7 @@ add)
   done
   : >"$d/staged" ;;
 commit)
-  [ -e "$d/failed-once" ] || { : >"$d/failed-once"; echo "error: Couldn't get agent socket?" >&2; exit 128; } ;;
+  [ -e "$d/failed-once" ] || { : >"$d/failed-once"; printf '%s\n' "error: Couldn't get agent socket?" 'fatal: failed to write commit object' >&2; exit 128; } ;;
 esac
 `)
 	c := commit_request(f, "vault: rename", "Notizen/Alt.md", "Notizen/Neu.md")
@@ -270,10 +270,11 @@ a_commit_waits_until_the_vault_here_shows_the_operations_before_it :: proc(t: ^t
 	testing.expect_value(t, rec.status, link.Record_Status.Done)
 }
 
-// The sync never brings it: after SYNC_WAIT the commit goes ahead, and a
-// path git does not find then fails it at once: no sync brings it any more.
+// The sync does not bring it: after SYNC_WAIT the commit goes ahead and
+// says so; the path git does not find is the rename's, which a late sync
+// may still bring, so the commit is tried again.
 @(test)
-a_commit_gives_up_waiting_for_the_sync_and_a_missing_path_fails_it :: proc(t: ^testing.T) {
+a_commit_gives_up_waiting_for_the_sync_and_goes_ahead :: proc(t: ^testing.T) {
 	f := fixture(t)
 	defer fixture_destroy(f)
 	note(f, "Notizen/alt.md")
@@ -289,12 +290,11 @@ a_commit_gives_up_waiting_for_the_sync_and_a_missing_path_fails_it :: proc(t: ^t
 	testing.expect_value(t, len(git_runs(f, "add")), 0)
 	f.client.now = time.time_add(base, link.SYNC_WAIT + time.Minute)
 	result, _ = link.flush(f.client)
-	testing.expect_value(t, result.pending, 0)
-	testing.expect_value(t, result.failed, 1)
+	testing.expect_value(t, result.pending, 1)
 	testing.expect_value(t, len(git_runs(f, "add")), 1)
 	testing.expect(t, contains(stderr_text(f), "does not show obsidian rename"), stderr_text(f))
 	rec, _ := record_of(f, commit.id)
-	testing.expect_value(t, rec.status, link.Record_Status.Failed)
+	testing.expect_value(t, rec.status, link.Record_Status.Retry)
 	testing.expect(t, contains(rec.error, "not in the vault"), rec.error)
 }
 
@@ -672,6 +672,10 @@ a_commit_git_refuses_for_good_fails_at_once_and_the_next_runs :: proc(t: ^testin
 		{"a path git does not know", "error: pathspec 'Notizen/gibts-nicht.md' did not match any file(s) known to git", 1},
 		{"a hook that rejects it", "commit-msg: the subject is longer than 72 characters", 1},
 		{"an ignored path", "The following paths are ignored by one of your .gitignore files:\nNotizen/tmp.md", 1},
+		// A hook's own words may name an agent, a signature or gpg; they are
+		// still the hook's no.
+		{"a hook that names an agent", "commit-msg: an agent commit must name its model in a Co-Authored-By trailer", 1},
+		{"a hook that names a signature", "pre-commit: signing policy: sign your work with gpg, see the signature guide", 1},
 	}
 	for c in cases {
 		f := fixture(t)
@@ -702,6 +706,13 @@ a_commit_that_fails_for_a_lock_or_the_agent_is_tried_again :: proc(t: ^testing.T
 			"error: Couldn't get agent socket?\nfatal: failed to write commit object",
 			"error: agent refused operation\nfatal: failed to write commit object",
 			"error: gpg failed to sign the data\nfatal: failed to write commit object",
+			"fatal: cannot lock ref 'HEAD': is at 1111 but expected 2222",
+			"fatal: unable to write new index file",
+			"error: unable to write file .git/objects/ab/cdef: No space left on device",
+			"fatal: write error: No space left on device",
+			"fatal: cannot do a partial commit during a rebase.",
+			"fatal: cannot do a partial commit during a merge.",
+			"error: open(\"Notizen/a.md\"): No such file or directory\nerror: unable to index file 'Notizen/a.md'\nfatal: adding files failed",
 		}) {
 		f := fixture(t)
 		defer fixture_destroy(f)
@@ -710,6 +721,72 @@ a_commit_that_fails_for_a_lock_or_the_agent_is_tried_again :: proc(t: ^testing.T
 		outcome, message := link.submit(f.client, commit_request(f, "vault: spaeter"))
 		testing.expectf(t, outcome == .Retrying, "%s: %v %s", stderr, outcome, message)
 	}
+}
+
+// git add refuses an ignored path itself, as real git does: that is for
+// good too.
+@(test)
+an_ignored_path_git_add_refuses_fails_at_once :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	note(f, "Notizen/tmp.md")
+	write_file(f, join(f, "bin", "stderr-text"), "The following paths are ignored by one of your .gitignore files:\nNotizen/tmp.md\nhint: Use -f if you really want to add them.")
+	set_case(f, `[ "$n" = git ] && [ "$4" = add ] && { cat "$d/stderr-text" >&2; exit 1; }` + "\n")
+	outcome, message := link.submit(f.client, commit_request(f, "vault: ignoriert", "Notizen/tmp.md"))
+	testing.expectf(t, outcome == .Failed, "%v %s", outcome, message)
+	testing.expect_value(t, len(git_runs(f, "commit")), 0)
+}
+
+// A refusal with HEAD moved since the attempt began (the commit may have
+// landed after all): not given up, but tried again, which finds out.
+@(test)
+a_refusal_with_head_moved_is_tried_again :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, join(f, "bin", "heads"), "")
+	set_case(f, `[ "$n" = git ] && [ "$3" = rev-parse ] && {
+  echo x >>"$d/heads"
+  if [ "$(wc -l <"$d/heads")" -le 1 ]; then echo 1111111111111111111111111111111111111111; else echo 2222222222222222222222222222222222222222; fi
+  exit 0
+}
+[ "$n" = git ] && [ "$4" = commit ] && { echo 'commit-msg: no' >&2; exit 1; }
+`)
+	outcome, message := link.submit(f.client, commit_request(f, "vault: verschoben"))
+	testing.expectf(t, outcome == .Retrying, "%v %s", outcome, message)
+}
+
+// A path the vault does not show, which an Obsidian operation before the
+// commit was to bring (the laptop suspended before its sync uploaded the
+// rename): tried again, with the bound of a day, after the sync wait has
+// given up. A path no operation names fails at once.
+@(test)
+a_missing_path_an_operation_names_is_tried_again_after_the_sync_wait :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	note(f, "Notizen/alt.md")
+	set_case(f, strings.concatenate({"v='", f.vault, "'\n", `[ "$n" = git ] && [ "$4" = commit ] && [ "$6" = "vault: vertippt" ] && { echo "error: pathspec 'Notizen/nue.md' did not match any file(s) known to git" >&2; exit 1; }
+[ "$n" = git ] && [ "$4" = commit ] && [ ! -e "$v/Notizen/neu.md" ] && { echo "error: pathspec 'Notizen/neu.md' did not match any file(s) known to git" >&2; exit 1; }
+`}, f.a))
+	start_daemon(f)
+	base := link.clock(f.client)
+	f.client.now = base
+	expect_enqueued(f, obsidian_request(f, .Rename, "Notizen/alt.md", name = "neu"))
+	commit := commit_request(f, "vault: rename", "Notizen/alt.md", "Notizen/neu.md")
+	expect_enqueued(f, commit)
+	link.flush(f.client)
+	f.client.now = time.time_add(base, link.SYNC_WAIT + time.Minute)
+	result, _ := link.flush(f.client)
+	testing.expect_value(t, result.pending, 1)
+	rec, _ := record_of(f, commit.id)
+	testing.expect_value(t, rec.status, link.Record_Status.Retry)
+	// The sync comes, an hour on: the commit goes through.
+	os.rename(join(f, "vault", "Notizen", "alt.md"), join(f, "vault", "Notizen", "neu.md"))
+	f.client.now = time.time_add(base, time.Hour)
+	result, _ = link.flush(f.client)
+	testing.expect_value(t, result.done, 1)
+	// A path nothing brings: for good, at once.
+	outcome, _ := link.submit(f.client, commit_request(f, "vault: vertippt", "Notizen/nue.md"))
+	testing.expect_value(t, outcome, link.Outcome.Failed)
 }
 
 // A commit that failed, recorded retry, whose HEAD has since moved to a
@@ -738,7 +815,7 @@ esac
 drop_lets_go_of_a_waiting_request :: proc(t: ^testing.T) {
 	f := fixture(t)
 	defer fixture_destroy(f)
-	set_case(f, `[ "$n" = git ] && [ "$4" = commit ] && [ "$6" = "vault: haengt" ] && { echo "error: Couldn't get agent socket?" >&2; exit 128; }` + "\n")
+	set_case(f, `[ "$n" = git ] && [ "$4" = commit ] && [ "$6" = "vault: haengt" ] && { printf '%s\n' "error: Couldn't get agent socket?" 'fatal: failed to write commit object' >&2; exit 128; }` + "\n")
 	stuck := commit_request(f, "vault: haengt")
 	outcome, _ := link.submit(f.client, stuck)
 	testing.expect_value(t, outcome, link.Outcome.Retrying)

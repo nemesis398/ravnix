@@ -307,3 +307,14 @@ the_environment_gives_the_socket_and_the_state :: proc(t: ^testing.T) {
 	testing.expect_value(t, r.code, 1)
 	testing.expect(t, contains(r.err, "HOME"), r.err)
 }
+
+// The daemon checks for the user manager's own socket before a scope, as
+// systemd-run --user connects there, not to the D-Bus bus.
+@(test)
+the_user_manager_is_looked_for_in_the_runtime_directory :: proc(t: ^testing.T) {
+	cfg, _ := link.config_from(link.Environment{runtime_dir = "/run/user/1000", home = "/home/alice"}, context.temp_allocator)
+	testing.expect_value(t, cfg.user_manager, "/run/user/1000/systemd/private")
+	cfg, _ = link.config_from(link.Environment{home = "/home/alice"}, context.temp_allocator)
+	testing.expect_value(t, cfg.user_manager, "")
+	free_all(context.temp_allocator)
+}
