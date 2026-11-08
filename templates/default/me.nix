@@ -93,7 +93,8 @@
 
     # The server.
     server = {
-      # user@host or an ssh alias, for an ssh of your own to the server.
+      # user@host or an ssh alias: the calendar that a click on Waybar's
+      # clock opens on the server (khal over ssh), and an ssh of your own.
       sshTarget = "alice@192.0.2.20";
       # The server's address in your NetBird network. The main terminal key
       # opens herdr there, and the main connection goes there.

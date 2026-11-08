@@ -12,10 +12,15 @@ in
       type = ravnix.sshTarget;
       example = "alice@muninn.example.org";
       description = ''
-        How you reach muninn over ssh by hand: `[user@]host` (host an
-        address or an ssh alias) or `ssh://[user@]host[:port]`. The main
-        terminal key and the main connection go to netbirdAddress instead,
-        which reaches muninn from anywhere the laptop roams.
+        How ssh reaches muninn outside the main terminal: `[user@]host`
+        (host an address or an ssh alias) or `ssh://[user@]host[:port]`.
+        A click on Waybar's clock opens `khal interactive` there with it
+        (`ssh -t <sshTarget>`, modules/desktop/waybar.nix), and it is the
+        target for an ssh of your own. That ssh is your ssh configuration's:
+        its agent and its known_hosts, not the key and the host key of
+        ravnix.serverAccess. The main terminal key and the main connection
+        go to netbirdAddress instead, which reaches muninn from anywhere the
+        laptop roams.
       '';
     };
 
