@@ -381,6 +381,30 @@ it_nord_setup_files_a_copy_of_the_key_under_the_baked_name() {
 	[[ "$(cat "$FAKE_DIR/rbw.added")" == "$key" ]]
 }
 
+it_nord_setup_files_the_key_although_visual_names_another_editor() {
+	fresh
+	nord_api
+	# ravnix exports VISUAL=nvim, and rbw takes VISUAL before EDITOR: an editor
+	# set only in EDITOR is never started. `false` stands for any editor that
+	# is not the key copier.
+	VISUAL=false EDITOR=false capture "$NORD" setup
+	expect_status 0
+	expect_out "nord: key copied to Bitwarden as 'key item'"
+	[[ "$(cat "$FAKE_DIR/rbw.added")" == "$key" ]]
+}
+
+it_nord_setup_files_the_key_from_a_cache_directory_with_a_space() {
+	fresh
+	nord_api
+	export XDG_CACHE_HOME="$scratch/cache dir"
+	mkdir -p "$XDG_CACHE_HOME"
+	capture "$NORD" setup
+	expect_status 0
+	expect_out "nord: key copied to Bitwarden as 'key item'"
+	[[ "$(cat "$FAKE_DIR/rbw.added")" == "$key" ]]
+	[[ -z "$(ls -A "$XDG_CACHE_HOME")" ]]
+}
+
 it_nord_setup_still_succeeds_when_the_copy_cannot_be_filed() {
 	fresh
 	nord_api
@@ -620,6 +644,8 @@ tests=(
 	it_nord_setup_keeps_the_key_and_the_token_off_every_command_line
 	it_nord_setup_leaves_no_file_with_the_key_behind
 	it_nord_setup_files_a_copy_of_the_key_under_the_baked_name
+	it_nord_setup_files_the_key_although_visual_names_another_editor
+	it_nord_setup_files_the_key_from_a_cache_directory_with_a_space
 	it_nord_setup_still_succeeds_when_the_copy_cannot_be_filed
 	it_nord_setup_refuses_when_a_profile_exists
 	it_nord_setup_reports_a_locked_vault_and_asks_nord_nothing

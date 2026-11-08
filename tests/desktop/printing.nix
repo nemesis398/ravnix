@@ -388,7 +388,8 @@ let
         return machine.succeed("bash -lc " + shlex.quote(cmd))
 
       def nord(args, check=True):
-        cmd = "FAKE_DIR=/tmp/fake XDG_CACHE_HOME=/tmp/fake/cache HOME=/root ${nordVm}/bin/nord " + args
+        # VISUAL is set the way ravnix sets it, and rbw asks it before EDITOR.
+        cmd = "FAKE_DIR=/tmp/fake XDG_CACHE_HOME=/tmp/fake/cache HOME=/root VISUAL=false EDITOR=false ${nordVm}/bin/nord " + args
         return machine.succeed(cmd) if check else machine.execute(cmd)
 
       machine.wait_for_unit("multi-user.target")
@@ -485,6 +486,9 @@ let
         machine.succeed("echo '{\"protected\":true}' > /tmp/fake/insights.json")
         out = nord("setup")
         assert "profile 'nord' ready" in out, out
+        # With VISUAL=false in the environment, the copy of the key reaches the
+        # vault only if the script sets VISUAL itself, as rbw asks it first.
+        assert "key copied to Bitwarden as 'key item'" in out, out
         def prop(name):
           return machine.succeed("nmcli -g " + name + " connection show nord").strip()
         assert prop("connection.autoconnect") == "no", prop("connection.autoconnect")

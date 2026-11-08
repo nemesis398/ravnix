@@ -203,12 +203,17 @@ setup() {
     || die "the profile was imported as '$IFACE' but could not be finished; fix or delete it by hand"
 
   # A copy of the key in Bitwarden, as the record outside this machine. rbw
-  # opens $EDITOR on a temp file; this editor copies the key file over it.
+  # opens an editor on a temp file; this editor copies the key file over it.
+  # rbw takes $VISUAL before $EDITOR (and ravnix exports VISUAL), so both are
+  # set. rbw runs an editor with a space in it through /bin/sh, so the path is
+  # quoted for a shell, and a cache directory with a space in its name works.
   ( umask 077; printf '%s\n' "$key" >"$tmp/key" )
   unset key
+  local copier
+  printf -v copier 'cp %q' "$tmp/key"
   if [ -z "$KEY_ITEM" ]; then
     echo "nord: no key item named (ravnix.vpn.nord.keyItem), so no copy of the key went to Bitwarden; the NM profile has it" >&2
-  elif EDITOR="cp $tmp/key" rbw add "$KEY_ITEM" >/dev/null 2>&1; then
+  elif VISUAL="$copier" EDITOR="$copier" rbw add "$KEY_ITEM" >/dev/null 2>&1; then
     echo "nord: key copied to Bitwarden as '$KEY_ITEM'"
   else
     echo "nord: could not copy the key to Bitwarden; the NM profile has it" >&2
