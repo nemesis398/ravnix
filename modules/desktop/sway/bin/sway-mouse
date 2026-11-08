@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# sway-mouse — per-application dispatch for the MX Master 3S gesture button.
+#
+# Why this exists
+# ---------------
+# Nothing off the shelf does per-application mouse mapping on sway.
+#
+#   logiops  has no window concept at all. Its config knows devices, buttons,
+#            gestures, dpi, smartshift, hiresscroll and thumbwheel, and nothing
+#            else. There is no condition to hang per-app behaviour on.
+#   Solaar   has Process and MouseProcess rule conditions, but its own docs
+#            list them under "known not to work under Wayland", with an
+#            exception only for GNOME plus the Solaar extension.
+#   Mouser   resolves the focused app through xdotool on X11 and kdotool on
+#            KDE Wayland, and silently falls back to its default profile on
+#            every other compositor, sway included.
+#
+# Wayland has no unified active-window API by design, so the lookup has to come
+# from the compositor itself. `swaymsg -t get_tree` hands it over for free.
+# That is the whole reason this script exists.
+#
+# The split
+# ---------
+#   logiops  Hardware only. The gesture button's plain press and its four swipe
+#            directions are not input events until logid synthesizes them; the
+#            kernel never sees the swipes at all. logid emits F14 to F18 and
+#            knows nothing about what they mean.
+#   this     All policy. F14 to F18 arrive as ordinary sway binds, and this
+#            reads the focused app_id and decides.
+#
+# Keeping logid dumb is deliberate. Changing what a gesture does is then a user
+# edit here with no root, no daemon restart and no reload.
+#
+# Why function keys
+# -----------------
+# logiops emits raw Linux event codes, and those assume a US QWERTY layout. Its
+# own documentation says to write KEY_Y when you mean 'z' on QWERTZ. This laptop
+# is de,us and the Dygma is us, so any letter logid emitted would mean two
+# different things depending on which keyboard was last used. Function keys
+# carry no layout at all, so the trap cannot fire. F13 is the Dygma's mod key,
+# remapped to Super by `custom:f13_super`, hence F14 upward. Real keystrokes are
+# synthesized here with wtype, which brings its own layout and sidesteps the
+# same problem a second time.
+#
+# The map
+# -------
+# One global mapping that holds everywhere, plus per-app overrides for
+# individual slots. An app that overrides nothing behaves globally; an app that
+# overrides one direction keeps the global meaning of the other four.
+#
+#   slot   global             helium         obsidian
+#   press  radial menu        .              .
+#   left   workspace next     .              .
+#   right  workspace prev     .              .
+#   up     fullscreen toggle  new tab        command palette
+#   down   floating toggle    close tab      quick switcher
+#
+# A dot means "no override, uses the global row". Left and right are never
+# overridden: they switch workspaces in every app. Helium spent them on tabs
+# once.
+#
+# To add an app, find its app_id with the window focused:
+#   swaymsg -t get_tree | jq -r 'first(.. | objects | select(.focused==true) | .app_id)'
+# then add cases below. Nothing else has to change.
+#
+# Usage
+# -----
+#   sway-mouse press|up|down|left|right
+#
+# Bound to F14 to F18 in ~/.config/sway/config. Only a change to the logiops
+# configuration needs `systemctl restart logid`.
+
+set -euo pipefail
+
+slot=${1:-}
+case $slot in
+    press | up | down | left | right) ;;
+    *)
+        printf 'sway-mouse: usage: sway-mouse press|up|down|left|right\n' >&2
+        exit 2
+        ;;
+esac
+
+# The focused window: app_id for native Wayland clients, WM_CLASS for XWayland
+# ones, empty for neither (nothing focused, or a layer surface such as an
+# already-open fuzzel). Empty simply matches no override and falls through.
+app=$(swaymsg -t get_tree 2>/dev/null |
+    jq -r 'first(.. | objects | select(.focused == true)
+                | (.app_id // .window_properties.class // ""))' 2>/dev/null) || app=
+[[ $app == null ]] && app=
+
+key() { wtype "$@"; }
+msg() { swaymsg "$@" >/dev/null; }
+
+# Per-application overrides. Return 1 for "no override", which falls through to
+# the global map below.
+app_specific() {
+    case "$app:$slot" in
+        # --- Helium -------------------------------------------------------
+        # Left and right are NOT overridden here: they switch workspaces in
+        # every app, the browser included. Tabs stay on Ctrl+PgUp/PgDn.
+        helium:up)    key -M ctrl -k t         -m ctrl ;;
+        helium:down)  key -M ctrl -k w         -m ctrl ;;
+
+        # --- Obsidian -----------------------------------------------------
+        # The side buttons already walk note history, so the two vertical
+        # directions go to the things otherwise worth a keyboard reach.
+        obsidian:up)   key -M ctrl -k p -m ctrl ;;   # command palette
+        obsidian:down) key -M ctrl -k o -m ctrl ;;   # quick switcher
+
+        # --- ONLYOFFICE ---------------------------------------------------
+        # The one app here that cannot do Wayland (its bundled Qt ships no
+        # libqwayland at all), so it runs on XWayland and sway reports
+        # app_id: null for it. That is why the lookup above falls back to
+        # window_properties.class. The measured value is XWAYLAND:ONLYOFFICE,
+        # which is a display form rather than the raw
+        # class, so confirm which of the two the fallback actually yields
+        # before trusting a guess:
+        #   swaymsg -t get_tree | jq -r 'first(.. | objects
+        #     | select(.focused == true) | [.app_id, .window_properties.class])'
+        # then uncomment one of these with the real string in front of the colon.
+        #
+        # ONLYOFFICE:up)   key -M ctrl -k Page_Up   -m ctrl ;;   # previous sheet
+        # ONLYOFFICE:down) key -M ctrl -k Page_Down -m ctrl ;;   # next sheet
+
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+# Global map. Up and down are a deliberate pair: both toggle how the focused
+# window is displayed, both are safe and both undo themselves. Nothing here
+# closes a window, because a mouse gesture is too easy to fire by accident.
+global() {
+    case $slot in
+        # The radial menu, opened latched for the pointer (SIGUSR1, 2026-10-06).
+        # A second press closes it. fuzzel only when the daemon is not running,
+        # so the button never does nothing; fuzzel itself stays on $mod+Space.
+        press)
+            if systemctl --user is-active --quiet sway-radial.service; then
+                exec systemctl --user kill --kill-whom=main --signal=SIGUSR1 sway-radial.service
+            fi
+            exec fuzzel
+            ;;
+        # Same direction and same command as the touchpad's 3-finger swipe
+        # (50-laptop.conf): the content follows the hand, so left goes NEXT.
+        left)  msg workspace next ;;
+        right) msg workspace prev ;;
+        up)    msg fullscreen toggle ;;
+        down)  msg floating toggle ;;
+    esac
+}
+
+app_specific || global

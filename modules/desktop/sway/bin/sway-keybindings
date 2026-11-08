@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# sway-keybindings — searchable cheatsheet of the ACTIVE sway binds (bound to $mod+k).
+# Shows "KEYS → action" in fuzzel (searchable; Esc to dismiss), falling back to a
+# floating terminal + less. Always reflects the live config — no separate list to keep in sync.
+#
+# READS config.d TOO (2026-09-04). It used to read ONLY ~/.config/sway/config, which
+# made it blind to every file pulled in by that config's trailing include. Two things
+# were wrong as a result:
+#   1. The 12 bindgesture lines in 50-laptop.conf were invisible.
+#   2. It advertised Super+WheelUp/WheelDown, which 50-laptop.conf unbinds — so the
+#      cheatsheet named two binds that do nothing on this machine.
+# Note the sharp edge that hid this: `grep -r` does NOT follow symlinks found while
+# recursing, and every file in config.d is a symlink into the store, so a -r search of that
+# directory reports NOTHING. Use -R.
+#
+# HANDLES unbindsym/unbindcode, so a bind removed later in load order disappears from
+# the list instead of being advertised. File order below IS load order: the main config
+# first, then config.d/*.conf, because the include sits at the end of the main config.
+#
+# SHOWS GESTURES as "4-finger swipe left → …". They are worth surfacing precisely
+# because a trackpad has no tactile landmarks: there is nothing to look at to remind
+# you a gesture exists.
+set -euo pipefail
+
+cfgdir="${XDG_CONFIG_HOME:-$HOME/.config}/sway"
+cfg="$cfgdir/config"
+[ -r "$cfg" ] || { command -v notify-send >/dev/null && notify-send "sway-keybindings" "config not found: $cfg"; exit 1; }
+
+# Load order, not glob order: main config, then its includes.
+files=("$cfg")
+if [ -d "$cfgdir/config.d" ]; then
+  for f in "$cfgdir/config.d"/*.conf; do [ -r "$f" ] && files+=("$f"); done
+fi
+
+text="$(
+  awk '
+    # ── Render a bindgesture spec: type[:fingers][:directions] ───────────────
+    # fingers is optional and numeric; directions is optional and is not. That
+    # ambiguity is why this tests for a digit rather than counting fields.
+    function glabel(spec,   n, p, type, fingers, dirs, out) {
+      n = split(spec, p, ":"); type = p[1]; fingers = ""; dirs = ""
+      if (n >= 2) {
+        if (p[2] ~ /^[0-9]+$/) { fingers = p[2]; if (n >= 3) dirs = p[3] }
+        else dirs = p[2]
+      }
+      out = (fingers != "" ? fingers "-finger " : "") type
+      return (dirs != "" ? out " " dirs : out)
+    }
+    # ── Normalise a key spec the way the display does, so an unbindsym can be
+    # matched against the bindsym it cancels. ────────────────────────────────
+    function nkey(k) {
+      gsub(/\$mod/, "Super", k)
+      sub(/^Mod1\+/, "Alt+", k); gsub(/\+Mod1\+/, "+Alt+", k)
+      sub(/button4/, "WheelUp", k); sub(/button5/, "WheelDown", k)
+      sub(/\+20$/, "+minus", k);   sub(/\+21$/, "+equal", k)
+      return k
+    }
+    function strip_flags(line) {
+      gsub(/--input-device=[^[:space:]]+[[:space:]]+/, "", line)
+      gsub(/--(locked|whole-window|to-code|no-warn|release|inhibited|border|exact)[[:space:]]+/, "", line)
+      return line
+    }
+
+    # join backslash line-continuations into one logical line
+    { while (sub(/\\[[:space:]]*$/, "")) { if (getline nxt <= 0) break; sub(/^[[:space:]]+/, "", nxt); $0 = $0 " " nxt } }
+    # skip everything inside a `mode "..." { ... }` block (resize/passthrough internals)
+    /^[[:space:]]*mode[[:space:]]+"/ { inmode = 1 }
+    inmode { if (/{/) d++; if (/}/) { d--; if (d <= 0) inmode = 0 }; next }
+
+    /^[[:space:]]*(bindsym|bindcode)[[:space:]]/ {
+      line = strip_flags($0)
+      sub(/^[[:space:]]*(bindsym|bindcode)[[:space:]]+/, "", line)
+      i = index(line, " "); k = nkey(substr(line, 1, i - 1)); cmd = substr(line, i + 1)
+      sub(/^[[:space:]]+/, "", cmd); sub(/^exec[[:space:]]+/, "", cmd)
+      out[k] = cmd; next
+    }
+    /^[[:space:]]*(unbindsym|unbindcode)[[:space:]]/ {
+      line = strip_flags($0)
+      sub(/^[[:space:]]*(unbindsym|unbindcode)[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      i = index(line, " "); if (i > 0) line = substr(line, 1, i - 1)
+      delete out[nkey(line)]; next
+    }
+    /^[[:space:]]*bindgesture[[:space:]]/ {
+      line = strip_flags($0)
+      sub(/^[[:space:]]*bindgesture[[:space:]]+/, "", line)
+      i = index(line, " "); g = glabel(substr(line, 1, i - 1)); cmd = substr(line, i + 1)
+      sub(/^[[:space:]]+/, "", cmd); sub(/^exec[[:space:]]+/, "", cmd)
+      out[g] = cmd; next
+    }
+
+    END { for (k in out) printf "%-24s  →  %s\n", k, out[k] }
+  ' "${files[@]}" | sort -u
+)"
+
+if command -v fuzzel >/dev/null 2>&1; then
+  printf '%s\n' "$text" | fuzzel --dmenu --prompt='keys  ' --width=96 --lines=30 >/dev/null || true
+else
+  tmp="$(mktemp)"; printf '%s\n' "$text" >"$tmp"
+  ghostty-float -e sh -c "less -R '$tmp'; rm -f '$tmp'" || rm -f "$tmp"
+fi

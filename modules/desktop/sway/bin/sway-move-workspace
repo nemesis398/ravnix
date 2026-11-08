@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# sway-move-workspace — carry the focused window to the NUMERICALLY next/previous
+# workspace and follow it there. Bound to the 4-finger trackpad swipes.
+#
+# WHY THIS EXISTS: sway has no relative-by-number workspace command. `workspace next`
+# cycles through workspaces that EXIST, so with 1, 2 and 5 open it jumps straight from
+# 2 to 5 and workspaces 3 and 4 stay unreachable until something else creates them.
+# `workspace number N` does address a workspace by number and creates it on demand,
+# but only absolutely, never relatively. This script is the missing middle: read the
+# current number, step it, address the result by number.
+#
+# WRAPS 10 -> 1 and 1 -> 10 (a deliberate choice). WS_MAX is 10 because waybar
+# declares exactly 1..10 persistent; a workspace 11 would exist but have no slot in
+# the bar, which is a worse surprise than wrapping.
+#
+# NOTE this deliberately does NOT match the 3-finger swipes, which still use sway's
+# `workspace next/prev` and therefore cycle through existing workspaces only. The two
+# rows agree on DIRECTION (fingers left = forward) but not on destination once the
+# numbering has a gap. Decided 2026-09-04 after the trade-off was put explicitly.
+#
+# Uses jq rather than python3 to follow sway-mouse, the other gesture-triggered script,
+# where interpreter startup sits in the interaction latency.
+set -euo pipefail
+
+WS_MAX=10
+
+dir="${1:-}"
+case "$dir" in
+  next|prev) ;;
+  *) echo "usage: $(basename "$0") next|prev" >&2; exit 2 ;;
+esac
+
+cur="$(swaymsg -t get_workspaces | jq -r '.[] | select(.focused) | .num')"
+
+# sway reports -1 for a workspace with no number (a purely named one). Stepping that
+# is meaningless, so do nothing rather than jump somewhere arbitrary.
+case "$cur" in ''|-1|*[!0-9]*) exit 0 ;; esac
+
+if [ "$dir" = next ]; then
+  tgt=$(( cur % WS_MAX + 1 ))
+else
+  tgt=$(( (cur + WS_MAX - 2) % WS_MAX + 1 ))
+fi
+
+# One IPC round trip for both commands. On an EMPTY workspace the move half has no
+# container to act on and reports failure, but sway still runs the rest of the list,
+# so the swipe degrades to plain navigation instead of doing nothing at all.
+swaymsg "move container to workspace number $tgt; workspace number $tgt" >/dev/null

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# sway-scratchpad-toggle — makes the 3-finger-down swipe a genuine put-away/take-out
+# pair. Bound from 50-laptop.conf.
+#
+# WHY THIS EXISTS: sway's scratchpad has THREE states, not two, and no single command
+# spans them. Verified on sway 1.11, 2026-09-04:
+#   `move scratchpad`   puts a window IN      scratchpad_state: none -> fresh
+#   `scratchpad show`   SHOWS or HIDES a member, state stays fresh either way
+#   `floating disable`  takes a window OUT    scratchpad_state: fresh -> none
+#
+# The trap is the middle one. A window retrieved with `scratchpad show` is STILL a
+# scratchpad member: it returns floating, keeps scratchpad_state=fresh, and can never
+# rejoin the tiling layout no matter how many times you swipe. It looks like a window
+# that came back, and it is not. That is what made 3-finger-down feel like it only
+# ever added windows and never removed them.
+#
+# So: read the focused window's scratchpad_state and do the inverse.
+#   member     -> floating disable, taking it out and back into the layout
+#   not member -> move scratchpad, putting it away
+#
+# 3-finger UP is deliberately left on sway's own `scratchpad show`, so you can still
+# peek at a stashed window and dismiss it again without committing to pulling it out.
+#
+# jq rather than python3, matching sway-mouse and sway-move-workspace: interpreter
+# startup sits inside the interaction latency for a gesture-triggered script.
+set -euo pipefail
+
+# Absent focus, an unfocusable node, or a node with no such field all collapse to
+# "none", which is the safe reading: treat it as "not a scratchpad member".
+state="$(swaymsg -t get_tree | jq -r '
+  [.. | objects | select(.focused == true) | .scratchpad_state] | (first // "none")
+')"
+
+case "$state" in
+  none|null|'') swaymsg 'move scratchpad'  >/dev/null ;;
+  *)            swaymsg 'floating disable' >/dev/null ;;
+esac

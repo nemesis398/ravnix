@@ -1,0 +1,775 @@
+# The Sway config of ravnix, a template: modules/desktop/sway.nix replaces the
+# placeholders between two @ signs (the palette, the cursor, the font, the terminal commands, the
+# workspace outputs, a few store paths) and installs the result as
+# ~/.config/sway/config, after `sway --validate` has accepted it with every
+# fragment of config.d. Colors are never written here: the palette block
+# below is generated from ravnix.theme, and everything else uses its
+# variables ($accent, $base, ...), so a user's accent reaches every line.
+#
+# SELF-CONTAINED: because this file exists, sway loads it instead of
+# /etc/sway/config, so what that file would pull in is spelled out below (the
+# systemd and D-Bus session integration of NixOS, the policykit agent, the
+# SNI-gated XDG autostart, the volume, brightness and media keys).
+#
+# Design: a port of the muscle memory of a Hyprland laptop, in Sway idioms.
+# Environment variables live in programs.sway.extraSessionCommands and in the
+# systemd user environment (modules/desktop/sway.nix), not here.
+#
+# OTHER MODULES ADD TO THIS CONFIG without editing it. Every file
+# ~/.config/sway/config.d/*.conf is included at the end, in the order of its
+# name, and a module makes one with
+#
+#   home-manager.sharedModules = [ { xdg.configFile."sway/config.d/60-apps.conf".text = ''...''; } ];
+#
+# (modules/desktop/sway.nix says more). The 50-laptop.conf of this module is
+# one such file: the touchpad, the gestures and the hotkey row.
+#
+#   man 5 sway · man 5 sway-input · man 5 sway-output · man 5 sway-bar
+
+### ─── Variables ──────────────────────────────────────────────────────────────
+set $mod Mod4
+
+# Vim-style direction keys (used in resize mode)
+set $left  h
+set $down  j
+set $up    k
+set $right l
+
+# Preferred apps. Every APPLICATION is named by its ROLE and launches through
+# its .desktop id with `gtk-launch`, never a raw command line:
+#   1. The .desktop file is the single definition of command, flags and icon, so
+#      a changed URL can never leave a stale copy behind here.
+#   2. The Wayland flags those .desktop files carry are ALWAYS applied. A bare
+#      command silently is not the same thing: a browser started as `exec
+#      helium` runs on XWayland, because only its .desktop file adds the ozone
+#      flags.
+# Role names, not product names, so swapping the product later is a one-line
+# change here and the keybinding never moves.
+# (sway treats '#' as a comment ONLY at line start, so these notes must stay on
+# their own lines.)
+#
+# Hyphenated names are safe. Sway sorts variables longest-name-first, so
+# $ai-local can never be mangled into $ai plus a literal "-local".
+
+# The terminal is the deliberate exception to the gtk-launch rule: $work and
+# $plain are whole command lines, and a .desktop entry cannot take arguments.
+set $term ghostty
+# The command of the MAIN terminal key, and of the terminal the session layout
+# starts at login. This is the one seam for the glue: ravnix.desktop.terminal.main
+# (modules/options/desktop.nix). Until the glue sets it, it is a local terminal;
+# then it opens herdr on the server.
+set $work @terminalMain@
+# A plain local shell, whatever the main terminal does. NO_MUX=1 is the escape
+# hatch of the shell's terminal auto-attach (ravnix.desktop.terminal.plain).
+set $plain @terminalPlain@
+# A small floating terminal: the window rule below floats every window of this
+# app id, centered, 40 percent wide and 70 percent high of the workspace. The
+# terminal apps that control the laptop's own hardware run in it.
+set $float ghostty-float
+set $menu fuzzel
+set $lock loginctl lock-session
+#   routes through swayidle's `lock` handler to swaylock
+
+set $browser       gtk-launch helium
+set $notes         gtk-launch obsidian
+set $office        gtk-launch onlyoffice-desktopeditors
+#   ONLYOFFICE runs on XWayland (app_id XWAYLAND:ONLYOFFICE) and cannot do
+#   otherwise: its bundled Qt ships only the xcb, linuxfb, minimal, offscreen
+#   and vnc platform plugins, with no libqwayland at all. Do not add ozone or
+#   -platform wayland flags expecting the browser fix to transfer.
+set $music         gtk-launch webapp-apple-music
+set $passwords-app gtk-launch bitwarden
+set $cloud         gtk-launch webapp-nextcloud
+set $recipes       gtk-launch webapp-mealie
+set $ai-local      gtk-launch webapp-openwebui
+set $ai-web        gtk-launch webapp-claude
+#   Mail and Matrix are not here: aerc and iamb run on the server, in the main
+#   terminal, and Thunderbird and Element are not installed.
+
+# The terminal apps that control the laptop's own hardware run locally, in
+# $float, on the keys the graphical apps had.
+set $files         $float -e yazi
+set $audio         $float -e wiremix
+set $bluetooth     $float -e bluetui
+set $network       $float -e nmtui
+
+# The two fuzzel popups call their script DIRECTLY rather than through
+# gtk-launch: one hop fewer, and the .desktop files of this module exist only
+# so both are findable by name in the launcher as well as on their key.
+set $calc sway-calc
+set $ask  sway-ask
+
+### ─── Colors ─────────────────────────────────────────────────────────────────
+# The Catppuccin Mocha palette by name, and $accent, generated from ravnix.theme.
+@palette@
+
+# Window colors. Tiled windows have no border (default_border none, below), so
+# the slots only show on a floating window: its 1 px frame is the accent while
+# focused and Surface0 when not. The `indicator` (split-direction hint) can
+# still show.
+#                       border     background  text    indicator  child_border
+client.focused          $accent    $accent     $crust  $accent    $accent
+client.focused_inactive $surface0  $surface0   $text   $surface0  $surface0
+client.unfocused        $surface0  $base       $text   $surface0  $surface0
+client.urgent           $red       $red        $crust  $red       $red
+client.placeholder      $base      $base       $text   $base      $base
+client.background       $base
+
+### ─── Session ────────────────────────────────────────────────────────────────
+# What NixOS adds to a Sway session (programs.sway): hand the compositor's
+# environment to the D-Bus and systemd user managers, start sway-session.target
+# (which binds graphical-session.target), and stop it when Sway exits.
+include /etc/sway/config.d/*
+
+### ─── Output / wallpaper ─────────────────────────────────────────────────────
+# Geometry (mode/position/scale) is owned by kanshi (ravnix.laptop.kanshiProfiles)
+# so the same recipe handles the laptop's docking. Here we only set the bg.
+# Solid Base is only the fallback. The wallpaper itself is drawn per output by
+# `backdrop wallpaper`, which every kanshi profile runs last, and lock-screen
+# runs again after each unlock. A sway reload resets the bg to this line, then
+# kanshi (exec_always) restarts and draws it again.
+output * bg $base solid_color
+
+### ─── Workspaces on outputs ──────────────────────────────────────────────────
+# ravnix.desktop.workspaceOutputs: the first connected output of a list wins.
+# BY DESCRIPTION, NOT CONNECTOR NAME: a connector name changes with the port
+# (HDMI or USB-C DP Alt-Mode) and a panel can come up as eDP-1 or eDP-2; the
+# description does not. Read them with `swaymsg -t get_outputs`, and keep them
+# in step with the criteria of the kanshi profiles.
+@workspaceOutputs@
+
+### ─── Input ──────────────────────────────────────────────────────────────────
+# All keyboards: German primary, US secondary. Caps Lock is the Compose key
+# (XKB compose:caps), except on the built-in keyboard (its blocks below swap
+# Caps and Escape). The original Caps-Lock toggle is sacrificed; chain
+# `caps:ctrl_modifier` (or similar) onto xkb_options if you want Ctrl remapped
+# to Caps-Lock behaviour, or `caps:super` to make it an extra Super.
+input type:keyboard {
+    xkb_layout   "de,us"
+    xkb_options  "compose:caps"
+    repeat_delay 250
+    repeat_rate  40
+    xkb_numlock  enabled
+}
+
+# The Dygma Defy is the main keyboard: its firmware assumes a plain US host
+# layout. xkb_options / repeat_* are repeated here on purpose: a device-specific
+# input block does NOT inherit `type:keyboard` settings (it would otherwise sit
+# at sway's defaults 600/25).
+#
+# custom:f13_super turns this keyboard's F13 into a real Super, because the
+# firmware emits F13 from the mod key so one layout serves both this laptop and
+# a Windows laptop (where PowerToys does the same translation). It is defined in
+# ~/.config/xkb/ (modules/desktop/sway/xkb) and is DEVICE-SCOPED: the built-in
+# keyboard and other keyboards keep a stock F13. Do not move it up into
+# `type:keyboard`.
+input "13807:18:DYGMA_DEFY_Keyboard" {
+    xkb_layout   "us"
+    xkb_options  "compose:caps,custom:f13_super"
+    repeat_delay 250
+    repeat_rate  40
+}
+
+# Built-in keyboard: Caps Lock is Escape, Escape is Compose. custom:swap_esc_compose
+# is in the xkb files and replaces compose:caps here, since both write <CAPS>.
+# Two blocks, because the Copilot filter grabs the raw keyboard and re-emits every
+# key from its own virtual device. That device is what sway normally sees, and the
+# raw one takes over only while the filter is down. Settings are repeated in full
+# for the same no-inheritance reason as the Dygma block.
+input "1:1:copilot-key-super" {
+    xkb_layout   "de,us"
+    xkb_options  "custom:swap_esc_compose"
+    repeat_delay 250
+    repeat_rate  40
+    xkb_numlock  enabled
+}
+input "1:1:AT_Translated_Set_2_keyboard" {
+    xkb_layout   "de,us"
+    xkb_options  "custom:swap_esc_compose"
+    repeat_delay 250
+    repeat_rate  40
+    xkb_numlock  enabled
+}
+
+# Pointer (Logitech receiver + Dygma mouse). natural_scroll enabled (matches the
+# laptop) — flip to `disabled` for a conventional wheel.
+input type:pointer {
+    accel_profile flat
+    pointer_accel 0
+    natural_scroll enabled
+}
+
+# ── Apple Magic Trackpad (2024, USB-C model) ─────────────────────────────────
+# Lives here beside the Dygma rather than in 50-laptop.conf, because this is a
+# PERIPHERAL that travels with the user; 50-laptop.conf is for the machine's own
+# built-in hardware, and its `input type:touchpad` block already covers this pad
+# with the shared tap/clickfinger/natural-scroll defaults. Only the differences
+# are here.
+#
+# TWO BLOCKS, AND THEY ARE NOT A COPY-PASTE MISTAKE. The sway identifier changes on
+# BOTH axes when the bus changes, so one block cannot match both:
+#
+#   USB       1452:804:Apple_Inc._Magic_Trackpad          vendor 0x05AC (USB vendor id)
+#   Bluetooth   76:804:Apple_Inc._Magic_Trackpad_USB-C    vendor 0x004C (BT company id)
+#
+# Note the trap in the second name: the kernel calls the Bluetooth device "USB-C"
+# (that is the 2024 model's product name), so the string containing "USB-C" is the
+# one that is NOT on USB. libinput's own 50-system-apple.quirks splits the same
+# device the same way.
+#
+# KEEP THE TWO BODIES IN SYNC. Change one, change the other.
+#
+# dwt disabled, and what that line actually does is BUS-DEPENDENT:
+#   over USB       libinput reports dwt/dwtp, so this line takes effect
+#   over Bluetooth libinput does not expose dwt AT ALL — the field is absent from
+#                  sway's input report no matter what you set, so this line is a no-op
+# Sway accepts the line without complaint and `sway --validate` passes, so nothing
+# warns you. It is kept in BOTH blocks anyway: it is correct where it applies,
+# harmless where it does not, and already right if libinput ever gains dwt over
+# Bluetooth. Why disable it at all: libinput pairs disable-while-typing with the
+# INTERNAL keyboard, so on a pad driven from another keyboard it does nothing
+# useful, and turning it off keeps it from being a suspect when the pad seems to
+# drop input. The built-in pad keeps dwt, where it does real work.
+#
+# scroll_factor 0.8: this pad's surface is much larger than the built-in one, so
+# the same finger travel produces more scroll; 0.8 puts a full swipe back at
+# roughly the internal pad's distance. It is deliberately NOT in the shared
+# `input type:touchpad` block, because that block also covers the internal pad,
+# which is already right at 1.0.
+input "76:804:Apple_Inc._Magic_Trackpad_USB-C" {
+    dwt disabled
+    scroll_factor 0.8
+}
+input "1452:804:Apple_Inc._Magic_Trackpad" {
+    dwt disabled
+    scroll_factor 0.8
+}
+
+focus_follows_mouse yes
+focus_on_window_activation smart
+# Don't teleport the cursor between outputs (matters once the laptop docks)
+mouse_warping container
+
+### ─── Look & feel ─────────────────────────────────────────────────────────────
+# Minimal look: NO borders on tiled windows, NO title bars, NO gaps, NO rounded
+# corners (sway has none), NO transparency (there is no opacity rule anywhere,
+# so every window is fully opaque). Focus on a tiled window is shown by the
+# focused-window title in the bar, not by a frame. A FLOATING window is the one
+# thing that gets a frame: 1 px, the accent while focused, Surface0 when not.
+# default_border none = no border AND no title bar.
+gaps inner 0
+gaps outer 0
+default_border none
+default_floating_border pixel 1
+font pango:@font@ @fontSize@
+
+# Cursor theme: Catppuccin Mocha in the accent, 24 px.
+seat * xcursor_theme @cursorTheme@ 24
+seat * hide_cursor when-typing enable
+# Also hide the cursor after 8s idle (clean empty desktop)
+seat * hide_cursor 8000
+
+### ─── Key bindings — apps ─────────────────────────────────────────────────────
+# ONE rule: every application sits on $mod+Shift, and the terminal is the only
+# exception. No product is named below; the role variables above do that, so
+# swapping a product never moves a key. The $mod+k cheatsheet parses this file
+# live, so nothing needs registering anywhere else.
+#
+# NB: no trailing comments on the bindsym lines. Sway hands everything after
+# `exec` straight to sh, and an inline '#' is not a comment here.
+
+# Terminal, the exception. The main one is the default session; the plain shell
+# is the one you have to ask for.
+bindsym $mod+Return     exec $work
+bindsym $mod+Alt+Return exec $plain
+
+# Applications, one letter each.
+bindsym $mod+Shift+b exec $browser
+bindsym $mod+Shift+f exec $files
+bindsym $mod+Shift+n exec $notes
+bindsym $mod+Shift+o exec $office
+bindsym $mod+Shift+m exec $music
+bindsym $mod+Shift+d exec $cloud
+bindsym $mod+Shift+r exec $recipes
+bindsym $mod+Shift+c exec $calc
+
+# Two families where a second modifier picks the variant, so there is only one
+# letter to remember per topic:
+#   A        quick AI popup (sway-ask)   P        Bitwarden desktop
+#   Alt+A    the self-hosted chat
+#   Ctrl+A   claude.ai, hosted
+@askBinding@
+bindsym $mod+Shift+Alt+a  exec $ai-local
+bindsym $mod+Shift+Ctrl+a exec $ai-web
+bindsym $mod+Shift+p      exec $passwords-app
+#
+# $calc and $ask are ALSO listed in fuzzel as "Calculator" and "AI Chat", from
+# the two .desktop files of this module. That works because a fuzzel spawned BY
+# fuzzel does get keyboard focus.
+#
+# This laptop's keyboard is German (xkb_layout "de,us" above), where '/' is
+# Shift+7, so a binding on $mod+Shift+slash would sit on the same physical chord
+# as the workspace-7 bind. Same reason to avoid $mod+Shift+y and +z for anything
+# new: y and z are swapped between the de laptop keyboard and the us Dygma.
+#
+# FREE on purpose: e, g, h, i, j, k, l, q, s, t, u, v, w, x, y. The point of this
+# layer is a keymap you never have to think about, and every bound key is one
+# more to remember. $mod+Shift+e and +g were mail and Matrix; those run in the
+# main terminal now.
+
+# Universal copy/paste/cut. Sway has no sendshortcut, so synthesize the legacy
+# clipboard chords with wtype (Wayland-native, no daemon): copy = Ctrl+Insert,
+# paste = Shift+Insert, cut = Ctrl+x. Works even in terminals where Ctrl+C is
+# SIGINT.
+bindsym $mod+c exec wtype -M ctrl  -k Insert -m ctrl
+bindsym $mod+v exec wtype -M shift -k Insert -m shift
+bindsym $mod+x exec wtype -M ctrl  -k x      -m ctrl
+# The same copy and paste on the mouse's side buttons: Back (button8) copies,
+# Forward (button9) pastes. --whole-window so it fires over a window's contents,
+# which also means Back and Forward are GONE as navigation everywhere: browser
+# history, a note's history, file managers. Any mouse's side buttons.
+bindsym --whole-window button8 exec wtype -M ctrl  -k Insert -m ctrl
+bindsym --whole-window button9 exec wtype -M shift -k Insert -m shift
+# Clipboard history picker: cliphist + fuzzel with image thumbnails.
+bindsym $mod+Ctrl+v exec sway-clipboard
+
+### ─── Key bindings — launcher & menus ─────────────────────────────────────────
+bindsym $mod+space       exec $menu
+# Power / session menu (fuzzel)
+bindsym $mod+Escape exec sway-powermenu
+# Keybindings cheatsheet — searchable list via fuzzel
+bindsym $mod+k exec sway-keybindings
+# Quick settings (fuzzel): display sharp/readable, mirror, audio output, do not
+# disturb, touchpad, night light, energy. See sway-settings.
+bindsym $mod+Shift+space exec sway-settings
+
+### ─── Key bindings — window management ────────────────────────────────────────
+bindsym $mod+w           kill
+bindsym $mod+t           floating toggle
+bindsym $mod+f           fullscreen
+bindsym $mod+j           layout toggle split
+# $mod+g ≈ group toggle
+bindsym $mod+g           layout toggle tabbed split
+bindsym $mod+a           focus parent
+# Pop focused window out: float, pin, center
+bindsym $mod+o           floating enable, sticky enable, resize set 960 600, move position center
+
+# Focus (SUPER + arrows)
+bindsym $mod+Left  focus left
+bindsym $mod+Down  focus down
+bindsym $mod+Up    focus up
+bindsym $mod+Right focus right
+
+# Alt+Tab — cycle windows on the current workspace
+bindsym Mod1+Tab       focus next
+bindsym Mod1+Shift+Tab focus prev
+
+# Move / swap window (SUPER + Shift + arrows)
+bindsym $mod+Shift+Left  move left
+bindsym $mod+Shift+Down  move down
+bindsym $mod+Shift+Up    move up
+bindsym $mod+Shift+Right move right
+
+# Move whole workspace to another output (SUPER + Shift + Alt + arrows)
+bindsym $mod+Shift+Alt+Left  move workspace to output left
+bindsym $mod+Shift+Alt+Down  move workspace to output down
+bindsym $mod+Shift+Alt+Up    move workspace to output up
+bindsym $mod+Shift+Alt+Right move workspace to output right
+
+# Floating: drag with $mod + left mouse, resize with $mod + right mouse
+floating_modifier $mod normal
+
+### ─── Key bindings — workspaces ───────────────────────────────────────────────
+bindsym $mod+1 workspace number 1
+bindsym $mod+2 workspace number 2
+bindsym $mod+3 workspace number 3
+bindsym $mod+4 workspace number 4
+bindsym $mod+5 workspace number 5
+bindsym $mod+6 workspace number 6
+bindsym $mod+7 workspace number 7
+bindsym $mod+8 workspace number 8
+bindsym $mod+9 workspace number 9
+bindsym $mod+0 workspace number 10
+
+# Move container to workspace AND follow
+bindsym $mod+Shift+1 move container to workspace number 1; workspace number 1
+bindsym $mod+Shift+2 move container to workspace number 2; workspace number 2
+bindsym $mod+Shift+3 move container to workspace number 3; workspace number 3
+bindsym $mod+Shift+4 move container to workspace number 4; workspace number 4
+bindsym $mod+Shift+5 move container to workspace number 5; workspace number 5
+bindsym $mod+Shift+6 move container to workspace number 6; workspace number 6
+bindsym $mod+Shift+7 move container to workspace number 7; workspace number 7
+bindsym $mod+Shift+8 move container to workspace number 8; workspace number 8
+bindsym $mod+Shift+9 move container to workspace number 9; workspace number 9
+bindsym $mod+Shift+0 move container to workspace number 10; workspace number 10
+
+# Move container to workspace SILENTLY, stay put
+bindsym $mod+Shift+Alt+1 move container to workspace number 1
+bindsym $mod+Shift+Alt+2 move container to workspace number 2
+bindsym $mod+Shift+Alt+3 move container to workspace number 3
+bindsym $mod+Shift+Alt+4 move container to workspace number 4
+bindsym $mod+Shift+Alt+5 move container to workspace number 5
+bindsym $mod+Shift+Alt+6 move container to workspace number 6
+bindsym $mod+Shift+Alt+7 move container to workspace number 7
+bindsym $mod+Shift+Alt+8 move container to workspace number 8
+bindsym $mod+Shift+Alt+9 move container to workspace number 9
+bindsym $mod+Shift+Alt+0 move container to workspace number 10
+
+# Cycle workspaces
+bindsym $mod+Tab        workspace next_on_output
+bindsym $mod+Shift+Tab  workspace prev_on_output
+bindsym $mod+Ctrl+Tab   workspace back_and_forth
+
+# Cycle workspaces with $mod + mouse wheel
+bindsym --whole-window $mod+button4 workspace prev_on_output
+bindsym --whole-window $mod+button5 workspace next_on_output
+
+### ─── Key bindings — MX Master 3S gesture button ──────────────────────────────
+# The wide button under the thumb rest has a press and four swipe directions.
+# Linux sees none of the swipes by itself: they are not input events, they are
+# computed from cursor motion while the button is held. logid synthesizes them
+# (the logiops configuration) and emits F14-F18. It knows nothing beyond that.
+# What each one MEANS is decided by sway-mouse, which reads the focused app_id
+# and can therefore vary per application; logid cannot, and no off-the-shelf
+# tool does per-app mouse mapping on a wlroots compositor.
+#
+# F-keys and not letters: logid emits raw event codes that assume US QWERTY (its
+# docs say to write KEY_Y where you mean 'z' on QWERTZ) and this laptop is de,us.
+# Function keys carry no layout, so the trap cannot fire. F13 is the Dygma's mod
+# key, remapped to Super by `custom:f13_super` in the xkb files, hence F14
+# upward. These carry no $mod, which is correct: the mouse needs no
+# keyboard-side twin.
+#
+# Global:  press = radial menu · left/right = workspace · up = fullscreen
+#          down = floating toggle
+# Per-app overrides live in the script, so changing one needs no reload.
+#
+# bindcode, never `bindsym F14`: inet(evdev) gives KEY_F14..F18 the keysyms
+# XF86Launch5..9, the same trap as F13 -> XF86Tools, so a keysym bind waits for
+# a keysym this keymap never produces. XKB keycode = evdev code + 8, so
+# KEY_F14 (184) .. KEY_F18 (188) are 192..196.
+bindcode 192 exec sway-mouse press
+bindcode 193 exec sway-mouse up
+bindcode 194 exec sway-mouse down
+bindcode 195 exec sway-mouse left
+bindcode 196 exec sway-mouse right
+
+### ─── Key bindings — scratchpad ───────────────────────────────────────────────
+bindsym $mod+s     scratchpad show
+bindsym $mod+Alt+s move scratchpad
+
+### ─── Key bindings — resize ───────────────────────────────────────────────────
+# Direct resize on the physical -/= keys (+Shift = height).
+# bindcode (not bindsym): on the de layout the `equal` keysym is unreachable, so a
+# keysym bind would never fire from a non-Dygma keyboard. 20 = AE11 (-), 21 = AE12 (=).
+bindcode $mod+20       resize shrink width  100px
+bindcode $mod+21       resize grow   width  100px
+bindcode $mod+Shift+20 resize shrink height 100px
+bindcode $mod+Shift+21 resize grow   height 100px
+# …and a dedicated resize mode on $mod+r
+mode "resize" {
+    bindsym $left  resize shrink width  10px
+    bindsym $down  resize grow   height 10px
+    bindsym $up    resize shrink height 10px
+    bindsym $right resize grow   width  10px
+    bindsym Left   resize shrink width  10px
+    bindsym Down   resize grow   height 10px
+    bindsym Up     resize shrink height 10px
+    bindsym Right  resize grow   width  10px
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+bindsym $mod+r mode "resize"
+
+### ─── Key bindings — system & notifications ───────────────────────────────────
+bindsym $mod+Ctrl+l       exec $lock
+# Cycle Waybar: full -> focus -> none -> full. `focus` drops the workspaces and
+# the whole right cluster; `none` kills the bar outright. What `none` costs:
+# waybar is the SNI tray HOST, so the tray icons go with it, and the keep-awake
+# cup, clock and network menu are unreachable while it is gone. The tray items
+# re-register themselves when the bar comes back, so nothing needs restarting.
+# $mod+Ctrl+a / +b / +w still open the audio, Bluetooth and network panels
+# directly meanwhile, and $mod+Ctrl+space is the only way back, which is fine
+# because it is a key and not a click target.
+bindsym $mod+Ctrl+space   exec waybar-mode
+# $mod+Ctrl is where the rest of the system keys live, so reload belongs here.
+# Do NOT move it onto $mod+Shift+c (the calculator) or $mod+Shift+r (recipes).
+bindsym $mod+Ctrl+r       reload
+bindsym $mod+comma        exec dunstctl close
+bindsym $mod+Shift+comma  exec dunstctl close-all
+bindsym $mod+Alt+comma    exec dunstctl action
+bindsym $mod+Ctrl+comma   exec dunstctl set-paused toggle
+# Night light: auto -> day forced -> night forced -> auto, with a notification
+bindsym $mod+Ctrl+n       exec sway-nightlight
+
+# Control panels: terminal apps in a floating terminal
+bindsym $mod+Ctrl+a exec $audio
+bindsym $mod+Ctrl+b exec $bluetooth
+bindsym $mod+Ctrl+w exec $network
+# Activity monitor — btop-auto shows the dGPU too when it's already awake
+bindsym $mod+Ctrl+t exec $term -e btop-auto
+
+### ─── Key bindings — screenshots (grimshot) ───────────────────────────────────
+# Alt+Print is active-window capture. Screen recording (wf-recorder) is deferred.
+bindsym Print            exec grimshot --notify savecopy area
+bindsym Shift+Print      exec grimshot --notify savecopy output
+bindsym Alt+Print        exec grimshot --notify savecopy active
+bindsym Ctrl+Print       exec grimshot --notify copy area
+
+### ─── Key bindings — media & brightness ───────────────────────────────────────
+# Volume — sway-volume sets the volume (never above the limit) and shows it in
+# a notification (works when locked). Defaults required: sway passes UNSET
+# $vars through literally, not as empty.
+set $volume_step  5
+set $volume_limit 100
+set $volume_helper sway-volume
+bindsym --locked XF86AudioRaiseVolume exec $volume_helper --limit "$volume_limit" --increase "$volume_step"
+bindsym --locked XF86AudioLowerVolume exec $volume_helper --limit "$volume_limit" --decrease "$volume_step"
+bindsym --locked XF86AudioMute        exec pactl set-sink-mute   @DEFAULT_SINK@   toggle && $volume_helper
+bindsym --locked XF86AudioMicMute     exec pactl set-source-mute @DEFAULT_SOURCE@ toggle
+
+# Brightness (external DDC monitor: brightnessctl only acts if a backlight exists)
+set $brightness_osd command -v notify-send >/dev/null && VALUE=$(brightnessctl --percentage get) && \
+    notify-send -e -h string:x-canonical-private-synchronous:brightness -h "int:value:$VALUE" -t 800 "Brightness: ${VALUE}%"
+bindsym XF86MonBrightnessDown exec brightnessctl -q set 5%-  && $brightness_osd
+bindsym XF86MonBrightnessUp   exec brightnessctl -q set +5%  && $brightness_osd
+
+# Media transport (playerctl) — Play/Stop allowed while locked
+bindsym --locked XF86AudioPlay exec playerctl play-pause
+bindsym --locked XF86AudioStop exec playerctl stop
+bindsym XF86AudioNext exec playerctl next
+bindsym XF86AudioPrev exec playerctl previous
+bindsym XF86AudioPause exec playerctl pause
+
+### ─── Key bindings — dictation (Handy) ─────────────────────────────────────────
+# Hold $mod+d, speak, let go: Handy transcribes offline and types the text into
+# the focused window. d is the same key on the de laptop board and the us
+# Dygma. Handy's own global shortcut cannot work under sway, so sway owns the
+# key and handy-ptt drives Handy by signal.
+# $mod+d cleans the text up first (filler out, a changed mind resolved, the
+# user's dictionary applied) through a model of the self-hosted chat; it needs
+# the home network or the VPN and falls back to the raw text with a notice.
+# $mod+Ctrl+d is the same hold-to-talk without the cleanup: instant, offline.
+# --no-repeat is required: without it sway re-fires the press bind every 25 ms
+# while the key is held. The release bind fires whichever key is let go first,
+# so handy-ptt remembers the mode of the press and the release follows it.
+bindsym --no-repeat $mod+d      exec handy-ptt down clean
+bindsym --release   $mod+d      exec handy-ptt up clean
+bindsym --no-repeat $mod+Ctrl+d exec handy-ptt down
+bindsym --release   $mod+Ctrl+d exec handy-ptt up
+
+### ─── Passthrough mode (for VNC/RDP into another compositor) ──────────────────
+# SUPER+SHIFT+Escape sends every key to the focused window; press again to exit.
+mode "passthrough" {
+    bindsym $mod+Shift+Escape mode "default"
+}
+bindsym $mod+Shift+Escape mode "passthrough"
+
+### ─── Game mode (MX Master buttons reach the game) ────────────────────────────
+# While a game window has focus, sway-game-mode (a user service) switches to
+# this mode and back to "default" when focus leaves. The mode exists for what it
+# does NOT bind: button8/button9 (copy/paste) and the gesture bindcodes 192-196
+# (sway-mouse), so Back, Forward and F14-F18 reach the game as a mouse button
+# the game can hold and as keys it can bind.
+# A mode drops every binding it does not repeat, so this one repeats what has to
+# keep working with the game focused: leaving the window (focus, workspaces),
+# fullscreen, lock, volume, media and brightness. Waybar shows the label.
+# Launchers and the rest are gone while the game has focus; that is the price.
+# SUPER+Shift+Escape leaves by hand if the watcher ever leaves it stuck.
+mode "game" {
+    bindsym $mod+Shift+Escape mode "default"
+    bindsym $mod+Left  focus left
+    bindsym $mod+Down  focus down
+    bindsym $mod+Up    focus up
+    bindsym $mod+Right focus right
+    bindsym Mod1+Tab       focus next
+    bindsym Mod1+Shift+Tab focus prev
+    bindsym $mod+1 workspace number 1
+    bindsym $mod+2 workspace number 2
+    bindsym $mod+3 workspace number 3
+    bindsym $mod+4 workspace number 4
+    bindsym $mod+5 workspace number 5
+    bindsym $mod+6 workspace number 6
+    bindsym $mod+7 workspace number 7
+    bindsym $mod+8 workspace number 8
+    bindsym $mod+9 workspace number 9
+    bindsym $mod+0 workspace number 10
+    bindsym $mod+Tab        workspace next_on_output
+    bindsym $mod+Shift+Tab  workspace prev_on_output
+    bindsym $mod+Ctrl+Tab   workspace back_and_forth
+    bindsym $mod+f          fullscreen
+    bindsym $mod+Ctrl+l     exec $lock
+    bindsym --locked XF86AudioRaiseVolume exec $volume_helper --limit "$volume_limit" --increase "$volume_step"
+    bindsym --locked XF86AudioLowerVolume exec $volume_helper --limit "$volume_limit" --decrease "$volume_step"
+    bindsym --locked XF86AudioMute        exec pactl set-sink-mute   @DEFAULT_SINK@   toggle && $volume_helper
+    bindsym --locked XF86AudioMicMute     exec pactl set-source-mute @DEFAULT_SOURCE@ toggle
+    bindsym XF86MonBrightnessDown exec brightnessctl -q set 5%-  && $brightness_osd
+    bindsym XF86MonBrightnessUp   exec brightnessctl -q set +5%  && $brightness_osd
+    bindsym --locked XF86AudioPlay exec playerctl play-pause
+    bindsym --locked XF86AudioStop exec playerctl stop
+    bindsym XF86AudioNext  exec playerctl next
+    bindsym XF86AudioPrev  exec playerctl previous
+    bindsym XF86AudioPause exec playerctl pause
+}
+
+### ─── Window rules ────────────────────────────────────────────────────────────
+# The policykit agent floats centered.
+for_window [app_id="lxqt-policykit-agent"]   floating enable, move position center
+for_window [app_id="org.gnome.Calculator"]   floating enable
+
+# The floating terminal: `ghostty-float` launches ghostty with this dedicated
+# app_id; the rule floats it centered at 40% x 70% of the workspace. The app_id
+# differs from ghostty's default (com.mitchellh.ghostty) so ONLY this window is
+# caught — $mod+Return terminals still tile. Order is load-bearing: `floating
+# enable` first (selects the float resize path so `ppt` resolves against the
+# workspace, not px), then `resize set` before `move position center` (center
+# uses the post-resize size). `ppt`, never `pt`. NB: ppt is % of the workspace
+# *usable* area (output minus the bar).
+for_window [app_id="com.mitchellh.ghostty.float"] floating enable, resize set 40 ppt 70 ppt, move position center
+
+# Float transient dialogs (file choosers, prefs, alerts) instead of tiling them.
+# These criteria are XWayland window properties; Wayland-native dialogs that don't
+# expose them just tile as usual. New floating windows are centered by sway.
+for_window [window_role="pop-up"]                floating enable
+for_window [window_role="dialog"]                floating enable
+for_window [window_role="task_dialog"]           floating enable
+for_window [window_role="GtkFileChooserDialog"]  floating enable
+for_window [window_type="dialog"]                floating enable
+
+# Browser idle-inhibit when fullscreen. The app_id is `helium`, MEASURED with
+# get_tree, not the vendor's StartupWMClass: an id that matches nothing leaves
+# the 5-minute idle lock running over a fullscreen video.
+for_window [app_id="helium"] inhibit_idle fullscreen
+# Helium web apps get the same treatment. They do NOT carry the app_id above. A
+# `--app=` window is named chrome-<host><path>-<profile> and Chromium IGNORES
+# --class in that mode. The path is encoded too, so a URL with a path gets a
+# DIFFERENT shape:
+#   https://example.org/      -> chrome-example.org__-Default
+#   https://example.org/new   -> chrome-example.org__new-Default
+# Hence the trailing wildcard rather than a literal '__-'. ("Default" is the
+# profile directory name; a second profile would change that suffix.)
+for_window [app_id="^chrome-.*-Default$"] inhibit_idle fullscreen
+
+# ONLYOFFICE presentations. ONLYOFFICE is XWayland, so it has a `class`, not an
+# app_id (measured: class ONLYOFFICE). A fullscreen slideshow or presenter view
+# must not hit the 5-minute idle lock while you talk.
+# "Show presenter view" opens the presenter (notes, timer, slide list) as a
+# second window titled plain "ONLYOFFICE", while the document window itself
+# goes fullscreen as the slideshow, both on the same output, the slideshow on
+# top. sway-present moves the slideshow to the external display and
+# fullscreens the presenter on the panel. The start window shares the title;
+# sway-present exits quietly for it. Its log: journalctl -t sway-present.
+# For sharp slides, switch the display to scale 1 in sway-settings BEFORE the
+# click: ONLYOFFICE pins the slideshow to the output size at that moment.
+for_window [class="ONLYOFFICE"] inhibit_idle fullscreen
+for_window [class="ONLYOFFICE" title="^ONLYOFFICE$"] exec sway-present
+
+### ─── Idle / lock ─────────────────────────────────────────────────────────────
+# swayidle is launched and OWNED by keep-awake (the single source of truth for
+# the idle command lines), NOT inline here — so the Waybar cup "keep-awake"
+# toggle can PERSIST across Waybar relaunches. That toggle flips a runtime state
+# file and relaunches swayidle; because swayidle is a plain `exec` (a sway
+# reload does NOT restart it), the state survives reloads. Two modes:
+#   normal      lock @5min, screen-off @6min, resume re-enables the output
+#               (kanshi can miss the DPMS-wake connector event, leaving
+#               active=false → blank desktop; `power on`+`enable` closes that
+#               race), plus before-sleep/lock/unlock.
+#   keep-awake  no idle timeouts, but STILL before-sleep/lock/unlock so a
+#               lid-close suspend still locks the screen.
+# Edit the swayidle command lines in keep-awake, not here.
+exec keep-awake start
+
+### ─── Status bar: Waybar ──────────────────────────────────────────────────────
+# Waybar is launched in the Autostart section below via `exec_always waybar-launch`
+# (NOT a sway `bar {}` block) so the focus-mode toggle can relaunch it with a
+# different config. waybar-launch picks config.jsonc (full) or config-focus.jsonc
+# (focus) from a runtime mode file; waybar still hosts the SNI tray for the applets.
+
+### ─── Autostart ───────────────────────────────────────────────────────────────
+# The session integration (environment into systemd and D-Bus, sway-session.target)
+# is the include of /etc/sway/config.d above.
+
+# PolicyKit auth agent — it must be started here.
+exec @polkitAgent@
+
+# Keep XDG user dirs current (idempotent).
+exec xdg-user-dirs-update
+
+# Once a StatusNotifier tray host (waybar) is up, run the XDG autostart entries —
+# this is what brings up the tray applets.
+exec sway-wait-sni && systemctl --user start xdg-desktop-autostart.target
+
+# Waybar — exec_always so a sway reload relaunches it cleanly. Mode-aware
+# (full | focus | none); toggle with $mod+Ctrl+space. Started before the SNI-gated
+# autostart so waybar's StatusNotifierWatcher is up when the tray applets launch.
+exec_always waybar-launch
+
+# Notifications: dunst is a systemd user service (services.dunst), started with
+# sway-session.target.
+
+# Night light. Fixed clock times, no coordinates and no geoclue: warm 4000 K from
+# 19:00, neutral 6500 K from 07:00, a 30 min fade each way. Plain exec, so a
+# reload does NOT pick up a changed line: pkill -x wlsunset, then swaymsg exec
+# the new one. $mod+Ctrl+n cycles the mode.
+exec wlsunset -S 07:00 -s 19:00 -d 1800 -t 4000 -T 6500
+
+# Monitor configuration daemon (owns output geometry; see ravnix.laptop.kanshiProfiles).
+# exec_always (not exec): a `swaymsg reload` reapplies sway's OWN output config,
+# which sets no scale/mode (kanshi owns those) and so resets every output to
+# scale 1.0 / preferred mode — silently undoing kanshi. Restarting kanshi on each
+# reload re-asserts the matched profile. `pkill -x` first so no second instance
+# lingers (two kanshi fight over the outputs); `exec` leaves no stray sh.
+exec_always sh -c 'pkill -x kanshi; exec kanshi'
+# A reload resets every input to this file, so a touchpad switched off in
+# sway-settings would come back on; reapply puts "off" back (no-op otherwise).
+exec_always sway-settings reapply
+
+# Clipboard history (cliphist): one watcher per kind.
+exec wl-paste --type text  --watch cliphist store
+exec wl-paste --type image --watch cliphist store
+
+# Session layout. Bring the desktop up already arranged: browser, terminal,
+# notes, music, each on its own workspace. `exec`, NEVER `exec_always`: a sway
+# reload must not relaunch four applications.
+#
+# Why a script and not `assign`. One `assign` line per app would do the login
+# placement declaratively, but it is permanent: with the terminal assigned to
+# workspace 2, $mod+Return pressed on workspace 7 opens a terminal on 2 and
+# does not follow it there, so the key looks broken. The script places the
+# windows it launched, at login, and then stops existing. Every keybinding
+# behaves exactly as it did before.
+#
+# The layout is declared HERE, not in the script, as triples of workspace,
+# app_id and command, so no product name is duplicated out of the role
+# variables above, and swapping an app stays the one-line change this config
+# promises. Sway expands a $variable inside double quotes into a SINGLE
+# argument, nested single quotes included.
+#
+# The app_ids are MEASURED with `swaymsg -t get_tree`, never read off a vendor's
+# StartupWMClass. Two apps on one workspace are placed in argument order,
+# whichever starts first.
+#
+# Obsidian deliberately does not use $notes. obsidian-open-daily starts it
+# plainly and then opens the newest EXISTING daily note through the Obsidian
+# CLI, creating nothing. Not through obsidian://open, which would be the obvious
+# way: Obsidian answers a URI with a "Run action from external link?" modal and
+# waits, so every login would come up behind a dialog. The CLI is not an
+# external link and is not challenged.
+# sway-session-layout can also tab a second vault together with the first
+# (`--tab 3 "Vault name"`, see the script); that names a vault, which is a
+# personal value, so no vault is named here.
+# The music webapp is a Helium --app window of https://music.apple.com/, so its
+# app_id follows the rule above.
+set $layout-browser 1  helium                          "$browser"
+set $layout-term    2  com.mitchellh.ghostty           "$work"
+set $layout-notes   3  obsidian                        "obsidian-open-daily"
+set $layout-music   10 chrome-music.apple.com__-Default "$music"
+exec sway-session-layout --focus 2 $layout-browser $layout-term $layout-notes $layout-music
+
+### ─── Per-machine and per-module fragments ────────────────────────────────────
+# ~/.config/sway/config.d/*.conf, in the order of their names. A module adds one
+# with xdg.configFile."sway/config.d/NN-name.conf" in its home-manager
+# configuration, and the build checks it together with this file (an empty
+# directory is fine: a zero-match glob include is non-fatal). This module's own
+# is 50-laptop.conf.
+include ~/.config/sway/config.d/*.conf

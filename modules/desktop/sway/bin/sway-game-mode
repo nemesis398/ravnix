@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""sway-game-mode: hold sway in mode "game" while a game window has focus.
+
+Why: sway binds the MX Master's Back/Forward (button8/9, copy and paste) and
+the gesture keys F14-F18 (sway-mouse) for every window, so a game never sees
+them. Mode "game" in the sway config leaves exactly those unbound. This watcher
+switches into it when a window from GAMES gains focus and back to "default"
+when focus goes anywhere else, an empty workspace included (2026-11-06, for
+Minecraft 26.3).
+
+In "game" it also switches off sway's cursor hiding. `seat * hide_cursor
+when-typing` hides the cursor on every key press by sending the window a
+wl_pointer.leave, and `hide_cursor 8000` does the same after 8 s without
+motion. SDL takes a leave as "all buttons released", so Minecraft stopped
+mining whenever W was pressed during a held click (measured with
+WAYLAND_DEBUG on wev, 2026-11-06). Leaving "game" restores the values from
+the sway config; keep HIDE_* in step with it.
+
+It only ever leaves mode "game": a focus change while you are in "resize" or
+"passthrough" leaves that mode alone. On SIGTERM it returns to "default"
+itself, and the unit's ExecStopPost runs `sway-game-mode --leave` after a
+crash, so sway never stays stuck in "game" without the watcher.
+
+Add a game: put its app_id (or XWayland class) into GAMES; read it with
+  swaymsg -t get_tree | jq -r '.. | select(.focused?) | .app_id // .window_properties.class'
+"""
+import json
+import signal
+import subprocess
+import sys
+
+GAMES = {"com.mojang.minecraft"}
+# "reload" arrives on the workspace channel: `swaymsg reload` resets sway to
+# mode "default" while the game keeps focus, and no focus event follows.
+EVENTS = {"focus", "close", "new", "move", "init", "empty", "reload"}
+# The sway config's values (modules/desktop/sway/config, `seat * hide_cursor`).
+HIDE_WHEN_TYPING = "enable"
+HIDE_TIMEOUT_MS = "8000"
+
+
+def swaymsg(*args):
+    return subprocess.run(["swaymsg", *args], capture_output=True, text=True)
+
+
+def focused_app():
+    out = swaymsg("-t", "get_tree")
+    if out.returncode:
+        return None
+    stack = [json.loads(out.stdout)]
+    while stack:
+        node = stack.pop()
+        if node.get("focused"):
+            return node.get("app_id") or (node.get("window_properties") or {}).get("class")
+        stack += node.get("nodes", []) + node.get("floating_nodes", [])
+    return None
+
+
+def current_mode():
+    out = swaymsg("-t", "get_binding_state")
+    return json.loads(out.stdout).get("name") if out.returncode == 0 else None
+
+
+def enter_game():
+    swaymsg("mode", "game")
+    swaymsg("seat", "*", "hide_cursor", "when-typing", "disable")
+    swaymsg("seat", "*", "hide_cursor", "0")
+
+
+def leave_game():
+    swaymsg("mode", "default")
+    swaymsg("seat", "*", "hide_cursor", "when-typing", HIDE_WHEN_TYPING)
+    swaymsg("seat", "*", "hide_cursor", HIDE_TIMEOUT_MS)
+
+
+def sync():
+    in_game = focused_app() in GAMES
+    mode = current_mode()
+    if in_game and mode != "game":
+        enter_game()
+    elif not in_game and mode == "game":
+        leave_game()
+
+
+def leave(*_):
+    if current_mode() == "game":
+        leave_game()
+    sys.exit(0)
+
+
+def main():
+    if sys.argv[1:] == ["--leave"]:
+        leave()
+    signal.signal(signal.SIGTERM, leave)
+    signal.signal(signal.SIGINT, leave)
+    sync()
+    sub = subprocess.Popen(
+        ["swaymsg", "-t", "subscribe", "-m", '["window", "workspace"]'],
+        stdout=subprocess.PIPE, text=True)
+    for line in sub.stdout:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("change") in EVENTS:
+            sync()
+    # The subscription only ends when sway goes away; systemd restarts us.
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

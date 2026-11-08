@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""sway-calc - calculator popup for sway (bound to $mod+Shift+c).
+
+Two fuzzel screens, no new packages:
+
+  1. input   `fuzzel --dmenu --prompt-only` gives a bare input box. It reads no
+     stdin and has no list, so Enter always returns exactly what was typed.
+  2. result  a normal `--dmenu` list: `= <result>` first, then the expression
+     and recent history. Enter on the result copies it and exits, Enter on any
+     other line reopens the input box with that expression prefilled, typing a
+     new expression evaluates it in place, Escape closes.
+
+Why `--match-mode=exact` on screen 2: under fuzzel's default `fzf` matching a
+freshly typed expression can fuzzy-match a history line, so Enter returns the
+history entry instead of what you typed. Whether that happens depends on what
+is in your history, i.e. it is unpredictable from the user's side. With exact
+matching a typed expression matches nothing and is returned raw.
+
+Expressions go through an `ast` whitelist, never `eval()`. Two shapes that
+would otherwise hang the popup while fuzzel holds exclusive keyboard focus are
+rejected up front: oversized integer `**` and oversized `factorial`.
+
+`%` always means percent here, never modulo. Use `mod(a, b)` for modulo. The
+three percent forms:
+
+    15% of 230   ->  34.5
+    230 + 19%    ->  273.7      (X + N% and X - N%, the VAT case)
+    19%          ->  0.19
+
+`ans` and `_` are the previous result, `^` is exponentiation, and `x`/`/` also
+accept the Unicode forms. History lives in $XDG_STATE_HOME/sway-calc/history,
+deliberately outside the Nextcloud tree (no mutable state in the synced tree).
+
+Test the evaluator with no GUI at all:
+
+    sway-calc --eval '230 + 19%'
+
+Deps: fuzzel, wl-copy, notify-send, python3 - all already on the system.
+"""
+
+from __future__ import annotations
+
+import ast
+import math
+import operator
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+WIDTH = 50
+MAX_HISTORY = 50
+MAX_LINES = 10
+PROMPT = "calc  "
+
+STATE_DIR = (
+    Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    / "sway-calc"
+)
+HISTORY_FILE = STATE_DIR / "history"
+
+
+class CalcError(Exception):
+    """Anything the user should see above the input box, in plain language."""
+
+
+# ── evaluation ────────────────────────────────────────────────────────────────
+
+
+def _power(base, exponent):
+    # An unguarded int ** int is the one expression that can lock the session:
+    # it computes for minutes while fuzzel holds exclusive keyboard focus.
+    # Bound the size of the result before asking Python for it.
+    if isinstance(base, int) and isinstance(exponent, int) and exponent > 0:
+        if base != 0 and base.bit_length() * exponent > 8192:
+            raise CalcError("exponent too large")
+    return operator.pow(base, exponent)
+
+
+def _factorial(n):
+    if isinstance(n, float) and n.is_integer():
+        n = int(n)
+    if not isinstance(n, int) or n < 0:
+        raise CalcError("factorial needs a whole number that is not negative")
+    if n > 10000:
+        raise CalcError("factorial argument too large")
+    return math.factorial(n)
+
+
+def _cbrt(x):
+    return math.copysign(abs(x) ** (1 / 3), x)
+
+
+BINOPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Pow: _power,
+}
+
+UNARYOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+CONSTANTS = {"pi": math.pi, "e": math.e, "tau": math.tau}
+
+FUNCTIONS = {
+    "abs": abs,
+    "acos": math.acos,
+    "asin": math.asin,
+    "atan": math.atan,
+    "atan2": math.atan2,
+    "cbrt": _cbrt,
+    "ceil": math.ceil,
+    "cos": math.cos,
+    "degrees": math.degrees,
+    "exp": math.exp,
+    "factorial": _factorial,
+    "floor": math.floor,
+    "gcd": math.gcd,
+    "hypot": math.hypot,
+    "log": math.log,
+    "log2": math.log2,
+    "log10": math.log10,
+    "max": max,
+    "min": min,
+    "mod": operator.mod,
+    "radians": math.radians,
+    "round": round,
+    "sin": math.sin,
+    "sqrt": math.sqrt,
+    "tan": math.tan,
+}
+
+# 15% of 230 -> 15/100*230.  Runs before the +N% rule so that a trailing
+# "of <number>" is already gone when that rule looks for a trailing percent.
+_PERCENT_OF = re.compile(r"%\s*of\b", re.IGNORECASE)
+# 230 + 19% -> (230) * (1 + 19/100).  Anchored at both ends: the percent has to
+# close the expression, which is exactly the shape a phone calculator handles.
+_SIGNED_PERCENT = re.compile(r"^\s*(.+?)\s*([+-])\s*([0-9]*\.?[0-9]+)\s*%\s*$")
+
+
+def preprocess(text: str) -> str:
+    """Rewrite calculator notation into a Python expression."""
+    src = text.strip()
+    for glyph, plain in (("×", "*"), ("·", "*"), ("÷", "/"), ("−", "-")):
+        src = src.replace(glyph, plain)
+    src = src.replace("^", "**")
+    src = _PERCENT_OF.sub("/100*", src)
+    signed = _SIGNED_PERCENT.match(src)
+    if signed:
+        left, sign, pct = signed.groups()
+        src = f"({left}) * (1 {sign} {pct}/100)"
+    return src.replace("%", "/100")
+
+
+def _eval(node, names):
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+            raise CalcError("only numbers are allowed")
+        return node.value
+    if isinstance(node, ast.BinOp):
+        handler = BINOPS.get(type(node.op))
+        if handler is None:
+            raise CalcError("that operator is not allowed")
+        return handler(_eval(node.left, names), _eval(node.right, names))
+    if isinstance(node, ast.UnaryOp):
+        handler = UNARYOPS.get(type(node.op))
+        if handler is None:
+            raise CalcError("that operator is not allowed")
+        return handler(_eval(node.operand, names))
+    if isinstance(node, ast.Name):
+        if node.id in names:
+            return names[node.id]
+        raise CalcError(f'unknown name "{node.id}"')
+    if isinstance(node, ast.Call):
+        if not isinstance(node.func, ast.Name):
+            raise CalcError("only plain function calls are allowed")
+        function = FUNCTIONS.get(node.func.id)
+        if function is None:
+            raise CalcError(f'unknown function "{node.func.id}"')
+        if node.keywords:
+            raise CalcError("keyword arguments are not allowed")
+        return function(*[_eval(arg, names) for arg in node.args])
+    raise CalcError("that is not a calculation")
+
+
+def evaluate(text: str, ans=None):
+    names = dict(CONSTANTS)
+    if ans is not None:
+        names["ans"] = ans
+        names["_"] = ans
+    try:
+        tree = ast.parse(preprocess(text), mode="eval")
+    except SyntaxError:
+        if "%" in text:
+            raise CalcError("% means percent here, use mod(a, b) for modulo") from None
+        raise CalcError("that is not a valid expression") from None
+    try:
+        return _eval(tree.body, names)
+    except CalcError:
+        raise
+    except ZeroDivisionError:
+        raise CalcError("division by zero") from None
+    except RecursionError:
+        raise CalcError("expression is nested too deeply") from None
+    except (ArithmeticError, ValueError, TypeError) as exc:
+        raise CalcError(str(exc) or "cannot compute that") from None
+
+
+def render(value) -> str:
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "nan"
+        if math.isinf(value):
+            return "inf" if value > 0 else "-inf"
+        if value.is_integer() and abs(value) < 1e15:
+            return str(int(value))
+        return f"{value:.10g}"
+    return str(value)
+
+
+# ── history ───────────────────────────────────────────────────────────────────
+
+
+def load_history():
+    try:
+        raw = HISTORY_FILE.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    entries = []
+    for line in raw.splitlines():
+        expression, tab, result = line.partition("\t")
+        if tab and expression:
+            entries.append((expression, result))
+    return entries[:MAX_HISTORY]
+
+
+def push_history(entries, expression, result):
+    kept = [(e, r) for e, r in entries if e != expression]
+    kept.insert(0, (expression, result))
+    kept = kept[:MAX_HISTORY]
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        HISTORY_FILE.write_text(
+            "".join(f"{e}\t{r}\n" for e, r in kept), encoding="utf-8"
+        )
+    except OSError:
+        pass  # history is a convenience, never block a calculation on it
+    return kept
+
+
+# ── screens ───────────────────────────────────────────────────────────────────
+
+
+def _fuzzel(args, lines=None):
+    proc = subprocess.run(
+        ["fuzzel", "--dmenu", *args],
+        input="" if lines is None else "\n".join(lines) + "\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout.strip("\n")
+
+
+def ask_expression(prefill: str, note: str):
+    args = [
+        f"--prompt-only={PROMPT}",
+        f"--width={WIDTH}",
+        "--placeholder=2+2    15% of 230    sqrt(2)",
+    ]
+    if prefill:
+        args.append(f"--search={prefill}")
+    if note:
+        args.append(f"--mesg={note}")
+    return _fuzzel(args)
+
+
+def build_result_screen(expression, result, history):
+    lines, actions = [], {}
+
+    def add(text, action):
+        if text not in actions:
+            lines.append(text)
+            actions[text] = action
+
+    add(f"= {result}", ("copy", result))
+    add(expression, ("edit", expression))
+    for past_expression, past_result in history[1:]:
+        add(f"{past_expression}  =  {past_result}", ("edit", past_expression))
+    return lines[:MAX_LINES], actions
+
+
+def ask_result(lines):
+    return _fuzzel(
+        [
+            "--no-sort",
+            "--match-mode=exact",
+            "--cache=/dev/null",
+            f"--prompt={PROMPT}",
+            f"--width={WIDTH}",
+            f"--lines={len(lines)}",
+            "--placeholder=Enter copies, or type a new calculation",
+        ],
+        lines,
+    )
+
+
+def copy_result(result: str):
+    try:
+        subprocess.run(["wl-copy"], input=result, text=True, check=False)
+    except OSError:
+        return
+    try:
+        subprocess.run(
+            [
+                "notify-send",
+                "-a", "sway-calc",
+                "-t", "1500",
+                "-h", "string:x-canonical-private-synchronous:sway-calc",
+                f"= {result}",
+                "copied to clipboard",
+            ],
+            check=False,
+        )
+    except OSError:
+        pass
+
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+
+def main(argv):
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if len(argv) > 2 and argv[1] == "--eval":
+        try:
+            print(render(evaluate(" ".join(argv[2:]))))
+        except CalcError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    history = load_history()
+    ans = None
+    prefill = ""
+    note = ""
+    shown = None  # (expression, result) on screen 2, or None for screen 1
+    actions = {}
+
+    while True:
+        if shown is None:
+            code, raw = ask_expression(prefill, note)
+            prefill = note = ""
+        else:
+            lines, actions = build_result_screen(*shown, history)
+            code, raw = ask_result(lines)
+
+        if code != 0:
+            return 0
+        raw = raw.strip()
+        if not raw:
+            return 0
+
+        if shown is not None and raw in actions:
+            kind, payload = actions[raw]
+            if kind == "copy":
+                copy_result(payload)
+                return 0
+            prefill, shown = payload, None
+            continue
+
+        try:
+            value = evaluate(raw, ans)
+        except CalcError as exc:
+            prefill, note, shown = raw, f"⚠ {exc}", None
+            continue
+
+        ans = value
+        result = render(value)
+        history = push_history(history, raw, result)
+        shown = (raw, result)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except FileNotFoundError as exc:
+        sys.exit(f"sway-calc: missing dependency: {exc.filename}")
+    except KeyboardInterrupt:
+        sys.exit(130)

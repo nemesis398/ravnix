@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# sway-nightlight — cycle wlsunset's mode (bound to $mod+Ctrl+n).
+#
+# wlsunset cycles on SIGUSR1: auto -> day forced -> night forced -> auto. It
+# never reports which mode it is in, so this script counts the signals it sent
+# and says the result in a notification. The count is keyed to wlsunset's PID:
+# a restarted wlsunset starts in auto again, and a stale count must not survive
+# it. State lives in $XDG_RUNTIME_DIR, never in the synced tree.
+#
+# `pkill -x`, never `-f`: a -f pattern matches this script's own command line.
+set -uo pipefail
+
+pid=$(pgrep -x -o wlsunset) || {
+  notify-send -a nightlight -u low 'Night light' 'wlsunset is not running'
+  exit 1
+}
+
+state="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/sway-nightlight"
+step=0
+if [ -r "$state" ]; then
+  read -r saved_pid saved_step <"$state" || true
+  [ "${saved_pid:-}" = "$pid" ] && step=${saved_step:-0}
+fi
+
+kill -USR1 "$pid" || exit 1
+step=$(( (step + 1) % 3 ))
+printf '%s %s\n' "$pid" "$step" >"$state"
+
+case $step in
+  0) msg='Auto: warm from 19:00, neutral from 07:00' ;;
+  1) msg='Day: neutral 6500 K until you switch back' ;;
+  2) msg='Night: warm 4000 K until you switch back' ;;
+esac
+notify-send -a nightlight -u low -h string:x-dunst-stack-tag:nightlight 'Night light' "$msg"

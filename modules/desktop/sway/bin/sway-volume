@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# sway-volume — set the volume of the default sink and show it in a notification.
+# The volume, brightness and media keys call it (modules/desktop/sway/config), so
+# it works while the screen is locked.
+#
+#   sway-volume [--sink SINK] [--limit PERCENT] [--increase STEP | --decrease STEP | --set-volume PERCENT]
+#
+# Without a change it only shows the current volume: the mute key runs it after
+# toggling. The volume is clamped to 0..LIMIT (default 100), so a held key never
+# goes above the limit. The notification replaces the one before it (the
+# synchronous hint) and carries the volume as a progress bar.
+set -uo pipefail
+
+# pactl prints in the locale of the session; the parsing below reads English.
+export LC_ALL=C.UTF-8
+
+# Overridable, so that the limits and the arithmetic can be tested without an
+# audio server (tests/desktop/helpers/script-tests.sh).
+PACTL=${PACTL:-pactl}
+NOTIFY_SEND=${NOTIFY_SEND:-notify-send}
+
+sink="@DEFAULT_SINK@"
+limit=100
+change=0
+set_to=-1
+
+usage() {
+  echo "usage: sway-volume [--sink S] [--limit N] [--increase N|--decrease N|--set-volume N]" >&2
+  exit 2
+}
+
+# A number is digits and nothing else: the value goes into arithmetic, where
+# bash would run a command hidden in an index (x[$(cmd)]).
+number() {
+  case ${1:-} in
+    ''|*[!0-9]*) echo "sway-volume: not a number: ${1:-}" >&2; exit 2 ;;
+  esac
+  echo "$1"
+}
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --sink) [ $# -ge 2 ] || usage; sink=$2; shift ;;
+    -l|--limit) limit=$(number "${2:-}") || exit 2; shift ;;
+    --set-volume) set_to=$(number "${2:-}") || exit 2; shift ;;
+    -i|--increase) change=$(number "${2:-}") || exit 2; shift ;;
+    -d|--decrease) change=-$(number "${2:-}") || exit 2; shift ;;
+    *) usage ;;
+  esac
+  shift
+done
+
+clamp() {
+  if [ "$1" -lt 0 ]; then echo 0
+  elif [ "$1" -gt "$limit" ]; then echo "$limit"
+  else echo "$1"
+  fi
+}
+
+# The first percentage pactl prints for the sink (left channel).
+volume_of() {
+  local line
+  line=$("$PACTL" get-sink-volume "$1" 2>/dev/null) || { echo 0; return; }
+  line=${line%%%*}
+  echo "${line##* }"
+}
+
+if [ "$change" -ne 0 ]; then
+  "$PACTL" set-sink-volume "$sink" "$(clamp $(( $(volume_of "$sink") + change )))%"
+elif [ "$set_to" -ge 0 ]; then
+  "$PACTL" set-sink-volume "$sink" "$(clamp "$set_to")%"
+fi
+
+volume=$(volume_of "$sink")
+text="Volume: ${volume}%"
+case $("$PACTL" get-sink-mute "$sink" 2>/dev/null) in
+  *yes) text="Volume: muted"; volume=0 ;;
+esac
+
+"$NOTIFY_SEND" --app-name sway --expire-time 800 \
+  --hint string:x-canonical-private-synchronous:volume \
+  --hint "int:value:$volume" --transient "$text"

@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""sway-session-layout - put the login apps on their workspaces, once.
+
+WHY THIS EXISTS: the desktop should come up already arranged - browser,
+terminal, notes, chat+mail, music, each on its own workspace - without that
+arrangement becoming a permanent rule. Sway's own `assign` would do the login
+placement in one line, but it is forever: with `assign [app_id=
+"com.mitchellh.ghostty"] workspace number 2` in the config, $mod+Return pressed
+on workspace 7 opens a terminal on 2 and does not follow it there, so the key
+looks broken. This script places only the windows it launched, at login, and
+then gets out of the way. Every keybinding keeps behaving exactly as before.
+
+THE LAYOUT IS NOT IN HERE. It is declared in the sway config, as triples of
+workspace, app_id and command, where the command is the same $role variable the
+keybinding uses:
+
+    sway-session-layout --focus 4 --tab 3 "Example Vault" \
+        1 helium "$browser" 2 com.mitchellh.ghostty "$work" ...
+
+so no product name is duplicated out of the config into this file, and swapping
+the music player stays the one-line change the config promises. Sway expands a
+$variable inside double quotes and hands the result over as a single argument -
+verified headless 2026-08-09, including $work, whose nested single quotes
+survive intact and re-parse correctly under `sh -c`.
+
+    --focus N            switch to workspace N when everything is placed
+    --tab N SUBSTRING    if workspace N ends up holding more than one window,
+                         make it a tabbed group and leave the window whose
+                         title contains SUBSTRING active
+
+ORDER ON A SHARED WORKSPACE IS THE ARGUMENT ORDER. Two apps named for the same
+workspace are placed in the order they are written, however fast each starts,
+which is what makes a shared workspace reliably hold the first app on the left
+and the second on the right. Electron and Gecko startup times are not
+comparable and not stable, so waiting on that race rather than assuming it is
+the whole point.
+
+EVERY window of a listed app_id is placed, not just the first. That is what
+collects Obsidian's extra vault windows onto the notes workspace instead of
+leaving them wherever they landed.
+
+AN APP IS NOT DONE JUST BECAUSE IT ONCE HAD A WINDOW. Some apps (a music player
+built on Electron was one) map a window and then throw it away for a different
+one: measured, con_id 142 at two seconds, replaced by 143 by four. Placing the first one and calling it finished
+left the real window wherever the desktop happened to be, which is exactly the
+bug this paragraph exists to stop coming back. So a placed window that has since
+vanished from the tree stops counting, the app goes back to unfinished, and the
+replacement gets placed when it appears.
+
+Already-running apps are not launched again, so running this by hand just
+re-applies the layout to what is already open.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DEADLINE = 30.0  # give up on an app whose window never appears
+SETTLE = 6.0     # keep collecting late windows this long after the last placement.
+#                  An app may swap its window between two and four seconds after
+#                  launch, so three was not enough margin; this is what the
+#                  final focus switch waits for, roughly ten seconds all told.
+POLL = 0.1
+
+LOG = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "sway-session-layout.log"
+
+
+def log(msg):
+    line = f"{time.strftime('%H:%M:%S')} {msg}"
+    print(line, file=sys.stderr)
+    try:
+        with LOG.open("a") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+
+
+def find_socket():
+    """sway exports SWAYSOCK to its own exec'd children; a hand-run from a tmux
+    pane or over SSH inherits nothing, so fall back to the live session's socket
+    (the live session's socket in the runtime directory)."""
+    sock = os.environ.get("SWAYSOCK")
+    if sock and Path(sock).exists():
+        return sock
+    uid = os.getuid()
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}"))
+    for path in sorted(runtime.glob(f"sway-ipc.{uid}.*.sock")):
+        pid = path.name.split(".")[2]
+        if Path(f"/proc/{pid}").exists():
+            return str(path)
+    return None
+
+
+def sway(*args):
+    result = subprocess.run(
+        ["swaymsg", *args], capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        log(f"swaymsg {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def windows():
+    """(con_id, app_id, title, workspace_name) for every view in the tree."""
+    try:
+        tree = json.loads(sway("-t", "get_tree"))
+    except json.JSONDecodeError:
+        return []
+    found = []
+
+    def walk(node, workspace):
+        if node.get("type") == "workspace":
+            workspace = node.get("name")
+        if node.get("app_id"):
+            found.append((node["id"], node["app_id"], node.get("name") or "", workspace))
+        for child in node.get("nodes", []) + node.get("floating_nodes", []):
+            walk(child, workspace)
+
+    walk(tree, None)
+    return found
+
+
+def parse_argv(argv):
+    focus, tab, apps = None, None, []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--focus" and i + 1 < len(argv):
+            focus = argv[i + 1]
+            i += 2
+        elif argv[i] == "--tab" and i + 2 < len(argv):
+            tab = (argv[i + 1], argv[i + 2])
+            i += 3
+        elif i + 2 < len(argv):
+            apps.append(
+                {"ws": argv[i], "app_id": argv[i + 1], "cmd": argv[i + 2], "placed": []}
+            )
+            i += 3
+        else:
+            sys.exit(
+                "usage: sway-session-layout [--focus N] [--tab N SUBSTRING] "
+                "WS APP_ID CMD [WS APP_ID CMD ...]"
+            )
+    return focus, tab, apps
+
+
+def launch(apps):
+    running = {app_id for _, app_id, _, _ in windows()}
+    for app in apps:
+        if app["app_id"] in running:
+            log(f"{app['app_id']}: already open, not launched")
+            continue
+        # setsid -f detaches immediately, so the app does not die with this
+        # script and does not sit in its process group. assign-cgroups.py still
+        # gives it its own systemd scope: it acts on the sway window::new event,
+        # not on who spawned the process.
+        subprocess.run(
+            ["setsid", "-f", "sh", "-c", app["cmd"]],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        log(f"{app['app_id']}: launched - {app['cmd']}")
+
+
+def place_pass(apps, placed, enforce_order):
+    """Move every unplaced window of every listed app_id, and forget the ones
+    that have vanished since. Returns True if anything moved."""
+    live = windows()
+
+    # An app that replaced its window is unfinished again, not
+    # done. Dropping the dead con_ids here is what reopens it for the successor.
+    alive = {con_id for con_id, _, _, _ in live}
+    placed.intersection_update(alive)
+    for app in apps:
+        app["placed"] = [con_id for con_id in app["placed"] if con_id in alive]
+
+    on_workspace = {con_id: workspace for con_id, _, _, workspace in live}
+    by_app = {}
+    for con_id, app_id, _, _ in live:
+        by_app.setdefault(app_id, []).append(con_id)
+
+    moved = False
+    for index, app in enumerate(apps):
+        # hold this app back while an EARLIER app bound for the same workspace
+        # is still missing, so the split order is the argument order
+        if enforce_order and any(
+            not earlier["placed"]
+            for earlier in apps[:index]
+            if earlier["ws"] == app["ws"]
+        ):
+            continue
+        for con_id in by_app.get(app["app_id"], []):
+            if con_id in placed:
+                continue
+            if on_workspace.get(con_id) == app["ws"]:
+                # already home - a re-run, or the app opened it in the right
+                # place. Count it, but do not log a move that did not happen.
+                log(f"{app['app_id']}: con_id {con_id} already on workspace {app['ws']}")
+            else:
+                sway(f"[con_id={con_id}] move container to workspace number {app['ws']}")
+                log(f"{app['app_id']}: con_id {con_id} -> workspace {app['ws']}")
+            placed.add(con_id)
+            app["placed"].append(con_id)
+            moved = True
+    return moved
+
+
+def place(apps):
+    placed = set()
+    started = time.monotonic()
+    last_move = started
+    while True:
+        if place_pass(apps, placed, enforce_order=True):
+            last_move = time.monotonic()
+        settled = all(app["placed"] for app in apps) and (
+            time.monotonic() - last_move >= SETTLE
+        )
+        if settled:
+            return
+        if time.monotonic() - started >= DEADLINE:
+            break
+        time.sleep(POLL)
+
+    # Deadline. Something never showed a window - most likely an app that puts
+    # up an error dialog under a DIFFERENT app_id when it fails to start. Stop enforcing the order so an app is not held back
+    # forever by one that is never coming, then report what is missing.
+    place_pass(apps, placed, enforce_order=False)
+    missing = [app["app_id"] for app in apps if not app["placed"]]
+    if missing:
+        log(f"gave up after {DEADLINE:.0f}s, no window appeared for: {', '.join(missing)}")
+
+
+def group(tab):
+    """Tab a workspace that ended up holding more windows than were declared for
+    it, so nothing is hidden behind anything else, and leave the wanted one on
+    top. Only ever with two or more windows: the config sets default_border none
+    on purpose, and a tabbed container with a single child would put the only
+    title bar on the desktop back."""
+    workspace, needle = tab
+    here = [w for w in windows() if w[3] == workspace]
+    if len(here) < 2:
+        log(f"workspace {workspace}: {len(here)} window(s), left as it is")
+        return
+    sway(f"[con_id={here[0][0]}] focus")
+    sway("layout tabbed")
+    active = next((w for w in here if needle in w[2]), here[0])
+    sway(f"[con_id={active[0]}] focus")
+    log(f'workspace {workspace}: {len(here)} windows tabbed, active "{active[2]}"')
+
+
+def main():
+    focus, tab, apps = parse_argv(sys.argv[1:])
+    if not apps:
+        sys.exit("sway-session-layout: nothing to place")
+
+    sock = find_socket()
+    if not sock:
+        sys.exit("sway-session-layout: no sway IPC socket, is sway running?")
+    os.environ["SWAYSOCK"] = sock
+
+    try:
+        LOG.write_text("")
+    except OSError:
+        pass
+    log(f"placing {len(apps)} app(s)")
+
+    launch(apps)
+    place(apps)
+    if tab:
+        group(tab)
+    if focus:
+        sway(f"workspace number {focus}")
+        log(f"focus -> workspace {focus}")
+
+
+if __name__ == "__main__":
+    main()

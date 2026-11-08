@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# ghostty-float — open ghostty as a floating window with a dedicated Wayland
+# app_id. Run it from any terminal or a launcher, or let a key or a bar module
+# call it: the terminal apps that control the laptop's hardware (yazi, wiremix,
+# bluetui, nmtui) and the calendar open in it.
+#
+# This script only LAUNCHES ghostty. The floating, sizing and centering is done
+# by the matching rule in the sway config ("Window rules"): float, centered, 40
+# percent wide and 70 percent high of the workspace.
+#
+#   for_window [app_id="com.mitchellh.ghostty.float"] \
+#       floating enable, resize set 40 ppt 70 ppt, move position center
+#
+# Keep the two app_ids identical. The id differs from ghostty's DEFAULT app_id
+# (com.mitchellh.ghostty) on purpose, so the rule scopes to ONLY this window and
+# the normal terminals keep tiling. It MUST stay a valid GTK application id —
+# dotted, lowercase, no hyphens (ghostty also uses it as a D-Bus bus name). An
+# invalid class is SILENTLY dropped and ghostty falls back to the default, which
+# would float EVERY ghostty window.
+#
+# Extra args are forwarded to ghostty, so `ghostty-float -e btop` works.
+set -euo pipefail
+
+exec ghostty --class=com.mitchellh.ghostty.float "$@"

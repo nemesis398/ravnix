@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# output-wake: power every output on after a resume from sleep. swayidle runs it
+# as `after-resume` (keep-awake), when logind reports the wake.
+#
+# WHY (2026-11-04): a suspend that starts after swayidle's 6-minute
+# `output * power off` (idle-suspend, or a lid closed on a locked, dark session)
+# wakes with the outputs still off, because Sway re-applies the stored power-off
+# when it recreates them. Usually the first keypress fires swayidle's `resume`
+# and lights them; in 7 of 20 such wakes since July it did not, and the screen
+# stayed dark until fix-display's step 2 ran this same command. This does not
+# depend on that keypress.
+#
+# At the wake Sway is still paused on the kernel's VT and reports no outputs, so
+# wait until it has them back (up to 20 s) before powering on. Every run logs one
+# line: `journalctl -t output-wake`. An output found off here is the case the
+# keypress path would have missed.
+#
+# The cost: an unattended wake (dock plugged in, a spurious lid wake) lights the
+# screens until the next idle cycle; a closed lid re-suspends within ~30 s anyway.
+set -uo pipefail
+
+log() { logger -t output-wake -- "$*"; }
+
+for _ in $(seq 40); do
+  states=$(timeout 3 swaymsg -rt get_outputs 2>/dev/null |
+    jq -r '[.[] | "\(.name)=\(if .power then "on" else "off" end)"] | join(" ")' 2>/dev/null)
+  if [[ -n $states ]]; then
+    if [[ $states == *=off* ]]; then
+      if timeout 3 swaymsg 'output * power on' >/dev/null 2>&1; then
+        log "powered on after resume, found: $states"
+      else
+        log "power on FAILED after resume, found: $states"
+        exit 1
+      fi
+    else
+      log "outputs already on after resume: $states"
+    fi
+    exit 0
+  fi
+  sleep 0.5
+done
+log "Sway reported no outputs within 20 s of the resume; nothing done"
+exit 1

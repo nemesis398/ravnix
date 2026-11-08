@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# sway-wait-sni — wait until a StatusNotifier tray host is on the session bus.
+# Waybar is the host (its tray module owns org.kde.StatusNotifierWatcher), and
+# the XDG autostart entries that carry a tray icon (the Nextcloud and Bitwarden
+# clients) lose their icon when they start first, so the sway config runs
+#
+#   sway-wait-sni && systemctl --user start xdg-desktop-autostart.target
+#
+# Exits 0 as soon as the watcher exists, and 1 after TIMEOUT seconds (default
+# 30). The caller's `&&` then skips the autostart: a session whose bar never
+# came up is broken in a way a missing tray icon does not describe, and starting
+# every app into it would only bury the failure.
+set -uo pipefail
+
+# BUSCTL is overridable, so that the wait can be tested without a session bus.
+BUSCTL=${BUSCTL:-busctl}
+timeout=${1:-${TIMEOUT:-30}}
+case $timeout in ''|*[!0-9]*) echo "usage: sway-wait-sni [SECONDS]" >&2; exit 2 ;; esac
+
+for _ in $(seq $(( timeout * 5 ))); do
+  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 0.2
+done
+echo "sway-wait-sni: no StatusNotifierWatcher within ${timeout} s" >&2
+exit 1

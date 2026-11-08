@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# sway-clipboard — cliphist history picker with image thumbnails (P14 round 2).
+#
+# Replaces the inline `cliphist list | fuzzel --dmenu | cliphist decode`
+# binding: bigger window, and image entries get per-row thumbnails via Rofi's
+# extended dmenu protocol (entry\0icon\x1f<abs-path>) — fuzzel ≥1.8.2 renders
+# absolute-path PNGs and downscales them itself (cliphist PR #153 dropped
+# ImageMagick from the official script for exactly that reason).
+# Walker-style INLINE previews are NOT possible in fuzzel: its large-preview
+# path (image-size-ratio) is SVG-only in render.c — a fat --line-height row
+# thumbnail is the honest equivalent (row icon height = line-height - descent).
+# Based on the official cliphist contrib/cliphist-fuzzel-img, tightened:
+# gif/webp/tiff added (cliphist emits them, contrib misses them), Alt+1
+# deletes the selected entry, stale thumbnails are GC'd after every run.
+# Deps: cliphist fuzzel wl-clipboard gawk (match(s,re,arr) is gawk-only).
+#
+set -u
+thumb_dir="${XDG_CACHE_HOME:-$HOME/.cache}/cliphist/thumbnails"
+mkdir -p "$thumb_dir"
+
+list=$(cliphist list) || exit 1
+if [ -z "$list" ]; then
+    notify-send "Clipboard" "history is empty"
+    exit 0
+fi
+
+# Annotate image entries (id\t[[ binary data <size> <fmt> <WxH> ]]) with a
+# thumbnail icon; decode once per id into the cache (full-size on purpose).
+annotated=$(gawk -v dir="$thumb_dir" '
+  /^[0-9]+\t<meta http-equiv=/ { next }   # browser HTML shim lines
+  match($0, /^([0-9]+)\t\[\[ binary data [^ ]+ [^ ]+ (png|jpeg|gif|bmp|tiff|webp)/, g) {
+    f = dir "/" g[1] "." g[2]
+    if (system("[ -f \"" f "\" ]") != 0)
+      system("printf \"" g[1] "\\t\" | cliphist decode > \"" f "\"")
+    print $0 "\0icon\x1f" f
+    next
+  }
+  { print }
+' <<<"$list")
+
+# --no-sort + --cache /dev/null keep cliphist newest-first order (no launch-
+# count reordering); --with-nth 2 hides the id column but returns the full
+# line for decode; --line-height is THE knob for thumbnail size.
+sel=$(fuzzel --dmenu --no-sort --counter --with-nth 2 \
+        --placeholder "clipboard…" --width 80 --lines 12 \
+        --line-height 64px --cache /dev/null <<<"$annotated")
+rc=$?
+
+case $rc in
+  0)  [ -n "$sel" ] && cliphist decode <<<"$sel" | wl-copy ;;
+  10) # custom-1 (Alt+1): delete the selected entry + its thumbnail
+      [ -n "$sel" ] && {
+        cliphist delete <<<"$sel"
+        find "$thumb_dir" -name "$(cut -f1 <<<"$sel").*" -delete
+      } ;;
+esac
+
+# GC thumbnails whose ids are no longer in the db
+for f in "$thumb_dir"/*; do
+  [ -e "$f" ] || break
+  id=${f##*/}; id=${id%.*}
+  grep -q "^${id}$(printf '\t')" <<<"$list" || rm -f -- "$f"
+done

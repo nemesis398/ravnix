@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# sway-settings: the quick settings menu (Super+Shift+Space). Built for
+# presenting on a classroom display.
+#
+# A fuzzel dropdown in the style of `energy menu`: one row per setting with its
+# current value. Picking a two-state row switches it and a notification says
+# the new value; Night light opens its three modes; Energy opens `energy menu`.
+#   Display        readable (scale 1.5) / sharp (scale 1) on the external display.
+#                  Sharp is for ONLYOFFICE slides: switch BEFORE "Show presenter
+#                  view", because ONLYOFFICE pins the slideshow to the size the
+#                  output has at the click (see sway-present). Stays until
+#                  switched back; a replug gets kanshi's profile again. Shown
+#                  only for an external display of 3200 px or wider.
+#   Mirror         wl-mirror shows the panel 1:1, fullscreen on the external
+#                  display. Shown only with an external display.
+#   Audio output   laptop speakers / the external display's HDMI sink; running
+#                  streams move along. Shown only when an HDMI sink is plugged.
+#   Do not disturb dunst paused / running.
+#   Touchpad       the built-in Synaptics pad on / off (the Magic Trackpad and
+#                  mice stay on). A sway reload resets inputs to the config, so
+#                  `sway-settings reapply` (exec_always) puts "off" back; the
+#                  state lives in $XDG_RUNTIME_DIR, so a reboot turns it on.
+#   Night light    wlsunset auto / day / night, through sway-nightlight.
+#   Energy         `energy menu`.
+#
+# Usage: sway-settings [menu|reapply]
+set -uo pipefail
+
+RUN="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+TOUCHPAD_STATE="$RUN/sway-settings-touchpad"
+# The built-in pad registers twice: the touchpad and its legacy mouse node.
+TOUCHPAD_IDS=("1739:52992:SYNA2BA6:00_06CB:CF00_Touchpad" "1739:52992:SYNA2BA6:00_06CB:CF00_Mouse")
+SHARP_MIN_WIDTH=3200
+READABLE_SCALE=1.5   # 2 was too big
+
+I_DISPLAY=$'\U000F0379' I_MIRROR=$'\U000F037A' I_AUDIO=$'\U000F057E'
+I_DND=$'\U000F009B' I_TOUCHPAD=$'\U000F07F8' I_NIGHT=$'\U000F0594' I_ENERGY=$'\U000F0084'
+
+notify() { notify-send -a settings -u low -h string:x-dunst-stack-tag:settings "$1" "$2"; }
+pick() { fuzzel --dmenu --prompt "$1" --width 44 --lines "$2"; }
+mark() { if [ "$1" = "$2" ]; then printf '󰄬 %s\n' "$3"; else printf '   %s\n' "$3"; fi; }
+
+# ── outputs ──────────────────────────────────────────────────────────────────
+outputs() { swaymsg -t get_outputs; }
+external() { outputs | jq -c '[.[] | select(.active and (.name | test("^eDP") | not))][0] // empty'; }
+panel() { outputs | jq -c '[.[] | select(.active and (.name | test("^eDP")))][0] // empty'; }
+
+display_state() { [ "$(jq -r '.scale == 1' <<<"$1")" = true ] && echo sharp || echo readable; }
+
+# Scale the external display to $1 and keep the panel beside it: when the
+# panel sits right of the display, it moves by the change in logical width.
+display_set() {
+  local target=$1 ext pan name mw x w px py nw
+  ext=$(external); pan=$(panel)
+  [ -n "$ext" ] && [ -n "$pan" ] || { notify Display "No external display"; return 1; }
+  name=$(jq -r .name <<<"$ext"); mw=$(jq -r .current_mode.width <<<"$ext")
+  x=$(jq -r .rect.x <<<"$ext"); w=$(jq -r .rect.width <<<"$ext")
+  px=$(jq -r .rect.x <<<"$pan"); py=$(jq -r .rect.y <<<"$pan")
+  nw=$(awk -v w="$mw" -v s="$target" 'BEGIN { printf "%d", w / s + 0.5 }')
+  if [ "$px" -ge $((x + w)) ]; then
+    swaymsg -q "output $(jq -r .name <<<"$pan") position $((x + nw)) $py"
+  fi
+  swaymsg -q "output $name scale $target"
+  # The wallpaper is drawn per logical size, so redraw it, without waiting.
+  swaymsg -q "exec backdrop wallpaper"
+  if [ "$target" = 1 ]; then
+    notify "Display: sharp" "$name at scale 1. Start the slideshow now."
+  else
+    notify "Display: readable" "$name at scale $target"
+  fi
+}
+
+# ── audio ────────────────────────────────────────────────────────────────────
+speaker_sink() { pactl -f json list sinks | jq -r '[.[] | select(.name | test("Speaker"))][0].name // empty'; }
+# The HDMI sink whose active port is plugged in, i.e. the external display.
+hdmi_sink() {
+  pactl -f json list sinks | jq -r '
+    [.[] | select(.name | test("HDMI")) | . as $s
+     | select(any(.ports[]; .name == $s.active_port and .availability == "available"))][0].name // empty'
+}
+audio_set() {
+  local sink=$1 label=$2 input
+  pactl set-default-sink "$sink"
+  for input in $(pactl -f json list sink-inputs | jq -r '.[].index'); do
+    pactl move-sink-input "$input" "$sink" 2>/dev/null
+  done
+  notify "Audio output" "$label"
+}
+
+# ── touchpad ─────────────────────────────────────────────────────────────────
+touchpad_state() {
+  swaymsg -t get_inputs | jq -r --arg id "${TOUCHPAD_IDS[0]}" \
+    '[.[] | select(.identifier == $id)][0].libinput.send_events // "enabled"' \
+    | sed 's/^enabled$/on/; s/^disabled$/off/'
+}
+touchpad_set() {
+  local id events=enabled
+  [ "$1" = off ] && events=disabled
+  for id in "${TOUCHPAD_IDS[@]}"; do swaymsg -q "input $id events $events"; done
+  if [ "$1" = off ]; then echo off >"$TOUCHPAD_STATE"; else rm -f "$TOUCHPAD_STATE"; fi
+}
+
+# ── night light (sway-nightlight counts its SIGUSR1 cycles per wlsunset PID) ─
+NIGHT_MODES=(auto day night)
+night_step() {
+  local pid saved_pid saved_step
+  pid=$(pgrep -x -o wlsunset) || { echo -1; return; }
+  if read -r saved_pid saved_step 2>/dev/null <"$RUN/sway-nightlight" && [ "$saved_pid" = "$pid" ]; then
+    echo "${saved_step:-0}"
+  else
+    echo 0
+  fi
+}
+
+# ── the menu ─────────────────────────────────────────────────────────────────
+menu() {
+  local ext pan rows=() choice
+  local r_disp="" r_mirror="" r_audio="" r_dnd r_tp r_night r_energy
+  local disp="" mirror=off spk hdmi cur dnd tp step night
+  ext=$(external); pan=$(panel)
+
+  if [ -n "$ext" ] && [ "$(jq -r .current_mode.width <<<"$ext")" -ge "$SHARP_MIN_WIDTH" ]; then
+    disp=$(display_state "$ext")
+    if [ "$disp" = sharp ]; then r_disp="$I_DISPLAY  Display: sharp (scale 1)"
+    else r_disp="$I_DISPLAY  Display: readable (scale $(jq -r .scale <<<"$ext"))"; fi
+    rows+=("$r_disp")
+  fi
+  if [ -n "$ext" ] && [ -n "$pan" ]; then
+    pgrep -x wl-mirror >/dev/null && mirror=on
+    r_mirror="$I_MIRROR  Mirror laptop screen: $mirror"
+    rows+=("$r_mirror")
+  fi
+  spk=$(speaker_sink); hdmi=$(hdmi_sink)
+  if [ -n "$spk" ] && [ -n "$hdmi" ]; then
+    cur=$(pactl get-default-sink)
+    if [ "$cur" = "$hdmi" ]; then r_audio="$I_AUDIO  Audio output: display (HDMI)"
+    else r_audio="$I_AUDIO  Audio output: laptop speakers"; fi
+    rows+=("$r_audio")
+  fi
+  dnd=off; [ "$(dunstctl is-paused)" = true ] && dnd=on
+  r_dnd="$I_DND  Do not disturb: $dnd"
+  tp=$(touchpad_state)
+  r_tp="$I_TOUCHPAD  Touchpad: $tp"
+  step=$(night_step)
+  if [ "$step" -ge 0 ]; then night=${NIGHT_MODES[$step]}; else night="not running"; fi
+  r_night="$I_NIGHT  Night light: $night"
+  r_energy="$I_ENERGY  Energy …"
+  rows+=("$r_dnd" "$r_tp" "$r_night" "$r_energy")
+
+  choice=$(printf '%s\n' "${rows[@]}" | pick "  Settings   " "${#rows[@]}") || exit 0
+  case "$choice" in
+    "$r_disp")
+      if [ "$disp" = sharp ]; then display_set "$READABLE_SCALE"; else display_set 1; fi ;;
+    "$r_mirror")
+      if [ "$mirror" = on ]; then
+        pkill -x wl-mirror; notify "Mirror" "off"
+      else
+        swaymsg -q "exec wl-mirror --fullscreen-output $(jq -r .name <<<"$ext") $(jq -r .name <<<"$pan")"
+        notify "Mirror" "Laptop screen on $(jq -r .name <<<"$ext")"
+      fi ;;
+    "$r_audio")
+      if [ "$cur" = "$hdmi" ]; then audio_set "$spk" "Laptop speakers"
+      else audio_set "$hdmi" "Display (HDMI)"; fi ;;
+    "$r_dnd")
+      # A paused dunst holds notifications back, so say it before pausing.
+      if [ "$dnd" = on ]; then dunstctl set-paused false; notify "Do not disturb" "off"
+      else notify "Do not disturb" "on: notifications wait until you switch it off"; sleep 1; dunstctl set-paused true; fi ;;
+    "$r_tp")
+      if [ "$tp" = on ]; then touchpad_set off; notify "Touchpad" "off (Magic Trackpad and mouse still work)"
+      else touchpad_set on; notify "Touchpad" "on"; fi ;;
+    "$r_night")
+      [ "$step" -ge 0 ] || { notify "Night light" "wlsunset is not running"; exit 1; }
+      local sub target i
+      sub=$({ mark "$night" auto "auto   (warm from 19:00, neutral from 07:00)"
+              mark "$night" day "day    (neutral 6500 K)"
+              mark "$night" night "night  (warm 4000 K)"; } | pick "  Night light   " 3) || exit 0
+      case "$sub" in *auto*) target=0 ;; *day*) target=1 ;; *) target=2 ;; esac
+      # sway-nightlight cycles one mode per call and notifies each time.
+      for ((i = 0; i < (target - step + 3) % 3; i++)); do sway-nightlight; done ;;
+    "$r_energy")
+      exec energy menu ;;
+  esac
+}
+
+case "${1:-menu}" in
+  menu) menu ;;
+  reapply)
+    # exec_always: a sway reload re-enabled the touchpad from the config.
+    [ "$(cat "$TOUCHPAD_STATE" 2>/dev/null)" = off ] && touchpad_set off
+    exit 0 ;;
+  *) echo "usage: sway-settings [menu|reapply]" >&2; exit 2 ;;
+esac

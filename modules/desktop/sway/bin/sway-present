@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# sway-present: lay out an ONLYOFFICE presenter-view slideshow on two screens.
+#
+# ONLYOFFICE runs under XWayland (no Qt Wayland plugin), so it cannot choose
+# an output. On "Show presenter view" it opens the presenter (notes, timer,
+# slide list) as a new window titled plain "ONLYOFFICE", then replaces the
+# document window with a new fullscreen slideshow window, both on the focused
+# output, the slideshow on top and the presenter hidden behind it. Measured
+# on a classroom display with the window event stream.
+#
+# Started by a sway for_window rule when that "ONLYOFFICE" window maps. It
+# moves the slideshow to the first active output that is not the laptop panel
+# and fullscreens it there, then fullscreens the presenter on the panel and
+# focuses it, so arrow keys and a clicker drive the show. ONLYOFFICE opens a
+# fresh document window on the focused workspace when the show ends, which is
+# the presenter's, so nothing needs to be moved back.
+#
+# Do NOT change the external output's scale from here. ONLYOFFICE sizes the
+# slideshow window to that output's logical size at the moment of the click,
+# pins it there (WM_NORMAL_HINTS "user specified size") and ignores every
+# later resize. Switching the board from scale 2 to 1 after the click left a
+# 1920x1080 slide in the top-left quarter of a 3840x2160 board (2026-11-03).
+#
+# The rule also fires for ONLYOFFICE's start window (same title). That one
+# maps with no document window beside it, and is skipped. Logs to the journal
+# under the tag sway-present.
+
+set -u
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/sway-present.lock"
+flock -n 9 || exit 0
+
+log() { logger -t sway-present -- "$*"; }
+tree() { swaymsg -t get_tree; }
+
+board=$(swaymsg -t get_outputs | jq -r '[.[] | select(.active and (.name | test("^eDP") | not))][0].name // empty')
+[ -n "$board" ] || { log "no external output beside the panel, nothing to do"; exit 0; }
+
+docs=$(tree | jq '[.. | objects | select(.window_properties?.class == "ONLYOFFICE" and .name != "ONLYOFFICE")] | length')
+[ "$docs" -gt 0 ] || { log "ONLYOFFICE start window, nothing to do"; exit 0; }
+
+# Wait for both windows: the presenter (title exactly "ONLYOFFICE") and the
+# fullscreen slideshow.
+pres="" show=""
+for _ in $(seq 50); do
+    { read -r pres; read -r show; } < <(tree | jq -r '
+        [.. | objects | select(.window_properties?.class == "ONLYOFFICE")] as $w
+        | ([$w[] | select(.name == "ONLYOFFICE")][0].id // ""),
+          ([$w[] | select(.fullscreen_mode == 1 and .name != "ONLYOFFICE")][0].id // "")')
+    [ -n "$pres" ] && [ -n "$show" ] && break
+    sleep 0.1
+done
+if [ -z "$pres" ] || [ -z "$show" ]; then
+    log "no slideshow within 5 s (presenter=${pres:-none}, show=${show:-none})"
+    exit 0
+fi
+
+swaymsg -q "[con_id=$show] fullscreen disable, move container to output \"$board\""
+swaymsg -q "[con_id=$show] fullscreen enable"
+swaymsg -q "[con_id=$pres] focus, fullscreen enable"
+log "slideshow $show -> $board, presenter $pres fullscreen on the panel"

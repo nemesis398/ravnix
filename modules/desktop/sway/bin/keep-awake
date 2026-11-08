@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# keep-awake — persistent "stay awake" toggle for the Waybar cup module.
+#
+# WHY THIS EXISTS: Waybar's built-in `idle_inhibitor` holds its Wayland idle
+# inhibitor on the Waybar *process*, so it resets to OFF on every Waybar relaunch
+# (mode toggle via waybar-launch, or `exec_always` on a sway reload). This script
+# decouples the state from Waybar by driving `swayidle` directly — swayidle is a
+# plain `exec` that nothing restarts on a reload, so keep-awake survives Waybar
+# relaunches. It is also the single source of truth for the swayidle command
+# lines (the sway config just runs `keep-awake start`).
+#
+# STATE lives in $XDG_RUNTIME_DIR → resets at logout (intentional: keep-awake
+# should not silently outlive a session).
+#
+# MODES:
+#   normal      full swayidle — lock @5min, screen-off @6min, resume re-enables
+#               the output (kanshi can miss the DPMS-wake connector event),
+#               `energy idle-suspend` @30min (suspends only on battery, only if
+#               that switch is on in the energy menu, never during a backup),
+#               before-sleep / lock / unlock.
+#   keep-awake  swayidle WITHOUT idle timeouts, but STILL before-sleep / lock /
+#               unlock — so suspending (lid close) still locks the screen.
+#
+# BEFORE-SLEEP, in both modes, locks and then runs `panel-crtc --fix`, which
+# moves the panel back to the CRTC the kernel console uses if it sits on
+# another one; otherwise the panel stays dark after the resume (2026-10-20,
+# the reason is in panel-crtc). swayidle -w holds the suspend until both are
+# done, for up to logind's 5 s.
+#
+# AFTER-RESUME, in both modes, runs `output-wake`, which powers the outputs on
+# once Sway has them back. A suspend that began after the 6-min power-off woke
+# with the screens still off whenever the keypress `resume` missed (2026-11-04;
+# the reason is in output-wake).
+#
+# LOCKING goes through `lock-screen` (the backdrop tool), not a bare
+# `swaylock -f`: it locks over the backdrop image and redraws the wallpaper
+# after the unlock. It gives the image at most 2 s and falls back to plain
+# swaylock, so the before-sleep budget above still holds.
+#
+# USAGE (all invoked for you):
+#   keep-awake start    sway config `exec` — seed state, (re)launch swayidle
+#   keep-awake toggle   Waybar on-click — flip state, relaunch swayidle, refresh bar
+#   keep-awake set on|off  the energy menu, and energy-watch on every unplug
+#                       (keep-awake was once left on for 8 days on battery)
+#   keep-awake status   Waybar exec — print the cup module JSON for the current state
+set -uo pipefail
+
+STATE="${XDG_RUNTIME_DIR:-/tmp}/keep-awake"
+SIG=9   # matches "signal": 9 on custom/idle-inhibit in modules.jsonc → SIGRTMIN+9
+
+on() { [ "$(cat "$STATE" 2>/dev/null)" = "1" ]; }
+
+# lock-screen locks over the backdrop image; where it is not installed, a plain
+# swaylock does the job, so a suspend never leaves the screen open.
+LOCK='lock-screen || swaylock -f'
+# panel-crtc and energy belong to the hardware module of the laptop; a layout
+# without them still locks and still wakes.
+FIXCRTC='! command -v panel-crtc >/dev/null || panel-crtc --fix'
+SUSPEND='! command -v energy >/dev/null || energy idle-suspend'
+
+# swaylock is found by its command line, not by `-x swaylock`: on NixOS it is a
+# wrapper whose process is called .swaylock-wrapped (see waybar-launch).
+# SC2016: the swayidle command lines are handed over as single-quoted strings on
+# purpose: swayidle runs each one through sh later, and $USER has to expand
+# there, in the session that runs it, not here.
+# shellcheck disable=SC2016
+launch_swayidle() {
+  pkill -x swayidle 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -x swayidle >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  if on; then
+    # keep-awake: no idle timeouts; still lock before sleep / on manual lock
+    setsid -f swayidle -w \
+      before-sleep "$LOCK; $FIXCRTC" \
+      after-resume 'output-wake' \
+      lock         "$LOCK" \
+      unlock       'pkill -u "$USER" -USR1 -f "^swaylock( |$)"' >/dev/null 2>&1
+  else
+    # normal: the sway config's original idle behaviour
+    setsid -f swayidle -w \
+      timeout 300  "$LOCK" \
+      timeout 360  'swaymsg "output * power off"' \
+      resume       'swaymsg "output * power on"; swaymsg "output * enable"' \
+      timeout 1800 "$SUSPEND" \
+      before-sleep "$LOCK; $FIXCRTC" \
+      after-resume 'output-wake' \
+      lock         "$LOCK" \
+      unlock       'pkill -u "$USER" -USR1 -f "^swaylock( |$)"' >/dev/null 2>&1
+  fi
+}
+
+case "${1:-status}" in
+  start)
+    [ -f "$STATE" ] || echo 0 > "$STATE"
+    launch_swayidle
+    ;;
+  toggle)
+    if on; then echo 0 > "$STATE"; else echo 1 > "$STATE"; fi
+    launch_swayidle
+    pkill -RTMIN+"$SIG" -u "$(id -u)" -f '^waybar( |$)' 2>/dev/null || true
+    ;;
+  set)
+    case "${2:-}" in
+      on)  echo 1 > "$STATE" ;;
+      off) echo 0 > "$STATE" ;;
+      *)   echo "usage: keep-awake set on|off" >&2; exit 2 ;;
+    esac
+    launch_swayidle
+    pkill -RTMIN+"$SIG" -u "$(id -u)" -f '^waybar( |$)' 2>/dev/null || true
+    ;;
+  status)
+    if on; then
+      echo '{"text":"󰅶","class":"activated","tooltip":"Keep-awake ON — idle lock and screen-off are disabled; suspend still locks. Click to resume normal idle."}'
+    else
+      echo '{"text":"󰛊","class":"deactivated","tooltip":"Normal idle — locks after 5 min. Click to keep the screen awake."}'
+    fi
+    ;;
+  *)
+    echo "usage: keep-awake {start|toggle|set on|off|status}" >&2; exit 2 ;;
+esac

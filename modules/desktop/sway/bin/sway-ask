@@ -1,0 +1,589 @@
+#!/usr/bin/env python3
+"""sway-ask - quick-answer popup for sway (bound to $mod+Shift+a), through Open WebUI.
+
+Entirely inside fuzzel, no terminal and no extra packages. The trick is
+`--mesg`: it renders a multi-line block ABOVE the input box, so one popup shows
+the last answer with the follow-up prompt directly underneath it. That is a
+conversation loop in a single widget.
+
+Three fuzzel facts this is built on, each verified by driving real popups:
+
+  * `--mesg=TEXT` takes newlines and is plain text (fuzzel uses fcft, not Pango,
+    so there is no markup to escape).
+  * `--prompt-only` reads no stdin and forces `--lines=0`, so in short-answer
+    mode there is no list to filter and typing goes straight to the input.
+  * fuzzel renders once at startup and can never update, so there is no way to
+    stream tokens. The wait is covered by a "thinking" popup that is replaced
+    when the answer lands.
+
+Two display modes, picked automatically:
+
+  short  answer fits on screen  -> `--prompt-only` + `--mesg`. Type the
+         follow-up directly, Enter sends it.
+  long   answer is taller       -> the answer becomes a scrollable list and the
+         question stays in `--mesg`. Arrows/PgUp/PgDn read it; Alt+1 opens a
+         clean input box for the follow-up, so typing never filters the text
+         out from under you.
+
+Keys in both modes:  Alt+1 follow up   Alt+2 copy answer   Alt+3 new chat
+                     Alt+4 open the chat in Open WebUI   Escape closes.
+
+Alt+4 and the Open WebUI window ($mod+Shift+Alt+a). That window is a Helium
+`--app` window, which has no address bar and cannot be pointed at a new URL:
+Ctrl+L does nothing there (probed 2026-10-22), and remote debugging would hand
+the whole Helium profile to any local process. So an existing window is
+REPLACED in place: a new app window opens on the chat, is swapped into the old
+window's slot, and the old one is closed, knowing that text typed but not sent
+in the old window is lost. With no chat yet, Alt+4 only
+focuses the window, or opens one on the start page. Opening a chat also takes
+it out of the archive, because opening it means carrying on there.
+
+The model is one on your Open WebUI (ravnix.desktop.ask: url, model and the
+Bitwarden item of the API key), set up with web search and whatever tools the
+popup should have. Its system prompt, settings and tools live in Open WebUI,
+not here, so the popup and the web UI answer alike. This speaks Open WebUI's
+API over plain `urllib`, no SDK.
+
+Three Open WebUI v0.12.3 facts shape the request, all measured on 2026-10-20:
+
+  * A plain API call gets native tool calls handed back, not run, and the
+    legacy mode allows one tool call per answer: one search, never the read
+    that follows it. So the popup uses the web UI's own chat flow: the request
+    names a chat and a session, Open WebUI runs the whole tool loop in the
+    background and writes the answer into the chat, and the popup polls it.
+    The model's tools are read from the model, because the UI, not the
+    server, applies them.
+  * That flow saves each question as a chat. The popup titles
+    it with the question and archives it once the answer is in, so it stays
+    out of the sidebar and can be picked up under Archived. Archiving earlier
+    would cancel the run. A follow-up goes into the same chat.
+  * A model created over the API is "not found" until something lists the
+    models. On that error the popup lists them once and asks again.
+
+The answer's [n] markers become a "Sources:" line with the host names.
+
+A sway keybinding inherits NO environment, so the API key is read from
+Bitwarden via `rbw` (the item named in ravnix.desktop.ask) rather than
+`$OPENWEBUI_API_KEY`; if the vault is locked the popup says so instead of
+hanging on a pinentry prompt with no tty.
+
+The popup sets its background and selection explicitly, fully opaque, from the
+theme (the Base role), so it looks the same whatever fuzzel.ini says.
+
+Conversation state lives in $XDG_STATE_HOME/sway-ask/, deliberately outside the
+Nextcloud tree, and resets after IDLE_RESET_SECONDS so yesterday's thread does
+not silently continue.
+
+Test without any GUI:  sway-ask --ask 'your question'
+
+Deps: fuzzel, rbw, wl-copy, python3 - all already on the system. Reaching
+Open WebUI may need your home network or VPN.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import textwrap
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from pathlib import Path
+
+BASE_URL = "@askUrl@"
+API_URL = f"{BASE_URL}/api/chat/completions"
+MODEL = "@askModel@"
+RBW_ITEM = "@askRbwItem@"
+# A search that loads five pages has taken 41 s; give it room.
+REQUEST_TIMEOUT = 180
+POLL_SECONDS = 1
+
+WIDTH = 92           # fuzzel window width, in characters
+WRAP = WIDTH - 4
+MESG_MAX_LINES = 26  # above this the answer switches to the scrollable list
+LIST_LINES = 20
+IDLE_RESET_SECONDS = 2 * 60 * 60
+
+# Fully opaque Base, as rrggbbaa, from the theme.
+OPAQUE = "@baseOpaque@"
+BASE_ARGS = [
+    "--dmenu",
+    f"--width={WIDTH}",
+    f"--background-color={OPAQUE}",
+    "--prompt-only=ask  ",
+]
+KEYS = "Alt+1 follow up    Alt+2 copy    Alt+3 new chat    Alt+4 web    Esc close"
+
+STATE_DIR = (
+    Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    / "sway-ask"
+)
+HISTORY_FILE = STATE_DIR / "conversation.json"
+
+EXIT_FOLLOW_UP, EXIT_COPY, EXIT_NEW, EXIT_WEB = 10, 11, 12, 13  # fuzzel custom-1..4
+
+# Chromium names an --app window after the URL, path included, so the start
+# page is chrome-<host>__-Default and a chat is chrome-<host>__c_<id>-Default.
+# The prefix catches both.
+WEBAPP_PREFIX = "@askWebappPrefix@"
+# The flags of the webapp-openwebui.desktop entry. They only take effect
+# when Helium is not running yet; otherwise the running browser opens the window.
+HELIUM_FLAGS = (
+    "--ozone-platform=wayland --enable-features=UseOzonePlatform,"
+    "AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL"
+)
+WINDOW_TIMEOUT = 15
+
+
+class AskError(Exception):
+    """Anything the user should read in the popup, in plain language."""
+
+
+# ── credentials ───────────────────────────────────────────────────────────────
+
+
+def api_key() -> str:
+    key = os.environ.get("OPENWEBUI_API_KEY")
+    if key:
+        return key.strip()
+    try:
+        done = subprocess.run(
+            ["rbw", "get", RBW_ITEM], capture_output=True, text=True, timeout=15
+        )
+    except FileNotFoundError:
+        raise AskError("rbw is not installed, so the API key cannot be read") from None
+    except subprocess.TimeoutExpired:
+        raise AskError("rbw timed out; is the vault waiting on a pinentry?") from None
+    if done.returncode != 0:
+        raise AskError(
+            "Bitwarden is locked. Run  ai-unlock  in a terminal, then try again."
+        )
+    key = done.stdout.strip()
+    if not key:
+        raise AskError(f"Bitwarden item {RBW_ITEM} has no password field")
+    return key
+
+
+# ── the API ───────────────────────────────────────────────────────────────────
+
+
+def _call(method: str, path: str, key: str, body=None, timeout=30):
+    request = urllib.request.Request(
+        f"{BASE_URL}{path}",
+        data=None if body is None else json.dumps(body).encode("utf-8"),
+        method=method,
+        headers={"content-type": "application/json", "authorization": f"Bearer {key}"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def _with_sources(reply: str, message: dict) -> str:
+    """Replace the [n] citation markers with one line of host names."""
+    urls = []
+    for source in message.get("sources") or []:
+        for meta in source.get("metadata") or []:
+            urls.append(meta.get("source") or meta.get("url") or "")
+    cited = []
+    for number in re.findall(r"\[(\d+)\]", reply):
+        index = int(number) - 1
+        if 0 <= index < len(urls) and urls[index]:
+            host = urllib.parse.urlparse(urls[index]).hostname or urls[index]
+            host = host.removeprefix("www.")
+            if host not in cited:
+                cited.append(host)
+    reply = re.sub(r"\s*(\[\d+\])+", "", reply).strip()
+    return f"{reply}\n\nSources: {', '.join(cited)}" if cited else reply
+
+
+def _tool_ids(key: str) -> list[str]:
+    model = _call("GET", f"/api/v1/models/model?id={MODEL}", key)
+    return list(((model or {}).get("meta") or {}).get("toolIds") or [])
+
+
+def _start(messages, chat: dict, key: str) -> tuple[str, str]:
+    """Hand the turn to Open WebUI's chat flow; return (chat id, answer id)."""
+    question_id, answer_id = str(uuid.uuid4()), str(uuid.uuid4())
+    parent = chat.get("answer_id")
+    body = {
+        "model": MODEL,
+        "messages": messages,
+        "stream": True,
+        "id": answer_id,
+        "session_id": f"sway-ask-{uuid.uuid4()}",
+        "parent_id": parent,
+        "user_message": {
+            "id": question_id, "role": "user", "content": messages[-1]["content"],
+            "models": [MODEL], "parentId": parent, "timestamp": int(time.time()),
+        },
+        "features": {"web_search": True},
+        "tool_ids": _tool_ids(key),
+    }
+    if chat.get("chat_id"):
+        body["chat_id"] = chat["chat_id"]
+    try:
+        started = _call("POST", "/api/chat/completions", key, body)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 400 or b"Model not found" not in exc.read():
+            raise
+        _call("GET", "/api/models", key)
+        started = _call("POST", "/api/chat/completions", key, body)
+    return started.get("chat_id") or chat["chat_id"], answer_id
+
+
+def _wait(chat_id: str, answer_id: str, key: str) -> dict:
+    deadline = time.monotonic() + REQUEST_TIMEOUT
+    while time.monotonic() < deadline:
+        time.sleep(POLL_SECONDS)
+        found = _call("GET", f"/api/v1/chats/{chat_id}", key)
+        message = (found.get("chat") or {}).get("history", {}).get("messages", {}).get(answer_id)
+        if message and message.get("done"):
+            return message
+    raise AskError("the model took too long to answer")
+
+
+def _file_away(chat_id: str, question: str, key: str) -> None:
+    """Title the chat with the question and archive it, once."""
+    found = _call("GET", f"/api/v1/chats/{chat_id}", key)
+    if found.get("archived"):
+        return
+    title = question if len(question) <= 60 else question[:59] + "…"
+    _call("POST", f"/api/v1/chats/{chat_id}", key, {"chat": {"title": title}})
+    _call("POST", f"/api/v1/chats/{chat_id}/archive", key, {})
+
+
+def _unarchive(chat_id: str, key: str) -> None:
+    """Bring the chat back into the sidebar. The archive call is a toggle."""
+    found = _call("GET", f"/api/v1/chats/{chat_id}", key)
+    if found.get("archived"):
+        _call("POST", f"/api/v1/chats/{chat_id}/archive", key, {})
+
+
+def ask(messages, key: str, chat: dict) -> str:
+    """Send the conversation and return the reply. `chat` is updated in place."""
+    try:
+        chat_id, answer_id = _start(messages, chat, key)
+        message = _wait(chat_id, answer_id, key)
+        first = not chat.get("chat_id")
+        chat.update(chat_id=chat_id, answer_id=answer_id)
+        if first:
+            _file_away(chat_id, messages[0]["content"], key)
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = (json.load(exc) or {}).get("detail", "")
+        except Exception:
+            pass
+        raise AskError(f"API error {exc.code}: {detail or exc.reason}") from None
+    except urllib.error.URLError as exc:
+        raise AskError(
+            f"cannot reach {BASE_URL}: {exc.reason}. Home network or NetBird?"
+        ) from None
+    except TimeoutError:
+        raise AskError("the model took too long to answer") from None
+
+    error = message.get("error")
+    if error:
+        raise AskError(f"the model failed: {(error or {}).get('content') or error}")
+    reply = (message.get("content") or "").strip()
+    if not reply:
+        raise AskError("empty reply")
+    return _with_sources(reply, message)
+
+
+# ── conversation state ────────────────────────────────────────────────────────
+
+
+def load_conversation():
+    """The messages so far and the Open WebUI chat they live in."""
+    try:
+        saved = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], {}
+    if time.time() - saved.get("updated", 0) > IDLE_RESET_SECONDS:
+        return [], {}
+    messages = saved.get("messages", [])
+    chat = saved.get("chat", {})
+    if not isinstance(messages, list) or not isinstance(chat, dict):
+        return [], {}
+    return messages, chat
+
+
+def save_conversation(messages, chat):
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        HISTORY_FILE.write_text(
+            json.dumps({"updated": time.time(), "messages": messages, "chat": chat}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass  # history is a convenience, never block a question on it
+
+
+def wrap(text: str) -> list[str]:
+    lines = []
+    for paragraph in text.splitlines():
+        if not paragraph.strip():
+            lines.append("")
+        elif paragraph.startswith("    "):
+            lines.append(paragraph)  # indented code: never re-wrap
+        else:
+            lines.extend(textwrap.wrap(paragraph, width=WRAP) or [""])
+    return lines
+
+
+# ── the popups ────────────────────────────────────────────────────────────────
+
+
+def _fuzzel(args, lines=None, wait=True):
+    proc = subprocess.Popen(
+        ["fuzzel", *args],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if not wait:
+        proc.stdin.close()
+        return proc
+    out, _ = proc.communicate("" if lines is None else "\n".join(lines) + "\n")
+    return proc.returncode, out.strip("\n")
+
+
+def prompt(mesg: str = ""):
+    args = [*BASE_ARGS, f"--placeholder={KEYS}"]
+    if mesg:
+        args.append(f"--mesg={mesg}")
+    return _fuzzel(args)
+
+
+def transcript(last, max_lines: int) -> str:
+    """One exchange as a --mesg block, tail-truncated to stay on screen."""
+    if not last:
+        return ""
+    question, answer = last
+    body = wrap(answer)
+    if len(body) > max_lines:
+        body = ["  …", *body[-(max_lines - 1):]]
+    return "\n".join([f"▸ {question}", "", *body, ""])
+
+
+def show_answer(question: str, answer: str):
+    """Render one exchange. Short answers get --mesg; long ones get a list."""
+    body = wrap(answer)
+    header = f"▸ {question}"
+    if len(body) <= MESG_MAX_LINES:
+        return prompt("\n".join([header, "", *body, ""]))
+    # Long answer: the text becomes a scrollable list. Two deliberate choices —
+    # the selection highlight is neutralised so the list reads as a page of prose
+    # rather than a menu, and the question goes in as the FIRST ROW instead of
+    # --mesg, because fuzzel renders the input line between --mesg and the list,
+    # which would wedge the key hints between the question and its answer.
+    args = [
+        "--dmenu",
+        f"--width={WIDTH}",
+        f"--background-color={OPAQUE}",
+        f"--selection-color={OPAQUE}",
+        "--selection-text-color=@textOpaque@",
+        "--no-sort",
+        "--match-mode=exact",
+        "--cache=/dev/null",
+        "--prompt=ask  ",
+        f"--lines={LIST_LINES}",
+        f"--placeholder={KEYS}",
+    ]
+    return _fuzzel(args, [header, "", *body])
+
+
+def thinking_popup(question: str):
+    return _fuzzel(
+        [*BASE_ARGS, f"--mesg=▸ {question}\n\n  …thinking", "--placeholder=Esc cancels"],
+        wait=False,
+    )
+
+
+def notify(summary: str, body: str = ""):
+    try:
+        subprocess.run(
+            ["notify-send", "-a", "sway-ask", "-t", "4000",
+             "-h", "string:x-canonical-private-synchronous:sway-ask", summary, body],
+            check=False,
+        )
+    except OSError:
+        pass
+
+
+def copy(text: str):
+    try:
+        subprocess.run(["wl-copy"], input=text, text=True, check=False)
+        notify("Answer copied to clipboard")
+    except OSError:
+        pass
+
+
+def _webapp_windows() -> list[int]:
+    tree = json.loads(subprocess.run(
+        ["swaymsg", "-t", "get_tree"], capture_output=True, text=True, check=True
+    ).stdout)
+    found, stack = [], [tree]
+    while stack:
+        node = stack.pop()
+        if (node.get("app_id") or "").startswith(WEBAPP_PREFIX):
+            found.append(node["id"])
+        stack.extend(node.get("nodes", []) + node.get("floating_nodes", []))
+    return found
+
+
+def _sway(command: str) -> None:
+    subprocess.run(["swaymsg", command], capture_output=True, check=False)
+
+
+def open_in_webui(chat: dict, key: str) -> None:
+    """Show the conversation in the Open WebUI window, replacing what it shows."""
+    chat_id = chat.get("chat_id")
+    try:
+        if chat_id:
+            _unarchive(chat_id, key)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise AskError(f"cannot unarchive the chat: {exc}") from None
+    try:
+        old = _webapp_windows()
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        raise AskError("cannot read the sway tree; is SWAYSOCK set?") from None
+    if old and not chat_id:
+        _sway(f"[con_id={old[0]}] focus")
+        return
+
+    url = f"{BASE_URL}/c/{chat_id}" if chat_id else f"{BASE_URL}/"
+    _sway(f"exec helium --app={url} {HELIUM_FLAGS}")
+    deadline = time.monotonic() + WINDOW_TIMEOUT
+    new = []
+    while not new and time.monotonic() < deadline:
+        time.sleep(0.2)
+        new = [con for con in _webapp_windows() if con not in old]
+    if not new:
+        raise AskError("Open WebUI did not open a window")
+    if old:
+        _sway(f"[con_id={old[0]}] swap container with con_id {new[0]}")
+        _sway(f"[con_id={old[0]}] kill")
+    _sway(f"[con_id={new[0]}] focus")
+
+
+def ask_with_spinner(messages, key: str, chat: dict) -> str:
+    """Run the request while a 'thinking' popup holds the screen."""
+    result = {}
+
+    def worker():
+        try:
+            result["reply"] = ask(messages, key, chat)
+        except AskError as exc:
+            result["error"] = str(exc)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    spinner = thinking_popup(messages[-1]["content"])
+    while thread.is_alive():
+        if spinner.poll() is not None:
+            raise KeyboardInterrupt  # Escape on the thinking popup = cancel
+        time.sleep(0.1)
+    spinner.terminate()
+    spinner.wait(timeout=2)
+    if "error" in result:
+        raise AskError(result["error"])
+    return result["reply"]
+
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+
+def main(argv):
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if len(argv) > 2 and argv[1] == "--ask":
+        try:
+            print(ask([{"role": "user", "content": " ".join(argv[2:])}], api_key(), {}))
+        except AskError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    try:
+        key = api_key()
+    except AskError as exc:
+        prompt(f"⚠ {exc}")
+        return 1
+
+    messages, chat = load_conversation()
+    last = (
+        (messages[-2]["content"], messages[-1]["content"])
+        if len(messages) >= 2
+        else None
+    )
+    # True whenever the next popup should be a bare input box rather than the
+    # answer view: at startup with nothing to show, and after Alt+1.
+    want_input = last is None
+
+    while True:
+        if want_input:
+            code, raw = prompt(transcript(last, 8))
+        else:
+            code, raw = show_answer(*last)
+        want_input = False
+
+        if code == EXIT_COPY:
+            if last:
+                copy(last[1])
+            continue
+        if code == EXIT_NEW:
+            messages, chat, last = [], {}, None
+            save_conversation(messages, chat)
+            want_input = True
+            continue
+        if code == EXIT_FOLLOW_UP:
+            want_input = True
+            continue
+        if code == EXIT_WEB:
+            try:
+                open_in_webui(chat, key)
+            except AskError as exc:
+                prompt(f"⚠ {exc}")
+                want_input = last is None
+                continue
+            return 0
+        if code != 0:
+            return 0
+
+        question = raw.strip()
+        if not question:
+            return 0
+
+        messages.append({"role": "user", "content": question})
+        try:
+            reply = ask_with_spinner(messages, key, chat)
+        except KeyboardInterrupt:
+            messages.pop()
+            return 0
+        except AskError as exc:
+            messages.pop()
+            prompt(f"⚠ {exc}")
+            want_input = last is None
+            continue
+
+        messages.append({"role": "assistant", "content": reply})
+        save_conversation(messages, chat)
+        last = (question, reply)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except FileNotFoundError as exc:
+        sys.exit(f"sway-ask: missing dependency: {exc.filename}")
+    except KeyboardInterrupt:
+        sys.exit(130)

@@ -1,0 +1,41 @@
+// Custom XKB symbols for this machine.
+//
+// f13_super — make F13 a real Super (Mod4) key.
+//
+// The Dygma Defy emits F13 from its mod key in firmware, because the same
+// layout has to work on the Windows work laptop, where Super is Windows' own
+// and PowerToys remaps F13 back to it. This is the Linux half of that same
+// translation: the firmware stays F13 everywhere, and each host turns it into
+// its own Super.
+//
+// Applied per device, not globally, through the Dygma's `input` block in
+// ~/.config/sway/config (xkb_options ... custom:f13_super). The laptop's
+// built-in keyboard and the MX Keys Mini keep a stock F13.
+//
+// `partial` so it merges onto a layout with `+custom(f13_super)` rather than
+// replacing it, and the override merge mode of `+` is what lets the key
+// definition win over the F13 that symbols/pc already set.
+
+partial modifier_keys
+xkb_symbols "f13_super" {
+    key <FK13> { [ Super_L ] };
+    modifier_map Mod4 { <FK13> };
+};
+
+// swap_esc_compose — the built-in keyboard's Caps Lock becomes Escape and its
+// Escape becomes Compose (Multi_key). Every other keyboard keeps compose:caps.
+//
+// Not `caps:swapescape` + `compose:caps`: both write <CAPS>, the last writer
+// wins, and either way <ESC> ends up as Caps_Lock. This sets both keys
+// itself, so it replaces compose:caps on the devices that request it.
+//
+// Applied per device through the internal keyboard's two `input` blocks in
+// ~/.config/sway/config: the copilot-key-super virtual device (which normally
+// carries every keystroke, since that filter grabs the keyboard) and the raw
+// AT Translated Set 2 keyboard (the fallback when the filter is down).
+
+partial modifier_keys
+xkb_symbols "swap_esc_compose" {
+    key <CAPS> { [ Escape ] };
+    key <ESC>  { [ Multi_key ] };
+};

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# sway-powermenu — fuzzel session/power menu (bound to $mod+Escape).
+# Falls back to swaynag buttons if fuzzel isn't available. Actions use logind via
+# systemctl/loginctl — no sudo needed for the active seat.
+set -uo pipefail
+
+act() {
+  case "$1" in
+    *Lock*)     exec loginctl lock-session ;;
+    *Logout*)   exec swaymsg exit ;;
+    *Suspend*)  exec systemctl suspend ;;
+    *Reboot*)   exec systemctl reboot ;;
+    *Shutdown*) exec systemctl poweroff ;;
+  esac
+}
+
+if command -v fuzzel >/dev/null 2>&1; then
+  choice=$(printf '%s\n' \
+    '  Lock' \
+    '  Logout' \
+    '  Suspend' \
+    '  Reboot' \
+    '  Shutdown' \
+    | fuzzel --dmenu --prompt 'power  ' --lines 5 --width 18) || exit 0
+  [ -n "$choice" ] && act "$choice"
+else
+  swaynag -t warning -m 'Session' \
+    -b 'Lock'     'loginctl lock-session' \
+    -b 'Logout'   'swaymsg exit' \
+    -b 'Suspend'  'systemctl suspend' \
+    -b 'Reboot'   'systemctl reboot' \
+    -b 'Shutdown' 'systemctl poweroff'
+fi

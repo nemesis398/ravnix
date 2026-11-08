@@ -1,0 +1,24 @@
+// User XKB rules — read by libxkbcommon (so: sway), not by X11's xkbcomp.
+//
+// libxkbcommon searches $XDG_CONFIG_HOME/xkb BEFORE /usr/share/X11/xkb, so this
+// file shadows the system `evdev` ruleset for every keymap sway compiles. It
+// must therefore stay a thin wrapper: include the system ruleset unchanged,
+// then declare the custom options. Anything left out here is simply gone.
+//
+// ORDER IS LOAD-BEARING, and it is the opposite of the arrangement
+// libxkbcommon's user-configuration example shows for custom *layouts*. The
+// symbols each matching rule contributes are concatenated in rule order, and
+// the last writer of a key wins. With the custom block first, the system's
+// `inet(evdev)` — which the include drags in for every model, and which is
+// what puts XF86Tools on <FK13> — lands afterwards and silently overwrites the
+// custom key definition. Measured: the modifier_map survived, the keysym did
+// not. Include first, custom last, and the override holds.
+//
+// An option declared here does nothing until some device asks for it by name,
+// so adding one is safe for every other keyboard.
+
+! include %S/evdev
+
+! option = symbols
+  custom:f13_super = +custom(f13_super)
+  custom:swap_esc_compose = +custom(swap_esc_compose)
