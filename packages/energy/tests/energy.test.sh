@@ -89,6 +89,18 @@ write_script "$scratch/charge-mode" \
 	'if [ "${1:-}" = set ]; then printf "charge-mode %s\n" "$*" >>"$CALLS"; exit 0; fi' \
 	'[ -n "${CHARGE_MODE_NOW:-}" ] || exit 1; printf "%s\n" "$CHARGE_MODE_NOW"'
 
+# Outside the sandbox the cases must never reach the desktop they run on.
+# Behind the stubs comes the caller's PATH without any directory that holds
+# keep-awake or waybar-launch: a case that takes a stub away would else run
+# the real one, and keep-awake restarts the session's swayidle. The cases
+# also get no Wayland, Sway or session bus to talk to.
+host_path=""
+IFS=: read -ra host_dirs <<<"$PATH"
+for dir in "${host_dirs[@]}"; do
+	[[ -e "$dir/keep-awake" || -e "$dir/waybar-launch" ]] || host_path+="${host_path:+:}$dir"
+done
+off_desktop=(-u WAYLAND_DISPLAY -u SWAYSOCK -u DISPLAY DBUS_SESSION_BUS_ADDRESS="unix:path=$scratch/no-bus")
+
 # The copy of energy.sh under test; the sandbox has no /usr/bin/env.
 sed -e "1s|^#!.*|#!$BASH|" \
 	-e "s|/sys/class/power_supply/ADP0|$fake/ADP0|g" \
@@ -135,7 +147,7 @@ set_state() {
 }
 
 run() {
-	capture env PATH="$bin:$PATH" CALLS="$calls" PROFILE_FILE="$scratch/profile" \
+	capture env "${off_desktop[@]}" PATH="$bin:$host_path" CALLS="$calls" PROFILE_FILE="$scratch/profile" \
 		OUTPUTS="$scratch/outputs" PICKS="$scratch/picks" FUZZEL_LOG="$scratch/fuzzel.log" \
 		EVENTS="$scratch/events" REFRESHES="$scratch/refreshes" ONLINE="$online" \
 		XDG_STATE_HOME="$STATE_HOME" XDG_RUNTIME_DIR="$RUNTIME" \
@@ -310,7 +322,7 @@ test_state_falls_back_to_home() {
 	fresh
 	local home="$scratch/home"
 	rm -rf -- "$home"
-	capture env -u XDG_STATE_HOME HOME="$home" PATH="$bin:$PATH" "$BASH" "$energy" set focus_bar on
+	capture env -u XDG_STATE_HOME "${off_desktop[@]}" HOME="$home" PATH="$bin:$host_path" "$BASH" "$energy" set focus_bar on
 	expect_status 0
 	content_is "$home/.local/state/energy/focus_bar" on
 }

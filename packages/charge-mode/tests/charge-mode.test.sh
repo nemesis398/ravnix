@@ -91,12 +91,16 @@ saved() {
 	(($# == 0)) || printf '%s\n' "$1" >"$state"
 }
 
+# Outside the sandbox the cases must never reach the desktop they run on:
+# no Wayland and no session bus, so a real notify-send behind a stub that a
+# case took away shows nothing.
 run() {
 	local script="$1"
 	shift
 	: >"$calls"
 	rm -f -- "$scratch/sleeps"
-	capture env PATH="$bin:$PATH" CALLS="$calls" SLEEPS="$scratch/sleeps" ATTR="$attr" \
+	capture env -u WAYLAND_DISPLAY -u DISPLAY DBUS_SESSION_BUS_ADDRESS="unix:path=$scratch/no-bus" \
+		PATH="$bin:$PATH" CALLS="$calls" SLEEPS="$scratch/sleeps" ATTR="$attr" \
 		"$BASH" "$script" "$@"
 }
 
@@ -429,6 +433,12 @@ running() {
 # helper whose name starts with waybar, not a program that only calls
 # itself waybar in its argv.
 test_the_refresh_reaches_a_wrapped_waybar_and_nothing_else() {
+	# The real pkill would signal the user's own Waybar too, outside the
+	# sandbox; the check runs it, where there is none.
+	if pgrep -u "$EUID" -x 'waybar|\.waybar-wrapped' >/dev/null 2>&1; then
+		echo "SKIP test_the_refresh_reaches_a_wrapped_waybar_and_nothing_else: a Waybar of this user runs; only the sandbox has none" >&3
+		return 0
+	fi
 	user_stub
 	firmware "Fast Standard [Long_Life]"
 	local d="$scratch/procs" name st i want
