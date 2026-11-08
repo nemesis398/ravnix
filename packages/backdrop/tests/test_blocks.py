@@ -1,17 +1,49 @@
 """The block elements of the facts are rectangles on whole pixels."""
 
+import re
+import unicodedata
+
+import numpy as np
+
 from conftest import H, W, bbox, rgb, tinted, where
 
-# Each block element and the part of its cell it covers.
-FRACTIONS = {
-    "▀": 1 / 2, "▄": 1 / 2, "▌": 1 / 2, "▐": 1 / 2,
-    "▁": 1 / 8, "▂": 2 / 8, "▃": 3 / 8, "▅": 5 / 8, "▆": 6 / 8, "▇": 7 / 8,
-    "▉": 7 / 8, "▊": 6 / 8, "▋": 5 / 8, "▍": 3 / 8, "▎": 2 / 8, "▏": 1 / 8,
-    "▔": 1 / 8, "▕": 1 / 8,
-    "▖": 1 / 4, "▗": 1 / 4, "▘": 1 / 4, "▝": 1 / 4,
-    "▙": 3 / 4, "▛": 3 / 4, "▜": 3 / 4, "▟": 3 / 4,
-    "▚": 1 / 2, "▞": 1 / 2,
+# Every block element that is drawn as rectangles: U+2580 to U+259F, except the
+# three shades.
+CHARS = [chr(c) for c in range(0x2580, 0x25A0) if c not in (0x2591, 0x2592, 0x2593)]
+
+EIGHTHS = {
+    "ONE EIGHTH": 1, "ONE QUARTER": 2, "THREE EIGHTHS": 3, "HALF": 4,
+    "FIVE EIGHTHS": 5, "THREE QUARTERS": 6, "SEVEN EIGHTHS": 7,
 }
+
+
+def covered(char):
+    """The 8 by 8 grid (rows, then columns) of the eighths of a cell that the
+    character covers, read off its Unicode name, so that the expectation comes
+    from the standard and not from the table the code draws from."""
+    name = unicodedata.name(char)
+    grid = np.zeros((8, 8), dtype=bool)
+    side = re.fullmatch(r"(UPPER|LOWER|LEFT|RIGHT) (.+) BLOCK", name)
+    if name == "FULL BLOCK":
+        grid[:] = True
+    elif side:
+        n = EIGHTHS[side[2]]
+        if side[1] == "UPPER":
+            grid[:n] = True
+        elif side[1] == "LOWER":
+            grid[8 - n :] = True
+        elif side[1] == "LEFT":
+            grid[:, :n] = True
+        else:
+            grid[:, 8 - n :] = True
+    else:
+        assert name.startswith("QUADRANT "), name
+        for part in name[len("QUADRANT ") :].split(" AND "):
+            vertical, horizontal = part.split()
+            rows = slice(0, 4) if vertical == "UPPER" else slice(4, 8)
+            columns = slice(0, 4) if horizontal == "LEFT" else slice(4, 8)
+            grid[rows, columns] = True
+    return grid
 
 
 def sgr(color):
@@ -40,21 +72,29 @@ def longest_run(line):
     return best
 
 
-def test_a_block_element_covers_its_part_of_the_cell_with_no_blend(lab):
-    blue = rgb("blue")
+def test_a_block_element_covers_the_eighths_its_name_says_and_nothing_else(lab):
+    blue, base = rgb("blue"), rgb("base")
     width, height = cell_size(lab)
-    chars = list(FRACTIONS)
-    for start in range(0, len(chars), 14):
-        group = chars[start : start + 14]
-        right, proc = render_facts(lab, "".join(sgr(blue) + c + "\x1b[m\n" for c in group))
+    for start in range(0, len(CHARS), 13):
+        group = CHARS[start : start + 13]
+        # A full block first, which sets the corner the rows are counted from.
+        right, proc = render_facts(lab, "".join(sgr(blue) + c + "\x1b[m\n" for c in ("\u2588", *group)))
         assert lab.journal(proc) == []
         ink = where(right, blue)
-        x0, y0, x1, y1 = bbox(ink)
-        assert not (tinted(right, blue, rgb("base"), least=0.05, slack=6) & ~ink).any()
-        for row, char in enumerate(group):
+        x0, y0 = bbox(ink)[:2]
+        assert not (tinted(right, blue, base, least=0.05, slack=6) & ~ink).any(), "a blended pixel"
+        for row, char in enumerate(group, start=1):
+            want = covered(char)
+            for r in range(8):
+                for c in range(8):
+                    # The center of each eighth of the cell in each direction.
+                    x = x0 + int((c + 0.5) * width / 8)
+                    y = y0 + row * height + int((r + 0.5) * height / 8)
+                    got = tuple(right[y, x])
+                    assert got == (blue if want[r, c] else base), (char, unicodedata.name(char), r, c, got)
+            # Whole pixels also in the sum: the part covered is its eighths, to a pixel on each edge.
             cell = ink[y0 + row * height : y0 + (row + 1) * height, x0 : x0 + width]
-            # The edges are rounded to whole pixels, so a part is right to a pixel on each side.
-            assert abs(cell.sum() - FRACTIONS[char] * width * height) <= width + height, (char, int(cell.sum()))
+            assert abs(cell.sum() - want.mean() * width * height) <= (width + height) / 2, (char, int(cell.sum()))
 
 
 def test_blocks_above_one_another_and_side_by_side_leave_no_seam(lab):
