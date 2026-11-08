@@ -10,8 +10,9 @@
 # wtype 0.5, which contains that commit (it is its parent's child: v0.5 is
 # 4b9cc29, one commit after 82bca82), so ravnix builds no wtype of its own.
 #
-# This check does not trust the version number. It runs the wtype of the
-# system against a real Wayland compositor (Sway, headless, in the build
+# This check does not trust the version number. It runs the wtype that a host
+# with nixosModules.desktop installs (the one Handy's launcher puts first on
+# PATH, checked below) against a real Wayland compositor (Sway, headless, in the build
 # sandbox) with a window that records its key events (wev), types 126
 # distinct characters, and requires that
 #
@@ -30,7 +31,21 @@
 }:
 let
   hostPkgs = inputs.nixpkgs.legacyPackages.${system};
-  wtype = hostPkgs.wtype;
+
+  # The wtype of the system under test: the one in the profile of a host with
+  # the desktop module, not the one nixpkgs happens to have, so an overlay or
+  # a pin of a host cannot split the two.
+  host = inputs.nixpkgs.lib.nixosSystem {
+    inherit system;
+    modules = (import ../flake/helpers/host-modules.nix { inherit lib; }) ++ [
+      self.nixosModules.desktop
+    ];
+  };
+  wtype =
+    lib.findFirst (p: lib.getName p == "wtype")
+      (throw "no wtype in the system profile of a host with nixosModules.desktop")
+      host.config.environment.systemPackages;
+  handyLaunch = host.pkgs.ravnix.handy-launch;
   wtype04 = wtype.overrideAttrs (old: {
     version = "0.4";
     src = pkgs.fetchFromGitHub {
@@ -60,7 +75,7 @@ pkgs.runCommand "desktop-wtype"
       hostPkgs.coreutils
       hostPkgs.gnugrep
     ];
-    inherit wtype;
+    inherit wtype handyLaunch;
     wtypeOld = wtype04;
     inherit probe;
     version = wtype.version;
@@ -105,7 +120,14 @@ pkgs.runCommand "desktop-wtype"
       # Sway answers with a new enter. So the probe starts with a sentinel,
       # which may be lost and is not part of what is judged.
       "$bin" -- "§$(cat "$probe")"
-      sleep 1
+      # Wait until wev has seen the keys (the sentinel and 126 characters, one
+      # of which may be lost), not for a fixed time: the build may share the
+      # machine with others. A short grace period catches the last events.
+      for _ in $(seq 1 300); do
+        [ "$(grep -c 'state: 1 (pressed)' "$out.log")" -ge 126 ] && break
+        sleep 0.1
+      done
+      sleep 0.3
       kill $wev_pid 2>/dev/null || true
       wait $wev_pid 2>/dev/null || true
       python3 -I - "$out.log" "$out" <<'PY'
@@ -151,6 +173,10 @@ pkgs.runCommand "desktop-wtype"
       return 0
     }
 
+    # Handy types through the wtype that its launcher puts first on PATH; it has
+    # to be this one.
+    grep -q "$wtype/bin" "$handyLaunch/bin/handy-launch" || fail "handy-launch does not put the system's wtype ($wtype) first on PATH"
+
     run_probe "$wtype/bin/wtype" "$TMPDIR/new"
     judge "wtype $version" "$TMPDIR/new" || fail "the wtype of the system drops or misplaces characters"
 
@@ -158,6 +184,12 @@ pkgs.runCommand "desktop-wtype"
     if judge "wtype 0.4 (control)" "$TMPDIR/old" quiet; then
       fail "the control passed: the probe does not see the defect of wtype 0.4"
     fi
+    # The defect of 0.4 is the Nth character on key N: the 29th character lands
+    # on Left Ctrl. The control has to show that, not just fail somewhere.
+    case " $(cat "$TMPDIR/old.codes") " in
+      *" 29 "*) ;;
+      *) fail "the control did not put a character on Left Ctrl (29): it fails for another reason than the defect it stands for: $(cut -c1-200 "$TMPDIR/old.codes")";;
+    esac
 
     [ "$failed" = 0 ] && touch $out || exit 1
   ''
