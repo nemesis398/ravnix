@@ -126,6 +126,29 @@
     # null refuses vault-commit.
     link.vault = "/home/alice/notes";
 
+    # The security key for git. The laptop runs an agent of its own that
+    # holds the key handles below and nothing else, and the main connection
+    # forwards it to the server, so that git there signs in with a touch on
+    # the key at the laptop, and never with Bitwarden's agent. Empty lists
+    # leave both hosts as they are.
+    skAgent = {
+      # Each handle, the file `ssh-keygen -t ed25519-sk` wrote (the one
+      # without .pub, made without a passphrase), as an absolute path on the
+      # laptop in a string, and the line of its .pub file. Not a real key.
+      keys = [
+        {
+          handle = "/home/alice/.ssh/keys/github-sk";
+          publicKey = "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tExampleOnlyNotARealKey alice@example.org";
+        }
+      ];
+      # The git hosts that ssh on the server reaches with them, as your git
+      # remotes name them.
+      hosts = [
+        "github.com"
+        "git.example.org"
+      ];
+    };
+
     # The laptop.
     laptop = {
       # The one disk the installer may write, by model and serial as

@@ -48,6 +48,7 @@ in
     ./claude.nix
     ./shell.nix
     ./shape.nix
+    ./sk-agent.nix
     ./placeholders.nix
     # The accent is a value the user sets in me.nix, so the option is here too;
     # nixosModules.theme imports the same file and the module system keeps one.
