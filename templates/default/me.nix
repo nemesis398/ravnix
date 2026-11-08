@@ -120,6 +120,12 @@
       hostKey = null;
     };
 
+    # The link between the hosts: the Obsidian vault's git repository on the
+    # server, an absolute path in a string, where `ravnix-link vault-commit`
+    # commits once the Obsidian operations before it have run on the laptop.
+    # null refuses vault-commit.
+    link.vault = "/home/alice/notes";
+
     # The laptop.
     laptop = {
       # The one disk the installer may write, by model and serial as

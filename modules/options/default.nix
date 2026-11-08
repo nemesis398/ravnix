@@ -31,6 +31,7 @@ in
     ./services.nix
     ./nix.nix
     ./laptop.nix
+    ./link.nix
     ./peripherals.nix
     ./apps.nix
     ./server.nix
