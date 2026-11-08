@@ -175,7 +175,9 @@ for unit in nextcloud-sync vdirsyncer; do
 done
 
 echo "== no program of the laptop"
-laptop=$(r ls $sysbin | grep -E '^(sway|swaylock|swayidle|waybar|fuzzel|dunst|kanshi|greetd|tuigreet|helium|obsidian|ghostty|onlyoffice-desktopeditors|steam)$' | tr '\n' ' ')
+# The laptop's programs of workbench-oci, and Helium: the server carries one,
+# but only as the browser of the DevTools MCP wrapper, by its store path.
+laptop=$(r ls $sysbin | grep -E '^(sway|swaylock|swayidle|waybar|fuzzel|dunst|kanshi|greetd|tuigreet|obsidian|ghostty|onlyoffice-desktopeditors|steam|helium)$' | tr '\n' ' ')
 if [ -z "$laptop" ]; then ok "none of the laptop's programs is in the system path"; else bad "laptop programs on the PATH: $laptop"; fi
 
 echo "== rootless Podman"

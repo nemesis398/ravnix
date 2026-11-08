@@ -67,9 +67,11 @@ let
   check = cond: msg: lib.optional (!cond) msg;
 
   # The programs of the laptop (modules/desktop, the graphical applications):
-  # none of them is on the server, in any form. docker-checks.sh looks for the
-  # same list on the PATH of a running container, and this check holds the two
-  # lists together.
+  # none of them is on the server, in any form. Helium is not in the list: the
+  # server carries one, for the Chrome DevTools MCP server, which drives it
+  # headless (modules/common/chrome-devtools-mcp.nix); the checks of that
+  # module and the VM test desktop-chrome-devtools-mcp hold that it is only
+  # that.
   laptopOnly = [
     "sway"
     "swaylock"
@@ -80,12 +82,16 @@ let
     "kanshi"
     "greetd"
     "tuigreet"
-    "helium"
     "obsidian"
     "ghostty"
     "onlyoffice-desktopeditors"
     "steam"
   ];
+  # What docker-checks.sh refuses on the PATH of a running container: the
+  # laptop's programs, and Helium, which the server reaches only by its store
+  # path, through the wrapper, and never on a PATH. This check holds the two
+  # lists together.
+  notOnPath = laptopOnly ++ [ "helium" ];
 
   # The entrypoint, built with stand-ins: a cgroup file that is a file of the
   # store, a mount that records what it was asked, an init that says it ran.
@@ -306,9 +312,10 @@ pkgs.runCommand "workbench-oci"
       grep -Eq "^$want-[0-9]" names.txt ||
         fail "the closure of the system lacks $want"
     done
-    # The script that looks for them in a running container looks for these.
-    grep -qF '^(${lib.concatStringsSep "|" laptopOnly})$' ${./oci/docker-checks.sh} ||
-      fail "docker-checks.sh does not look for the laptop's programs the check does"
+    # The script that looks for them in a running container looks for these,
+    # and for Helium.
+    grep -qF '^(${lib.concatStringsSep "|" notOnPath})$' ${./oci/docker-checks.sh} ||
+      fail "docker-checks.sh does not look for the laptop's programs the check does, and Helium"
 
     # The deploy files. Never pull: the image is loaded by hand, and a missing
     # tag must stop the start and not fetch a stranger's image from a registry
