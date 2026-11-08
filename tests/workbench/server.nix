@@ -188,6 +188,9 @@ pkgs.testers.runNixOSTest (
         home-manager.users.${user.username} = {
           programs.rbw.package = lib.mkForce fakeRbw;
           programs.claude-code.package = lib.mkForce fakeClaudePackage;
+          # Short, so that the test can see in seconds that a skipped start is
+          # not tried again (it is half a minute on a server).
+          systemd.user.services.claude-remote-control.Service.RestartSec = lib.mkForce 1;
         };
         ravnix.workbench.nextcloudSync.package = fakeNextcloudPackage;
 
@@ -442,20 +445,36 @@ pkgs.testers.runNixOSTest (
             assert user_ctl("show -p ConditionResult --value claude-remote-control.service").strip() == "no"
             machine.fail("test -e " + HOME + "/remote-control.log")
 
-        with subtest("Remote Control waits for the state file as well: a login without ~/.claude.json is not enough"):
+        with subtest("Remote Control waits for ~/.claude.json to say Claude Code ran its first run"):
             # What copying ~/.claude/ to a new machine leaves behind: the
             # login and the repository, and not the file next to ~/.claude/
             # that holds the answers to the first-run dialogs. Started like
             # this, Claude Code would ask on a terminal that is not there.
             as_user("mkdir -p ~/.claude ~/work && git init -q ~/work && echo '{}' > ~/.claude/.credentials.json && rm -f ~/.claude.json")
-            machine.execute("su - " + USER + " -c 'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start claude-remote-control.service'")
+            user_ctl("start claude-remote-control.service")
             assert user_ctl("is-active claude-remote-control.service", False)[1].strip() == "inactive"
-            assert user_ctl("show -p ConditionResult --value claude-remote-control.service").strip() == "no"
             machine.fail("test -e " + HOME + "/remote-control.log")
             machine.fail("test -e " + HOME + "/.claude.json")
+            assert "first run" in user_journal("claude-remote-control.service"), user_journal("claude-remote-control.service")
 
-        with subtest("Remote Control starts once there is a login, its state file and a repository, as the development VM before it had it"):
-            as_user("echo '{\"numStartups\": 3, \"projects\": {\"keep\": {\"me\": true}}}' > ~/.claude.json")
+        with subtest("a ~/.claude.json with only MCP servers in it is not a first run, and Remote Control is not started or retried"):
+            # What ravnix's MCP step leaves before any login: the file exists,
+            # and Claude Code has not been started on this machine.
+            only = '{"mcpServers": {"x": {"type": "http", "url": "https://example.org/mcp"}}}'
+            as_user("echo " + shlex.quote(only) + " > ~/.claude.json")
+            before = as_user("cat ~/.claude.json")
+            user_ctl("start claude-remote-control.service")
+            assert user_ctl("is-active claude-remote-control.service", False)[1].strip() == "inactive"
+            # Longer than RestartSec: Restart=always must not start a skipped unit again.
+            machine.sleep(4)
+            assert user_ctl("is-active claude-remote-control.service", False)[1].strip() == "inactive"
+            assert user_ctl("show -p NRestarts --value claude-remote-control.service").strip() == "0"
+            machine.fail("test -e " + HOME + "/remote-control.log")
+            # Skipped before anything touched the file.
+            assert as_user("cat ~/.claude.json") == before, as_user("cat ~/.claude.json")
+
+        with subtest("Remote Control starts once there is a login, a first run and a repository, as the development VM before it had it"):
+            as_user("echo '{\"numStartups\": 3, \"hasCompletedOnboarding\": true, \"projects\": {\"keep\": {\"me\": true}}}' > ~/.claude.json")
             user_ctl("start claude-remote-control.service")
             machine.wait_until_succeeds("su - " + USER + " -c 'test -s ~/remote-control.log'", timeout=60)
             log = as_user("cat ~/remote-control.log").splitlines()
@@ -470,18 +489,19 @@ pkgs.testers.runNixOSTest (
             # answered in the file Claude Code keeps it in, and the rest of
             # the file is as it was.
             state = json.loads(as_user("cat ~/.claude.json"))
-            assert state["remoteDialogSeen"] is True and state["numStartups"] == 3 and state["projects"] == {"keep": {"me": True}}, state
+            assert state["remoteDialogSeen"] is True and state["numStartups"] == 3 and state["hasCompletedOnboarding"] is True and state["projects"] == {"keep": {"me": True}}, state
             assert user_ctl("is-active claude-remote-control.service").strip() == "active"
 
-        with subtest("a ~/.claude.json that is not JSON stops Remote Control and is left as it is"):
+        with subtest("a ~/.claude.json that is not JSON keeps Remote Control from starting and is left as it is"):
             user_ctl("stop claude-remote-control.service")
             as_user("rm -f ~/remote-control.log; echo 'not json' > ~/.claude.json")
-            code, _ = machine.execute("su - " + USER + " -c 'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start claude-remote-control.service'")
-            assert code != 0
+            user_ctl("start claude-remote-control.service")
+            assert user_ctl("is-active claude-remote-control.service", False)[1].strip() == "inactive"
+            assert "not JSON" in user_journal("claude-remote-control.service"), user_journal("claude-remote-control.service")
+            machine.sleep(4)
+            assert user_ctl("show -p NRestarts --value claude-remote-control.service").strip() == "0"
             assert as_user("cat ~/.claude.json").strip() == "not json"
             machine.fail("test -e " + HOME + "/remote-control.log")
-            user_ctl("stop claude-remote-control.service", False)
-            user_ctl("reset-failed claude-remote-control.service", False)
 
         with subtest("a switch leaves herdr's server and its panes running"):
             # The workspace made above is still open, the server's process is

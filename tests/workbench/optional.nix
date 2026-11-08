@@ -249,10 +249,15 @@ let
     (lib.optional (
       (service everything "claude-remote-control").Unit.ConditionPathExists != [
         "%h/.claude/.credentials.json"
-        "%h/.claude.json"
         "${me.ravnix.server.remoteControlDir}/.git"
       ]
-    ) "Remote Control starts without its login, its state file and its repository")
+    ) "Remote Control starts without its login and its repository")
+    # That Claude Code ran its first run is read from ~/.claude.json by an
+    # ExecCondition= helper (a skip it makes is clean, and Restart=always
+    # does not restart it), not from the file merely existing.
+    (lib.optional (
+      !(service everything "claude-remote-control").Service ? ExecCondition
+    ) "Remote Control does not check that Claude Code finished its first run")
     (lib.optional (
       (service everything "nextcloud-sync").Unit.X-SwitchMethod != "keep-old"
     ) "a switch can start a Nextcloud sync")
@@ -342,6 +347,35 @@ pkgs.runCommand "workbench-optional" { } (''
   fi
   ! grep -q -E '^vdirsyncer (discover|metasync|sync)$' "$vs" ||
     fail "the calendar sync runs vdirsyncer for every pair, feeds again after the guard"
+  # The helper that decides whether Remote Control may start: exit 0 only for
+  # a ~/.claude.json that says Claude Code finished its first run. Anything
+  # else is a skip, exit 1, never 255 (a failure, which Restart=always
+  # retries every half minute). A file that holds only mcpServers, as other
+  # parts of ravnix make it, proves nothing.
+  ready=${one (service everything "claude-remote-control").Service.ExecCondition}
+  grep -q 'hasCompletedOnboarding' "$ready" || fail "Remote Control does not look for hasCompletedOnboarding"
+  home=$(mktemp -d)
+  ready_case() {
+    want=$1 content=$2 label=$3
+    rm -f "$home/.claude.json"
+    if [ "$content" != MISSING ]; then printf '%s' "$content" >"$home/.claude.json"; fi
+    got=0
+    HOME=$home "$ready" >/dev/null 2>&1 || got=$?
+    [ "$got" = "$want" ] || fail "the Remote Control condition gives $got, not $want, for $label"
+  }
+  ready_case 1 MISSING "no ~/.claude.json"
+  ready_case 1 "" "an empty file"
+  ready_case 1 '{}' "an empty object"
+  ready_case 1 '{"mcpServers":{}}' "only an empty mcpServers"
+  ready_case 1 '{"mcpServers":{"x":{"type":"http","url":"https://example.org/mcp"}},"numStartups":2}' "mcpServers and a startup count"
+  ready_case 1 '{"hasCompletedOnboarding":false}' "onboarding not completed"
+  ready_case 1 '{"hasCompletedOnboarding":"true"}' "onboarding as a string"
+  ready_case 1 'not json' "a file that is not JSON"
+  ready_case 1 '[]' "a JSON array"
+  ready_case 1 '"hasCompletedOnboarding"' "a JSON string"
+  ready_case 0 '{"hasCompletedOnboarding":true}' "completed onboarding"
+  ready_case 0 '{"mcpServers":{},"hasCompletedOnboarding":true,"numStartups":9}' "completed onboarding among other keys"
+  rm -rf "$home"
   rc=${one (service everything "claude-remote-control").Service.ExecStartPre}
   grep -q 'remoteDialogSeen' "$rc" || fail "Remote Control does not answer its consent prompt"
   grep -q 'is not JSON' "$rc" || fail "Remote Control does not refuse a ~/.claude.json that is not JSON"

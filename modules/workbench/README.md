@@ -46,16 +46,19 @@ These cannot be declared, because each one is a login or a secret.
    in the terminal, logs in, and keeps the session in `~/.local/share/iamb`. It
    cannot read a password from a command.
 4. **Remote Control.** Run `claude auth login` and choose claude.ai (an API key or
-   a setup token does not work with Remote Control). The login makes both
-   `~/.claude/.credentials.json` and `~/.claude.json`, and Remote Control needs
-   both: copying only `~/.claude/` from another machine is not enough, because
-   `~/.claude.json` lives beside it in the home directory. Clone the repository
-   named by `ravnix.server.remoteControlDir`, `cd` into it and run `claude` once
-   to accept the folder. Then `systemctl --user start claude-remote-control`; it
-   starts by itself at every boot after that. Until the login, the state file and
-   the repository exist, the unit is skipped with a failed condition
-   (`systemctl --user status claude-remote-control` says which), not restarted
-   every half minute.
+   a setup token does not work with Remote Control). The login makes
+   `~/.claude/.credentials.json` and records in `~/.claude.json` that Claude Code
+   had its first run (`hasCompletedOnboarding`); Remote Control needs both.
+   Copying only `~/.claude/` from another machine is not enough, because
+   `~/.claude.json` lives beside it in the home directory. And a `~/.claude.json`
+   that merely exists is not enough either: ravnix itself makes one when it
+   merges the MCP servers into it, and that file says nothing of a first run.
+   Clone the repository named by `ravnix.server.remoteControlDir`, `cd` into it and
+   run `claude` once to accept the folder. Then `systemctl --user start
+   claude-remote-control`; it starts by itself at every boot after that. Until the
+   login, the first run and the repository exist, the unit is skipped, not
+   restarted every half minute: `systemctl --user status claude-remote-control`
+   and `journalctl --user -u claude-remote-control` say which is missing.
 
 ## Updating
 

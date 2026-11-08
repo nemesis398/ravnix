@@ -23,21 +23,37 @@
 #     minute while `systemctl --user is-active` said "active". The answer is a
 #     flag in ~/.claude.json (remoteDialogSeen), which ExecStartPre sets before
 #     each start, in the file as it is. A ~/.claude.json that is not JSON stops
-#     the start and is left alone. The file has to exist: it is where Claude
-#     Code keeps the answers to every first-run dialog, and it lives in $HOME
-#     beside ~/.claude/, so copying ~/.claude/ to a new machine leaves it
-#     behind. Without it Claude Code would ask on a terminal that is not there,
-#     which is the same loop, so the unit's condition names it too.
+#     the start and is left alone.
+#   - Claude Code must have had its first run on this machine. ~/.claude.json
+#     is where it keeps the answers to every first-run dialog, and it lives in
+#     $HOME beside ~/.claude/, so copying ~/.claude/ to a new machine leaves it
+#     behind; without the answers Claude Code asks on a terminal that is not
+#     there, which is the same loop. That the file exists proves nothing,
+#     because other parts of ravnix make it too (the MCP servers of
+#     ravnix.claude.mcpServers are merged into it, before any login). So an
+#     ExecCondition= helper reads the key `hasCompletedOnboarding` and starts
+#     the unit only when it is true. Evidence for that key, from the
+#     packaged Claude Code 2.1.319 (`rg -a -o` over bin/.claude-unwrapped,
+#     nothing run): `claude auth login` writes hasCompletedOnboarding: true
+#     in its success path, right before it prints "Login successful."; the
+#     interactive onboarding writes it when its last screen is confirmed; and
+#     Claude Code's own repair of a damaged config treats it, with
+#     oauthAccount, as the sign of a config that held a login. No ravnix
+#     step writes it. oauthAccount was not taken, because the onboarding
+#     screens are what block, and they key on hasCompletedOnboarding. A skip by
+#     ExecCondition= (exit 1 to 254) leaves the unit inactive and not failed,
+#     and Restart=always does not start it again, so nothing loops; the
+#     helper says why on stderr, which is the journal.
 #   - It must start in a project directory, never in $HOME: the trust dialog
 #     does not save trust for $HOME.
 #   - It needs a claude.ai login; an API key or a setup token does not work.
 #     `claude auth login` is interactive, so it is a step by hand (README.md),
 #     and so is accepting the folder once (`cd` there and run `claude`). Until
-#     the login, the state file and the repository exist, the unit does not
-#     start and says so (a failed condition), instead of restarting every half
-#     minute behind an "active" that is not true. Once they exist,
-#     `systemctl --user start claude-remote-control` starts it, and it comes up
-#     by itself at every boot.
+#     the login, the first run and the repository exist, the unit does not
+#     start and says so (a failed condition, or the helper's message), instead
+#     of restarting every half minute behind an "active" that is not true.
+#     Once they exist, `systemctl --user start claude-remote-control` starts
+#     it, and it comes up by itself at every boot.
 #   - ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are unset for it, so the login
 #     is the one that counts.
 #
@@ -62,6 +78,33 @@ in
     home-manager.users.${user} =
       { ... }:
       let
+        ready = pkgs.writeShellApplication {
+          name = "ravnix-remote-control-ready";
+          runtimeInputs = [ pkgs.jq ];
+          text = ''
+            file="$HOME/.claude.json"
+            # Every way out but success is exit 1, a skip that systemd takes
+            # for a unit that does not need to run; 255 would be a failure
+            # that Restart=always retries.
+            if [ ! -f "$file" ]; then
+              echo "$file does not exist, so Claude Code has not had its first run here; log in with claude auth login, then start this unit" >&2
+              exit 1
+            fi
+            status=0
+            jq -e '.hasCompletedOnboarding == true' "$file" >/dev/null 2>&1 || status=$?
+            case "$status" in
+              0) exit 0 ;;
+              1 | 4)
+                echo "$file does not say Claude Code finished its first run (hasCompletedOnboarding is not true), so Remote Control would ask its questions on no terminal; log in with claude auth login, then start this unit" >&2
+                ;;
+              *)
+                echo "$file is not JSON that holds an object (jq exit $status); Remote Control does not start, and the file is as it was" >&2
+                ;;
+            esac
+            exit 1
+          '';
+        };
+
         prepare = pkgs.writeShellApplication {
           name = "ravnix-remote-control-prepare";
           runtimeInputs = [
@@ -96,12 +139,12 @@ in
         systemd.user.services.claude-remote-control = {
           Unit = {
             Description = "Claude Code Remote Control session";
-            # Not started until the login, the state file and the repository
-            # exist (see the header); the condition fails quietly and
-            # `systemctl --user status` says which one.
+            # Not started until the login and the repository exist (see the
+            # header); the condition fails quietly and `systemctl --user
+            # status` says which one. The first run is checked by
+            # ExecCondition= below.
             ConditionPathExists = [
               "%h/.claude/.credentials.json"
-              "%h/.claude.json"
               "${dir}/.git"
             ];
           };
@@ -116,6 +159,7 @@ in
               "ANTHROPIC_API_KEY"
               "ANTHROPIC_BASE_URL"
             ];
+            ExecCondition = lib.getExe ready;
             ExecStartPre = lib.getExe prepare;
             ExecStart = "${profile}/claude remote-control --name ${os.networking.hostName} --spawn worktree";
             Restart = "always";
