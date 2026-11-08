@@ -176,9 +176,12 @@ sway_env = machine.succeed(f"tr '\\0' '\\n' < /proc/$(pgrep -u {USER} -x sway | 
 assert "WLR_DRM_DEVICES=/dev/dri/primary-gpu" in sway_env.splitlines(), "Sway did not start with WLR_DRM_DEVICES=/dev/dri/primary-gpu"
 
 # home-manager's session variables reach the processes Sway starts, which is
-# what the launcher and the keys are: greetd runs no login shell, so the Sway
-# wrapper reads the file itself. Qt finds its platform theme through one of
-# them; another is a variable this test gave home-manager.
+# what the launcher and the keys are. greetd runs the session through the
+# user's shell, and home-manager's bash profile reads the file, so here they
+# arrive with or without the Sway wrapper's help; the wrapper reads the file
+# too, for a user whose shell does not, and that is checked further down in an
+# empty environment. Qt finds its platform theme through one of them, the
+# cursor through two more; another is a variable this test gave home-manager.
 hm_file = f"/etc/profiles/per-user/{USER}/etc/profile.d/hm-session-vars.sh"
 
 
