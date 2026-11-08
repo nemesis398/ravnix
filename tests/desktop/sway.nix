@@ -46,6 +46,8 @@ let
   mauve = hostOf [ ];
   teal = hostOf [ { ravnix.theme.accent = lib.mkForce "teal"; } ];
   gpu = hostOf [ { ravnix.desktop.gpu.primary = "0000:36:00.0"; } ];
+  # The template sets ravnix.desktop.ask; a user who leaves it out gets no popup.
+  askOff = hostOf [ { ravnix.desktop.ask = lib.mkForce null; } ];
   # What another module does with the seams: a fragment of config.d, and the
   # main terminal of the glue.
   seam = hostOf [
@@ -119,6 +121,15 @@ let
         udev = gpu.config.services.udev.extraRules;
       };
       noGpuSession = mauve.config.programs.sway.extraSessionCommands;
+      # What other tasks call by name has to be on the session's PATH, which
+      # is the system profile: environment.systemPackages.
+      installed = map (p: p.name) mauve.config.environment.systemPackages;
+      ask = {
+        entriesOn = lib.attrNames (homeOf mauve).xdg.desktopEntries;
+        entriesOff = lib.attrNames (homeOf askOff).xdg.desktopEntries;
+        installedOff = map (p: p.name) askOff.config.environment.systemPackages;
+        swayOff = source askOff "sway/config";
+      };
     }
   );
 

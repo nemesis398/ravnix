@@ -153,6 +153,18 @@ wait_for("swayidle", lambda: machine.execute(f"pgrep -u {USER} -x swayidle")[0] 
 wait_for("the policy kit agent", lambda: machine.execute(f"pgrep -u {USER} -f lxqt-policykit-agent")[0] == 0)
 wait_for("sway-session.target", lambda: as_user("systemctl --user is-active sway-session.target", check=False)[0] == 0)
 
+# The commands that energy, the keys and the bar call by name resolve for a
+# process Sway starts (swaymsg exec runs them with Sway's own environment).
+swaymsg("exec", "command -v keep-awake waybar-launch waybar-mode ghostty-float sway-volume > /tmp/session-path.txt 2>&1")
+wait_for(
+    "the session's PATH to be asked",
+    lambda: machine.execute("test $(wc -l < /tmp/session-path.txt) -ge 5")[0] == 0,
+    20,
+)
+found = machine.succeed("cat /tmp/session-path.txt")
+for command in ("keep-awake", "waybar-launch", "waybar-mode", "ghostty-float", "sway-volume"):
+    assert f"/bin/{command}" in found, f"{command} is not on the PATH of the Sway session: {found}"
+
 # Waybar has been up long enough to have failed on a bad config or stylesheet.
 machine.sleep(5)
 assert waybars() == 1, "Waybar is not running once"

@@ -278,6 +278,29 @@ def main():
     expect(not re.search(r"card[0-9]|by-path", gpu["session"] + gpu["udev"]), "the GPU is named by cardN or by path")
     expect('KERNELS=="0000:36:00.0"' in gpu["udev"] and "SYMLINK+=\"dri/primary-gpu\"" in gpu["udev"], "the udev rule does not match the PCI address and link it")
     expect("WLR_DRM_DEVICES" not in args["noGpuSession"], "WLR_DRM_DEVICES is set without gpu.primary")
+    # wlroots (and Aquamarine) split these variables at every colon, so a value
+    # with one is torn apart, no GPU is found and the screen stays black.
+    expect(re.search(r"^export WLR_DRM_DEVICES=\S+$", gpu["session"], re.M), "WLR_DRM_DEVICES is not exported as one word")
+    for var in ("WLR_DRM_DEVICES", "AQ_DRM_DEVICES"):
+        for value in re.findall(rf"{var}=(\S*)", gpu["session"]):
+            expect(":" not in value, f"{var}={value} has a colon, which wlroots splits the list at")
+            expect(value.startswith("/dev/dri/") and "by-path" not in value, f"{var}={value} is not a colon-free udev link below /dev/dri")
+
+    # The commands that other tasks call by name (energy runs keep-awake and
+    # waybar-launch, the keys run the rest) are in the system profile.
+    for command in ("keep-awake", "waybar-launch", "waybar-mode", "ghostty-float", "sway-volume", "sway-wait-sni", "output-wake"):
+        expect(command in args["installed"], f"{command} is not installed in the system profile, so not on the session's PATH")
+
+    # Without ravnix.desktop.ask there is no popup, no launcher entry, and the key is free.
+    ask = args["ask"]
+    expect("sway-ask" in ask["entriesOn"], "ravnix.desktop.ask is set and the launcher has no AI Chat entry")
+    expect("sway-ask" not in ask["entriesOff"], "ravnix.desktop.ask is null and the launcher still lists AI Chat")
+    expect("sway-ask" not in ask["installedOff"], "ravnix.desktop.ask is null and sway-ask is still installed")
+    off = read(ask["swayOff"])
+    expect(not re.search(r"^\s*bindsym\s+\$mod\+Shift\+a\b", off, re.M), "ravnix.desktop.ask is null and $mod+Shift+a is still bound")
+    expect("# $mod+Shift+a is free" in off, "ravnix.desktop.ask is null and the config does not say the key is free")
+    expect(not re.search(r"exec\s+\$ask\b", off), "ravnix.desktop.ask is null and something still runs $ask")
+    expect(not re.search(r"@[a-z][A-Za-z0-9.]*@", off), "ravnix.desktop.ask is null and a token is left in the config")
 
     if failures:
         for f in failures:
