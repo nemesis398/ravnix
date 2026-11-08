@@ -112,11 +112,23 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
 let
   inherit (config.ravnix) apps theme;
+  unfree = import ../../lib/unfree.nix { inherit lib; };
+
+  # Read-only pkgs (nixos/modules/misc/nixpkgs/read-only.nix, as a NixOS VM
+  # test node has it) declares nixpkgs.config as an option that no module may
+  # define, and says so by the file that declares it. The probe asks for that
+  # file and no other, as nixosModules.common does for the overlay, so a rename
+  # upstream shows as the error of defining the option (tests/desktop/vm-node.nix),
+  # not as unfree names that go missing quietly.
+  readOnlyPkgs = lib.any (lib.hasSuffix "/misc/nixpkgs/read-only.nix") (
+    map toString options.nixpkgs.config.declarations
+  );
   inherit (theme) roles palette;
   user = config.ravnix.user.username;
 
@@ -189,22 +201,17 @@ let
   bare = lib.removePrefix "#";
 in
 {
-  # The unfree packages of this module, allowed by name and nothing else.
-  # steam-unwrapped is Steam's download. Packet Tracer's names are allowed for a
-  # host that installs it (the .deb is its download, which nixpkgs asks the
-  # store for by name), and widevine-cdm, the DRM library of Helium, for a host
-  # that sets ravnix.apps.widevine: nothing unfree and not redistributable is
-  # forced on every laptop.
-  nixpkgs.config.allowUnfreePackages = [
-    "obsidian"
-    "steam"
-    "steam-unwrapped"
-  ]
-  ++ lib.optionals apps.packetTracer [
-    "CiscoPacketTracer_901_Ubuntu_64bit.deb"
-    "cisco-packet-tracer"
-  ]
-  ++ lib.optional apps.widevine "widevine-cdm";
+  # The unfree packages of this module, allowed by name and nothing else
+  # (lib/unfree.nix). steam-unwrapped is Steam's download. Packet Tracer's names
+  # are allowed for a host that installs it (the .deb is its download, which
+  # nixpkgs asks the store for by name), and widevine-cdm, the DRM library of
+  # Helium, for a host that sets ravnix.apps.widevine: nothing unfree and not
+  # redistributable is forced on every laptop. A host with a read-only pkgs (a
+  # VM test node) takes no nixpkgs.config from a module; whoever hands it the
+  # pkgs allows the same names, with `unfree.predicate` of lib/unfree.nix.
+  nixpkgs.config = lib.mkIf (!readOnlyPkgs) {
+    allowUnfreePackages = unfree.allowed apps;
+  };
 
   # The dconf service, which home-manager's dconf settings (the GTK theme for
   # libadwaita, see the header) go through.
