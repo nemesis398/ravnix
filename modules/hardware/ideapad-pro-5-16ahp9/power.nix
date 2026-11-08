@@ -52,6 +52,15 @@ let
   inherit (pkgs.ravnix) energy;
 in
 {
+  # tuned owns the CPU policy here, so power-profiles-daemon stays off:
+  # tuned-ppd serves its D-Bus API (net.hadess.PowerProfiles), which
+  # Waybar's power-profiles-daemon module and `energy` talk to. The
+  # desktop's Waybar module turns power-profiles-daemon on with mkDefault,
+  # for hardware without tuned; this plain false wins over that. nixpkgs'
+  # tuned module sets the same false, and saying it here keeps the ruling
+  # with the owner of the policy.
+  services.power-profiles-daemon.enable = false;
+
   services.tuned = {
     enable = true;
     ppdSupport = true;

@@ -119,6 +119,13 @@ let
   # nvidia.nix and panel.nix).
   imported = file: lib.any (k: lib.hasSuffix "/modules/hardware/ideapad-pro-5-16ahp9/${file}" (toString k)) (keys huginn);
   tuned = c.services.tuned;
+  # huginn beside a module that turns power-profiles-daemon on by default,
+  # as Task 3.2a's waybar.nix does for hardware without tuned: power.nix's
+  # plain false has to win, or tuned's assertion stops the build.
+  ppdOffIn = map (d: toString d.file) huginn.options.services.power-profiles-daemon.enable.definitionsWithLocations;
+  withPpdDefault = huginn.extendModules {
+    modules = [ { services.power-profiles-daemon.enable = lib.mkDefault true; } ];
+  };
   upower = c.services.upower;
   zram = s: s.config.zramSwap;
   zramAsFedora =
@@ -285,6 +292,11 @@ let
     # its power-profiles mapping.
     ++ check (tuned.enable && tuned.ppdSupport) "tuned and tuned-ppd are not on"
     ++ check (!c.services.power-profiles-daemon.enable && !c.services.tlp.enable && !c.services.auto-cpufreq.enable) "a second owner of the CPU policy is on"
+    ++ check (lib.any (lib.hasSuffix "/modules/hardware/ideapad-pro-5-16ahp9/power.nix") ppdOffIn) "power.nix does not turn power-profiles-daemon off itself; the owner of the CPU policy has to say it"
+    ++ check (evaluates withPpdDefault) "huginn does not evaluate beside a power-profiles-daemon that is on by default (Task 3.2a's waybar.nix): power.nix does not turn it off over a default"
+    ++ check (
+      !withPpdDefault.config.services.power-profiles-daemon.enable && withPpdDefault.config.services.tuned.enable
+    ) "beside a power-profiles-daemon that is on by default, huginn's CPU policy is not tuned's alone"
     ++ check (lib.getAttrs (lib.attrNames laptopProfiles) tuned.profiles == laptopProfiles) "the laptop profiles are not Fedora's"
     ++ check (tuned.ppdSettings.main.default == "balanced" && tuned.ppdSettings.main.battery_detection) "tuned-ppd does not start balanced with battery detection"
     ++ check (
