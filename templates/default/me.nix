@@ -210,6 +210,42 @@
       };
     };
 
+    # The desktop.
+    desktop = {
+      # Which output each workspace (1 to 10) prefers: the first connected
+      # one in `outputs` wins. Use a description as `swaymsg -t get_outputs`
+      # prints it (make, model, serial), which survives a change of port or
+      # a USB-C dock; a connector name such as eDP-1 can change. Put the
+      # built-in panel last, so that undocked it takes every workspace.
+      # Empty means Sway decides. kanshiProfiles above use the same names.
+      workspaceOutputs = [
+        {
+          number = 1;
+          outputs = [ "eDP-1" ];
+        }
+        {
+          number = 2;
+          outputs = [
+            "Example Corp Monitor 0x00000000"
+            "eDP-1"
+          ];
+        }
+      ];
+
+      # The quick AI popup on Super+Shift+A: a question typed into fuzzel goes
+      # to a model of your Open WebUI, and the answer comes back with a
+      # prompt for the follow-up. Set it to null to leave the popup out.
+      ask = {
+        # The address of your Open WebUI, without a path.
+        url = "https://chat.example.org";
+        # The id of the model it asks, as Open WebUI lists it.
+        model = "quick";
+        # The Bitwarden item whose password is the API key; the popup reads
+        # it through rbw at the moment you ask.
+        rbwItem = "Open WebUI - API key";
+      };
+    };
+
     # Where rbw finds your secrets at runtime. Only the server and the
     # account; no secret goes into this flake.
     secrets = {

@@ -34,6 +34,7 @@ in
     ./apps.nix
     ./server.nix
     ./scripts.nix
+    ./desktop.nix
     ./secrets.nix
     ./matrix.nix
     ./workbench.nix
