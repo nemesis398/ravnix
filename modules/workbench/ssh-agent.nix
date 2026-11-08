@@ -36,11 +36,10 @@
 # which rbw's agent cannot serve (it signs with Ed25519 and RSA keys only).
 # This file asserts what the configuration shows: deployFrom names none of
 # the server's own addresses, its NetBird address or a loopback address in
-# any spelling (the IPv4-compatible and IPv4-mapped ones too), from which
-# the agent's keys would come, and the Proxmox update key, which is in the
-# vault, is no deploy key. It cannot see the
-# server's LAN address, which no ravnix option holds: keep it out of
-# deployFrom too.
+# any spelling (the dotted IPv4-compatible and IPv4-mapped ones too), from
+# which the agent's keys would come, and the Proxmox update key, which is in
+# the vault, is no deploy key. It cannot see the server's LAN address, which
+# no ravnix option holds: keep it out of deployFrom too.
 { config, lib, ... }:
 let
   cfg = config.ravnix.server;
@@ -50,7 +49,8 @@ let
   # A loopback address in any spelling sshd's from= would match: 127.0.0.0/8
   # and ::1, with or without zeros (0::1, 0:0:0:0:0:0:0:1, 0000:...:0001),
   # in the IPv4-compatible spelling (::0.0.0.1), and 127.0.0.0/8 mapped into
-  # IPv6 (::ffff:127.0.0.1). Lowercased first.
+  # IPv6 in the dotted spelling (::ffff:127.0.0.1), not the hex one
+  # (::ffff:7f00:1). Lowercased first.
   zeros = "(0{0,4}:){1,7}:?(0{0,4}:)*";
   loopback =
     a:
