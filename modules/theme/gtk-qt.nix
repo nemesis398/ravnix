@@ -197,13 +197,14 @@ in
         gtk4.extraConfig.gtk-enable-animations = false;
       };
 
-      # libadwaita reads the interface settings, not settings.ini.
+      # libadwaita reads the interface settings, not settings.ini. The cursor
+      # keys are home-manager's: its gtk module writes cursor-theme and
+      # cursor-size from home.pointerCursor, so a second, fixed value here
+      # would refuse every host that changes the cursor.
       dconf.settings."org/gnome/desktop/interface" = {
         color-scheme = "prefer-dark";
         gtk-theme = gtkTheme.name;
         icon-theme = iconTheme;
-        cursor-theme = "catppuccin-mocha-${accent}-cursors";
-        cursor-size = 24;
         font-name = uiFont;
         monospace-font-name = uiFont;
         document-font-name = uiFont;
