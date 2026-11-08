@@ -552,11 +552,13 @@
 
     # The radial menu behind the four-finger pinch on the trackpad. menu is
     # your own menu as a TOML file: a path in your flake, for example
-    # ./radial/menu.toml (a rebuild picks up a change), or a path in the Nix
-    # store; a string naming a file elsewhere is refused. ravnix's own menu
-    # (packages/sway-radial/menu.toml) is the model to copy. Null keeps ravnix's own menu, which holds nothing that belongs to
-    # one machine: a sink name, a display profile or an app of yours is what a
-    # menu of your own is for.
+    # ./radial/menu.toml (a rebuild picks up a change), or a store path that
+    # comes from a derivation. A string naming a file elsewhere, a store path
+    # typed out as text and a path outside your flake are refused. ravnix's own
+    # menu (packages/sway-radial/menu.toml) is the model to copy. Null keeps
+    # ravnix's own menu, which holds nothing that belongs to one machine: a
+    # sink name, a display profile or an app of yours is what a menu of your
+    # own is for.
     desktop.radial.menu = null;
 
     # What the small scripts (packages/NAME) need of you, besides what they

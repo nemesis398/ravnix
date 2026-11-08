@@ -58,7 +58,21 @@ let
   # cannot read it, and home-manager would stop at the copy with a message about
   # an absolute path.
   outside = host [ { ravnix.desktop.radial.menu = lib.mkForce "/home/alice/radial/menu.toml"; } ];
-  # A path in the store, named by a string: nothing to copy, so it is fine.
+  # A store path typed out as plain text: the string has no context, so Nix does
+  # not know it is a store path, and home-manager copies it with builtins.path,
+  # which a pure evaluation refuses. (`nix store add-file` prints such a string.)
+  typedStore = host [
+    {
+      ravnix.desktop.radial.menu = lib.mkForce (
+        builtins.unsafeDiscardStringContext "${package}/lib/sway-radial/menu.toml"
+      );
+    }
+  ];
+  # An absolute path literal outside the flake is a Nix path, but not one in the
+  # store, so the same copy fails the same way.
+  literal = host [ { ravnix.desktop.radial.menu = lib.mkForce /home/alice/radial/menu.toml; } ];
+  # A path in the store that comes from a derivation, as a string with context:
+  # nothing to copy, so it is fine.
   inTheStore = host [ { ravnix.desktop.radial.menu = lib.mkForce "${package}/lib/sway-radial/menu.toml"; } ];
   bad =
     value:
@@ -119,6 +133,12 @@ let
     ++ lib.optional (
       lib.length (refusals outside) != 1
     ) "a menu outside the store is not refused once: ${toString (refusals outside)}"
+    ++ lib.optional (
+      lib.length (refusals typedStore) != 1
+    ) "a store path typed out as text is not refused once: ${toString (refusals typedStore)}"
+    ++ lib.optional (
+      lib.length (refusals literal) != 1
+    ) "an absolute path literal outside the flake is not refused once: ${toString (refusals literal)}"
     ++ lib.optional (bad { menu = "menu.toml"; }) "a relative menu path is accepted"
     ++ lib.optional (bad { menu = 5; }) "a number is accepted as the menu"
     ++ lib.optional (bad { menu = [ ownMenu ]; }) "a list is accepted as the menu"

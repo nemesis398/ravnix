@@ -158,10 +158,13 @@ against the `.desktop` files of the machine it runs on.
 ## Findings that are not fixed
 
 - A `desktop` item whose `.desktop` id does not resolve is drawn dim and still
-  runs `gtk-launch` through Sway, which fails with a log line. That is by design (hiding it
-  would move every other item), but a typo in an id is easy to miss; the
-  `machine` test `test_every_desktop_id_resolves_on_this_machine` finds it on
-  the machine that has the apps.
+  runs `gtk-launch` through Sway, which fails. The message is gtk-launch's own
+  and goes to Sway's output (the log of the Sway session), not to
+  `journalctl --user -u sway-radial`, which only holds the program's own lines
+  (a menu it refused, an id that is not a plain desktop id). That is by design
+  (hiding the item would move every other one), but a typo in an id is easy to
+  miss; the `machine` test `test_every_desktop_id_resolves_on_this_machine`
+  finds it on the machine that has the apps.
 - The menu is read once per change and parsed whole. A file of millions of lines
   is read before it is refused or accepted (a megabyte of comments loads in well
   under a second).

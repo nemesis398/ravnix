@@ -60,19 +60,31 @@ let
   chosen = config.ravnix.desktop.radial.menu;
 in
 {
-  # A path of the flake is copied into the store and a path in the store is
-  # there already. A string that names any other file cannot be read: a flake
-  # evaluates purely, so home-manager's copy of it stops with "access to
-  # absolute path is forbidden", which does not say which option is wrong. (And
-  # an impure evaluation would only copy a snapshot, not link the live file.)
+  # What home-manager can link: a path of the flake (the flake's source is in
+  # the store, so the path is too), or a string that Nix knows to be a store
+  # path, which is to say one with string context (it comes from a derivation).
+  # Anything else it copies with builtins.path, and a flake evaluates purely, so
+  # that stops with "access to absolute path is forbidden", which does not say
+  # which option is wrong. That covers a string naming a file outside the store,
+  # a store path typed out as text (no context, so Nix does not know it), and a
+  # path literal outside the flake. (An impure evaluation would only copy a
+  # snapshot, not link the live file.)
   assertions = [
     {
-      assertion = chosen == null || builtins.isPath chosen || lib.hasPrefix "${builtins.storeDir}/" (toString chosen);
+      assertion =
+        chosen == null
+        || (
+          if builtins.isPath chosen then
+            lib.hasPrefix "${builtins.storeDir}/" (toString chosen)
+          else
+            builtins.hasContext chosen
+        );
       message = ''
-        ravnix.desktop.radial.menu is ${toString chosen}, a file outside the Nix store named by a string.
-        Set it to a path of your flake instead (./radial/menu.toml) or to a path in the store.
-        A flake evaluates purely and cannot read that file, and a copy would be a snapshot, so a
-        change of the menu is a rebuild.
+        ravnix.desktop.radial.menu is ${toString chosen}, which a pure evaluation cannot read.
+        Set it to a path of your flake (./radial/menu.toml) or to a store path that comes from a
+        derivation. A string that names a file outside the store, a store path typed out as text
+        and a path outside your flake are refused: a flake evaluates purely, and a copy would be a
+        snapshot, so a change of the menu is a rebuild.
       '';
     }
   ];
