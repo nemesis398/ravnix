@@ -14,7 +14,9 @@
 # output. On it: the ravnix mark in the middle, the phyllon mark top left at the
 # same size, both in the accent; the fastfetch facts with the NixOS logo (in
 # Blue and Sapphire) top right; and, when the user lists any, their tool logos
-# in Surface grays, spread around the rest. The lock image is Base (or the same
+# in Surface grays, spread around the rest. The NixOS logo is fastfetch's own
+# and is made of block glyphs by design: it is drawn as the terminal shows it,
+# not redrawn as a vector. The lock image is Base (or the same
 # image) and the ravnix mark alone, sized to sit inside swaylock's ring, so
 # nothing about the machine can be read on a locked screen. It never runs
 # fastfetch and never draws a logo.
@@ -82,7 +84,7 @@ NEEDED = ("base", "text", "blue", "sapphire", "surface1", "surface2", "red", "gr
           "pink", "teal", "subtext0", "subtext1")
 
 # swaylock's indicator-radius is 110 and its thickness 10, so the ring's inner
-# edge is at 105 (modules/desktop/sway sets both). Both marks are drawn in a
+# edge is at 105 (modules/desktop/swaylock.nix sets both). Both marks are drawn in a
 # square of MARK_SIZE; the phyllon spiral's dots reach 92.6 of the SVG's
 # 100-unit half-width, which puts them at about 95 from the center, clear of
 # the ring. The wordmark is fitted to that same reach.

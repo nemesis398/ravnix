@@ -28,6 +28,9 @@ physical resolution (the lock ring's radius is logical too).
 | wallpaper | Base, or the user's own picture scaled until it covers the output and cropped at the middle. On it: the ravnix mark in the middle and the phyllon mark in the top left corner, at the same size and both in the accent; the NixOS logo in Blue and Sapphire with the system facts, drawn through fastfetch, in the top right; and the user's tool logos, if any, in Surface1 and Surface2 alternately, spread evenly around the rest |
 | lock image | Base, or the same picture, and the ravnix mark alone, sized to sit inside the 110 px lock ring (its inner edge is at 105 px). It never runs fastfetch and never draws a logo, so nothing about the machine can be read on a locked screen |
 
+The NixOS logo is fastfetch's own, made of block glyphs by design, and is drawn
+as the terminal shows it, not redrawn as a vector.
+
 The ravnix mark is the wordmark `ravnix` in the theme's font, bold, until Task
 12.2 ships the mark. From then on `assets/ravnix-mark.svg` is drawn instead,
 in one color whatever its own fills say, in the square the phyllon mark has. Both
@@ -108,7 +111,8 @@ nix build .#checks.x86_64-linux.desktop-backdrop -L
 ## Findings that are not fixed
 
 - The ring's radius and thickness (110 and 10 px) are written here and in the
-  swaylock config of the sway module. Nothing checks that the two agree.
+  swaylock config (`modules/desktop/swaylock.nix`, Task 3.2a). Nothing checks
+  that the two agree.
 - Two logos can overlap when there are many: the spread picks the point farthest
   from the logos placed so far among 400 tries, and never refuses a point that is
   near one. 31 logos on the laptop's panel do not.
@@ -126,10 +130,6 @@ nix build .#checks.x86_64-linux.desktop-backdrop -L
 - `lock-screen` sends the output of the redraw after an unlock to nowhere, as
   swayidle's before-sleep must not be held by it; a problem on that redraw is
   only visible at the next `backdrop wallpaper`.
-- fastfetch's `colors` module with the block symbol prints two lines, and the
-  second starts left of the first: that is how the Palette row of ravnix's fastfetch
-  config looks on the wallpaper, and in a terminal. A single line (the circle
-  symbol) would not have it.
 - ravnix's fastfetch config sets only the logo's color slots 1 and 2, so in a
   terminal the other four stay in the terminal's blue and cyan (Blue and Teal).
   `backdrop` sets all six for the wallpaper itself.
