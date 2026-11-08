@@ -142,9 +142,14 @@ apply() {
   run_helper "$mode"
   command -v notify-send >/dev/null 2>&1 &&
     notify-send -a charge-mode "Charge mode: $mode" "$(describe "$mode")"
-  # -x matches the process name exactly. Never `pkill -f` here: that matches the
-  # whole command line and takes out unrelated processes that merely mention it.
-  pkill -RTMIN+"$SIG" -x waybar 2>/dev/null || true
+  # Waybar redraws its battery module on the signal. -x matches the process
+  # name exactly, which the kernel takes from the executable's file name:
+  # waybar, or .waybar-wrapped where NixOS wraps it (the wrapper execs the
+  # real binary under that name, and a second wrap adds `_`, which the
+  # 15-character name cuts off). Only the user's own processes. Never
+  # `pkill -f` here: that matches the whole command line and takes out
+  # unrelated processes that merely mention waybar, waybar-launch among them.
+  pkill -RTMIN+"$SIG" -u "$EUID" -x 'waybar|\.waybar-wrapped' 2>/dev/null || true
   printf '%s\n' "$mode"
 }
 

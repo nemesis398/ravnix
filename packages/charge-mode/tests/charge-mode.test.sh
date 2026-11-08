@@ -48,6 +48,9 @@ write_script "$bin/pkill" 'printf "pkill %s\n" "$*" >>"$CALLS"'
 write_script "$bin/sleep" \
 	'n=$(($(cat "$SLEEPS" 2>/dev/null || echo 0) + 1)); echo "$n" >"$SLEEPS"' \
 	'if [ "$n" = "${APPEAR_AT:-}" ]; then mkdir -p "$(dirname "$ATTR")"; echo "Fast Standard [Long_Life]" >"$ATTR"; fi'
+# The call that makes Waybar redraw its battery module: by the process name,
+# the plain one or the one NixOS's wrapper gives it, of the user's own.
+refresh_bar="pkill -RTMIN+10 -u $EUID -x waybar|\\.waybar-wrapped"
 # A helper that only logs, for the cases about who calls it with what.
 write_script "$scratch/stub-apply" 'printf "apply %s\n" "$*" >>"$CALLS"'
 
@@ -208,7 +211,7 @@ test_cycle_goes_long_life_standard_fast() {
 		expect_status 0
 		calls_are "sudo -n $scratch/stub-apply $to" "apply $to" \
 			"notify-send -a charge-mode Charge mode: $to $(describe "$to")" \
-			"pkill -RTMIN+10 -x waybar"
+			"$refresh_bar"
 		[[ "$out" == "$to" ]] || { echo "  printed '$out', not $to"; return 1; }
 	done
 }
@@ -228,7 +231,7 @@ test_set_calls_the_helper_with_the_mode() {
 	expect_status 0
 	calls_are "sudo -n $scratch/stub-apply Fast" "apply Fast" \
 		"notify-send -a charge-mode Charge mode: Fast $(describe Fast)" \
-		"pkill -RTMIN+10 -x waybar"
+		"$refresh_bar"
 }
 
 test_set_without_a_mode_lists_the_offer() {
@@ -246,7 +249,7 @@ test_set_leaves_validation_to_the_helper() {
 	run "$cm" set Bogus
 	calls_are "sudo -n $scratch/stub-apply Bogus" "apply Bogus" \
 		"notify-send -a charge-mode Charge mode: Bogus " \
-		"pkill -RTMIN+10 -x waybar"
+		"$refresh_bar"
 }
 
 # A failing sudo: the message is the real cause, sudo's own words or the
@@ -366,7 +369,7 @@ test_no_notification_without_notify_send() {
 	run "$cm" set Fast
 	mv "$scratch/notify-send.away" "$bin/notify-send"
 	expect_status 0
-	calls_are "sudo -n $scratch/stub-apply Fast" "apply Fast" "pkill -RTMIN+10 -x waybar"
+	calls_are "sudo -n $scratch/stub-apply Fast" "apply Fast" "$refresh_bar"
 }
 
 # charge-mode and the real helper together, as the sudo rule runs them.
@@ -403,6 +406,60 @@ test_set_with_a_refused_mode_writes_nothing() {
 	expect_no_err "sudo"
 	content_is "$attr" "Fast Standard [Long_Life]"
 	content_is "$state" Long_Life
+}
+
+# The Waybar refresh, against real processes and the real pkill: it reaches
+# Waybar under the name NixOS's wrapper gives the process (.waybar-wrapped)
+# and under the plain one, and nothing else: not waybar-launch, not a
+# helper whose name starts with waybar, not a program that only calls
+# itself waybar in its argv.
+test_the_refresh_reaches_a_wrapped_waybar_and_nothing_else() {
+	user_stub
+	firmware "Fast Standard [Long_Life]"
+	local d="$scratch/procs" name st i want
+	local -A pid=()
+	rm -rf -- "$d"
+	mkdir -p "$d"
+	mkfifo "$d/fifo"
+	# Each reads the FIFO for up to 60 s; a signal it does not handle ends it.
+	for name in .waybar-wrapped waybar waybar-launch waybar-powerdraw not-waybar; do
+		cp -- "$BASH" "$d/$name"
+	done
+	for name in .waybar-wrapped waybar waybar-launch waybar-powerdraw; do
+		"$d/$name" -c 'read -r -t 60 _ <>"$0"' "$d/fifo" &
+		pid[$name]=$!
+	done
+	(exec -a waybar "$d/not-waybar" -c 'read -r -t 60 _ <>"$0"' "$d/fifo") &
+	pid[not-waybar]=$!
+	for name in "${!pid[@]}"; do
+		for ((i = 0; i < 200; i++)); do
+			[[ "$(cat "/proc/${pid[$name]}/comm" 2>/dev/null)" == "${name:0:15}" ]] && break
+			sleep 0.01
+		done
+	done
+	mv "$bin/pkill" "$scratch/pkill.away"
+	run "$cm" set Fast
+	mv "$scratch/pkill.away" "$bin/pkill"
+	expect_status 0
+	want=$((128 + $(kill -l RTMIN+10)))
+	for name in .waybar-wrapped waybar; do
+		st=0
+		wait "${pid[$name]}" || st=$?
+		[[ "$st" == "$want" ]] || {
+			echo "  $name ended with $st, not by SIGRTMIN+10 ($want)"
+			kill "${pid[@]}" 2>/dev/null || true
+			return 1
+		}
+	done
+	for name in waybar-launch waybar-powerdraw not-waybar; do
+		kill -0 "${pid[$name]}" 2>/dev/null || {
+			echo "  the refresh signalled $name"
+			kill "${pid[@]}" 2>/dev/null || true
+			return 1
+		}
+		kill "${pid[$name]}"
+		wait "${pid[$name]}" || true
+	done
 }
 
 # charge-mode-apply: the security boundary of the sudo rule. It writes only
@@ -687,6 +744,7 @@ tests=(
 	test_set_writes_the_attribute_and_the_saved_mode
 	test_default_writes_only_the_saved_mode
 	test_set_with_a_refused_mode_writes_nothing
+	test_the_refresh_reaches_a_wrapped_waybar_and_nothing_else
 	test_apply_writes_the_mode_and_saves_it
 	test_apply_save_only_leaves_the_live_mode
 	test_apply_refuses_what_the_firmware_does_not_offer

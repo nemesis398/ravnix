@@ -44,6 +44,13 @@ None. The sudo rule's user is `ravnix.user.username`.
   notification, since a click on Waybar shows no terminal. The original
   printed "the helper refused, or the sudoers rule is absent" for every
   failure, which named the wrong cause when the PATH had lost the wrappers;
+- the Waybar refresh signals the process named `waybar` or `.waybar-wrapped`,
+  of the user's own (`pkill -u "$EUID" -x 'waybar|\.waybar-wrapped'`). NixOS
+  wraps Waybar, and the wrapper execs the real binary as `.waybar-wrapped`,
+  the name the kernel gives the process, so the original `pkill -x waybar`
+  reached nothing and the battery module showed the old mode until its next
+  interval. The name is still matched whole, so `waybar-launch` and the
+  `waybar-*` helpers are never hit;
 - the helpers are bash, not `/bin/sh`; their code is otherwise the same;
 - the hints that named the Fedora installer name the hardware module; the
   installer itself (a snapper snapshot, SELinux contexts, the sudoers file
@@ -52,7 +59,7 @@ None. The sudo rule's user is `ravnix.user.username`.
 
 ## Tests
 
-`tests/charge-mode.test.sh`, the check `bin-charge-mode`, 44 cases. Each
+`tests/charge-mode.test.sh`, the check `bin-charge-mode`, 45 cases. Each
 script runs as a copy whose battery and state paths point into the sandbox,
 and a case fails if the copy still names a real one; sudo, notify-send,
 pkill and sleep are stubs. Covered: the bracketed mode anywhere in the list,
@@ -61,9 +68,12 @@ fixed list), no `charge_types` for every command; cycle from each mode and
 from none, set, set without a mode, sudo without a rule, a sudo that is not
 setuid, no sudo, a sudo that fails without a word, a missing helper, the
 boot default read and written, help, unknown commands, no notify-send; the
-user's command and the real helper together, with the helper's refusal shown
-as it is; the helper's refusals (wrong case, brackets, spaces, globs, a
-leading dash, `;`, `..`, 100 000 characters), no mode, no attribute, a
+user's command and the real helper together, with the helper's refusal
+shown as it is; the Waybar refresh with the real pkill against real
+processes named `.waybar-wrapped` and `waybar`, which it ends, and
+`waybar-launch`, `waybar-powerdraw` and one that only calls itself waybar,
+which it leaves; the helper's refusals (wrong case, brackets, spaces, globs,
+a leading dash, `;`, `..`, 100 000 characters), no mode, no attribute, a
 failed write that saves nothing, extra arguments, 200 rounds of two at once;
 the restore with no, an empty or an unreadable saved mode, a late attribute,
 one that never appears (20 half-second waits), and a saved mode passed on
