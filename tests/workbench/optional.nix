@@ -193,9 +193,12 @@ let
     (lib.optional (
       failed nothing != [ ]
     ) "a host with none of the optional values fails: ${toString (failed nothing)}")
+    # A bare server runs herdr's server and the glue's ravnix-link-deliver,
+    # which delivers queued requests to the laptop from boot (Task 5.3) and
+    # needs none of the optional values; any other unit is one of theirs.
     (lib.optional (
-      lib.filter (u: u != "herdr-server") (unitsOf nothing) != [ ]
-    ) "a host with none of the optional values has units besides herdr: ${toString (unitsOf nothing)}")
+      lib.filter (u: u != "herdr-server" && u != "ravnix-link-deliver") (unitsOf nothing) != [ ]
+    ) "a host with none of the optional values has units besides herdr and the link: ${toString (unitsOf nothing)}")
 
     # Mail accounts.
     (lib.optional (
