@@ -26,6 +26,8 @@ source "${TEST_LIB:?TEST_LIB names scripts/tests/lib.sh}"
 
 bin="$scratch/bin"
 calls="$scratch/calls"
+# The runner's output, for a case that skips to say so.
+exec 3>&1
 sys="$scratch/fake-sysfs"
 attr="$sys/BAT0/charge_types"
 state="$scratch/state/charge-mode"
@@ -283,8 +285,12 @@ test_a_sudo_without_setuid_is_named() {
 
 test_no_sudo_on_the_path_is_named() {
 	# Outside the sandbox the system's sudo is on the PATH, so the case
-	# means something only in the check, which has none.
-	! command -v sudo >/dev/null 2>&1 || return 0
+	# means something only in the check, which has none. A skip says so on
+	# the runner's own output (fd 3), which the test's log does not swallow.
+	if command -v sudo >/dev/null 2>&1; then
+		echo "SKIP test_no_sudo_on_the_path_is_named: $(command -v sudo) is on the PATH; only the sandbox has none" >&3
+		return 0
+	fi
 	user_stub
 	firmware "Fast Standard [Long_Life]"
 	mv "$bin/sudo" "$scratch/sudo.away"
