@@ -24,6 +24,8 @@ set -uo pipefail
 RAPL="${RAPL:-/sys/class/powercap/intel-rapl:0}"
 # Overridable like RAPL, so that the battery path can be tested against fixtures.
 PSDIR="${PSDIR:-/sys/class/power_supply}"
+# SYSFS replaces /sys for the GPU reads (RAPL and PSDIR above are their own).
+SYSFS="${SYSFS:-/sys}"
 STATE="${XDG_RUNTIME_DIR:-/tmp}/waybar-powerdraw"
 ICON="<span color='@accent@'>󱐋</span>"
 nl=$'\n'
@@ -49,7 +51,7 @@ done
 
 # ── NVIDIA dGPU presence + PM state (BOTH reads are passive — they do NOT wake it) ──
 nv_dev=""
-for l in /sys/bus/pci/drivers/nvidia/0000:*; do
+for l in "$SYSFS"/bus/pci/drivers/nvidia/0000:*; do
   [ -e "$l" ] && { nv_dev="$(readlink -f "$l")"; break; }
 done
 nv_rs=""
@@ -60,7 +62,7 @@ gpu_label="GPU"; [ -n "$nv_dev" ] && gpu_label="iGPU"
 # ── iGPU/GPU watts (amdgpu, µW → W) ──
 gpu_w=""
 gpu_pwr=""
-for h in /sys/class/hwmon/hwmon*; do
+for h in "$SYSFS"/class/hwmon/hwmon*; do
   [ "$(cat "$h/name" 2>/dev/null)" = "amdgpu" ] || continue
   for n in power1_average power1_input; do
     [ -r "$h/$n" ] && { gpu_pwr="$h/$n"; break; }

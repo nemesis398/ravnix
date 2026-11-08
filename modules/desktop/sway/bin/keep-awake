@@ -60,6 +60,10 @@ SUSPEND='! command -v energy >/dev/null || energy idle-suspend'
 
 # swaylock is found by its command line, not by `-x swaylock`: on NixOS it is a
 # wrapper whose process is called .swaylock-wrapped (see waybar-launch).
+# WAYBAR_MATCH and SWAYLOCK_MATCH replace the patterns that find those two
+# processes, so that a test can name the ones it started and touch no other
+# (tests/desktop/helpers/script-tests.sh).
+WAYBAR_MATCH=${WAYBAR_MATCH:-'^waybar( |$)'}
 # SC2016: the swayidle command lines are handed over as single-quoted strings on
 # purpose: swayidle runs each one through sh later, and $USER has to expand
 # there, in the session that runs it, not here.
@@ -76,7 +80,7 @@ launch_swayidle() {
       before-sleep "$LOCK; $FIXCRTC" \
       after-resume 'output-wake' \
       lock         "$LOCK" \
-      unlock       'pkill -u "$USER" -USR1 -f "^swaylock( |$)"' >/dev/null 2>&1
+      unlock       'pkill -u "$USER" -USR1 -f "${SWAYLOCK_MATCH:-^swaylock( |$)}"' >/dev/null 2>&1
   else
     # normal: the sway config's original idle behaviour
     setsid -f swayidle -w \
@@ -87,7 +91,7 @@ launch_swayidle() {
       before-sleep "$LOCK; $FIXCRTC" \
       after-resume 'output-wake' \
       lock         "$LOCK" \
-      unlock       'pkill -u "$USER" -USR1 -f "^swaylock( |$)"' >/dev/null 2>&1
+      unlock       'pkill -u "$USER" -USR1 -f "${SWAYLOCK_MATCH:-^swaylock( |$)}"' >/dev/null 2>&1
   fi
 }
 
@@ -99,7 +103,7 @@ case "${1:-status}" in
   toggle)
     if on; then echo 0 > "$STATE"; else echo 1 > "$STATE"; fi
     launch_swayidle
-    pkill -RTMIN+"$SIG" -u "$(id -u)" -f '^waybar( |$)' 2>/dev/null || true
+    pkill -RTMIN+"$SIG" -u "$(id -u)" -f "$WAYBAR_MATCH" 2>/dev/null || true
     ;;
   set)
     case "${2:-}" in
@@ -108,7 +112,7 @@ case "${1:-status}" in
       *)   echo "usage: keep-awake set on|off" >&2; exit 2 ;;
     esac
     launch_swayidle
-    pkill -RTMIN+"$SIG" -u "$(id -u)" -f '^waybar( |$)' 2>/dev/null || true
+    pkill -RTMIN+"$SIG" -u "$(id -u)" -f "$WAYBAR_MATCH" 2>/dev/null || true
     ;;
   status)
     if on; then

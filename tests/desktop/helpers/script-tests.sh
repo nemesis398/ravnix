@@ -21,6 +21,28 @@ export XDG_RUNTIME_DIR=$work/run
 mkdir -p "$XDG_RUNTIME_DIR"
 export HOME=$work/home
 
+# The scripts find Waybar and swaylock by command line and signal or kill them.
+# In the build sandbox nothing else runs, but a check run as the developer with
+# the sandbox off would reach the developer's own bar and lock screen. So the
+# scripts are told to match only the stand-ins this test starts, whose names
+# are unique, and decoys named like the real programs prove that nothing else
+# is touched.
+export WAYBAR_MATCH='^ravnix-test-waybar( |$)'
+export SWAYLOCK_MATCH='^ravnix-test-swaylock( |$)'
+decoy() { # decoy NAME: a process whose command line starts with NAME, sets decoy_pid
+  ( exec -a "$1" python3 -c 'import time; time.sleep(120)' ) &
+  decoy_pid=$!
+}
+decoy waybar
+decoy_waybar=$decoy_pid
+decoy swaylock
+decoy_swaylock=$decoy_pid
+# No test may read the machine it runs on: every script that has a /sys seam
+# is given an empty one unless the test builds a fixture.
+sysfs_empty=$work/sysfs-empty
+mkdir -p "$sysfs_empty"
+export SYSFS=$sysfs_empty
+
 # A power supply fixture: ps NAME key=value...
 ps() {
   local dir=$1 name=$2
@@ -128,6 +150,94 @@ ps "$d" BAT0 type=Battery capacity=100 status=Full
 out=$(PSDIR=$d RAPL=$empty/none "$(script waybar-powerdraw)")
 json_ok "waybar-powerdraw (AC)" "$out"
 
+# ── waybar-gpu and waybar-gputemp: the classes, on a fixture of /sys ─────────
+gpu_class() { jq -r .class <<<"$("$(script waybar-gpu)")"; }
+gpu_text() { jq -r .text <<<"$("$(script waybar-gpu)")"; }
+gpu_is() { [ "$(gpu_class)" = "$1" ] && gpu_text | grep -q "$2"; } # CLASS TEXT-PATTERN
+rm -rf "$work/sys-gpu"
+export SYSFS=$work/sys-gpu
+# a card of another driver comes first and must be skipped
+mkdir -p "$SYSFS/class/drm/card0/device" "$SYSFS/class/drm/card1/device"
+printf 'DRIVER=i915\n' >"$SYSFS/class/drm/card0/device/uevent"
+printf '99\n' >"$SYSFS/class/drm/card0/device/gpu_busy_percent"
+printf 'DRIVER=amdgpu\n' >"$SYSFS/class/drm/card1/device/uevent"
+busy() { printf '%s\n' "$1" >"$SYSFS/class/drm/card1/device/gpu_busy_percent"; }
+busy 12
+gpu_is gpu ' 12%$' || bad "gpu at 12%: $(gpu_class) $(gpu_text)"
+busy 79
+[ "$(gpu_class)" = gpu ] || bad "gpu at 79% is $(gpu_class), not plain"
+busy 80
+[ "$(gpu_class)" = warning ] || bad "gpu at 80% is $(gpu_class), not warning"
+busy 94
+[ "$(gpu_class)" = warning ] || bad "gpu at 94% is $(gpu_class), not warning"
+busy 95
+[ "$(gpu_class)" = critical ] || bad "gpu at 95% is $(gpu_class), not critical"
+busy 100
+[ "$(gpu_class)" = critical ] || bad "gpu at 100% is $(gpu_class), not critical"
+busy abc
+gpu_is gpu ' 0%$' || bad "an unreadable gpu load is not shown as 0%: $(gpu_text)"
+busy ""
+[ "$(gpu_class)" = gpu ] || bad "an empty gpu load is not plain"
+rm -f "$SYSFS/class/drm/card1/device/uevent"
+busy 99
+gpu_text | grep -q ' 0%$' || bad "a card without a driver line was taken for the amdgpu: $(gpu_text)"
+ok "waybar-gpu classes"
+
+temp_class() { jq -r .class <<<"$("$(script waybar-gputemp)")"; }
+temp_text() { jq -r .text <<<"$("$(script waybar-gputemp)")"; }
+temp_is() { [ "$(temp_class)" = "$1" ] && temp_text | grep -q "$2"; } # CLASS TEXT-PATTERN
+rm -rf "$work/sys-temp"
+export SYSFS=$work/sys-temp
+mkdir -p "$SYSFS/class/hwmon/hwmon0" "$SYSFS/class/hwmon/hwmon1" "$SYSFS/class/hwmon/hwmon2"
+printf 'nvme\n' >"$SYSFS/class/hwmon/hwmon0/name"
+printf '99000\n' >"$SYSFS/class/hwmon/hwmon0/temp1_input"
+printf 'amdgpu\n' >"$SYSFS/class/hwmon/hwmon1/name" # an amdgpu with no edge temperature: skipped
+printf 'amdgpu\n' >"$SYSFS/class/hwmon/hwmon2/name"
+tempc() { printf '%s\n' "$1" >"$SYSFS/class/hwmon/hwmon2/temp1_input"; }
+tempc 45000
+temp_is gpu ' 45°C$' || bad "gpu temperature 45: $(temp_class) $(temp_text)"
+tempc 79999
+temp_is gpu ' 79°C$' || bad "gpu temperature 79.999 is not 79 and plain: $(temp_text)"
+tempc 80000
+[ "$(temp_class)" = warning ] || bad "gpu temperature 80 is $(temp_class), not warning"
+tempc 89999
+[ "$(temp_class)" = warning ] || bad "gpu temperature 89.999 is $(temp_class), not warning"
+tempc 90000
+[ "$(temp_class)" = critical ] || bad "gpu temperature 90 is $(temp_class), not critical"
+tempc 120000
+[ "$(temp_class)" = critical ] || bad "gpu temperature 120 is $(temp_class), not critical"
+tempc junk
+temp_is gpu ' 0°C$' || bad "an unreadable gpu temperature is not shown as 0: $(temp_text)"
+ok "waybar-gputemp classes"
+
+# ── waybar-powerdraw on the GPU side: watts of the amdgpu, and the dGPU's state
+rm -rf "$work/sys-draw" "$d"
+export SYSFS=$work/sys-draw
+ps "$d" AC type=Mains
+mkdir -p "$SYSFS/class/hwmon/hwmon0" "$SYSFS/bus/pci/drivers/nvidia" "$work/pci-nvidia/power"
+printf 'amdgpu\n' >"$SYSFS/class/hwmon/hwmon0/name"
+printf '15000000\n' >"$SYSFS/class/hwmon/hwmon0/power1_average"
+draw() { PSDIR=$d RAPL=$empty/none "$(script waybar-powerdraw)"; }
+out=$(draw)
+jq -r .text <<<"$out" | grep -q ' 15W$' || bad "the amdgpu's 15 W is not the draw on AC: $out"
+jq -r .tooltip <<<"$out" | grep -qF 'GPU: 15 W' || bad "the tooltip does not name the GPU: $out"
+ln -s "$work/pci-nvidia" "$SYSFS/bus/pci/drivers/nvidia/0000:01:00.0"
+printf 'suspended\n' >"$work/pci-nvidia/power/runtime_status"
+out=$(draw)
+{ jq -r .tooltip <<<"$out" | grep -qF 'iGPU: 15 W' && jq -r .tooltip <<<"$out" | grep -qF 'dGPU: suspended'; } || bad "a suspended dGPU is not reported, or the amdgpu is not the iGPU: $out"
+jq -r .text <<<"$out" | grep -q 'dGPU' && bad "a suspended dGPU is marked in the bar: $out"
+printf 'active\n' >"$work/pci-nvidia/power/runtime_status"
+out=$(draw)
+jq -r .text <<<"$out" | grep -q ' 15W+dGPU$' || bad "an active dGPU is not marked +dGPU: $out"
+rm -f "$SYSFS/class/hwmon/hwmon0/power1_average"
+printf '9000000\n' >"$SYSFS/class/hwmon/hwmon0/power1_input"
+jq -r .text <<<"$(draw)" | grep -q ' 9W+dGPU$' || bad "power1_input is not the fallback of power1_average: $(draw)"
+rm -rf "$SYSFS/class/hwmon/hwmon0"
+out=$(draw)
+{ jq -r .text <<<"$out" | grep -q -- '--' && jq -r .tooltip <<<"$out" | grep -qF 'No readable power sensor'; } || bad "no sensor at all is not said so: $out"
+export SYSFS=$sysfs_empty
+ok "waybar-powerdraw GPU side"
+
 # ── waybar-clock ─────────────────────────────────────────────────────────────
 clock=$(script waybar-clock)
 rm -rf "$XDG_RUNTIME_DIR"
@@ -157,7 +267,7 @@ tip=$(jq -r .tooltip <<<"$("$clock")")
 # ── Waybar is found by its command line, as NixOS's wrapper names the process
 # .waybar-wrapped: a stand-in called waybar by argv[0] only, like the wrapper's.
 fake_waybar() { # fake_waybar SIGNAL-LOG: starts it, sets fake_pid
-  ( exec -a waybar python3 -c 'import signal, sys, time
+  ( exec -a ravnix-test-waybar python3 -c 'import signal, sys, time
 def note(*_):
     open(sys.argv[1], "a").write("x")
 signal.signal(signal.SIGRTMIN + 8, note)
@@ -191,7 +301,7 @@ ok "Waybar is found and signalled by its command line"
 keep=$(script keep-awake)
 handler=$(grep -m1 -o "unlock  *'[^']*'" "$keep" | sed "s/^unlock  *'//; s/'\$//")
 [ -n "$handler" ] || bad "keep-awake has no unlock handler for swayidle"
-( exec -a swaylock python3 -c 'import signal, sys, time
+( exec -a ravnix-test-swaylock python3 -c 'import signal, sys, time
 signal.signal(signal.SIGUSR1, lambda *_: sys.exit(0))
 time.sleep(60)' ) &
 fake_pid=$!
@@ -255,6 +365,7 @@ cat >"$stubs/pactl" <<STUB
 #!/bin/sh
 case "\$1" in
   get-sink-volume) [ -f "$pa/broken" ] && exit 1
+                   [ -f "$pa/garbage" ] && { echo "Volume: n/a"; exit 0; }
                    echo "Volume: front-left: 32768 /  \$(cat "$pa/volume")% / -18.06 dB,   front-right: 32768 /  \$(cat "$pa/volume")% / -18.06 dB" ;;
   set-sink-volume) echo "\${3%\%}" >"$pa/volume" ;;
   get-sink-mute) echo "Mute: \$(cat "$pa/mute")" ;;
@@ -291,8 +402,32 @@ for args in "--increase abc" "--increase" "--limit 5;ls" "--set-volume x[\$(touc
 done
 [ ! -e "$pa/pwned" ] || bad "sway-volume ran a command from an argument"
 : >"$pa/broken"
-if ! PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" --increase 5 >/dev/null 2>&1; then bad "sway-volume fails when pactl cannot be read"; fi
-rm -f "$pa/broken"
+# pactl cannot be read: nothing is set (a volume key during a hiccup must not
+# turn the sound off or set it to the step), nothing is shown, and the status
+# says so.
+for args in "--increase 5" "--decrease 5" "--set-volume 30" ""; do
+  printf '40\n' >"$pa/volume"
+  echo no >"$pa/mute"
+  : >"$pa/notifications"
+  : >"$pa/broken"
+  # shellcheck disable=SC2086
+  PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" $args >/dev/null 2>&1
+  rc=$?
+  rm -f "$pa/broken"
+  [ $rc = 1 ] || bad "sway-volume $args exits $rc when pactl cannot be read, not 1"
+  [ ! -s "$pa/notifications" ] || bad "sway-volume $args shows a volume it could not read: $(cat "$pa/notifications")"
+  case $args in
+    "--increase 5"|"--decrease 5"|"") [ "$(cat "$pa/volume")" = 40 ] || bad "sway-volume $args changed an unreadable volume to $(cat "$pa/volume")" ;;
+  esac
+done
+# pactl answers, with no number in it.
+printf '40\n' >"$pa/volume"
+: >"$pa/notifications"
+: >"$pa/garbage"
+PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" --increase 5 >/dev/null 2>&1
+[ $? = 1 ] || bad "sway-volume takes an answer without a number for a volume"
+[ "$(cat "$pa/volume")" = 40 ] || bad "sway-volume changed the volume after an answer without a number"
+rm -f "$pa/garbage"
 ok "sway-volume"
 
 # ── sway-wait-sni ────────────────────────────────────────────────────────────
@@ -310,6 +445,14 @@ for arg in abc -1 "1;2"; do
 done
 rm -f "$stubs/busctl"
 ok "sway-wait-sni"
+
+# The decoys, called waybar and swaylock like the real programs, were in reach of
+# every kill and signal above and must have survived them all.
+kill -0 "$decoy_waybar" 2>/dev/null || bad "a process called waybar was killed or signalled: the scripts do not stay with WAYBAR_MATCH"
+kill -0 "$decoy_swaylock" 2>/dev/null || bad "a process called swaylock was killed or signalled: the scripts do not stay with SWAYLOCK_MATCH"
+kill "$decoy_waybar" "$decoy_swaylock" 2>/dev/null
+wait "$decoy_waybar" "$decoy_swaylock" 2>/dev/null
+ok "the scripts touched only the processes the test started"
 
 [ $fail = 0 ] || exit 1
 echo "script tests passed" >"$result"

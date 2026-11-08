@@ -17,7 +17,9 @@ mode="$(cat "$STATE" 2>/dev/null || echo full)"
 # name: on NixOS waybar is a wrapper that runs `.waybar-wrapped`, so `-x waybar`
 # matches nothing and every relaunch would leave the old bar on screen.
 me="$(id -u)"
-pattern='^waybar( |$)'
+# WAYBAR_MATCH replaces the pattern, so that a test can name the processes it
+# started and touch no other (tests/desktop/helpers/script-tests.sh).
+pattern=${WAYBAR_MATCH:-'^waybar( |$)'}
 pkill -u "$me" -f "$pattern" 2>/dev/null || true
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   pgrep -u "$me" -f "$pattern" >/dev/null 2>&1 || break

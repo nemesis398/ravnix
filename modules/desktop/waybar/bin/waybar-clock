@@ -9,6 +9,8 @@ set -uo pipefail
 
 STATE="${XDG_RUNTIME_DIR:-/tmp}/waybar-clock-mode"
 SIG=8 # matches "signal": 8 in modules.jsonc  →  SIGRTMIN+8
+# WAYBAR_MATCH: see waybar-launch.
+WAYBAR_MATCH=${WAYBAR_MATCH:-'^waybar( |$)'}
 # (Waybar is found by its command line below, not by `-x waybar`: on NixOS its
 # process is called .waybar-wrapped, see waybar-launch.)
 
@@ -16,7 +18,7 @@ if [ "${1:-}" = "toggle" ]; then
   cur="$(cat "$STATE" 2>/dev/null || echo time)"
   if [ "$cur" = date ]; then new="time"; else new="date"; fi
   printf '%s\n' "$new" >"$STATE"
-  pkill -RTMIN+"$SIG" -u "$(id -u)" -f '^waybar( |$)' 2>/dev/null || true
+  pkill -RTMIN+"$SIG" -u "$(id -u)" -f "$WAYBAR_MATCH" 2>/dev/null || true
   exit 0
 fi
 

@@ -57,21 +57,34 @@ clamp() {
   fi
 }
 
-# The first percentage pactl prints for the sink (left channel).
+# The first percentage pactl prints for the sink (left channel). Fails, and
+# prints nothing, when pactl does or its answer holds no number: an unreadable
+# volume is not 0, and a key press during a hiccup must not turn the sound off
+# or set it to the step.
 volume_of() {
-  local line
-  line=$("$PACTL" get-sink-volume "$1" 2>/dev/null) || { echo 0; return; }
+  local line pct
+  line=$("$PACTL" get-sink-volume "$1" 2>/dev/null) || return 1
   line=${line%%%*}
-  echo "${line##* }"
+  pct=${line##* }
+  case $pct in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  echo "$pct"
+}
+
+unreadable() {
+  echo "sway-volume: cannot read the volume of $sink" >&2
+  exit 1
 }
 
 if [ "$change" -ne 0 ]; then
-  "$PACTL" set-sink-volume "$sink" "$(clamp $(( $(volume_of "$sink") + change )))%"
+  now=$(volume_of "$sink") || unreadable
+  "$PACTL" set-sink-volume "$sink" "$(clamp $(( now + change )))%"
 elif [ "$set_to" -ge 0 ]; then
   "$PACTL" set-sink-volume "$sink" "$(clamp "$set_to")%"
 fi
 
-volume=$(volume_of "$sink")
+volume=$(volume_of "$sink") || unreadable
 text="Volume: ${volume}%"
 case $("$PACTL" get-sink-mute "$sink" 2>/dev/null) in
   *yes) text="Volume: muted"; volume=0 ;;

@@ -10,8 +10,10 @@ set -uo pipefail
 ICON="<span color='@accent@'>󱃂</span>"
 
 # First amdgpu hwmon with a readable edge temp (the iGPU exposes one here).
+# SYSFS replaces /sys, so that a test reads fixtures and not the machine.
+SYSFS="${SYSFS:-/sys}"
 temp_file=""
-for h in /sys/class/hwmon/hwmon*; do
+for h in "$SYSFS"/class/hwmon/hwmon*; do
   [ "$(cat "$h/name" 2>/dev/null)" = "amdgpu" ] || continue
   [ -r "$h/temp1_input" ] && { temp_file="$h/temp1_input"; break; }
 done
