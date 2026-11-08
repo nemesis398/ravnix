@@ -79,9 +79,16 @@ in
     };
 
     diskSerial = mkOption {
-      type = types.nonEmptyStr;
+      # udev's by-id characters: the laptop shape names the disk by them and
+      # matches the serial in a udev rule, which reads *?[ and | as a
+      # pattern.
+      type = types.strMatching "[0-9A-Za-z#+.:=@_-]+";
       example = "EXAMPLE0SERIAL";
-      description = "The serial of that disk, as `lsblk -o SERIAL` prints it.";
+      description = ''
+        The serial of that disk, as `lsblk -o SERIAL` prints it: letters,
+        digits and `#+-.:=@_` only. The laptop shape hides every other
+        internal disk from udisks by it.
+      '';
     };
 
     kanshiProfiles = mkOption {

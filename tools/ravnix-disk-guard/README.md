@@ -77,6 +77,26 @@ disko --mode destroy,format,mount --argstr device "$dev" hosts/laptop/disko.nix
 3.5's QEMU passthrough script is to refuse to start while the guard exits 2,
 since the disk is then mounted on the host.
 
+## What protects the disk to keep
+
+The guard is one of four layers:
+
+1. **The guard** names the target by model and serial, refuses it while it
+   is in use, and prints no kernel name.
+2. **The layout** in `hosts/laptop/disko.nix` takes nothing but one name
+   under `/dev/disk/by-id`, in udev's characters, and disko lists the one
+   disk it is about to wipe and asks first.
+3. **The boot loader** leaves the firmware's boot entries alone:
+   `efi.canTouchEfiVariables` stays false, so a switch never rewrites the
+   other system's entry.
+4. **The running system** hides every other internal disk from udisks:
+   `hosts/laptop/hide-other-disks.nix` gives each NVMe or SATA disk whose
+   serial is not `ravnix.laptop.diskSerial`, and its partitions,
+   `UDISKS_IGNORE=1`, so the desktop neither shows nor automounts it, and a
+   file manager cannot format it. A USB disk still mounts. root can still
+   mount the hidden disk by hand; nothing stops that but rule 2 of
+   AGENTS.md.
+
 ## Tests and bench
 
 `ravnix-disk-guard-tests` covers the laptop's layout today, the same with
@@ -102,7 +122,10 @@ with a newline, and its absence without a seam, for `--by-id
 
 `tests/laptop/disko.nix` runs the guard and disko in a VM with two QEMU
 NVMe disks of one model, and checks that the disk to keep comes out of it
-bit for bit unchanged.
+bit for bit unchanged, read with O_DIRECT past the page cache. The same VM
+runs the udev rule and udisks: the disk to keep and its partitions carry
+`UDISKS_IGNORE=1` and udisks' `HintIgnore`, and the target and its LUKS
+partition do not.
 
 `ravnix-disk-guard-bench` decides on `bench/lsblk.json`, a laptop's list with
 the two NVMe disks, two USB disks, zram and sixteen loop devices, and the

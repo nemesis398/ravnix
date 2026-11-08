@@ -1,7 +1,9 @@
 # The install's disk step, end to end, in a VM whose disks are VM images:
 # the disk guard picks the disk by model and serial, disko writes the layout
 # of hosts/laptop/disko.nix to the path the guard printed, and the other disk
-# comes out bit for bit as it went in.
+# comes out bit for bit as it went in. The VM also runs the shape's udev
+# rule, hosts/laptop/hide-other-disks.nix, and udisks: the disk to keep and
+# its partitions are hidden from udisks, the target is not.
 #
 # The VM has two NVMe disks of one model, QEMU's, told apart by serial only,
 # as two disks of one series would be. The NVMe driver probes them at the
@@ -54,6 +56,17 @@ in
 pkgs.testers.runNixOSTest {
   name = "laptop-disko";
   nodes.machine = {
+    # The shape's rule hiding the other internal disks, for the target's
+    # serial; the rest of the shape would mount the VM's root from the
+    # target.
+    imports = [
+      self.nixosModules.options
+      ../../templates/default/me.nix
+      ../../hosts/laptop/hide-other-disks.nix
+    ];
+    ravnix.laptop.diskSerial = lib.mkForce serial;
+    services.udisks2.enable = true;
+
     virtualisation = {
       memorySize = 2048;
       cores = 2;
@@ -76,6 +89,7 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     import shlex
     import subprocess
+    from datetime import timedelta
 
     for name in ["keep", "target"]:
         subprocess.run(["${qemuImg}", "create", "-q", "-f", "qcow2", str(machine.state_dir / f"{name}.qcow2"), "3G"], check=True)
@@ -100,6 +114,16 @@ pkgs.testers.runNixOSTest {
     def keep_hash():
         return machine.succeed("set -o pipefail; dd if=${keepDevice} iflag=direct bs=1M status=none | sha256sum")
 
+    def udev_hides(dev):
+        props = machine.succeed(f"udevadm info --query=property --name={shlex.quote(dev)}").splitlines()
+        return "UDISKS_IGNORE=1" in props
+
+    # What udisks makes of it, once it has caught up with udev.
+    def udisks_hint(dev, hidden):
+        kernel = machine.succeed(f"readlink -f {shlex.quote(dev)}").strip()
+        want = "true" if hidden else "false"
+        machine.wait_until_succeeds(f"udisksctl info -b {kernel} | grep -Ex '\\s*HintIgnore:\\s*{want}'", timeout=timedelta(seconds=60))
+
     with subtest("the disk to keep holds a system like Fedora's, mounted read-only"):
         machine.succeed(
             "sgdisk --clear --new=1:0:+256M --typecode=1:EF00 --new=2:0:0 ${keepDevice}",
@@ -119,6 +143,16 @@ pkgs.testers.runNixOSTest {
             "mount -o ro,noload /dev/mapper/keeproot /srv/keep/root",
             "mount -o ro,noload ${keepDevice}-part1 /srv/keep/boot",
         )
+
+    with subtest("udisks ignores the disk to keep and its partitions, and not the target"):
+        machine.succeed("udevadm settle")
+        # The second partition is LUKS, which udisks shows unless told; the
+        # first is an ESP, which udisks' own rules hide anyway.
+        for dev in ["${keepDevice}", "${keepDevice}-part1", "${keepDevice}-part2"]:
+            assert udev_hides(dev), f"udev does not hide {dev} from udisks"
+            udisks_hint(dev, hidden=True)
+        assert not udev_hides("${device}"), "udev hides the target from udisks"
+        udisks_hint("${device}", hidden=False)
 
     with subtest("the guard picks the target by model and serial, whatever its kernel name"):
         status, out, err = guard_on("${serial}")
@@ -166,6 +200,9 @@ pkgs.testers.runNixOSTest {
         assert machine.succeed("findmnt -no FSTYPE /mnt/boot").strip() == "vfat"
         assert machine.succeed("swapon --show --noheadings").strip() == "", "there is swap"
         assert "swap" not in machine.succeed(f"lsblk -nro FSTYPE {dev}"), "a swap signature on the target"
+        # The target's LUKS partition stays visible to udisks.
+        assert not udev_hides(f"{dev}-part2"), "udev hides the target's LUKS partition from udisks"
+        udisks_hint(f"{dev}-part2", hidden=False)
 
     with subtest("the guard refuses the target while it is mounted, and after unmounting while LUKS is open"):
         status, out, err = guard_on("${serial}")

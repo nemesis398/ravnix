@@ -1,7 +1,8 @@
 # The laptop shape and the IdeaPad Pro 5 16AHP9 module, evaluated as the
 # private flake will build huginn, with the template's values: the disk
-# layout as NixOS mounts it, the boot loader, the disk the shape names, and
-# the graphics, the kernel parameters and the initrd of the hardware. The
+# layout as NixOS mounts it, the boot loader, the disk the shape names, the
+# rule that hides the other internal disks from udisks, and the graphics,
+# the kernel parameters and the initrd of the hardware. The
 # whole system must evaluate, its assertions and the NVIDIA driver's licence
 # included, without building anything.
 {
@@ -56,6 +57,37 @@ let
       && has fs.${mount}.options "compress=zstd"
     ) "${mount} is not the btrfs subvolume ${name} in cryptroot with compress=zstd";
 
+  # The rule that hides the laptop's other internal disks from udisks, and
+  # its text for the template's serial.
+  hider = cfg: lib.findFirst (p: (p.name or "") == "ravnix-hide-other-disks") null cfg.services.udev.packages;
+  hide = hider c;
+  rules = lib.filter (l: l != "" && !lib.hasPrefix "#" l) (lib.splitString "\n" (hide.text or ""));
+  hidden = [
+    ''ACTION!="remove", SUBSYSTEM=="block", KERNEL=="nvme*", ENV{DEVTYPE}=="disk|partition", ENV{ID_SERIAL_SHORT}!="EXAMPLE0SERIAL", ENV{UDISKS_IGNORE}="1"''
+    ''ACTION!="remove", SUBSYSTEM=="block", KERNEL=="sd*", ENV{ID_BUS}=="ata", ENV{DEVTYPE}=="disk|partition", ENV{ID_SERIAL_SHORT}!="EXAMPLE0SERIAL", ENV{UDISKS_IGNORE}="1"''
+  ];
+  # The shape with another serial: udev reads *?[ and | in a match as a
+  # pattern, so a serial holding one must not evaluate.
+  withSerial =
+    serial:
+    build [
+      self.nixosModules.laptop
+      {
+        nixpkgs.hostPlatform = system;
+        ravnix.laptop.diskSerial = lib.mkForce serial;
+      }
+    ];
+  patterns = [
+    "EXAMPLE*"
+    "EXAMPLE?"
+    "EXAMPLE[0]"
+    "EXAMPLE|KEEP0SERIAL"
+    "EXAMPLE SERIAL"
+    "EXAMPLE\"SERIAL"
+    "EXAMPLE\\SERIAL"
+    "EXAMPLE\nSERIAL"
+  ];
+
   initrdModules = c.boot.initrd.availableKernelModules ++ c.boot.initrd.kernelModules;
   params = c.boot.kernelParams;
   nvidia = c.hardware.nvidia;
@@ -71,6 +103,19 @@ let
     ++ check (
       c.disko.devices.disk.huginn.device == "/dev/disk/by-id/nvme-Example_SSD_1TB_EXAMPLE0SERIAL"
     ) "the shape's disk is ${c.disko.devices.disk.huginn.device}, not the by-id path of the template's model and serial"
+
+    # The other internal disks, hidden from udisks by the serial, in a rule
+    # file after 60-persistent-storage, which sets ID_SERIAL_SHORT, and
+    # 80-udisks2; with or without a hardware module.
+    ++ check (hide != null) "no udev rule hides the laptop's other internal disks from udisks"
+    ++ check (
+      (hide.destination or null) == "/lib/udev/rules.d/90-ravnix-hide-other-disks.rules"
+    ) "the rule hiding the other disks is ${builtins.toJSON (hide.destination or null)}, not lib/udev/rules.d/90-ravnix-hide-other-disks.rules"
+    ++ check (rules == hidden) "the rules hiding the other disks are ${builtins.toJSON rules}, not ${builtins.toJSON hidden}"
+    ++ check (hider bare.config != null) "the shape without a hardware module hides no disk"
+    ++ map (s: "the shape evaluates with the serial ${builtins.toJSON s}, which the rule would read as a pattern") (
+      lib.filter (s: evaluates (withSerial s)) patterns
+    )
 
     # The layout, as NixOS mounts it.
     ++ subvolume "/" "@"

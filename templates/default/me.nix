@@ -103,7 +103,8 @@
     laptop = {
       # The one disk the installer may write, by model and serial as
       # `lsblk -o NAME,MODEL,SERIAL` prints them. Never by device name: an
-      # nvme0n1 can be another disk after the next boot.
+      # nvme0n1 can be another disk after the next boot. huginn hides every
+      # other internal disk from udisks by the serial.
       diskModel = "Example SSD 1TB";
       diskSerial = "EXAMPLE0SERIAL";
       # Your monitor layouts, in order; kanshi applies the first whose
