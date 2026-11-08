@@ -23,7 +23,37 @@
 #     .bash) or by its shebang (sh, bash, dash, ksh), hooks included: the
 #     staged copy, and the work-tree copy where it differs.
 # The slow steps:
-#   - flake: nix flake check, which builds every check of the flake.
+#   - flake: what nix flake check checked, in a process per check, so the
+#     step stays within the laptop's RAM. nix flake check evaluates all of
+#     the flake's checks, NixOS systems among them, in one evaluator that
+#     keeps every one of them alive: it peaked at 15.6 GB without building
+#     and at about 18 GB while building, on a 27 GB laptop. The step:
+#       1. asks nix for the system it builds for (nix config show system),
+#          as nix flake check takes it;
+#       2. lists the names of checks.SYSTEM with builtins.attrNames, which
+#          evaluates no check (tests/flake/check-names.nix keeps it so);
+#       3. checks every other output in one nix eval that reads no check,
+#          with scripts/lib/flake-outputs.nix, which holds what is checked
+#          and how: packages.SYSTEM (each a derivation, its drvPath
+#          evaluated), overlays (each a function of final), nixosModules
+#          and homeModules (each an attribute set, a function or a path
+#          that exists), templates (path, description, welcomeText and
+#          nothing else); other systems are omitted, as nix flake check
+#          omits them. Any other output fails the step until that file
+#          checks it, so a new output is never silently unchecked;
+#       4. builds each check in a nix build of its own, in the order of
+#          the listing, with --keep-going inside the build, so a check
+#          that fails, also one that fails to evaluate, stops none of the
+#          others. A name no attribute path on the command line can hold
+#          (a double quote, a control character, the empty name) fails as
+#          a check.
+#     Then it names every failed check, and exits with the first failing
+#     status, in the order listing, outputs, checks. RAVNIX_CHECK_JOBS=2
+#     builds two checks at once, each line marked with its check's name;
+#     the default, 1, keeps to one, because a NixOS system's evaluation
+#     alone takes several GB, and two of them beside the user's
+#     applications can pass the 85 % of RAM the step is to stay under.
+#     Nix's own max-jobs and cores still decide the builds inside a check.
 #   - claude-code: claude-code-verify checks the Claude Code download that
 #     packages.claude-code was made from, for the version in ravnix's own
 #     flake.lock, against Anthropic's release manifest. A private flake whose
@@ -82,9 +112,22 @@ command -v rg >/dev/null 2>&1 || fail "rg not found. Install ripgrep."
 command -v shellcheck >/dev/null 2>&1 || fail "shellcheck not found. Install ShellCheck."
 if [[ "$mode" == full ]]; then
 	command -v nix >/dev/null 2>&1 ||
-		fail "nix not found on PATH, and the full gate runs nix flake check." \
+		fail "nix not found on PATH, and the full gate builds the flake's checks." \
 			"Outside NixOS, open a new shell or source" \
 			"/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh."
+fi
+
+# How many checks the flake step builds at once (the header says why 1).
+check_jobs=1
+if [[ "$mode" == full ]]; then
+	case "${RAVNIX_CHECK_JOBS:-}" in
+	"" | 1) ;;
+	2) check_jobs=2 ;;
+	*)
+		printf 'check.sh: RAVNIX_CHECK_JOBS is %q; it is 1, the default, or 2.\n' "$RAVNIX_CHECK_JOBS" >&2
+		exit 2
+		;;
+	esac
 fi
 
 work="$(mktemp -d -p "${TMPDIR:-/tmp}" ravnix-check.XXXXXX)"
@@ -175,8 +218,155 @@ nix_() {
 	nix --extra-experimental-features 'nix-command flakes' "$@" --no-update-lock-file
 }
 
+# Lists the checks of checks.SYSTEM by name, which evaluates none of them:
+# a line "ok NAME" each, or "bad JSON" for a name that no attribute path on
+# the command line can hold, one that is empty or holds a double quote or a
+# control character.
+# shellcheck disable=SC2016 # Nix's ${...}, not the shell's.
+list_checks='checks: builtins.concatStringsSep "" (map (name: if builtins.match "[^\"[:cntrl:]]+" name == null then "bad ${builtins.toJSON name}\n" else "ok ${name}\n") (builtins.attrNames checks))'
+outputs_validator=scripts/lib/flake-outputs.nix
+
+# The attribute path of the check named $1 below checks.SYSTEM: quoted, so
+# a dot is part of the name, and each byte but A-Z a-z 0-9 . _ ~ -
+# percent-encoded, since nix decodes a flake reference's fragment before it
+# reads the path in it (a % or a # would change it otherwise).
+check_attr() {
+	local LC_ALL=C s="$1" i c out=""
+	for ((i = 0; i < ${#s}; i++)); do
+		c="${s:i:1}"
+		case "$c" in
+		[A-Za-z0-9._~-]) out+="$c" ;;
+		*)
+			printf -v c '%%%02X' "'$c"
+			out+="$c"
+			;;
+		esac
+	done
+	printf '"%s"' "$out"
+}
+
+# Builds the installable $2 with each line of its output marked [$1], for
+# two builds side by side. Run in the background, it becomes that nix
+# process (exec), so the job's pid is nix's and stopping the job stops the
+# build. The flags are nix_'s.
+build_marked() {
+	local line
+	exec > >(while IFS= read -r line; do printf '[%s] %s\n' "$1" "$line"; done) 2>&1
+	exec nix --extra-experimental-features 'nix-command flakes' \
+		build --no-link --print-build-logs --keep-going "$2" --no-update-lock-file
+}
+
+# The builds running in the background, by pid. A script's background jobs
+# ignore SIGINT, so a Ctrl-C would stop the gate and leave them running:
+# the flake step stops them on its way out.
+declare -A building=()
+stop_builds() {
+	((${#building[@]} == 0)) || kill -TERM -- "${!building[@]}" 2>/dev/null || true
+}
+
+# "N things", or "1 thing".
+counted() {
+	if (($1 == 1)); then printf '1 %s' "$2"; else printf '%d %ss' "$1" "$2"; fi
+}
+
 step_flake() {
-	nix_ flake check --print-build-logs --keep-going
+	local system listing line i s pid first=0 list_status=0 outputs_status=0 running=0
+	local names=() attrs=() results=() failed=()
+	if ((check_jobs > 1)); then
+		trap 'exit 130' INT
+		trap 'exit 143' TERM
+		trap stop_builds EXIT
+	fi
+
+	system="$(nix --extra-experimental-features 'nix-command flakes' config show system)" || return $?
+	if [[ ! "$system" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]]; then
+		printf 'check.sh: nix names the system it builds for %q, which is no system name\n' "$system" >&2
+		return 1
+	fi
+
+	listing="$(nix_ eval --raw ".#checks.$system" --apply "$list_checks")" || list_status=$?
+	if ((list_status == 0)) && [[ -n "$listing" ]]; then
+		while IFS= read -r line; do
+			case "$line" in
+			"ok "*)
+				names+=("${line#ok }")
+				attrs+=("$(check_attr "${line#ok }")")
+				;;
+			"bad "*)
+				names+=("${line#bad }")
+				attrs+=("")
+				;;
+			*)
+				printf 'check.sh: the listing of the checks printed a line of another shape: %s\n' "$line" >&2
+				list_status=1
+				;;
+			esac
+		done <<<"$listing"
+	fi
+	if ((list_status != 0)); then
+		printf 'check.sh: could not list the checks of checks.%s (exit %d)\n' "$system" "$list_status" >&2
+		names=() attrs=()
+	fi
+
+	echo "the other outputs:"
+	if [[ ! -f "$outputs_validator" ]]; then
+		echo "check.sh: $outputs_validator is missing, so the other outputs cannot be checked" >&2
+		outputs_status=1
+	else
+		nix_ eval --raw .#. --apply "outputs: (($(<"$outputs_validator")) \"$system\" outputs).report" ||
+			outputs_status=$?
+	fi
+
+	printf 'checks.%s: %s, %s at a time\n' "$system" "$(counted "${#names[@]}" check)" \
+		"$( ((check_jobs == 1)) && echo one || echo two)"
+	for i in "${!names[@]}"; do
+		if [[ -z "${attrs[i]}" ]]; then
+			printf 'check.sh: no attribute path on the command line can name the check %s\n' "${names[i]}" >&2
+			results[i]=1
+			continue
+		fi
+		if ((check_jobs == 1)); then
+			printf -- '--> %s\n' "${names[i]}"
+			s=0
+			nix_ build --no-link --print-build-logs --keep-going ".#checks.$system.${attrs[i]}" || s=$?
+			results[i]=$s
+			continue
+		fi
+		if ((running == check_jobs)); then
+			s=0
+			wait -n -p pid || s=$?
+			results[${building[$pid]}]=$s
+			unset 'building[$pid]'
+			running=$((running - 1))
+		fi
+		build_marked "${names[i]}" ".#checks.$system.${attrs[i]}" &
+		building[$!]=$i
+		running=$((running + 1))
+	done
+	while ((running > 0)); do
+		s=0
+		wait -n -p pid || s=$?
+		results[${building[$pid]}]=$s
+		unset 'building[$pid]'
+		running=$((running - 1))
+	done
+
+	((list_status == 0)) || first=$list_status
+	if ((outputs_status != 0)); then
+		printf 'check.sh: the other outputs failed (exit %d)\n' "$outputs_status" >&2
+		((first != 0)) || first=$outputs_status
+	fi
+	for i in "${!names[@]}"; do
+		((results[i] == 0)) && continue
+		failed+=("  ${names[i]} (exit ${results[i]})")
+		((first != 0)) || first=${results[i]}
+	done
+	if ((${#failed[@]} > 0)); then
+		printf 'check.sh: %d of %d checks failed:\n' "${#failed[@]}" "${#names[@]}" >&2
+		printf '%s\n' "${failed[@]}" >&2
+	fi
+	((first == 0)) || return "$first"
+	echo "flake: $(counted "${#names[@]}" check) built, and the other outputs checked"
 }
 
 # The record of the pairs the claude-code step verified: one line

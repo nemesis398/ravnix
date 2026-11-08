@@ -32,7 +32,7 @@ new_repo() {
 	git -C "$repo" config user.email test@example.invalid
 	mkdir -p "$repo/scripts/lib" "$repo/.githooks"
 	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$src/scripts/check-style.sh" "$repo/scripts/"
-	cp -p "$src/scripts/lib/git-snapshot.sh" "$repo/scripts/lib/"
+	cp -p "$src/scripts/lib/git-snapshot.sh" "$src/scripts/lib/flake-outputs.nix" "$repo/scripts/lib/"
 	cp -p "$src/.githooks/pre-commit" "$src/.githooks/commit-msg" \
 		"$src/.githooks/pre-push" "$repo/.githooks/"
 	printf 'clean\n' >"$repo/a.md"
@@ -40,11 +40,15 @@ new_repo() {
 	git -C "$repo" commit -qm init
 	git -C "$repo" config core.hooksPath .githooks
 	git -C "$repo" config ravnix.denyList "$list"
-	# The full gate's claude-code step builds the verifier and the download,
-	# reads the version and runs the verifier; this nix answers with ones
-	# that pass, so a test here sees the hooks and nothing of that step.
-	write_script "$bin/nix" "printf '%s\n' \"\$*\" >>'$bin/nix.log'" \
+	# The full gate's flake step asks for the system, lists the checks (one,
+	# named one), checks the other outputs and builds the check; its
+	# claude-code step builds the verifier and the download, reads the
+	# version and runs the verifier. This nix answers with ones that pass,
+	# so a test here sees the hooks and nothing of those steps.
+	write_script "$bin/nix" "printf '%s\n' \"\$*\" | tr '\n' ' ' >>'$bin/nix.log'; echo >>'$bin/nix.log'" \
 		'case "$*" in' \
+		"*'config show system'*) echo x86_64-linux ;;" \
+		"*' eval '*' .#checks.'*) echo 'ok one' ;;" \
 		"*'build'*'.#claude-code-verify'*) echo '$bin/verify' ;;" \
 		"*'build'*'.#claude-code.download'*) echo '$bin/download' ;;" \
 		"*'eval'*'.#claude-code.version'*) printf '1.2.3' ;;" \
@@ -94,8 +98,8 @@ pre_push() {
 }
 
 expect_full_gate() {
-	[[ "$(cat "$bin/nix.log" 2>/dev/null)" == *"flake check"* ]] || {
-		echo "  expected the full gate (nix flake check) to run"
+	[[ "$(cat "$bin/nix.log" 2>/dev/null)" == *' build '*'.#checks.x86_64-linux."one"'* ]] || {
+		echo "  expected the full gate (the build of each check) to run"
 		return 1
 	}
 	[[ -f "$bin/verify.log" ]] || {

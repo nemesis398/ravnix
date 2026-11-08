@@ -61,8 +61,9 @@ it.
 5. **Every tool has tests, and the tests hunt for problems:** edge cases,
    malformed input, missing files, empty and huge values, concurrent runs, a
    dead dependency. Odin tools use `core:testing`, Bash glue uses shell tests,
-   and all of them run in `nix flake check`. Write the failing test first and
-   watch it fail. A finding you do not fix goes into the tool's `README.md`.
+   and all of them are checks of the flake, which the full gate builds. Write
+   the failing test first and watch it fail. A finding you do not fix goes
+   into the tool's `README.md`.
 6. **Run the gate before you say done, and show its output.** The gate is
    `scripts/check.sh`. The git hooks run its fast part on every commit and
    all of it before every push, and the Claude Code Stop hook runs the fast
@@ -80,6 +81,7 @@ it.
 ```sh
 scripts/check.sh --fast                      # what pre-commit and the Stop hook run
 scripts/check.sh                             # the full gate, as pre-push runs it
+RAVNIX_CHECK_JOBS=2 scripts/check.sh         # two checks at once, when the RAM allows
 nix build .#checks.x86_64-linux.NAME         # one Nix check
 ```
 

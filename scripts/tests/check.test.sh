@@ -24,10 +24,10 @@ record=""
 
 # Creates a repository holding the gate's scripts and one clean file, all
 # committed, with ravnix.denyList pointing at a deny list outside it. bin is
-# a directory, first on PATH in gate, that holds a fake nix logging its
-# arguments to $bin/nix.log; tmp is the gate's TMPDIR, state its
-# XDG_STATE_HOME, and record the file there that remembers the verified
-# downloads.
+# a directory, first on PATH in gate, that holds a fake nix (fake_nix); tmp
+# is the gate's TMPDIR, state its XDG_STATE_HOME, and record the file there
+# that remembers the verified downloads. The flake has the checks alpha,
+# beta and gamma, and they all pass.
 new_repo() {
 	local dir
 	dir="$(mktemp -d -p "$scratch")"
@@ -45,32 +45,138 @@ new_repo() {
 	git -C "$repo" config ravnix.denyList "$list"
 	mkdir -p "$repo/scripts/lib"
 	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$src/scripts/check-style.sh" "$repo/scripts/"
-	cp -p "$src/scripts/lib/git-snapshot.sh" "$repo/scripts/lib/"
+	cp -p "$src/scripts/lib/git-snapshot.sh" "$src/scripts/lib/flake-outputs.nix" "$repo/scripts/lib/"
 	printf 'clean\n' >"$repo/a.md"
 	git -C "$repo" add -A
 	git -C "$repo" commit -qm init
 	fake_nix 0
+	checks_named alpha beta gamma
 }
 
-# Makes the fake nix's flake check exit with $1. For the claude-code step it
+# Writes the fake nix. It logs each call to $bin/nix.log, one line per call
+# with its newlines made spaces, and answers from files in $bin:
+#
+#   system, system.status    what `nix config show system` prints
+#                            (x86_64-linux) and its exit status (0)
+#   names, names.status      what the listing of the checks prints and its
+#                            exit status (0); checks_named writes it
+#   outputs.status           the exit status of the outputs validation (0),
+#                            whose --apply expression it saves in
+#                            outputs.apply; outputs.err is its stderr
+#   build.status             the exit status of every check's build ($1)
+#   build.fail               lines "STATUS INSTALLABLE": that check's status
+#   build.barrier            when present, each build waits (10 s at most)
+#                            until two builds have run at the same time
+#   build.hang               when present, each build runs for 30 s
+#   version, no-download     the Claude Code version (1.2.3), and the build
+#                            of the download printing nothing
+#
+# Each check's build logs "start N INSTALLABLE", with N the builds running
+# then, and "end INSTALLABLE" to builds.log. For the claude-code step it
 # builds a fake claude-code-verify, which logs its arguments to
-# $bin/verify.log and exits with $2 (default 0), and a fake download, and it
-# evaluates the version to 1.2.3. With $3 set to "no-download", the build of
-# the download prints nothing.
+# $bin/verify.log and exits with $2 (default 0), and a fake download. With
+# $3 set to "no-download", the build of the download prints nothing.
 fake_nix() {
-	local download="echo '$bin/download'"
-	[[ "${3:-}" != no-download ]] || download=":"
-	write_script "$bin/nix" "printf '%s\n' \"\$*\" >>'$bin/nix.log'" \
-		'case "$*" in' \
-		"*'flake check'*) exit $1 ;;" \
-		"*'build'*'.#claude-code-verify'*) echo '$bin/verify' ;;" \
-		"*'build'*'.#claude-code.download'*) $download ;;" \
-		"*'eval'*'.#claude-code.version'*) printf '1.2.3' ;;" \
-		"*) echo \"fake nix: unexpected arguments: \$*\" >&2; exit 64 ;;" \
-		'esac'
+	mkdir -p "$bin"
+	{
+		printf '#!%s\n' "$BASH"
+		cat <<'EOF'
+d="${0%/*}"
+printf '%s' "$*" | tr '\n' ' ' >>"$d/nix.log"
+echo >>"$d/nix.log"
+code() { cat -- "$d/$1" 2>/dev/null || echo 0; }
+case "$*" in
+*'config show system'*)
+	cat -- "$d/system" 2>/dev/null || echo x86_64-linux
+	exit "$(code system.status)"
+	;;
+*' eval '*' .#checks.'*)
+	cat -- "$d/names" 2>/dev/null
+	exit "$(code names.status)"
+	;;
+*' eval '*' .#. '*)
+	prev=""
+	for a; do
+		[[ "$prev" != --apply ]] || printf '%s' "$a" >"$d/outputs.apply"
+		prev="$a"
+	done
+	[[ ! -e "$d/outputs.err" ]] || cat -- "$d/outputs.err" >&2
+	echo "packages.x86_64-linux: 2 derivations"
+	exit "$(code outputs.status)"
+	;;
+*' build '*' .#checks.'*)
+	inst=""
+	for a; do [[ "$a" != .#checks.* ]] || inst="$a"; done
+	mkdir -p "$d/running"
+	: >"$d/running/$$"
+	running=("$d"/running/*)
+	((${#running[@]} < 2)) || : >"$d/overlapped"
+	printf 'start %s %s\n' "${#running[@]}" "$inst" >>"$d/builds.log"
+	if [[ -e "$d/build.barrier" ]]; then
+		for _ in $(seq 100); do
+			[[ ! -e "$d/overlapped" ]] || break
+			sleep 0.1
+		done
+	fi
+	if [[ -e "$d/build.hang" ]]; then
+		for _ in $(seq 300); do sleep 0.1; done
+	fi
+	rm -f -- "$d/running/$$"
+	printf 'end %s\n' "$inst" >>"$d/builds.log"
+	echo "building $inst"
+	while read -r st i; do
+		if [[ "$i" == "$inst" ]]; then
+			echo "error: $inst failed" >&2
+			exit "$st"
+		fi
+	done < <(cat -- "$d/build.fail" 2>/dev/null)
+	exit "$(code build.status)"
+	;;
+*' build '*'.#claude-code-verify'*) echo "$d/verify" ;;
+*' build '*'.#claude-code.download'*) [[ -e "$d/no-download" ]] || echo "$d/download" ;;
+*' eval '*'.#claude-code.version'*) cat -- "$d/version" 2>/dev/null || printf '1.2.3' ;;
+*) echo "fake nix: unexpected arguments: $*" >&2; exit 64 ;;
+esac
+EOF
+	} >"$bin/nix"
+	chmod +x "$bin/nix"
+	printf '%s\n' "$1" >"$bin/build.status"
+	rm -f -- "$bin/no-download"
+	[[ "${3:-}" != no-download ]] || : >"$bin/no-download"
 	write_script "$bin/verify/bin/claude-code-verify" \
 		"printf '%s\n' \"\$*\" >'$bin/verify.log'" "exit ${2:-0}"
 	: >"$bin/download"
+}
+
+# The flake's checks are the arguments, as the listing prints them.
+checks_named() {
+	if (($# == 0)); then
+		: >"$bin/names"
+	else
+		printf 'ok %s\n' "$@" >"$bin/names"
+	fi
+}
+# fail_check STATUS INSTALLABLE: the build of that check exits with STATUS.
+fail_check() {
+	printf '%s %s\n' "$1" "$2" >>"$bin/build.fail"
+}
+# The installables of the checks' builds, in the order they started.
+builds() {
+	[[ ! -e "$bin/builds.log" ]] || sed -n 's/^start [0-9]* //p' "$bin/builds.log"
+}
+# expect_builds INSTALLABLE...: exactly these builds ran, in this order.
+expect_builds() {
+	local want got
+	want="$(printf '%s\n' "$@")"
+	got="$(builds)"
+	[[ "$got" == "${want%$'\n'}" ]] || {
+		printf '  expected the builds:\n%s\n  got:\n%s\n' "$want" "$got"
+		return 1
+	}
+}
+# The installable of the check named $1, a name that needs no encoding.
+check_of() {
+	printf '.#checks.x86_64-linux."%s"' "$1"
 }
 
 # Writes $2 into $repo/$1 and stages it.
@@ -121,13 +227,14 @@ the_fast_gate_passes_on_a_clean_repository() {
 	}
 }
 
-the_full_gate_adds_nix_flake_check_and_the_claude_code_check() {
+the_full_gate_adds_the_flake_step_and_the_claude_code_check() {
 	new_repo
 	gate
 	expect_status 0
 	expect_out "all 5 steps passed"
-	[[ "$(cat "$bin/nix.log")" == *"flake check"* ]] || {
-		echo "  expected nix flake check, the fake nix got: $(cat "$bin/nix.log" 2>/dev/null)"
+	expect_builds "$(check_of alpha)" "$(check_of beta)" "$(check_of gamma)"
+	[[ -s "$bin/outputs.apply" ]] || {
+		echo "  expected the flake step to check the other outputs, the fake nix got: $(cat "$bin/nix.log" 2>/dev/null)"
 		return 1
 	}
 	[[ "$(cat "$bin/verify.log" 2>/dev/null)" == "$bin/download 1.2.3" ]] || {
@@ -140,13 +247,20 @@ the_gate_never_lets_nix_write_the_lock_file() {
 	new_repo
 	gate
 	expect_status 0
-	local line
+	local line n=0
 	while IFS= read -r line; do
+		n=$((n + 1))
+		# The one call that reads no flake, and refuses the flag.
+		[[ "$line" != *" config show system" ]] || continue
 		[[ "$line" == *--no-update-lock-file* ]] || {
 			echo "  nix ran without --no-update-lock-file: $line"
 			return 1
 		}
 	done <"$bin/nix.log"
+	((n > 3)) || {
+		echo "  expected the full gate to run nix more than three times, it ran it $n times"
+		return 1
+	}
 }
 
 the_fast_gate_does_not_verify_claude_code() {
@@ -455,7 +569,366 @@ a_failing_flake_check_fails_the_full_gate_with_its_status() {
 	fake_nix 3
 	gate
 	expect_status 3
-	expect_err "flake failed"
+	expect_err "flake failed (exit 3)"
+}
+
+the_flake_step_never_runs_nix_flake_check() {
+	new_repo
+	gate
+	expect_status 0
+	# Only these three subcommands: never flake check, which holds every
+	# check in one evaluator.
+	local line
+	while IFS= read -r line; do
+		line="${line#--extra-experimental-features nix-command flakes }"
+		case "$line" in
+		"config show system" | "eval "* | "build "*) ;;
+		*)
+			echo "  the gate ran another nix command: ${line:0:200}"
+			return 1
+			;;
+		esac
+	done <"$bin/nix.log"
+}
+
+each_check_is_built_in_a_nix_process_of_its_own() {
+	new_repo
+	checks_named delta alpha
+	gate
+	expect_status 0
+	# In the order the listing gives, one installable per process.
+	expect_builds "$(check_of delta)" "$(check_of alpha)"
+	local line n=0
+	while IFS= read -r line; do
+		[[ "$line" == *" build "*".#checks."* ]] || continue
+		n=$((n + 1))
+		[[ "$line" == *" build --no-link --print-build-logs --keep-going .#checks.x86_64-linux."*" --no-update-lock-file" ]] || {
+			echo "  unexpected build of a check: $line"
+			return 1
+		}
+		[[ "${line#*.#checks.}" != *".#"* ]] || {
+			echo "  one nix build got more than one installable: $line"
+			return 1
+		}
+	done <"$bin/nix.log"
+	((n == 2)) || {
+		echo "  expected 2 builds of checks, got $n"
+		return 1
+	}
+	expect_out "2 checks built"
+}
+
+the_checks_are_listed_by_name_only() {
+	new_repo
+	gate
+	expect_status 0
+	# The listing asks for the names alone, so nix evaluates no check.
+	local listing
+	listing="$(rg -F ' eval ' "$bin/nix.log" | rg -F '.#checks.')"
+	[[ "$listing" == *" eval --raw .#checks.x86_64-linux --apply "*"builtins.attrNames"* ]] || {
+		echo "  unexpected listing of the checks: $listing"
+		return 1
+	}
+	[[ "$(printf '%s\n' "$listing" | wc -l)" == 1 ]] || {
+		echo "  expected one listing, got: $listing"
+		return 1
+	}
+}
+
+the_listing_comes_before_any_build() {
+	new_repo
+	gate
+	expect_status 0
+	local first
+	first="$(rg -n -F ' build ' "$bin/nix.log" | head -1 | cut -d: -f1)"
+	[[ "$(sed -n "1,${first}p" "$bin/nix.log")" == *"config show system"*" eval --raw .#checks.x86_64-linux "* ]] || {
+		echo "  expected the system and the listing before the first build: $(cat "$bin/nix.log")"
+		return 1
+	}
+}
+
+a_failing_check_does_not_stop_the_others_and_is_named() {
+	new_repo
+	fail_check 100 "$(check_of beta)"
+	gate
+	expect_status 100
+	expect_builds "$(check_of alpha)" "$(check_of beta)" "$(check_of gamma)"
+	expect_err "1 of 3 checks failed"
+	expect_err "  beta (exit 100)"
+	expect_no_err "alpha (exit"
+	expect_no_err "gamma (exit"
+	expect_err "flake failed (exit 100)"
+}
+
+every_failed_check_is_named_and_the_first_status_is_the_steps() {
+	new_repo
+	checks_named alpha beta gamma delta
+	fail_check 1 "$(check_of gamma)"
+	fail_check 100 "$(check_of beta)"
+	gate
+	expect_status 100
+	expect_builds "$(check_of alpha)" "$(check_of beta)" "$(check_of gamma)" "$(check_of delta)"
+	expect_err "2 of 4 checks failed"
+	expect_err "  beta (exit 100)"
+	expect_err "  gamma (exit 1)"
+	expect_err "flake failed (exit 100)"
+}
+
+a_check_that_fails_to_evaluate_counts_as_failed() {
+	new_repo
+	# A check that throws is still listed, since the listing reads names
+	# only; its build is what evaluates it, and fails.
+	fail_check 1 "$(check_of beta)"
+	gate
+	expect_status 1
+	expect_builds "$(check_of alpha)" "$(check_of beta)" "$(check_of gamma)"
+	expect_err "  beta (exit 1)"
+	expect_err "flake failed (exit 1)"
+}
+
+an_empty_list_of_checks_builds_nothing_and_says_so() {
+	new_repo
+	checks_named
+	gate
+	expect_status 0
+	expect_builds
+	expect_out "0 checks built"
+	[[ -s "$bin/outputs.apply" ]] || {
+		echo "  the other outputs went unchecked"
+		return 1
+	}
+}
+
+a_check_name_that_needs_quoting_is_quoted() {
+	new_repo
+	checks_named 'a.b' '50% off' "it's \$HOME" 'ü' '-x#y?z'
+	gate
+	expect_status 0
+	# Quoted for nix's attribute path, and percent-encoded for the flake
+	# reference, which decodes its fragment.
+	expect_builds \
+		"$(check_of a.b)" \
+		"$(check_of 50%25%20off)" \
+		"$(check_of it%27s%20%24HOME)" \
+		"$(check_of %C3%BC)" \
+		"$(check_of -x%23y%3Fz)"
+	expect_out "5 checks built"
+}
+
+a_check_name_nix_cannot_address_fails_and_the_others_run() {
+	new_repo
+	printf '%s\n' 'ok alpha' 'bad "x\"y"' 'ok gamma' >"$bin/names"
+	gate
+	expect_status 1
+	expect_builds "$(check_of alpha)" "$(check_of gamma)"
+	expect_err "1 of 3 checks failed"
+	expect_err '"x\"y"'
+	expect_err "flake failed (exit 1)"
+}
+
+a_listing_line_of_another_shape_fails_the_step() {
+	new_repo
+	printf '%s\n' 'ok alpha' 'warning: something' >"$bin/names"
+	gate
+	expect_status 1
+	expect_err "warning: something"
+	expect_err "flake failed (exit 1)"
+}
+
+a_listing_that_fails_fails_the_step_and_the_outputs_are_still_checked() {
+	new_repo
+	printf '5\n' >"$bin/names.status"
+	gate
+	expect_status 5
+	expect_builds
+	expect_err "could not list the checks"
+	[[ -s "$bin/outputs.apply" ]] || {
+		echo "  the other outputs went unchecked"
+		return 1
+	}
+	expect_err "flake failed (exit 5)"
+	[[ ! -e "$bin/verify.log" ]] || {
+		echo "  claude-code-verify ran after a failed flake step"
+		return 1
+	}
+}
+
+a_system_nix_cannot_name_fails_the_step_before_any_build() {
+	new_repo
+	printf '4\n' >"$bin/system.status"
+	gate
+	expect_status 4
+	expect_builds
+	expect_err "flake failed (exit 4)"
+	local bad
+	for bad in '' 'x86_64 linux' '../x' 'x86_64-linux"'; do
+		rm -f -- "$bin/system.status"
+		printf '%s\n' "$bad" >"$bin/system"
+		gate
+		expect_status 1
+		expect_builds
+		expect_err "system"
+	done
+}
+
+the_other_outputs_are_checked_for_the_system() {
+	new_repo
+	gate
+	expect_status 0
+	local apply want
+	apply="$(cat "$bin/outputs.apply")"
+	want="$(cat "$src/scripts/lib/flake-outputs.nix")"
+	[[ "$apply" == "outputs: (($want) \"x86_64-linux\" outputs).report" ]] || {
+		echo "  expected the outputs to be checked by scripts/lib/flake-outputs.nix for x86_64-linux, got: $apply"
+		return 1
+	}
+	expect_out "packages.x86_64-linux: 2 derivations"
+}
+
+a_bad_output_fails_the_step_and_the_checks_still_run() {
+	new_repo
+	printf '1\n' >"$bin/outputs.status"
+	printf '%s\n' "error: flake output 'apps' is no output the flake step knows" >"$bin/outputs.err"
+	gate
+	expect_status 1
+	expect_builds "$(check_of alpha)" "$(check_of beta)" "$(check_of gamma)"
+	expect_err "flake output 'apps' is no output the flake step knows"
+	expect_err "the other outputs failed (exit 1)"
+	expect_err "flake failed (exit 1)"
+	[[ ! -e "$bin/verify.log" ]] || {
+		echo "  claude-code-verify ran after a failed flake step"
+		return 1
+	}
+}
+
+a_bad_output_before_a_failing_check_gives_the_status_of_the_outputs() {
+	new_repo
+	printf '7\n' >"$bin/outputs.status"
+	fail_check 100 "$(check_of alpha)"
+	gate
+	expect_status 7
+	expect_err "  alpha (exit 100)"
+	expect_err "the other outputs failed (exit 7)"
+}
+
+without_a_validator_the_flake_step_fails() {
+	new_repo
+	rm -- "$repo/scripts/lib/flake-outputs.nix"
+	gate
+	expect_status 1
+	expect_err "flake-outputs.nix"
+	[[ ! -e "$bin/outputs.apply" ]] || {
+		echo "  the outputs were checked without the validator"
+		return 1
+	}
+}
+
+# The checks are built one at a time unless RAVNIX_CHECK_JOBS says 2.
+
+by_default_one_check_builds_at_a_time() {
+	new_repo
+	checks_named alpha beta gamma delta
+	gate
+	expect_status 0
+	local want
+	want="$(printf 'start 1 %s\nend %s\n' \
+		"$(check_of alpha)" "$(check_of alpha)" "$(check_of beta)" "$(check_of beta)" \
+		"$(check_of gamma)" "$(check_of gamma)" "$(check_of delta)" "$(check_of delta)")"
+	[[ "$(cat "$bin/builds.log")" == "$want" ]] || {
+		printf '  expected one build at a time, got:\n%s\n' "$(cat "$bin/builds.log")"
+		return 1
+	}
+}
+
+two_jobs_build_two_checks_at_a_time_and_never_more() {
+	new_repo
+	checks_named alpha beta gamma delta epsilon
+	: >"$bin/build.barrier"
+	fail_check 100 "$(check_of gamma)"
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS=2 scripts/check.sh
+	expect_status 100
+	[[ -e "$bin/overlapped" ]] || {
+		echo "  no two builds ran at the same time: $(cat "$bin/builds.log")"
+		return 1
+	}
+	! rg -q '^start [3-9]' "$bin/builds.log" || {
+		echo "  more than two builds ran at once: $(cat "$bin/builds.log")"
+		return 1
+	}
+	[[ "$(builds | sort)" == "$(printf '%s\n' "$(check_of alpha)" "$(check_of beta)" "$(check_of delta)" "$(check_of epsilon)" "$(check_of gamma)" | sort)" ]] || {
+		echo "  expected each check built once: $(builds)"
+		return 1
+	}
+	expect_err "1 of 5 checks failed"
+	expect_err "  gamma (exit 100)"
+	expect_err "flake failed (exit 100)"
+	# Each build's lines are marked with its check.
+	expect_out "[beta] building $(check_of beta)"
+}
+
+two_jobs_report_the_first_failing_check_in_order() {
+	new_repo
+	checks_named alpha beta gamma
+	: >"$bin/build.barrier"
+	fail_check 3 "$(check_of gamma)"
+	fail_check 9 "$(check_of beta)"
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS=2 scripts/check.sh
+	expect_status 9
+	expect_err "2 of 3 checks failed"
+}
+
+an_interrupted_gate_stops_the_builds_it_started() {
+	new_repo
+	: >"$bin/build.hang"
+	local gate pid _ alive=() running=()
+	# The gate in a process group of its own, as a terminal runs it, so a
+	# Ctrl-C reaches all of it. A script's background jobs ignore SIGINT.
+	set -m
+	(cd "$repo" && exec env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS=2 scripts/check.sh) >"$scratch/.out" 2>&1 &
+	gate=$!
+	set +m
+	for _ in $(seq 100); do
+		running=("$bin"/running/*)
+		[[ ! -e "${running[0]}" ]] || ((${#running[@]} < 2)) || break
+		sleep 0.1
+	done
+	((${#running[@]} == 2)) || {
+		echo "  expected two builds running, there are: ${running[*]}"
+		kill -TERM -- "-$gate"
+		return 1
+	}
+	kill -INT -- "-$gate"
+	wait "$gate" || true
+	for _ in $(seq 50); do
+		alive=()
+		for pid in "${running[@]##*/}"; do
+			! kill -0 "$pid" 2>/dev/null || alive+=("$pid")
+		done
+		((${#alive[@]} > 0)) || break
+		sleep 0.1
+	done
+	((${#alive[@]} == 0)) || {
+		kill -TERM "${alive[@]}" 2>/dev/null || true
+		echo "  the builds ${alive[*]} kept running after the gate was interrupted"
+		return 1
+	}
+}
+
+a_bad_job_count_fails_before_any_step() {
+	new_repo
+	local jobs
+	for jobs in 0 3 -1 ' 1' 1.5 two 01; do
+		capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS="$jobs" scripts/check.sh
+		expect_status 2
+		expect_err "RAVNIX_CHECK_JOBS"
+		expect_no_out "==> boundary"
+	done
+	# The fast gate runs no check, so it does not read it.
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS=7 scripts/check.sh --fast
+	expect_status 0
+	# Empty is the default.
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" XDG_STATE_HOME="$state" RAVNIX_CHECK_JOBS= scripts/check.sh
+	expect_status 0
 }
 
 # The claude-code step.
@@ -582,13 +1055,7 @@ a_mismatch_it_cannot_forget_says_to_delete_the_record() {
 
 a_version_it_could_not_read_back_is_not_recorded() {
 	new_repo
-	write_script "$bin/nix" "printf '%s\n' \"\$*\" >>'$bin/nix.log'" \
-		'case "$*" in' \
-		"*'flake check'*) exit 0 ;;" \
-		"*'build'*'.#claude-code-verify'*) echo '$bin/verify' ;;" \
-		"*'build'*'.#claude-code.download'*) echo '$bin/download' ;;" \
-		"*'eval'*'.#claude-code.version'*) printf '1.2.3 beta' ;;" \
-		'esac'
+	printf '1.2.3 beta' >"$bin/version"
 	gate
 	expect_status 0
 	expect_err "could not record Claude Code 1.2.3 beta as verified"
@@ -677,9 +1144,10 @@ a_download_nix_does_not_build_fails_the_full_gate() {
 
 a_failing_flake_check_skips_the_claude_code_check() {
 	new_repo
-	fake_nix 3
+	fail_check 3 "$(check_of gamma)"
 	gate
 	expect_status 3
+	expect_no_out "==> claude-code"
 	[[ ! -e "$bin/verify.log" ]] || {
 		echo "  claude-code-verify ran after a failed flake check"
 		return 1
@@ -715,7 +1183,7 @@ a_missing_shellcheck_fails_before_any_step() {
 
 tests=(
 	the_fast_gate_passes_on_a_clean_repository
-	the_full_gate_adds_nix_flake_check_and_the_claude_code_check
+	the_full_gate_adds_the_flake_step_and_the_claude_code_check
 	the_gate_never_lets_nix_write_the_lock_file
 	the_fast_gate_does_not_verify_claude_code
 	an_unknown_argument_is_bad_usage
@@ -749,6 +1217,28 @@ tests=(
 	an_unstaged_script_error_is_checked_too
 	a_sourced_library_is_followed
 	a_failing_flake_check_fails_the_full_gate_with_its_status
+	the_flake_step_never_runs_nix_flake_check
+	each_check_is_built_in_a_nix_process_of_its_own
+	the_checks_are_listed_by_name_only
+	the_listing_comes_before_any_build
+	a_failing_check_does_not_stop_the_others_and_is_named
+	every_failed_check_is_named_and_the_first_status_is_the_steps
+	a_check_that_fails_to_evaluate_counts_as_failed
+	an_empty_list_of_checks_builds_nothing_and_says_so
+	a_check_name_that_needs_quoting_is_quoted
+	a_check_name_nix_cannot_address_fails_and_the_others_run
+	a_listing_line_of_another_shape_fails_the_step
+	a_listing_that_fails_fails_the_step_and_the_outputs_are_still_checked
+	a_system_nix_cannot_name_fails_the_step_before_any_build
+	the_other_outputs_are_checked_for_the_system
+	a_bad_output_fails_the_step_and_the_checks_still_run
+	a_bad_output_before_a_failing_check_gives_the_status_of_the_outputs
+	without_a_validator_the_flake_step_fails
+	by_default_one_check_builds_at_a_time
+	two_jobs_build_two_checks_at_a_time_and_never_more
+	two_jobs_report_the_first_failing_check_in_order
+	an_interrupted_gate_stops_the_builds_it_started
+	a_bad_job_count_fails_before_any_step
 	a_claude_code_mismatch_fails_the_full_gate
 	an_unreachable_manifest_fails_the_full_gate_and_says_so
 	a_verifier_that_cannot_run_fails_the_full_gate
