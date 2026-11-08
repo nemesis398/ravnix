@@ -6,20 +6,20 @@
 # (modules/options/sk-agent.nix); which end a host is comes from
 # ravnix.shape, and a host does nothing for an end it is not.
 #
-# The laptop end. sk-agent, a user unit from the start of the user's
-# session, runs ssh-agent on $XDG_RUNTIME_DIR/sk-agent.sock (mode 600), a
-# socket of its own: not SSH_AUTH_SOCK, not Bitwarden's agent, which keeps
-# the keys that need no touch (commit signing, the servers), and not any
-# other. It refuses to load a PKCS#11 or FIDO library that a client names
-# (-P none): the socket is reachable from the server, and the security key
-# needs only ssh's own FIDO support. sk-agent-keys, bound to it, loads the
-# handles of ravnix.skAgent.keys into it each time it starts, and only
-# those: it empties the agent first, and loads a handle only if the public
-# half of the file is the listed one. A handle that is missing, unreadable,
-# has a passphrase (nobody is there to type it) or is another key is left
-# out, and the unit fails naming it, while the agent keeps the others. A
-# socket left behind by an agent that was killed is removed before the next
-# one starts, since ssh-agent will not bind over it.
+# The laptop end. sk-agent, a user unit from the start of the user's session,
+# runs ssh-agent on $XDG_RUNTIME_DIR/sk-agent.sock (mode 600), a socket of its
+# own: not SSH_AUTH_SOCK, which on both hosts is rbw's agent
+# (modules/common/rbw.nix) and keeps the keys that need no touch (commit
+# signing, the servers), and not any other. It refuses to load a PKCS#11 or
+# FIDO library that a client names (-P none): the socket is reachable from the
+# server, and the security key needs only ssh's own FIDO support.
+# sk-agent-keys, bound to it, loads the handles of ravnix.skAgent.keys into it
+# each time it starts, and only those: it empties the agent first, and loads a
+# handle only if the public half of the file is the listed one. A handle that
+# is missing, unreadable, has a passphrase (nobody is there to type it) or is
+# another key is left out, and the unit fails naming it, while the agent keeps
+# the others. A socket left behind by an agent that was killed is removed
+# before the next one starts, since ssh-agent will not bind over it.
 #
 # The forward is not made here. The main connection (modules/glue/
 # terminal.nix, Task 5.2) forwards ravnix.skAgent.socket as it forwards
@@ -42,11 +42,11 @@
 #
 #   - IdentityAgent is the forwarded socket, at /run/user/%i (the path the
 #     forward writes, also where XDG_RUNTIME_DIR is unset), so neither
-#     SSH_AUTH_SOCK nor Bitwarden's agent is asked; IdentitiesOnly and an
-#     IdentityFile for each listed public half make ssh offer those keys
-#     and no other the agent holds, and none of the server's default key
-#     files (~/.ssh/id_*); only publickey authentication is tried, so
-#     nothing asks for a password.
+#     SSH_AUTH_SOCK (rbw's agent) nor any other agent is asked;
+#     IdentitiesOnly and an IdentityFile for each listed public half make
+#     ssh offer those keys and no other the agent holds, and none of the
+#     server's default key files (~/.ssh/id_*); only publickey
+#     authentication is tried, so nothing asks for a password.
 #   - A Match exec runs sk-agent-check before ssh connects, and only for
 #     those hosts. While the laptop's agent is not there, it says why, naming
 #     the laptop, and the Match sends ssh to a ProxyCommand that exits at
