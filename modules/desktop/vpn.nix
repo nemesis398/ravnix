@@ -17,8 +17,15 @@
 # to "loose", as Fedora's kernel default is, and opens no port. The UI is not
 # installed, as on Fedora (NETBIRD_SKIP_UI_APP).
 # The management server is written into the client's config before it first
-# starts (config.d, merged by the module), so `netbird up --setup-key KEY`
-# enrolls with it; the key comes from the vault and is typed once.
+# starts (config.d, merged by the module), so one command enrolls with it:
+#
+#   netbird up --setup-key-file <(rbw get SETUP-KEY-ITEM)
+#
+# The setup key of a reusable group enrolls any machine into the mesh, so it
+# never goes on a command line, where every local user reads it from /proc
+# while `netbird up` runs and the shell keeps it in its history.
+# --setup-key-file is read by the CLI itself, so a process substitution works,
+# and rbw reads the key from the vault at that moment.
 #
 # NordVPN is a NetworkManager WireGuard profile that `nord setup` builds once.
 # That needs NetworkManager, and systemd-resolved to route DNS: the profile's

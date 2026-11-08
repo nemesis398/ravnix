@@ -464,6 +464,9 @@ let
 
       with subtest("NetBird runs with the management URL, and its ports are shut"):
         machine.wait_for_unit("netbird.service")
+        # The documented enrollment reads the setup key from a file, so that it
+        # never sits on a command line (/proc/PID/cmdline is world-readable).
+        assert "--setup-key-file" in machine.succeed("netbird up --help 2>&1")
         machine.succeed("netbird status || true")
         machine.wait_until_succeeds("jq -e '.ManagementURL.Host == \"netbird.example.org:443\"' /var/lib/netbird/config.json")
         machine.fail("which netbird-ui")
