@@ -36,6 +36,7 @@ in
     ./server.nix
     ./scripts.nix
     ./desktop.nix
+    ./laptop-access.nix
     ./secrets.nix
     ./matrix.nix
     ./workbench.nix

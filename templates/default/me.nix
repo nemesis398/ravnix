@@ -103,6 +103,23 @@
       remoteControlDir = "/home/alice/src/project";
     };
 
+    # How the server reaches the laptop over NetBird to run a command there
+    # (`ravnix-laptop COMMAND`), with a key of its own. Make it on the
+    # server with `ssh-keygen -t ed25519 -N "" -f <identityFile>`; neither
+    # the YubiKey nor Bitwarden's agent is used. Each value can be null,
+    # which leaves that part out.
+    laptopAccess = {
+      # The private key, a file on the server only you can read. An absolute
+      # path in a string.
+      identityFile = "/home/alice/.ssh/ravnix-laptop";
+      # Its public half, the line of the .pub file. The laptop accepts it
+      # only from the server's NetBird address. Not a real key.
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey ravnix-laptop@example.org";
+      # The laptop's host key (/etc/ssh/ssh_host_ed25519_key.pub on the
+      # laptop). Null trusts the first key the laptop shows and remembers it.
+      hostKey = null;
+    };
+
     # The laptop.
     laptop = {
       # The one disk the installer may write, by model and serial as

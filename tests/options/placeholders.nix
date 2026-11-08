@@ -35,6 +35,7 @@ let
     "ravnix.hosts.muninn.sshTarget"
     "ravnix.hosts.nas.sshTarget"
     "ravnix.server.netbirdAddress"
+    "ravnix.laptopAccess.publicKey"
     "ravnix.secrets.rbwBaseUrl"
     "ravnix.matrix.homeserver"
     "ravnix.matrix.rooms.sessions.botUser"

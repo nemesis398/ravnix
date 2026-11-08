@@ -155,6 +155,11 @@ pkgs.testers.runNixOSTest (
   {
     name = "workbench-server";
 
+    # nixosModules.server brings the glue, whose server end puts the
+    # ravnix-laptop command (pkgs.ravnix) on the PATH, so the node's pkgs gets
+    # the overlay, as modules/common/nixos.nix says for a VM test.
+    node.pkgs = lib.mkForce (pkgs.extend self.overlays.default);
+
     nodes.machine =
       { pkgs, ... }:
       {
