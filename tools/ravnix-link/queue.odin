@@ -332,10 +332,11 @@ Commit_Result :: enum u8 {
 // may not have, in git's and ssh's own words: a lock another git holds, a
 // signature that failed (git ends every one with "failed to write commit
 // object", whatever the agent said), an index or object it could not
-// write, a rebase or merge under way, a file the sync replaced while git
-// read it. Anything else git exits non-zero for (a hook that rejects the
-// commit, an ignored path) comes again on every attempt; a hook's own
-// words, which may name an agent or a signature, do not count.
+// write, a rebase or merge under way (git's "cannot do a partial commit
+// during a"), a file the sync replaced while git read it (it is gone).
+// Anything else git exits non-zero for (a hook that rejects the commit, an
+// ignored path) comes again on every attempt; a hook's own words, which may
+// name an agent or a signature, do not count.
 transient :: proc(output: string) -> bool {
 	o := strings.to_lower(output, context.temp_allocator)
 	for phrase in ([]string {
@@ -344,18 +345,17 @@ transient :: proc(output: string) -> bool {
 			"failed to write commit object",
 			"unable to write new index file",
 			"unable to write file",
-			"unable to index file",
-			"adding files failed",
 			"no space left on device",
 			"read-only file system",
-			"during a rebase",
-			"during a merge",
+			"cannot do a partial commit during a",
 		}) {
 		if strings.contains(o, phrase) {
 			return true
 		}
 	}
-	return false
+	// A file the sync replaced while git read it is gone; one git may not
+	// read, or a folder with a repository of its own, stays as it is.
+	return strings.contains(o, "unable to index file") && strings.contains(o, "no such file or directory")
 }
 
 // run_git_commit commits the request's paths (or what is staged) in vault.
@@ -558,7 +558,10 @@ expired :: proc(cfg: Config, r: Request) -> bool {
 // What an Obsidian operation that the laptop has done must look like in
 // the server's copy of the vault before a commit after it runs: gone is
 // gone, and present (or alt) is there; a delete has no present. The file
-// expect keeps them, one per line, until they show or SYNC_WAIT has passed.
+// expect keeps them, one per line, until they show; one that does not
+// show within SYNC_WAIT no longer holds a commit, and is kept for
+// COMMIT_GIVE_UP more, flagged dropped, for a commit that misses its path
+// (brought_by_sync), unless a drop of that commit retires it.
 Expectation :: struct {
 	id:      string,
 	created: string, // the operation's: a commit created at or after it waits
@@ -797,9 +800,41 @@ drop :: proc(cfg: Config, id: string) -> (r: Request, why: string) {
 		if w := record(cfg, &out, Record{id = id, status = .Failed, error = "dropped by hand (ravnix-link drop)"}, context.temp_allocator); w != "" {
 			return {}, w
 		}
+		if e.request.kind == .Vault_Commit {
+			if w := retire(cfg, e.request); w != "" {
+				report(cfg, "the operations %s waited for stay: %s", describe(e.request), w)
+			}
+		}
 		return e.request, ""
 	}
 	return {}, fmt.tprintf("%s waits for nothing: it is not in the queue, or was resolved", id)
+}
+
+// retire forgets the Obsidian operations that the commit r waits on for a
+// path a sync was to bring, so a later commit of the path does not wait a
+// day for them again.
+retire :: proc(cfg: Config, r: Request) -> string {
+	expects, why := read_expectations(cfg, context.temp_allocator)
+	if why != "" {
+		return why
+	}
+	b := strings.builder_make(context.temp_allocator)
+	retired := 0
+	for x in expects {
+		named := false
+		for p in r.paths {
+			named ||= p == x.present || x.alt != "" && p == x.alt
+		}
+		if named && x.created <= r.created {
+			retired += 1
+			continue
+		}
+		strings.write_string(&b, encode_expectation(x, context.temp_allocator))
+	}
+	if retired == 0 {
+		return ""
+	}
+	return replace_file(state_path(cfg, "expect"), strings.to_string(b))
 }
 
 // flush delivers what waits, as the header says. It reports on stderr what

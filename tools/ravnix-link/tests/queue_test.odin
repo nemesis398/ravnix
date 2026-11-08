@@ -676,6 +676,7 @@ a_commit_git_refuses_for_good_fails_at_once_and_the_next_runs :: proc(t: ^testin
 		// still the hook's no.
 		{"a hook that names an agent", "commit-msg: an agent commit must name its model in a Co-Authored-By trailer", 1},
 		{"a hook that names a signature", "pre-commit: signing policy: sign your work with gpg, see the signature guide", 1},
+		{"a hook that names a merge", "pre-commit: no commits during a merge freeze", 1},
 	}
 	for c in cases {
 		f := fixture(t)
@@ -737,6 +738,71 @@ an_ignored_path_git_add_refuses_fails_at_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(git_runs(f, "commit")), 0)
 }
 
+// git add fails to index a file for what lasts: one it may not read (mode
+// 000, as a sync client may write one) or a folder that holds a repository
+// of its own. That is for good, at once; only a file the sync replaced
+// while git read it is tried again.
+@(test)
+a_file_git_add_cannot_index_for_good_fails_at_once :: proc(t: ^testing.T) {
+	Case :: struct {
+		why, stderr: string,
+	}
+	cases := []Case {
+		{"a nested repository", "error: 'Notizen/a.md' does not have a commit checked out\nerror: unable to index file 'Notizen/a.md'\nfatal: adding files failed"},
+		{"a file it may not read", ""},
+	}
+	for c in cases {
+		f := fixture(t)
+		defer fixture_destroy(f)
+		note(f, "Notizen/a.md")
+		if c.stderr == "" {
+			testing.expect_value(t, os.chmod(join(f, "vault", "Notizen", "a.md"), os.perm_number(0)), nil)
+		}
+		write_file(f, join(f, "bin", "stderr-text"), c.stderr)
+		set_case(f, strings.concatenate({"v='", f.vault, "'\n", `[ "$n" = git ] && [ "$4" = add ] && {
+  if [ ! -r "$v/Notizen/a.md" ]; then
+    printf '%s\n' 'error: open("Notizen/a.md"): Permission denied' "error: unable to index file 'Notizen/a.md'" 'fatal: adding files failed' >&2
+  else
+    cat "$d/stderr-text" >&2
+  fi
+  exit 128
+}
+`}, f.a))
+		outcome, message := link.submit(f.client, commit_request(f, "vault: kaputt", "Notizen/a.md"))
+		testing.expectf(t, outcome == .Failed, "%s: %v %s", c.why, outcome, message)
+		os.chmod(join(f, "vault", "Notizen", "a.md"), os.perm_number(0o644))
+	}
+}
+
+// drop of a commit that waits for a path an Obsidian operation was to
+// bring retires that operation too: the next commit that names the path
+// does not wait a day for it again.
+@(test)
+drop_retires_the_operation_a_commit_waits_for :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	note(f, "Notizen/alt.md")
+	set_case(f, `[ "$n" = git ] && [ "$4" = commit ] && { echo "error: pathspec 'Notizen/neu.md' did not match any file(s) known to git" >&2; exit 1; }` + "\n")
+	start_daemon(f)
+	base := link.clock(f.client)
+	f.client.now = base
+	expect_enqueued(f, obsidian_request(f, .Rename, "Notizen/alt.md", name = "neu"))
+	first := commit_request(f, "vault: rename", "Notizen/alt.md", "Notizen/neu.md")
+	expect_enqueued(f, first)
+	link.flush(f.client)
+	f.client.now = time.time_add(base, link.SYNC_WAIT + time.Minute)
+	link.flush(f.client)
+	rec, _ := record_of(f, first.id)
+	testing.expect_value(t, rec.status, link.Record_Status.Retry)
+	r := cli(f, "drop", first.id)
+	testing.expectf(t, r.code == 0, "%d %s", r.code, r.err)
+	expects, _ := link.read_expectations(f.client, f.a)
+	testing.expect_value(t, len(expects), 0)
+	again := commit_request(f, "vault: rename again", "Notizen/neu.md")
+	outcome, message := link.submit(f.client, again)
+	testing.expectf(t, outcome == .Failed, "%v %s", outcome, message)
+}
+
 // A refusal with HEAD moved since the attempt began (the commit may have
 // landed after all): not given up, but tried again, which finds out.
 @(test)
@@ -779,6 +845,27 @@ a_missing_path_an_operation_names_is_tried_again_after_the_sync_wait :: proc(t: 
 	testing.expect_value(t, result.pending, 1)
 	rec, _ := record_of(f, commit.id)
 	testing.expect_value(t, rec.status, link.Record_Status.Retry)
+	// Another attempt, a quarter of an hour on, still before the sync: the
+	// operation the wait gave up on is kept, and it is tried again.
+	f.client.now = time.time_add(base, 30 * time.Minute)
+	f.client.retry_now = true
+	result, _ = link.flush(f.client)
+	f.client.retry_now = false
+	testing.expect_value(t, result.pending, 1)
+	rec, _ = record_of(f, commit.id)
+	testing.expect_value(t, rec.status, link.Record_Status.Retry)
+	testing.expect_value(t, rec.attempts, 2)
+	// status does not show the wait it gave up as one.
+	r := cli(f, "status")
+	testing.expect(t, !contains(r.out, "waits until"), r.out)
+	testing.expect(t, contains(r.out, "attempt 2 failed"), r.out)
+	// The kept operation names neu.md, not a path that nothing brings.
+	expects, xwhy := link.read_expectations(f.client, f.a)
+	testing.expect_value(t, xwhy, "")
+	testing.expect_value(t, len(expects), 1)
+	typo := commit_request(f, "vault: vertippt", "Notizen/nue.md")
+	testing.expect(t, !link.brought_by_sync(f.vault, typo, expects))
+	testing.expect(t, link.brought_by_sync(f.vault, commit, expects))
 	// The sync comes, an hour on: the commit goes through.
 	os.rename(join(f, "vault", "Notizen", "alt.md"), join(f, "vault", "Notizen", "neu.md"))
 	f.client.now = time.time_add(base, time.Hour)

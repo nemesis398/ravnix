@@ -104,9 +104,11 @@ says the request is queued and exits 0.
   words: a lock another git holds (`….lock': File exists`, `cannot lock
   ref`), a signature that failed (git ends every one, whatever the agent
   said, with `failed to write commit object`), an index or object it could
-  not write, a full or read-only disk, a rebase or merge under way, a file
-  the sync replaced while git read it (`unable to index file`), and a time
-  limit. So is a path git does not know that an Obsidian operation before
+  not write, a full or read-only disk, a rebase or merge under way (`cannot
+  do a partial commit during a`), a file the sync replaced while git read
+  it (`unable to index file` with `No such file or directory`), and a time
+  limit. A file git may not read, or a folder with a repository of its
+  own, fails at once. So is a path git does not know that an Obsidian operation before
   the commit leaves, since a late sync may still bring it (a laptop that
   suspended before it uploaded the rename). One that git refuses for what
   every attempt would have (any other path git does not know, an ignored
@@ -136,7 +138,9 @@ says the request is queued and exits 0.
 
   **`dismiss`** empties that list. **`drop ID`** lets go of a request that
   waits, by its ID: it is recorded failed, by hand, and what waits behind
-  it goes ahead. An ID that waits for nothing is refused.
+  it goes ahead. A dropped commit also retires the Obsidian operations it
+  was retried for, so the next commit of those paths fails at once when
+  git does not know them. An ID that waits for nothing is refused.
 
 ## On the laptop
 
@@ -219,7 +223,7 @@ files 600:
 | --- | --- |
 | `queue` | the requests, one line each, appended under an exclusive lock as one write and synced to the disk before the command goes on |
 | `acked` | an outcome per request: `started`, `retry`, `done`, `failed`, `expired` or `skipped`; a commit's `started` and `retry` hold the vault's HEAD before git ran, the attempts, the first attempt's time and the next one's |
-| `expect` | what each Obsidian operation the laptop did leaves in the vault (a path there, one gone), until the server's copy shows it |
+| `expect` | what each Obsidian operation the laptop did leaves in the vault (a path there, one gone), until the server's copy shows it; one it does not show within 15 minutes is kept for a day, flagged dropped, so a commit that misses its path is tried again |
 | `failed` | the commits that failed for good, until `dismiss` |
 | `deliver.lock` | the lock that lets one delivery run at a time |
 
@@ -305,7 +309,7 @@ agent there:
 
 ## Tests and bench
 
-`ravnix-link-tests` runs 86 tests. The protocol: every kind round-trips with
+`ravnix-link-tests` runs 88 tests. The protocol: every kind round-trips with
 spaces, umlauts and an en dash in its paths; a 10 MB body, a line of 64 KiB
 and one byte, NUL, control characters, invalid UTF-8, lone surrogates,
 unknown keys and kinds, a key twice, deep nesting, trailing bytes, bad IDs
@@ -321,6 +325,8 @@ behind a failed or a waiting Obsidian request, a commit that waits for the
 sync and one that gives up waiting, a path git does not know and one that a
 late sync brings, a hook (one naming an agent or a signature among them)
 or an ignored path that refuses it at once, from git add or git commit, a
+file git may not index (mode 000, a nested repository), a retry across a
+flush before the late sync, a drop that retires the operation, a
 refusal with HEAD moved, a lock, an agent, a signature, a full disk, a
 rebase or a file the sync replaced that it is tried again for, one recorded retry that had landed, `drop`, a commit
 cut off before and after git ran, nothing to commit, a commit that fails
@@ -388,6 +394,11 @@ Findings that are not fixed, so nobody mistakes them for covered.
   thousand. A `retry` record lives up to a day, so another commit with the
   same message in that span, made by hand or by another tool, would count,
   too.
+- A commit retried for a path an Obsidian operation was to bring says
+  only git's pathspec error in `status`, not which operation it waits
+  for. When that operation will never show (the note was renamed again on
+  the laptop before the sync), `drop` releases the commit and the
+  operation.
 - Whether git's refusal is for good is read from git's own words, listed
   above. A hook that prints one of those phrases is tried again, for a
   day; any other refusal with HEAD unchanged fails at once.
