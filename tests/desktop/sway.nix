@@ -70,6 +70,8 @@ let
       };
     }
   ];
+  # NixOS's bus-id type also takes the domain form.
+  huginnDomain = huginnOf [ { hardware.nvidia.prime.amdgpuBusId = lib.mkForce "PCI:54@0:0:0"; } ];
   huginnBadId = huginnOf [ { hardware.nvidia.prime.amdgpuBusId = lib.mkForce "PCI:300:0:0"; } ];
   huginnByHand = huginnOf [ { ravnix.desktop.gpu.primary = "0000:05:00.0"; } ];
   # The proprietary driver on a host that is not huginn, and PRIME on one
@@ -114,6 +116,20 @@ let
     [ "PCI:0:31:7" "0000:00:1f.7" ] # the highest device and function
     [ "PCI:054:0:0" "0000:36:00.0" ] # a leading zero is still decimal
     [ "pci:54:0:0" "0000:36:00.0" ]
+    # The domain form NixOS's bus-id type takes too: PCI:bus@domain:device:function.
+    [ "PCI:54@0:0:0" "0000:36:00.0" ]
+    [ "PCI:54@1:0:0" "0001:36:00.0" ]
+    [ "PCI:0@10:0:0" "000a:00:00.0" ] # a domain above 9
+    [ "PCI:0@16:2:0" "0010:00:02.0" ] # above 15
+    [ "PCI:0@255:0:0" "00ff:00:00.0" ]
+    [ "PCI:0@65535:31:7" "ffff:00:1f.7" ] # the highest of everything
+    [ "PCI:54@0001:0:0" "0001:36:00.0" ] # a leading zero is still decimal
+    [ "PCI:0@65536:0:0" null ]
+    [ "PCI:0@:0:0" null ]
+    [ "PCI:@0:0:0" null ]
+    [ "PCI:54@a:0:0" null ]
+    [ "PCI:54@0@0:0:0" null ]
+    [ "PCI:54@000000:0:0" null ]
     [ "PCI:256:0:0" null ]
     [ "PCI:0:32:0" null ]
     [ "PCI:0:0:8" null ]
@@ -433,6 +449,7 @@ let
     ++ lib.optional (huginn.config.ravnix.desktop.gpu.primary != "0000:36:00.0") "huginn: gpu.primary is not taken from amdgpuBusId PCI:54:0:0 (it is ${toString huginn.config.ravnix.desktop.gpu.primary})"
     ++ lib.optional (gpuWarnings huginn != [ ]) "huginn: the GPU warning is shown though the address is known"
     ++ lib.optional (huginnIntel.config.ravnix.desktop.gpu.primary != "0000:00:02.0") "gpu.primary is not taken from intelBusId when there is no amdgpuBusId"
+    ++ lib.optional (huginnDomain.config.ravnix.desktop.gpu.primary != "0000:36:00.0" || gpuWarnings huginnDomain != [ ]) "gpu.primary is not taken from a bus id in the domain form PCI:54@0:0:0, or warns about it"
     ++ lib.optional (huginnNoIds.config.ravnix.desktop.gpu.primary != null) "gpu.primary is set without a bus id"
     ++ lib.optional (gpuWarnings huginnNoIds == [ ]) "PRIME is on and gpu.primary is null, and nothing warns"
     ++ lib.optional (huginnBadId.config.ravnix.desktop.gpu.primary != null || gpuWarnings huginnBadId == [ ]) "a bus id out of range is taken or not warned about"

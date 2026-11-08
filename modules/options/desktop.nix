@@ -94,8 +94,8 @@ in
       default = if primeBusId == "" then null else pci.fromBusId primeBusId;
       defaultText = lib.literalMD ''
         `hardware.nvidia.prime.amdgpuBusId`, or `intelBusId` when there is no
-        AMD one, converted from NixOS's decimal `PCI:54:0:0` to `0000:36:00.0`;
-        null when neither is set or the id is not of that form
+        AMD one, converted from NixOS's decimal `PCI:54:0:0` (or `PCI:54@0:0:0`)
+        to `0000:36:00.0`; null when neither is set or the id is not of that form
       '';
       internal = true;
       example = "0000:00:02.0";
