@@ -340,13 +340,18 @@ let
         # The template's values are placeholders and warn about it.
         warnings = lib.mkForce [ ];
 
-        # Two queues: one whose printer is a socket the test listens on,
-        # raw so that no driver is needed, and one whose printer is not
+        # Three queues: one whose printer is a socket the test listens on,
+        # raw so that no driver is needed, and two whose printers are not
         # there, which must neither fail the boot nor stop the first queue.
+        # "away" is a refused port. "nobody" is a DNS-SD name nothing on the
+        # network answers to, which is what both real printers are when the
+        # laptop is away from home: it takes the resolver path, and the unit
+        # is wanted by multi-user.target, so every boot there waits for it.
         # "away" sorts before "desk", so a failure there comes first.
         ravnix.printing = {
           printers = lib.mkForce {
             away.uri = "ipp://127.0.0.1:1/ipp/print";
+            nobody.uri = "dnssd://Nobody._ipp._tcp.local/";
             desk = {
               uri = "socket://127.0.0.1:9100";
               model = "raw";
@@ -401,6 +406,7 @@ let
 
     testScript = ''
       import shlex
+      import time
 
       def login(cmd):
         # A login shell, so that the session variables of SANE are set.
@@ -427,10 +433,27 @@ let
 
       with subtest("a printer that is not there neither fails the unit nor stops the others"):
         machine.fail("lpstat -p away")
+        machine.fail("lpstat -p nobody")
         assert machine.succeed("systemctl show -p Result --value ravnix-printers").strip() == "success"
         machine.succeed("systemctl is-active cups.socket")
         journal = machine.succeed("journalctl -u ravnix-printers --no-pager")
-        assert "away" in journal and "could not" in journal, journal
+        assert "away" in journal and "nobody" in journal and "could not" in journal, journal
+        # The boot waited for the unit, so how long it ran is how long a boot
+        # away from home is held up: the DNS-SD name is given up on in seconds.
+        ran = machine.succeed("systemctl show -p ExecMainStartTimestampMonotonic -p ExecMainExitTimestampMonotonic ravnix-printers").split()
+        stamps = dict(item.split("=") for item in ran)
+        seconds = (int(stamps["ExecMainExitTimestampMonotonic"]) - int(stamps["ExecMainStartTimestampMonotonic"])) / 1e6
+        print("ravnix-printers ran for", seconds, "seconds at boot")
+        assert 0 < seconds < 60, seconds
+
+      with subtest("a run with the DNS-SD printer away succeeds, and in seconds"):
+        start = time.monotonic()
+        machine.succeed("systemctl start ravnix-printers.service")
+        took = time.monotonic() - start
+        print("ravnix-printers took", took, "seconds")
+        assert machine.succeed("systemctl show -p Result --value ravnix-printers").strip() == "success"
+        assert took < 60, took
+        machine.fail("lpstat -p nobody")
 
       with subtest("a job reaches the printer"):
         machine.succeed("echo 'hello from huginn' | lp -d desk -o raw")
@@ -455,7 +478,9 @@ let
         script = machine.succeed("grep -l ravnix-printers.service /etc/NetworkManager/dispatcher.d/*").split()[0]
         machine.succeed(script + " eth0 up")
         machine.wait_until_succeeds("lpstat -p desk")
-        assert "system default destination: desk" in machine.succeed("lpstat -d")
+        # The default is set after the last queue was tried, and "nobody" takes
+        # its seconds to give up on.
+        machine.wait_until_succeeds("lpstat -d | grep -q 'system default destination: desk'")
         # Any other event does nothing.
         machine.succeed("lpadmin -x desk")
         machine.succeed(script + " eth0 down")
