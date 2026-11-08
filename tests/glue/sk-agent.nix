@@ -135,6 +135,10 @@ pkgs.testers.runNixOSTest {
         self.nixosModules.server
       ];
       ravnix.shape = "server";
+      # The test framework gives root an empty password, for a console login
+      # when the test runs interactively; the server shape refuses a root
+      # password, and the driver needs none.
+      users.users.root.hashedPasswordFile = lib.mkForce null;
       # Another account on muninn, which must not reach the forwarded agent.
       users.users.other.isNormalUser = true;
       ravnix.server.remoteControlDir = lib.mkForce null;

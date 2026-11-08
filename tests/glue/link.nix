@@ -86,6 +86,10 @@ pkgs.testers.runNixOSTest {
         self.nixosModules.server
       ];
       ravnix.shape = "server";
+      # The test framework gives root an empty password, for a console login
+      # when the test runs interactively; the server shape refuses a root
+      # password, and the driver needs none.
+      users.users.root.hashedPasswordFile = lib.mkForce null;
       ravnix.link.vault = lib.mkForce "${home}/vault";
       # The agent that signs the vault's commits, as the agent's module
       # gives its socket to the user manager (Task 4.3).
