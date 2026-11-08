@@ -34,6 +34,8 @@ a kernel name such as nvme0n1. It writes nothing, anywhere.
                      from FILE instead of running lsblk
   --by-id DIR        where the links are (default: ` + DEFAULT_BY_ID + `)
 
+The last two are for tests: each says on standard error that it is used.
+
 Exit status: 0 the disk is found and free, and its path printed; 1 no single
 disk matches, or the device list or the links cannot be read or disagree;
 2 the disk is mounted or held; 3 bad usage. Only exit 0 prints a path.`
@@ -106,6 +108,18 @@ run :: proc(args: []string, lsblk := LSBLK, stdout: ^os.File = nil, stderr: ^os.
 	}
 	if why := check_value(serial); why != "" {
 		return usage_error(errf, "--serial %s", why)
+	}
+
+	// A test seam decides on what a file says instead of on the live system,
+	// so it says so first, one line each, before anything is read: whoever
+	// passes one by mistake sees it at the top. The name is quoted, so the
+	// line stays one line. --by-id naming /dev/disk/by-id itself reads the
+	// live links, and says nothing.
+	if has_json {
+		fmt.fprintfln(errf, "ravnix-disk-guard: --lsblk-json: the disks are read from %q, not from lsblk on the live system", lsblk_json)
+	}
+	if has_by_id && strings.trim_right(by_id, "/") != DEFAULT_BY_ID {
+		fmt.fprintfln(errf, "ravnix-disk-guard: --by-id: the links are read from %q, not from /dev/disk/by-id on the live system", by_id)
 	}
 
 	data: []u8

@@ -73,6 +73,21 @@ lsblk_printing :: proc(path: string) -> string {
 	})
 }
 
+// The line --lsblk-json prints on standard error, for the file at path,
+// which holds nothing to escape.
+lsblk_json_line :: proc(path: string) -> string {
+	return strings.concatenate({"ravnix-disk-guard: --lsblk-json: the disks are read from \"", path, "\", not from lsblk on the live system\n"})
+}
+
+// The line --by-id prints on standard error, for the directory dir, which
+// holds nothing to escape.
+by_id_line :: proc(dir: string) -> string {
+	return strings.concatenate({"ravnix-disk-guard: --by-id: the links are read from \"", dir, "\", not from /dev/disk/by-id on the live system\n"})
+}
+
+JSON_SAYS :: "ravnix-disk-guard: --lsblk-json:"
+BY_ID_SAYS :: "ravnix-disk-guard: --by-id:"
+
 @(test)
 print_device_prints_only_the_path :: proc(t: ^testing.T) {
 	dir := scratch_dir(t)
@@ -104,7 +119,14 @@ without_print_device_it_says_what_it_found :: proc(t: ^testing.T) {
 	defer ran_destroy(r)
 	testing.expect_value(t, r.code, 0)
 	testing.expectf(t, strings.contains(r.out, TARGET_LINK) && strings.contains(r.out, "nvme0n1"), "stdout: %s", r.out)
-	testing.expect_value(t, r.err, "")
+	// Standard error holds the two seams' lines and nothing else.
+	json_says := lsblk_json_line(TODAY_PATH)
+	defer delete(json_says)
+	by_id_says := by_id_line(by_id)
+	defer delete(by_id_says)
+	want := strings.concatenate({json_says, by_id_says})
+	defer delete(want)
+	testing.expect_value(t, r.err, want)
 }
 
 @(test)
@@ -122,6 +144,99 @@ swapped_names_print_the_same_path :: proc(t: ^testing.T) {
 	testing.expect_value(t, r.code, 0)
 	testing.expect_value(t, r.out, want)
 	testing.expectf(t, strings.contains(r.err, "nvme1n1"), "stderr: %s", r.err)
+}
+
+// A test seam decides on a file instead of the live system, so it says so,
+// once, before anything else, whenever it is used: an operator who passes
+// one by mistake sees it in the guard's first line.
+@(test)
+each_test_seam_says_it_is_used :: proc(t: ^testing.T) {
+	dir := scratch_dir(t)
+	defer delete(dir)
+	defer os.remove_all(dir)
+	by_id := make_links(t, dir, today_links[:])
+	defer delete(by_id)
+	json_says := lsblk_json_line(TODAY_PATH)
+	defer delete(json_says)
+	by_id_says := by_id_line(by_id)
+	defer delete(by_id_says)
+	both := strings.concatenate({json_says, by_id_says})
+	defer delete(both)
+	body := lsblk_printing(TODAY_PATH)
+	defer delete(body)
+	lsblk := fake_lsblk(t, dir, body)
+	defer delete(lsblk)
+
+	// Both, in either order: the file's line, then the directory's, then the
+	// verdict, and no seam line twice.
+	orders := [][]string{
+		{"--model", MODEL, "--serial", SERIAL, "--print-device", "--lsblk-json", TODAY_PATH, "--by-id", by_id},
+		{"--by-id", by_id, "--lsblk-json", TODAY_PATH, "--print-device", "--serial", SERIAL, "--model", MODEL},
+	}
+	for args in orders {
+		r := run_guard(t, dir, args)
+		testing.expectf(t, r.code == 0, "%v: exit %d: %s", args, r.code, r.err)
+		testing.expectf(t, strings.has_prefix(r.err, both), "%v: stderr: %s", args, r.err)
+		testing.expectf(t, strings.count(r.err, "live system") == 2, "%v: stderr: %s", args, r.err)
+		ran_destroy(r)
+	}
+
+	// --by-id alone, with lsblk run: its line only.
+	r := run_guard(t, dir, {"--model", MODEL, "--serial", SERIAL, "--print-device", "--by-id", by_id}, lsblk)
+	testing.expectf(t, r.code == 0, "exit %d: %s", r.code, r.err)
+	testing.expectf(t, strings.has_prefix(r.err, by_id_says), "stderr: %s", r.err)
+	testing.expectf(t, !strings.contains(r.err, JSON_SAYS), "stderr: %s", r.err)
+	ran_destroy(r)
+
+	// --lsblk-json alone: its line only. The links are then read from
+	// /dev/disk/by-id, which has none of the fixture's made-up disk, or is
+	// not there at all in the build sandbox, so the guard refuses.
+	r = run_guard(t, dir, {"--model", MODEL, "--serial", SERIAL, "--print-device", "--lsblk-json", TODAY_PATH})
+	expect_refusal(t, r, 1, "")
+	testing.expectf(t, strings.has_prefix(r.err, json_says), "stderr: %s", r.err)
+	testing.expectf(t, !strings.contains(r.err, BY_ID_SAYS), "stderr: %s", r.err)
+	ran_destroy(r)
+
+	// --by-id naming /dev/disk/by-id itself reads the live links: no line.
+	for live in ([]string{"/dev/disk/by-id", "/dev/disk/by-id/", "/dev/disk/by-id//"}) {
+		r = run_guard(t, dir, {"--model", MODEL, "--serial", SERIAL, "--lsblk-json", TODAY_PATH, "--by-id", live})
+		testing.expectf(t, r.code == 1, "%s: exit %d", live, r.code)
+		testing.expectf(t, strings.has_prefix(r.err, json_says), "%s: stderr: %s", live, r.err)
+		testing.expectf(t, !strings.contains(r.err, BY_ID_SAYS), "%s: stderr: %s", live, r.err)
+		ran_destroy(r)
+	}
+
+	// The line comes first even when the file cannot be read.
+	missing := strings.concatenate({dir, "/no-such.json"})
+	defer delete(missing)
+	missing_says := lsblk_json_line(missing)
+	defer delete(missing_says)
+	r = run_guard(t, dir, {"--model", MODEL, "--serial", SERIAL, "--print-device", "--lsblk-json", missing, "--by-id", by_id})
+	expect_refusal(t, r, 1, "cannot read")
+	testing.expectf(t, strings.has_prefix(r.err, missing_says), "stderr: %s", r.err)
+	ran_destroy(r)
+
+	// A name with a newline is quoted: the line stays one line.
+	newline := strings.concatenate({dir, "/a\nb.json"})
+	defer delete(newline)
+	newline_says := strings.concatenate({`ravnix-disk-guard: --lsblk-json: the disks are read from "`, dir, `/a\nb.json", not from lsblk on the live system` + "\n"})
+	defer delete(newline_says)
+	r = run_guard(t, dir, {"--model", MODEL, "--serial", SERIAL, "--print-device", "--lsblk-json", newline, "--by-id", by_id})
+	expect_refusal(t, r, 1, "cannot read")
+	testing.expectf(t, strings.has_prefix(r.err, newline_says), "stderr: %s", r.err)
+	ran_destroy(r)
+
+	// Neither: lsblk and /dev/disk/by-id, and no seam line.
+	r = run_guard(t, dir, {"--model", MODEL, "--serial", SERIAL, "--print-device"}, lsblk)
+	expect_refusal(t, r, 1, "")
+	testing.expectf(t, !strings.contains(r.err, "live system"), "stderr: %s", r.err)
+	ran_destroy(r)
+
+	// Bad usage is refused before any seam is used: the usage error alone.
+	r = run_guard(t, dir, {"--model", MODEL, "--lsblk-json", TODAY_PATH, "--by-id", by_id})
+	expect_refusal(t, r, 3, "give --model and --serial")
+	testing.expectf(t, !strings.contains(r.err, "live system"), "stderr: %s", r.err)
+	ran_destroy(r)
 }
 
 // expect_refusal checks that a run exited code, printed nothing on standard

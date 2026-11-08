@@ -50,7 +50,18 @@ printing any other disk's serial.
 
 `--lsblk-json FILE` reads lsblk's output from a file instead of running
 lsblk, and `--by-id DIR` reads the links from another directory; the tests
-and the bench use both.
+and the bench use both. Neither decides on the live system, so each one
+used says so on standard error, one line each and before anything is read,
+where whoever passed one by mistake sees it first:
+
+```
+ravnix-disk-guard: --lsblk-json: the disks are read from "FILE", not from lsblk on the live system
+ravnix-disk-guard: --by-id: the links are read from "DIR", not from /dev/disk/by-id on the live system
+```
+
+The name is quoted, so the line stays one line whatever it holds. `--by-id
+/dev/disk/by-id`, with or without a trailing slash, reads the live links and
+prints no line.
 
 ## How the install uses it
 
@@ -84,8 +95,10 @@ like links, in reverse order, a partition link pointing elsewhere, a missing
 or unreadable directory, a trailing slash; the command's every exit code and
 what it prints where, 17 kinds of bad usage, an lsblk that fails, is killed,
 prints nothing, garbage, an empty list or more than 4 MiB, is missing or not
-executable, and the columns and environment it gets; and eight threads
-deciding at once.
+executable, and the columns and environment it gets; the line each test
+seam prints, alone, together, in either order, before a refusal, for a name
+with a newline, and its absence without a seam, for `--by-id
+/dev/disk/by-id` and on bad usage; and eight threads deciding at once.
 
 `tests/laptop/disko.nix` runs the guard and disko in a VM with two QEMU
 NVMe disks of one model, and checks that the disk to keep comes out of it
