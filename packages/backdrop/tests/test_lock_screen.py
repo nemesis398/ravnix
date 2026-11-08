@@ -19,6 +19,9 @@ LOCK_SCREEN_WRAPPED = [os.environ.get("LOCK_SCREEN_WRAPPED") or LOCK_SCREEN[0]]
 TOOLS = ["bash", "sh", "cat", "env", "id", "pgrep", "setsid", "sleep", "tail", "timeout", "dirname"]
 
 
+DAEMON_NAMES = ["swaylock", ".swaylock-wrapped"]
+
+
 @pytest.fixture
 def locker(lab):
     for tool in TOOLS:
@@ -27,10 +30,14 @@ def locker(lab):
         link = lab.stubs / tool
         if not link.exists():
             link.symlink_to(target)
-    daemon = lab.root / "daemon"
-    daemon.mkdir()
-    shutil.copy2(BASH, daemon / "swaylock")
-    lab.extra_env.update(PATH=str(lab.stubs), STUB_DAEMON=str(daemon / "swaylock"))
+    # The daemon swaylock -f leaves, as a copy of bash that has its name: on
+    # NixOS swaylock is a wrapper that execs .swaylock-wrapped, which the
+    # kernel names .swaylock-wrapp, so both are tried.
+    lab.daemons = lab.root / "daemon"
+    lab.daemons.mkdir()
+    for name in DAEMON_NAMES:
+        shutil.copy2(BASH, lab.daemons / name)
+    lab.extra_env.update(PATH=str(lab.stubs), STUB_DAEMON=str(lab.daemons / "swaylock"))
     return lab
 
 
@@ -146,10 +153,11 @@ def test_without_an_image_one_failed_attempt_is_all(locker):
     assert backdrop_calls(locker) == []
 
 
-def test_the_wallpaper_is_redrawn_once_after_the_unlock(locker):
+@pytest.mark.parametrize("daemon", DAEMON_NAMES)
+def test_the_wallpaper_is_redrawn_once_after_the_unlock(locker, daemon):
     serving(locker)
     start = time.monotonic()
-    proc = lock(locker, STUB_LOCK_SECONDS="3")
+    proc = lock(locker, STUB_LOCK_SECONDS="3", STUB_DAEMON=str(locker.daemons / daemon))
     assert proc.returncode == 0
     assert time.monotonic() - start < 2.5, "lock-screen waited for the unlock"
     assert backdrop_calls(locker) == [], "redrawn before the unlock"

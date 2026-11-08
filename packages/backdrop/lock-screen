@@ -19,7 +19,10 @@ swaylock -f "${args[@]}" || { ((${#args[@]})) && swaylock -f; } || exit 1
 # unlock. Wait for that in the background, so swayidle's before-sleep is not held.
 # Only a call that locked gets here (a second lock while locked fails above), so
 # one unlock redraws the wallpaper once.
-if backdrop=$(command -v backdrop) && pid=$(pgrep -nxu "$(id -u)" swaylock); then
+# The daemon's process name is swaylock, or on NixOS, where swaylock is a
+# wrapper that execs .swaylock-wrapped, that name cut to the kernel's 15
+# characters.
+if backdrop=$(command -v backdrop) && pid=$(pgrep -nxu "$(id -u)" 'swaylock|\.swaylock-wrapp'); then
   # The single quotes are meant: the inner sh expands $1 and $2.
   # shellcheck disable=SC2016
   setsid -f sh -c 'tail --pid="$1" -f /dev/null; exec "$2" wallpaper' sh "$pid" "$backdrop" \
