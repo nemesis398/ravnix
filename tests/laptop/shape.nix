@@ -119,7 +119,7 @@ let
     ++ check (!has initrdModules "nouveau") "nouveau is in the initrd"
     ++ check (has c.boot.kernelModules "kvm-amd") "no kvm-amd"
 
-    # The initrd finds the Samsung on the laptop and in QEMU, where the disk
+    # The initrd finds the NVMe disk on the laptop and in QEMU, where the disk
     # is passed through as a virtio device.
     ++ lib.concatMap (m: check (has initrdModules m) "the initrd lacks ${m}") [
       "nvme"

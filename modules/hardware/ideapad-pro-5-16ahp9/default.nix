@@ -1,5 +1,5 @@
-# The Lenovo IdeaPad Pro 5 16AHP9 with the Ryzen 7 7840HS: its Radeon 780M
-# drives the panel and the desktop, and its RTX 4050 renders only what is
+# The Lenovo IdeaPad Pro 5 16AHP9 with the Ryzen 7 8845HS (Hawk Point): its
+# Radeon 780M drives the panel and the desktop, and its RTX 4050 renders only what is
 # started through `prime-run`, and is powered off (D3cold) the rest of the
 # time. The private flake imports this beside nixosModules.laptop.
 # Task 3.4 adds the power, battery, panel and NVIDIA suspend modules of this
@@ -80,7 +80,7 @@
     ];
     kernelModules = [ "kvm-amd" ];
     initrd.availableKernelModules = [
-      # The Samsung NVMe, and a keyboard or the YubiKey on USB or a USB4 dock
+      # The NVMe disk, and a keyboard or the YubiKey on USB or a USB4 dock
       # at the passphrase prompt.
       "nvme"
       "xhci_pci"
