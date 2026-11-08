@@ -52,9 +52,9 @@ to prove it.
 * systemd user units do not see home-manager's session variables. Processes
   that Sway starts do (the Sway wrapper reads
   `/etc/profiles/per-user/$USER/etc/profile.d/hm-session-vars.sh`). The units
-  get only the three variables of `systemd.user.sessionVariables` in
-  `sway.nix`; a unit that needs `QT_QPA_PLATFORMTHEME` would have to be given
-  it there.
+  get only the two variables of `systemd.user.sessionVariables` in
+  `sway.nix` (the Bitwarden SSH agent socket and `GTK_IM_MODULE`); a unit that
+  needs `QT_QPA_PLATFORMTHEME` would have to be given it there.
 
 ## Review findings left as they are, with the reason
 
@@ -76,10 +76,9 @@ to prove it.
   another power daemon, it overrides that line.
 * **`CLAUDE_CODE_DISABLE_ARTIFACT`** was set in this module's
   `systemd.user.sessionVariables` and is gone. It belongs to the Claude Code
-  module, and in the old place it reached only systemd user units, not the
-  terminals that run Claude Code, which here run on the server. If it is wanted,
-  `home.sessionVariables.CLAUDE_CODE_DISABLE_ARTIFACT = "1"` goes next to
-  `DISABLE_AUTOUPDATER` in `modules/common/claude-code.nix`.
+  module, and main already sets it there (`modules/common/claude-code.nix`, in
+  both `home.sessionVariables` and `systemd.user.sessionVariables`), so the
+  shell and the user manager have it; this module needs nothing.
 
 ## Review findings fixed in a way worth knowing
 
