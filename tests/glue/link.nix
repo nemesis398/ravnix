@@ -196,8 +196,9 @@ pkgs.testers.runNixOSTest {
     muninn.wait_for_unit("sshd.service")
 
     with subtest("huginn's user reaches muninn over ssh"):
-        # The key goes in at run time: a keyFiles option would read it while
-        # the test is evaluated.
+        # The public half is muninn's in its configuration
+        # (users.users.<user>.openssh.authorizedKeys.keys); only the private
+        # half goes in at run time, into huginn's ~/.ssh.
         as_user(huginn, "install -D -m 600 ${snakeoil.snakeOilEd25519PrivateKey} ~/.ssh/id_ed25519")
         as_user(huginn, "ssh muninn true")
 
