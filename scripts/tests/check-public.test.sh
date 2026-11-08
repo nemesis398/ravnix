@@ -328,6 +328,24 @@ a_name_hit_names_the_list_line() {
 	expect_lines 1
 }
 
+the_summary_names_the_list_by_its_file_name_and_never_its_path() {
+	# The path of the list can hold entries itself (a directory named after
+	# the user, say), and the summary goes where the hit lines go.
+	new_tree 'alice'
+	put a.md 'alice\n'
+	run_check "$list" .
+	expect_status 1
+	expect_err "1 hit"
+	expect_err "deny list deny-list.txt "
+	expect_no_err "${list%/*}"
+	put b.md 'alice again\n'
+	run_check "$list" .
+	expect_status 1
+	expect_err "2 hits"
+	expect_err "deny list deny-list.txt "
+	expect_no_err "${list%/*}"
+}
+
 # A made-up rg that records how it was called and then runs the real one, or
 # fails when RG_FAIL is set. For each --file it notes the directory of the
 # file and the modes of both. The caller puts fake_bin first on the PATH and
@@ -675,6 +693,7 @@ tests=(
 	a_hit_names_the_list_line_and_never_prints_the_entry
 	a_link_hit_names_the_list_line_and_never_prints_the_entry
 	a_name_hit_names_the_list_line
+	the_summary_names_the_list_by_its_file_name_and_never_its_path
 	the_entries_stay_off_the_command_line_and_in_a_private_file
 	the_private_directory_is_removed_when_the_search_fails
 )

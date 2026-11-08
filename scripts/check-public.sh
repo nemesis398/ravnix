@@ -13,7 +13,11 @@
 # and reports, and the entries are the values the list keeps out of them. For
 # the same reason they are never put on a command line, where any local user
 # could read them: they reach rg as files, in a directory of the owner's alone
-# that is removed when the check ends.
+# that is removed when the check ends, and the summary line names the list by
+# its file name, since its path can hold an entry. Two things a hit does
+# show: the path of a file that holds an entry in its name (it is the file's
+# own, and the hit is about it), so a value that could be a file name is not
+# one to list; and the text of nothing else.
 #
 # Usage: check-public.sh DENY_LIST [PATH...]
 #
@@ -58,6 +62,7 @@ die() {
 (($# >= 1)) || usage
 [[ "$1" != -* ]] || usage
 list="$1"
+listname="${list##*/}"
 shift
 paths=("$@")
 ((${#paths[@]} > 0)) || paths=(.)
@@ -67,7 +72,6 @@ command -v rg >/dev/null 2>&1 || die "rg not found; install ripgrep."
 
 entries=()    # the literals
 entry_line=() # the line of each in the list
-listname="${list##*/}"
 lineno=0
 while IFS= read -r line || [[ -n "$line" ]]; do
 	lineno=$((lineno + 1))
@@ -224,9 +228,9 @@ check_strings link links "${targets[@]}"
 printf '%s\n' "${hits[@]}"
 if ((${#hits[@]} == 1)); then
 	printf '%s: 1 hit: a value from the deny list %s is in the files above (the last number is its line in the list)\n' \
-		"$prog" "$list" >&2
+		"$prog" "$listname" >&2
 else
 	printf '%s: %d hits: values from the deny list %s are in the files above (the last number is the line in the list)\n' \
-		"$prog" "${#hits[@]}" "$list" >&2
+		"$prog" "${#hits[@]}" "$listname" >&2
 fi
 exit 1
