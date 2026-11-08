@@ -18,7 +18,10 @@ directories in it: `profile/`, whose `Default/Preferences` mark the extension
 the server and the browser. The profile is per launch because a second browser
 on a shared profile refuses to start. The wrapper passes `TERM`, `INT` and `HUP`
 on to the server, removes the directory when the server ends, and removes the
-directories of wrappers that were killed (their PID is in the name).
+directories of wrappers that were killed (their PID is in the name). A third
+file, `owner`, holds the boot id and the start time of the wrapper, so that a
+leftover from before a reboot, or one whose PID went to another process, is
+recognized as gone and not taken for a running launch.
 
 ## Changed from the original
 
@@ -67,8 +70,9 @@ directories of wrappers that were killed (their PID is in the name).
   at once, and only from the directory that launch uses. A `TMPDIR` that changes
   between launches (short, then long) leaves the first directory's launch
   until a launch uses that directory again.
-- A wrapper whose PID was reused by an unrelated process keeps its dead launch
-  until that process ends.
+- A launch with no usable `owner` file (one an older wrapper made, or one whose
+  wrapper stopped between making the directory and writing the file) goes by the
+  PID in its name alone, and stays while a process has that PID.
 - The sweep skips what is not a directory of the user's own (`stat` does not
   follow a link, so a link another user planted in `/tmp` is left alone, and a
   failing removal only prints a line). The tests cover a link of the user's own

@@ -64,6 +64,15 @@
 # is taken in the C locale). It says on stderr why it passes one over.
 # Directories in a place the wrapper passed over this time are not swept.
 #
+# Whose launch it is. The wrapper writes owner into the launch: the boot id and
+# its own start time (field 22 of /proc/PID/stat). The sweep takes a launch for
+# gone when its boot is another one, or when the process with that PID started
+# at another time, so a PID that means something else after a reboot, or after
+# the number was handed on, does not keep a leftover alive. /tmp is on disk on
+# ravnix hosts, and a leftover from a crash or a power loss survives the boot.
+# A launch with no usable owner file (one an older wrapper made, or one whose
+# wrapper stopped before it wrote the file) goes by the PID in its name alone.
+#
 # A stop signal (TERM, INT, HUP) is recorded from the first line on, because
 # one that comes before the server exists would otherwise end the wrapper by
 # default, and the exit trap would remove the launch from under a server that
@@ -107,6 +116,27 @@ bytes() {
     printf '%s' "${#1}"
 }
 
+# The start time of process $1 in clock ticks since boot: field 22 of
+# /proc/PID/stat, counted after the command name (which may hold spaces and
+# parentheses). Empty when there is no such process.
+starttime() {
+    local stat fields
+    stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+    read -ra fields <<<"${stat##*) }"
+    printf '%s' "${fields[19]:-}"
+}
+
+# Is the launch in $1, whose name holds the PID $2, still in use?
+in_use() {
+    local boot start
+    if read -r boot start <"$1/owner" 2>/dev/null &&
+        [[ $boot =~ ^[0-9a-f-]+$ && $start =~ ^[0-9]+$ ]]; then
+        [[ $boot == "$boot_id" && $(starttime "$2") == "$start" ]]
+        return
+    fi
+    [[ $2 =~ ^[0-9]+$ ]] && kill -0 "$2" 2>/dev/null
+}
+
 browser=${CHROME_DEVTOOLS_HELIUM:-$DEFAULT_BROWSER}
 
 if [[ ! -f $browser || ! -x $browser ]]; then
@@ -144,15 +174,18 @@ fi
 export CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1
 unset PUPPETEER_DANGEROUS_NO_SANDBOX CHROME_DEVEL_SANDBOX
 
+boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+
 # Remove the directories of wrappers that are gone. Only ours: stat does not
-# follow a link, so a link someone else made is not taken for ours. kill -0
-# also fails for a PID that now belongs to another user, and the directory is
-# ours either way. A directory that cannot be removed does not stop the launch.
+# follow a link, so a link someone else made is not taken for ours. in_use
+# looks at the process by its start time, so a PID of another user's process
+# is no better than a PID of ours; the directory is ours either way. A
+# directory that cannot be removed does not stop the launch.
 for old in "$tmp/$PREFIX"*; do
     [[ -d $old && $(stat -c %u -- "$old" 2>/dev/null || true) == "$EUID" ]] || continue
     pid=${old##*/"$PREFIX"}
     pid=${pid%%.*}
-    if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    if in_use "$old" "$pid"; then
         continue
     fi
     rm -rf -- "$old" || echo "chrome-devtools-mcp-helium: could not remove $old" >&2
@@ -164,6 +197,9 @@ mkdir -m 700 -- "$launch/profile" "$launch/t"
 mkdir -- "$launch/profile/Default"
 printf '{"extensions":{"settings":{"%s":{"disable_reasons":[1]}}}}\n' "$UBO" \
     >"$launch/profile/Default/Preferences"
+if [[ -n $boot_id ]]; then
+    printf '%s %s\n' "$boot_id" "$(starttime "$$")" >"$launch/owner"
+fi
 export TMPDIR=$launch/t
 
 # In the background so a stop signal can be passed on and the directory still

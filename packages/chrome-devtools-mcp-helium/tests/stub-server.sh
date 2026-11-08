@@ -23,6 +23,15 @@ count_entries() {
 	echo "${#entries[@]}"
 }
 
+# Field 22 of /proc/PID/stat, the start time of PID in clock ticks since boot
+# (counted after the command name, which may hold spaces and parentheses).
+starttime() {
+	local stat fields
+	stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+	read -ra fields <<<"${stat##*) }"
+	printf '%s' "${fields[19]:-}"
+}
+
 prev=
 dir=
 for a in "$@"; do
@@ -37,6 +46,8 @@ done
 	printf 'noupdate:%s\n' "${CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS-unset}"
 	printf 'nosandbox:%s\n' "${PUPPETEER_DANGEROUS_NO_SANDBOX-unset}"
 	printf 'sandboxhelper:%s\n' "${CHROME_DEVEL_SANDBOX-unset}"
+	printf 'owner:%s\n' "$(cat -- "${dir%/*}/owner" 2>/dev/null || echo none)"
+	printf 'wrapperstart:%s\n' "$(starttime "$PPID")"
 	printf 'mode:%s\n' "$(stat -c %a -- "$dir" 2>/dev/null || true)"
 	printf 'launchmode:%s\n' "$(stat -c %a -- "${dir%/*}" 2>/dev/null || true)"
 	printf 'tmpmode:%s\n' "$(stat -c %a -- "${TMPDIR-/nonexistent}" 2>/dev/null || true)"

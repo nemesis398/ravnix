@@ -6,10 +6,11 @@
 # the rest cover what the port changed (the server and the browser are store
 # paths, no npx; a directory of its own for every launch, with a TMPDIR in it)
 # and the edge cases that are cheap to hit: odd arguments and paths, a link or
-# a stuck directory among the old launches, two wrappers at once, every stop
-# signal (also one that comes before the server has started), a server that is
-# killed, a TMPDIR that is unusable in each way, an
-# environment that would switch the browser's sandbox off.
+# a stuck directory among the old launches, a launch from before the boot or
+# whose PID went to another process, two wrappers at once, every stop signal
+# (also one that comes before the server has started), a server that is killed,
+# a TMPDIR that is unusable in each way, an environment that would switch the
+# browser's sandbox off.
 #
 # The server is a stand-in (stub-server.sh) and so is the browser, because the
 # wrapper only checks that the browser is executable. The check
@@ -88,6 +89,15 @@ run() {
 	capture "${wenv[@]}" "$UNDER_TEST" "$@" <"$stdin"
 	dir="$(sed -n 's/^dir://p' "$log" | head -n 1)"
 	launch="${dir%/profile}"
+}
+
+# The start time of process $1 in clock ticks since boot: field 22 of
+# /proc/PID/stat, counted after the command name.
+starttime() {
+	local stat fields
+	stat=$(cat "/proc/$1/stat")
+	read -ra fields <<<"${stat##*) }"
+	printf '%s' "${fields[19]}"
 }
 
 # A PID that is gone: the PID of a process that has ended and been waited for.
@@ -733,6 +743,69 @@ a_stop_during_the_sweep_is_passed_on_when_the_server_exists() {
 	expect_empty "$sb/t"
 }
 
+# The wrapper writes whose launch it is: the boot and its own start time. A PID
+# alone says nothing after a reboot, or once the number went to another process.
+the_launch_records_the_boot_and_the_start_time_of_its_wrapper() {
+	setup
+	run -- x
+	expect_status 0
+	local want_boot owner
+	want_boot="$(cat /proc/sys/kernel/random/boot_id)"
+	owner="$(logged owner)"
+	[[ "$owner" =~ ^([0-9a-f-]+)\ ([0-9]+)$ ]] || {
+		echo "  the owner file holds '$owner'"
+		return 1
+	}
+	[[ "${BASH_REMATCH[1]}" == "$want_boot" ]] || {
+		echo "  the boot id is ${BASH_REMATCH[1]}, not $want_boot"
+		return 1
+	}
+	[[ "${BASH_REMATCH[2]}" == "$(logged wrapperstart)" && -n "$(logged wrapperstart)" ]] || {
+		echo "  the start time is ${BASH_REMATCH[2]}, the wrapper's was '$(logged wrapperstart)'"
+		return 1
+	}
+}
+
+a_launch_from_before_the_boot_is_removed_although_its_pid_is_alive() {
+	setup
+	# $$ is running, as the PID of a launch made before the last reboot may be.
+	mkdir -p "$sb/t/${PREFIX}$$.DDDDDD/profile"
+	printf '%s %s\n' 00000000-0000-0000-0000-000000000000 "$(starttime $$)" >"$sb/t/${PREFIX}$$.DDDDDD/owner"
+	run -- x
+	expect_status 0
+	[[ ! -e "$sb/t/${PREFIX}$$.DDDDDD" ]]
+}
+
+a_launch_whose_pid_went_to_another_process_is_removed() {
+	setup
+	mkdir -p "$sb/t/${PREFIX}$$.EEEEEE/profile"
+	printf '%s %s\n' "$(cat /proc/sys/kernel/random/boot_id)" "$(($(starttime $$) + 1))" >"$sb/t/${PREFIX}$$.EEEEEE/owner"
+	run -- x
+	expect_status 0
+	[[ ! -e "$sb/t/${PREFIX}$$.EEEEEE" ]]
+}
+
+a_launch_whose_wrapper_is_the_one_that_wrote_it_is_left_alone() {
+	setup
+	mkdir -p "$sb/t/${PREFIX}$$.FFFFFF/profile"
+	printf '%s %s\n' "$(cat /proc/sys/kernel/random/boot_id)" "$(starttime $$)" >"$sb/t/${PREFIX}$$.FFFFFF/owner"
+	run -- x
+	expect_status 0
+	[[ -d "$sb/t/${PREFIX}$$.FFFFFF" ]]
+}
+
+an_owner_file_that_makes_no_sense_falls_back_to_the_pid() {
+	setup
+	local dead
+	dead="$(dead_pid)"
+	mkdir -p "$sb/t/${PREFIX}$$.GGGGGG" "$sb/t/${PREFIX}$dead.HHHHHH"
+	printf 'not an owner\n' >"$sb/t/${PREFIX}$$.GGGGGG/owner"
+	: >"$sb/t/${PREFIX}$dead.HHHHHH/owner"
+	run -- x
+	expect_status 0
+	[[ -d "$sb/t/${PREFIX}$$.GGGGGG" && ! -e "$sb/t/${PREFIX}$dead.HHHHHH" ]]
+}
+
 tests=(
 	the_server_gets_the_browser_the_profile_and_the_privacy_flags
 	every_launch_gets_a_fresh_directory_in_tmpdir_named_for_the_wrapper
@@ -774,5 +847,10 @@ tests=(
 	the_stop_handler_is_installed_before_the_launch_and_the_server
 	a_stop_that_comes_with_the_server_reaches_it
 	a_stop_during_the_sweep_is_passed_on_when_the_server_exists
+	the_launch_records_the_boot_and_the_start_time_of_its_wrapper
+	a_launch_from_before_the_boot_is_removed_although_its_pid_is_alive
+	a_launch_whose_pid_went_to_another_process_is_removed
+	a_launch_whose_wrapper_is_the_one_that_wrote_it_is_left_alone
+	an_owner_file_that_makes_no_sense_falls_back_to_the_pid
 )
 run_tests "${tests[@]}"
