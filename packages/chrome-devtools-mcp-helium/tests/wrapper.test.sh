@@ -4,9 +4,10 @@
 # switched off (packages/chrome-devtools-mcp-helium). The first twelve tests
 # are the ones the Fedora setup had for the wrapper it was carried over from;
 # the rest cover what the port changed (the server and the browser are store
-# paths, no npx; the profile's root) and the edge cases that are cheap to hit:
-# odd arguments and paths, a symlink among the old profiles, two wrappers at
-# once, every stop signal.
+# paths, no npx; a directory of its own for every launch, with a TMPDIR in it)
+# and the edge cases that are cheap to hit: odd arguments and paths, a link or
+# a stuck directory among the old launches, two wrappers at once, every stop
+# signal, a server that is killed, a TMPDIR that is unusable in each way.
 #
 # The server is a stand-in (stub-server.sh) and so is the browser, because the
 # wrapper only checks that the browser is executable. The check
@@ -17,9 +18,11 @@
 #   DEFAULT_BROWSER  the stand-in browser the wrapper was built with
 #
 # Every path the wrapper reads is a throwaway tree of the test's scratch
-# directory: TMPDIR and XDG_RUNTIME_DIR are set to it, so no test touches the
-# real /tmp or a real home. The environment is built from nothing (env -i), and
-# PATH names no directory, so the wrapper has to bring its own tools.
+# directory: TMPDIR, CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP (the directory it uses
+# when TMPDIR is no good, /tmp in life) and XDG_RUNTIME_DIR are set to it, so
+# no test touches the real /tmp, the real runtime directory or a real home.
+# The environment is built from nothing (env -i), and PATH names no directory,
+# so the wrapper has to bring its own tools.
 #
 # The end-to-end proof against the real Helium is the VM test
 # desktop-chrome-devtools-mcp (tests/desktop/chrome-devtools-mcp.nix).
@@ -34,38 +37,43 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${UNDER_TEST:?run this through the check common-chrome-devtools-mcp-helium}"
 : "${DEFAULT_BROWSER:?run this through the check common-chrome-devtools-mcp-helium}"
 UBO=blockjmkbacgjkknlgpkjjiijinjdanf
-PREFIX=chrome-devtools-helium.
+PREFIX=cdh.
+# The longest directory, in bytes, that the wrapper puts a launch in (TMP_MAX in
+# the script). A test with a sandbox over it would make the wrapper fall back to
+# the real /tmp.
+TMP_MAX=40
 
 sb=""
 log=""
 dir=""
+launch=""
 stdin=/dev/null
 
-# A fresh sandbox for the test that calls it: the roots the wrapper puts its
-# profile under, and the stand-in log.
+# A fresh sandbox for the test that calls it. t is the TMPDIR the wrapper is
+# given, f the fallback it uses when that is no good, r the runtime directory.
 setup() {
-	sb="$(mktemp -d -p "$scratch" sb.XXXXXX)"
-	# The wrapper passes over a root of more than 60 characters and falls back to
-	# /tmp, which no test may touch. So the sandbox must be short enough to be
-	# used: run the file with a short TMPDIR.
-	if ((${#sb} + 4 > 60)); then
-		echo "  the sandbox $sb is too long for the wrapper to use (60 characters at most for a root)"
+	sb="$(mktemp -d -p "$scratch" XXX)"
+	if ((${#sb} + 2 > TMP_MAX)); then
+		echo "  the sandbox $sb is too long for the wrapper to use (${TMP_MAX} bytes at most for a directory)"
 		echo "  and it would fall back to the real /tmp; run this with a shorter TMPDIR"
 		return 1
 	fi
-	mkdir -p "$sb/tmp" "$sb/run"
+	mkdir -p "$sb/t" "$sb/f" "$sb/r"
 	log="$sb/server.log"
 	: >"$log"
 	stdin=/dev/null
 }
 
 # env for one wrapper run, as an array: nothing but what the wrapper is told.
+# Later assignments win, so a test passes its own value of any of these.
 wrapper_env() {
-	wenv=(env -i PATH=/nonexistent TMPDIR="$sb/tmp" XDG_RUNTIME_DIR="$sb/run" STUB_LOG="$log" "$@")
+	wenv=(env -i PATH=/nonexistent TMPDIR="$sb/t" CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP="$sb/f"
+		XDG_RUNTIME_DIR="$sb/r" STUB_LOG="$log" "$@")
 }
 
 # run [VAR=value...] -- [ARGS...]: one wrapper run, stdin from $stdin. Sets
-# status, out, err, dir (the profile the server was given) and log.
+# status, out, err, dir (the profile the server was given), launch (the
+# directory it is in) and log.
 run() {
 	local vars=()
 	while (($# > 0)) && [[ "$1" != -- ]]; do
@@ -77,6 +85,7 @@ run() {
 	wrapper_env "${vars[@]}"
 	capture "${wenv[@]}" "$UNDER_TEST" "$@" <"$stdin"
 	dir="$(sed -n 's/^dir://p' "$log" | head -n 1)"
+	launch="${dir%/profile}"
 }
 
 # The lines of the log that start with $1, without it.
@@ -97,6 +106,14 @@ expect_args() {
 	}
 }
 
+# Fails unless the directory $1 holds nothing.
+expect_empty() {
+	[[ -z "$(ls -A -- "$1")" ]] || {
+		echo "  $1 is not empty: $(ls -A -- "$1")"
+		return 1
+	}
+}
+
 # Starts a wrapper whose server waits for a signal, in the background and in
 # its own process group (job control), because a plain background job of a
 # script ignores SIGINT and the wrapper could not trap it. Sets wrapper_pid and
@@ -106,9 +123,9 @@ start_waiting() {
 	shift
 	local waiting_log="$sb/$name.log"
 	: >"$waiting_log"
+	wrapper_env STUB_LOG="$waiting_log" STUB_MODE=wait "$@"
 	set -m
-	env -i PATH=/nonexistent TMPDIR="$sb/tmp" XDG_RUNTIME_DIR="$sb/run" STUB_LOG="$waiting_log" \
-		STUB_MODE=wait "$@" "$UNDER_TEST" </dev/null >/dev/null 2>"$sb/$name.err" &
+	"${wenv[@]}" "$UNDER_TEST" </dev/null >/dev/null 2>"$sb/$name.err" &
 	wrapper_pid=$!
 	set +m
 	local _
@@ -134,10 +151,10 @@ the_server_gets_the_browser_the_profile_and_the_privacy_flags() {
 		--no-usage-statistics --no-performance-crux --slim
 }
 
-the_profile_is_a_fresh_directory_in_tmpdir_named_for_the_wrapper() {
+every_launch_gets_a_fresh_directory_in_tmpdir_named_for_the_wrapper() {
 	setup
 	run -- x
-	[[ "$dir" =~ ^"$sb/tmp/$PREFIX"[0-9]+\.[A-Za-z0-9]{6}$ ]] || {
+	[[ "$dir" =~ ^"$sb/t/$PREFIX"[0-9]+\.[A-Za-z0-9]{6}/profile$ ]] || {
 		echo "  the profile is $dir"
 		return 1
 	}
@@ -152,32 +169,32 @@ the_profile_starts_with_ubo_switched_off() {
 	}
 }
 
-the_profile_is_removed_after_the_server_exits() {
+the_launch_is_removed_after_the_server_exits() {
 	setup
 	run -- x
 	expect_status 0
-	[[ -n "$dir" && ! -e "$dir" ]] || {
-		echo "  the profile $dir is still there"
+	[[ -n "$dir" && ! -e "$dir" && ! -e "$launch" ]] || {
+		echo "  the launch $launch is still there"
 		return 1
 	}
 }
 
-every_launch_gets_its_own_profile() {
+every_launch_gets_its_own_directory() {
 	setup
 	run -- x
-	local first="$dir"
+	local first="$launch"
 	run -- x
-	[[ -n "$dir" && "$dir" != "$first" ]] || {
-		echo "  both launches used $dir"
+	[[ -n "$launch" && "$launch" != "$first" ]] || {
+		echo "  both launches used $launch"
 		return 1
 	}
 }
 
-the_servers_exit_status_is_passed_on_and_the_profile_still_goes() {
+the_servers_exit_status_is_passed_on_and_the_launch_still_goes() {
 	setup
 	run STUB_RC=3 -- x
 	expect_status 3
-	[[ -n "$dir" && ! -e "$dir" ]]
+	[[ -n "$dir" && ! -e "$launch" ]]
 }
 
 stdin_reaches_the_server_and_its_stdout_comes_back() {
@@ -204,23 +221,23 @@ a_missing_browser_is_named_and_the_server_never_starts() {
 	}
 }
 
-a_profile_whose_wrapper_is_gone_is_removed_by_the_next_launch() {
+a_launch_whose_wrapper_is_gone_is_removed_by_the_next_launch() {
 	setup
 	local dead
 	sleep 0 &
 	dead=$!
 	wait "$dead"
-	mkdir -p "$sb/tmp/${PREFIX}$dead.AAAAAA/Default"
+	mkdir -p "$sb/t/${PREFIX}$dead.AAAAAA/profile/Default" "$sb/t/${PREFIX}$dead.AAAAAA/t"
 	run -- x
-	[[ ! -e "$sb/tmp/${PREFIX}$dead.AAAAAA" ]]
+	[[ ! -e "$sb/t/${PREFIX}$dead.AAAAAA" ]]
 }
 
-a_profile_whose_wrapper_still_runs_is_left_alone() {
+a_launch_whose_wrapper_still_runs_is_left_alone() {
 	setup
 	# $$ is the test file's own process, which is running.
-	mkdir -p "$sb/tmp/${PREFIX}$$.BBBBBB/Default"
+	mkdir -p "$sb/t/${PREFIX}$$.BBBBBB/profile/Default"
 	run -- x
-	[[ -d "$sb/tmp/${PREFIX}$$.BBBBBB" ]]
+	[[ -d "$sb/t/${PREFIX}$$.BBBBBB" ]]
 }
 
 sigterm_reaches_the_server_and_the_wrapper_exits_with_its_status() {
@@ -235,15 +252,15 @@ sigterm_reaches_the_server_and_the_wrapper_exits_with_its_status() {
 	}
 }
 
-after_sigterm_the_profile_is_removed() {
+after_sigterm_the_launch_is_removed() {
 	setup
-	start_waiting a
 	local profile
+	start_waiting a
 	profile="$(sed -n 's/^dir://p' "$sb/a.log")"
 	[[ -d "$profile" ]]
 	kill -TERM "$wrapper_pid"
 	finish "$wrapper_pid"
-	[[ -n "$profile" && ! -e "$profile" ]]
+	[[ -n "$profile" && ! -e "${profile%/profile}" ]]
 }
 
 sigint_and_sighup_are_passed_on_as_a_stop() {
@@ -262,8 +279,8 @@ sigint_and_sighup_are_passed_on_as_a_stop() {
 			echo "  after SIG$sig the wrapper exited with $wrapper_status"
 			return 1
 		}
-		[[ ! -e "$profile" ]] || {
-			echo "  after SIG$sig the profile is still there"
+		[[ ! -e "${profile%/profile}" ]] || {
+			echo "  after SIG$sig the launch is still there"
 			return 1
 		}
 	done
@@ -294,7 +311,7 @@ a_browser_that_cannot_be_run_is_refused() {
 	expect_err "$sb/not-executable"
 	[[ ! -s "$log" ]]
 	# A directory is no browser either.
-	run CHROME_DEVTOOLS_HELIUM="$sb/tmp" -- x
+	run CHROME_DEVTOOLS_HELIUM="$sb/t" -- x
 	((status != 0))
 	[[ ! -s "$log" ]]
 }
@@ -318,71 +335,190 @@ arguments_reach_the_server_as_they_are() {
 		'two words' '' '*' "$newline" '--flag=a b' "-n" '$HOME' '`id`'
 }
 
-the_profile_is_private_to_the_user() {
+the_launch_and_what_is_in_it_are_private_to_the_user() {
 	setup
 	run -- x
-	[[ "$(logged mode)" == 700 ]] || {
-		echo "  the profile's mode is '$(logged mode)'"
+	[[ "$(logged launchmode)" == 700 && "$(logged mode)" == 700 && "$(logged tmpmode)" == 700 ]] || {
+		echo "  modes: launch '$(logged launchmode)', profile '$(logged mode)', TMPDIR '$(logged tmpmode)'"
 		return 1
 	}
+}
+
+# The server writes the files of its tools below os.tmpdir() and never removes
+# them, and its file tools may read and write there: the directory must be one
+# of the launch, empty at the start, and not the caller's.
+the_servers_tmpdir_is_an_empty_directory_of_the_launch() {
+	setup
+	run -- x
+	[[ "$(logged tmpdir)" == "$launch/t" ]] || {
+		echo "  the server's TMPDIR is '$(logged tmpdir)', not $launch/t"
+		return 1
+	}
+	[[ "$(logged tmpentries)" == 0 ]] || {
+		echo "  the server's TMPDIR held $(logged tmpentries) entries at the start"
+		return 1
+	}
+}
+
+files_the_server_leaves_in_its_tmpdir_go_with_the_launch() {
+	setup
+	run -- x
+	expect_status 0
+	# The stand-in left a directory and a file in its TMPDIR, as the server does.
+	grep -q . "$log"
+	[[ ! -e "$launch" ]]
+	expect_empty "$sb/t"
+	expect_empty "$sb/r"
+}
+
+the_runtime_directory_is_not_written_to() {
+	setup
+	run -- x
+	expect_status 0
+	expect_empty "$sb/r"
+	start_waiting a
+	[[ "$(sed -n 's/^dir://p' "$sb/a.log")" != "$sb/r"* ]]
+	[[ "$(sed -n 's/^tmpdir://p' "$sb/a.log")" != "$sb/r"* ]]
+	kill -TERM "$wrapper_pid"
+	finish "$wrapper_pid"
+	expect_empty "$sb/r"
 }
 
 a_tmpdir_with_spaces_is_fine() {
 	setup
-	local odd="$sb/tmp/a b  c"
+	local odd="$sb/t/a b"
 	mkdir -p "$odd"
 	run TMPDIR="$odd" -- x
 	expect_status 0
-	[[ "$dir" == "$odd/$PREFIX"* ]] || {
+	[[ "$dir" == "$odd/$PREFIX"*/profile ]] || {
 		echo "  the profile is $dir"
 		return 1
 	}
-	[[ "$(logged tmpdir)" == "$odd" ]]
-	[[ ! -e "$dir" ]]
+	[[ "$(logged tmpdir)" == "$launch/t" && ! -e "$launch" ]]
 }
 
-# Chromium keeps its singleton socket under TMPDIR, and a path over about a
-# hundred characters makes the browser exit at once, which the server reports
-# as "Target closed". So the wrapper does not trust a long TMPDIR.
+# Chromium keeps its singleton socket under TMPDIR, and a path over what a
+# socket can hold makes the browser exit at once, which the server reports as
+# "Target closed". So the wrapper does not trust a long TMPDIR.
 a_tmpdir_that_is_too_long_is_not_used() {
 	setup
 	local filler long
 	filler="$(printf '%080d' 0 | tr 0 x)"
-	long="$sb/tmp/$filler"
+	long="$sb/t/$filler"
 	mkdir -p "$long"
 	run TMPDIR="$long" -- x
 	expect_status 0
-	[[ "$dir" == "$sb/run/$PREFIX"* ]] || {
-		echo "  the profile is $dir, not under $sb/run"
+	[[ "$dir" == "$sb/f/$PREFIX"*/profile ]] || {
+		echo "  the profile is $dir, not under $sb/f"
 		return 1
 	}
-	[[ "$(logged tmpdir)" == "$sb/run" ]] || {
-		echo "  the server's TMPDIR is '$(logged tmpdir)'"
-		return 1
-	}
-	expect_err "TMPDIR"
-	[[ ! -e "$dir" ]]
+	[[ "$(logged tmpdir)" == "$launch/t" ]]
+	expect_err "not using TMPDIR="
+	[[ ! -e "$launch" ]]
 }
 
-a_tmpdir_that_is_missing_or_unset_falls_back_to_the_runtime_directory() {
+# The limit is on the bytes of the directory: the longest one that fits is
+# used, one byte more is passed over.
+the_longest_tmpdir_that_fits_is_used_and_one_byte_more_is_not() {
+	setup
+	local fits over
+	fits="$sb/$(printf '%0*d' $((TMP_MAX - ${#sb} - 1)) 0 | tr 0 x)"
+	over="${fits}y"
+	((${#fits} == TMP_MAX)) || {
+		echo "  the test's own directory is ${#fits} bytes, not $TMP_MAX"
+		return 1
+	}
+	mkdir -p "$fits" "$over"
+	run TMPDIR="$fits" -- x
+	expect_status 0
+	[[ "$dir" == "$fits/$PREFIX"* ]] || {
+		echo "  a directory of $TMP_MAX bytes was passed over: $err"
+		return 1
+	}
+	run TMPDIR="$over" -- x
+	expect_status 0
+	[[ "$dir" == "$sb/f/$PREFIX"* ]] || {
+		echo "  a directory of $((TMP_MAX + 1)) bytes was used"
+		return 1
+	}
+	expect_err "not using TMPDIR="
+}
+
+# 'ä' is one character and two bytes: a directory of $TMP_MAX characters with
+# one of them is over the limit in bytes, in a UTF-8 locale too.
+a_tmpdir_is_measured_in_bytes_not_in_characters() {
+	setup
+	local umlauts wide
+	umlauts="$(printf '%0*d' $((TMP_MAX - ${#sb} - 1)) 0 | sed 's/0/ä/g')"
+	wide="$sb/$umlauts"
+	mkdir -p "$wide"
+	run LC_ALL=C.UTF-8 TMPDIR="$wide" -- x
+	expect_status 0
+	[[ "$dir" == "$sb/f/$PREFIX"* ]] || {
+		echo "  a directory of $(printf '%s' "$wide" | wc -c) bytes was used"
+		return 1
+	}
+	expect_err "not using TMPDIR="
+}
+
+a_tmpdir_that_is_missing_or_unset_falls_back() {
 	setup
 	run TMPDIR="$sb/does-not-exist" -- x
 	expect_status 0
-	[[ "$dir" == "$sb/run/$PREFIX"* ]]
+	[[ "$dir" == "$sb/f/$PREFIX"*/profile ]]
 	expect_err "$sb/does-not-exist"
 	run TMPDIR= -- x
 	expect_status 0
-	[[ "$dir" == "$sb/run/$PREFIX"* ]]
+	[[ "$dir" == "$sb/f/$PREFIX"*/profile ]]
 	expect_no_err "TMPDIR"
 }
 
-the_server_runs_with_the_tmpdir_the_profile_is_in() {
+a_tmpdir_that_cannot_be_written_is_passed_over() {
 	setup
-	run -- x
-	[[ "$(logged tmpdir)" == "$sb/tmp" ]]
+	((EUID != 0)) || {
+		echo "  this test needs a user that a mode can keep out: it is root"
+		return 1
+	}
+	mkdir -p "$sb/ro"
+	chmod 500 "$sb/ro"
+	run TMPDIR="$sb/ro" -- x
+	expect_status 0
+	[[ "$dir" == "$sb/f/$PREFIX"*/profile ]]
+	expect_err "no writable directory"
 }
 
-a_link_among_the_old_profiles_is_removed_and_its_target_is_not() {
+a_tmpdir_in_the_runtime_directory_is_passed_over() {
+	setup
+	mkdir -p "$sb/r/in"
+	run TMPDIR="$sb/r/in" -- x
+	expect_status 0
+	[[ "$dir" == "$sb/f/$PREFIX"*/profile ]]
+	expect_err "runtime directory"
+	# The runtime directory itself, and a link to it, are in it too.
+	ln -s "$sb/r" "$sb/lk"
+	run TMPDIR="$sb/r" -- x
+	[[ "$dir" == "$sb/f/$PREFIX"*/profile ]]
+	run TMPDIR="$sb/lk" -- x
+	[[ "$dir" == "$sb/f/$PREFIX"*/profile ]]
+	expect_err "runtime directory"
+	expect_empty "$sb/r/in"
+}
+
+with_no_usable_directory_the_wrapper_stops_before_the_server() {
+	setup
+	run TMPDIR="$sb/missing" CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP="$sb/also-missing" -- x
+	((status != 0)) || {
+		echo "  the wrapper succeeded"
+		return 1
+	}
+	expect_err "no usable directory"
+	[[ ! -s "$log" ]] || {
+		echo "  the server ran"
+		return 1
+	}
+}
+
+a_link_among_the_old_launches_is_removed_and_its_target_is_not() {
 	setup
 	local dead
 	sleep 0 &
@@ -390,9 +526,9 @@ a_link_among_the_old_profiles_is_removed_and_its_target_is_not() {
 	wait "$dead"
 	mkdir -p "$sb/precious/Default"
 	echo keep >"$sb/precious/Default/data"
-	ln -s "$sb/precious" "$sb/tmp/${PREFIX}$dead.LINKED"
+	ln -s "$sb/precious" "$sb/t/${PREFIX}$dead.LINKED"
 	run -- x
-	[[ ! -e "$sb/tmp/${PREFIX}$dead.LINKED" && ! -L "$sb/tmp/${PREFIX}$dead.LINKED" ]] || {
+	[[ ! -e "$sb/t/${PREFIX}$dead.LINKED" && ! -L "$sb/t/${PREFIX}$dead.LINKED" ]] || {
 		echo "  the link was left"
 		return 1
 	}
@@ -402,19 +538,45 @@ a_link_among_the_old_profiles_is_removed_and_its_target_is_not() {
 	}
 }
 
-files_and_other_names_among_the_old_profiles_are_left_alone() {
+# One launch that cannot be removed (a directory below it that cannot be
+# written) must not stop the next one, or a stuck leftover would lock the user
+# out of the server for good.
+a_leftover_that_cannot_be_removed_does_not_stop_the_next_launch() {
+	setup
+	((EUID != 0)) || {
+		echo "  this test needs a user that a mode can keep out: it is root"
+		return 1
+	}
+	local dead
+	sleep 0 &
+	dead=$!
+	wait "$dead"
+	mkdir -p "$sb/t/${PREFIX}$dead.STUCK00/sub"
+	echo x >"$sb/t/${PREFIX}$dead.STUCK00/sub/file"
+	chmod a-w "$sb/t/${PREFIX}$dead.STUCK00/sub"
+	run -- x
+	expect_status 0
+	[[ -s "$log" ]] || {
+		echo "  the server never ran"
+		return 1
+	}
+	expect_err "could not remove"
+	[[ -d "$sb/t/${PREFIX}$dead.STUCK00" ]]
+}
+
+files_and_other_names_among_the_old_launches_are_left_alone() {
 	setup
 	local dead
 	sleep 0 &
 	dead=$!
 	wait "$dead"
-	: >"$sb/tmp/${PREFIX}$dead.FILE00"
-	mkdir -p "$sb/tmp/other-$dead" "$sb/tmp/chrome-devtools-helium$dead"
+	: >"$sb/t/${PREFIX}$dead.FILE00"
+	mkdir -p "$sb/t/other-$dead" "$sb/t/cdh$dead"
 	run -- x
-	[[ -f "$sb/tmp/${PREFIX}$dead.FILE00" && -d "$sb/tmp/other-$dead" && -d "$sb/tmp/chrome-devtools-helium$dead" ]]
+	[[ -f "$sb/t/${PREFIX}$dead.FILE00" && -d "$sb/t/other-$dead" && -d "$sb/t/cdh$dead" ]]
 }
 
-two_wrappers_at_once_keep_to_their_own_profiles() {
+two_wrappers_at_once_keep_to_their_own_launches() {
 	setup
 	local first second p1 p2
 	start_waiting one
@@ -427,7 +589,7 @@ two_wrappers_at_once_keep_to_their_own_profiles() {
 		echo "  the profiles are '$p1' and '$p2'"
 		return 1
 	}
-	# The second launch swept, and must have left the first one's profile.
+	# The second launch swept, and must have left the first one's directory.
 	[[ -d "$p1" && -d "$p2" ]] || {
 		echo "  a profile is missing while both wrappers run"
 		return 1
@@ -435,7 +597,21 @@ two_wrappers_at_once_keep_to_their_own_profiles() {
 	kill -TERM "$first" "$second"
 	finish "$first"
 	finish "$second"
-	[[ ! -e "$p1" && ! -e "$p2" ]]
+	[[ ! -e "${p1%/profile}" && ! -e "${p2%/profile}" ]]
+	expect_empty "$sb/t"
+}
+
+# The server that dies under the wrapper, as it does when its browser takes it
+# down: the wrapper reports how it died and cleans up all the same.
+a_server_that_is_killed_leaves_nothing_behind_and_its_status_is_passed_on() {
+	setup
+	run STUB_MODE=crash -- x
+	((status == 137)) || {
+		echo "  the wrapper exited with $status, not 137"
+		return 1
+	}
+	[[ -n "$dir" && ! -e "$launch" ]]
+	expect_empty "$sb/t"
 }
 
 a_wrapper_with_no_server_arguments_and_a_closed_stdin_still_works() {
@@ -446,36 +622,45 @@ a_wrapper_with_no_server_arguments_and_a_closed_stdin_still_works() {
 	expect_status 0
 	expect_args --executablePath "$DEFAULT_BROWSER" --userDataDir "$dir" --headless \
 		--no-usage-statistics --no-performance-crux
-	[[ ! -e "$dir" ]]
+	[[ ! -e "$launch" ]]
 }
 
 tests=(
 	the_server_gets_the_browser_the_profile_and_the_privacy_flags
-	the_profile_is_a_fresh_directory_in_tmpdir_named_for_the_wrapper
+	every_launch_gets_a_fresh_directory_in_tmpdir_named_for_the_wrapper
 	the_profile_starts_with_ubo_switched_off
-	the_profile_is_removed_after_the_server_exits
-	every_launch_gets_its_own_profile
-	the_servers_exit_status_is_passed_on_and_the_profile_still_goes
+	the_launch_is_removed_after_the_server_exits
+	every_launch_gets_its_own_directory
+	the_servers_exit_status_is_passed_on_and_the_launch_still_goes
 	stdin_reaches_the_server_and_its_stdout_comes_back
 	a_missing_browser_is_named_and_the_server_never_starts
-	a_profile_whose_wrapper_is_gone_is_removed_by_the_next_launch
-	a_profile_whose_wrapper_still_runs_is_left_alone
+	a_launch_whose_wrapper_is_gone_is_removed_by_the_next_launch
+	a_launch_whose_wrapper_still_runs_is_left_alone
 	sigterm_reaches_the_server_and_the_wrapper_exits_with_its_status
-	after_sigterm_the_profile_is_removed
+	after_sigterm_the_launch_is_removed
 	sigint_and_sighup_are_passed_on_as_a_stop
 	the_browser_can_be_overridden
 	an_empty_browser_override_means_the_default
 	a_browser_that_cannot_be_run_is_refused
 	the_server_is_told_not_to_look_for_updates
 	arguments_reach_the_server_as_they_are
-	the_profile_is_private_to_the_user
+	the_launch_and_what_is_in_it_are_private_to_the_user
+	the_servers_tmpdir_is_an_empty_directory_of_the_launch
+	files_the_server_leaves_in_its_tmpdir_go_with_the_launch
+	the_runtime_directory_is_not_written_to
 	a_tmpdir_with_spaces_is_fine
 	a_tmpdir_that_is_too_long_is_not_used
-	a_tmpdir_that_is_missing_or_unset_falls_back_to_the_runtime_directory
-	the_server_runs_with_the_tmpdir_the_profile_is_in
-	a_link_among_the_old_profiles_is_removed_and_its_target_is_not
-	files_and_other_names_among_the_old_profiles_are_left_alone
-	two_wrappers_at_once_keep_to_their_own_profiles
+	the_longest_tmpdir_that_fits_is_used_and_one_byte_more_is_not
+	a_tmpdir_is_measured_in_bytes_not_in_characters
+	a_tmpdir_that_is_missing_or_unset_falls_back
+	a_tmpdir_that_cannot_be_written_is_passed_over
+	a_tmpdir_in_the_runtime_directory_is_passed_over
+	with_no_usable_directory_the_wrapper_stops_before_the_server
+	a_link_among_the_old_launches_is_removed_and_its_target_is_not
+	a_leftover_that_cannot_be_removed_does_not_stop_the_next_launch
+	files_and_other_names_among_the_old_launches_are_left_alone
+	two_wrappers_at_once_keep_to_their_own_launches
+	a_server_that_is_killed_leaves_nothing_behind_and_its_status_is_passed_on
 	a_wrapper_with_no_server_arguments_and_a_closed_stdin_still_works
 )
 run_tests "${tests[@]}"

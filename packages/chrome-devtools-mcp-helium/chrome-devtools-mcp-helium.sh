@@ -26,23 +26,43 @@
 #
 # Why a fresh profile per launch. Every Claude Code session starts its own
 # server, and a second browser on a shared profile fails with "The browser is
-# already running for <dir>". So each launch makes a profile in a temporary
-# directory (below) whose Preferences mark uBO as switched off by the user
-# (disable_reasons [1]), which Helium honors from the first start, and removes
-# it when the server exits. The directory name carries the wrapper's PID, so a
-# launch removes the profiles of wrappers that were killed before they could
-# clean up.
+# already running for <dir>". So each launch makes a directory of its own
+# (below) with a profile in it, whose Preferences mark uBO as switched off by
+# the user (disable_reasons [1]), which Helium honors from the first start, and
+# removes the directory when the server exits. The directory name carries the
+# wrapper's PID, so a launch removes the directories of wrappers that were
+# killed before they could clean up.
 #
-# Where the profile goes, and the TMPDIR of the server and the browser. The
-# first of TMPDIR, XDG_RUNTIME_DIR and /tmp that is a writable directory with
-# a short path. Chromium puts its singleton socket in TMPDIR, as
-# .org.chromium.Chromium.XXXXXX/SingletonSocket, and a socket path is limited
-# to 107 characters, so a TMPDIR over about 60 makes the browser exit at once,
-# which the server reports as "Target closed". The wrapper does not rely on
-# the caller's TMPDIR being short, as the Fedora wrapper did: it says why on
-# stderr when it passes over one, and gives that directory to the server as
-# TMPDIR, so the browser cannot be handed a long one. Profiles in a directory
-# the wrapper passed over this time are not swept.
+# What a launch gets. One private directory (mode 700), cdh.PID.XXXXXX, in the
+# first usable directory of TMPDIR and the fallback (below), with two
+# directories in it:
+#
+#   profile/   the browser's profile, with its HTTP disk cache;
+#   t/         the TMPDIR of the server and the browser, empty at the start.
+#
+# Why a TMPDIR of its own. The server writes the files its tools make
+# (screenshots, Lighthouse reports, screencasts) to chrome-devtools-mcp-XXXXXX
+# directories under os.tmpdir() and never removes them, and its file tools may
+# read and write below os.tmpdir(), unless the client has told it other roots:
+# upload_file, and the filePath of screenshots, traces and heap snapshots. With
+# the shared /tmp, or the user's runtime directory (a RAM-backed directory that
+# holds the user's sockets and credentials), as that root, the files of every
+# session would pile up, and a prompt-injected page could have the agent read
+# what is in the root. With t/ the root is an empty private directory, and
+# everything in it goes with the launch.
+#
+# Where the directory goes, and why it is short. The first of TMPDIR and the
+# fallback (CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP, default /tmp) that is a
+# writable directory, not inside $XDG_RUNTIME_DIR, and short. Chromium puts its
+# singleton socket under TMPDIR, as .org.chromium.Chromium.XXXXXX/
+# SingletonSocket, and a socket path is limited to 108 bytes. Measured with
+# Helium 0.21.1.1: a TMPDIR of 62 bytes starts, one of 63 aborts, which the
+# server reports as "Target closed". The wrapper does not rely on the caller's
+# TMPDIR being short, as the Fedora wrapper did: with 46 bytes for the socket,
+# 21 for cdh.PID.XXXXXX/t (PIDs have up to 7 digits) and one to spare, the
+# directory above must be at most 40 bytes (bytes, not characters: the length
+# is taken in the C locale). It says on stderr why it passes one over.
+# Directories in a place the wrapper passed over this time are not swept.
 #
 # Telemetry: --no-usage-statistics stops Google's usage statistics, and
 # --no-performance-crux keeps trace URLs away from the CrUX API. The server's
@@ -56,8 +76,17 @@ set -euo pipefail
 readonly SERVER=@server@
 readonly DEFAULT_BROWSER=@browser@
 readonly UBO=blockjmkbacgjkknlgpkjjiijinjdanf
-readonly PREFIX=chrome-devtools-helium.
-readonly TMP_MAX=60
+readonly PREFIX=cdh.
+# 107 bytes of socket path with a spare byte, minus the singleton socket's
+# 46 bytes and the 21 of /cdh.PID.XXXXXX/t.
+readonly TMP_MAX=40
+
+# The length of $1 in bytes: the limit is on bytes, and ${#1} counts characters
+# in a UTF-8 locale.
+bytes() {
+    local LC_ALL=C
+    printf '%s' "${#1}"
+}
 
 browser=${CHROME_DEVTOOLS_HELIUM:-$DEFAULT_BROWSER}
 
@@ -66,14 +95,21 @@ if [[ ! -f $browser || ! -x $browser ]]; then
     exit 1
 fi
 
+runtime=
+if [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+    runtime=$(realpath -m -- "$XDG_RUNTIME_DIR")
+fi
+
 tmp=
-for candidate in "TMPDIR=${TMPDIR:-}" "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-}" "fallback=/tmp"; do
+for candidate in "TMPDIR=${TMPDIR:-}" "fallback=${CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP:-/tmp}"; do
     path=${candidate#*=}
     [[ -n $path ]] || continue
-    if [[ ${#path} -gt $TMP_MAX ]]; then
-        reason="more than $TMP_MAX characters, too long for Chromium's singleton socket"
+    if (($(bytes "$path") > TMP_MAX)); then
+        reason="more than $TMP_MAX bytes, too long for Chromium's singleton socket"
     elif [[ ! -d $path || ! -w $path ]]; then
         reason="no writable directory"
+    elif [[ -n $runtime && ( $(realpath -m -- "$path") == "$runtime" || $(realpath -m -- "$path") == "$runtime"/* ) ]]; then
+        reason="inside the runtime directory, which is RAM and holds the user's sockets and credentials"
     else
         tmp=$path
         break
@@ -81,36 +117,39 @@ for candidate in "TMPDIR=${TMPDIR:-}" "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-}" "fa
     echo "chrome-devtools-mcp-helium: not using $candidate: $reason" >&2
 done
 if [[ -z $tmp ]]; then
-    echo "chrome-devtools-mcp-helium: no writable directory with a short path for the profile (TMPDIR, XDG_RUNTIME_DIR, /tmp)" >&2
+    echo "chrome-devtools-mcp-helium: no usable directory for the launch (TMPDIR, then CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP or /tmp)" >&2
     exit 1
 fi
-export TMPDIR=$tmp
 
 # Nix decides which version runs.
 export CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1
 
-# Remove the profiles of wrappers that are gone. kill -0 also fails for a PID
-# that now belongs to another user, and the directory is ours either way.
+# Remove the directories of wrappers that are gone. Only ours: stat does not
+# follow a link, so a link someone else made is not taken for ours. kill -0
+# also fails for a PID that now belongs to another user, and the directory is
+# ours either way. A directory that cannot be removed does not stop the launch.
 for old in "$tmp/$PREFIX"*; do
-    [[ -d $old && -O $old ]] || continue
+    [[ -d $old && $(stat -c %u -- "$old" 2>/dev/null || true) == "$EUID" ]] || continue
     pid=${old##*/"$PREFIX"}
     pid=${pid%%.*}
     if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
         continue
     fi
-    rm -rf -- "$old"
+    rm -rf -- "$old" || echo "chrome-devtools-mcp-helium: could not remove $old" >&2
 done
 
-profile=$(mktemp -d "$tmp/$PREFIX$$.XXXXXX")
-trap 'rm -rf -- "$profile"' EXIT
-mkdir -- "$profile/Default"
+launch=$(mktemp -d "$tmp/$PREFIX$$.XXXXXX")
+trap 'rm -rf -- "$launch"' EXIT
+mkdir -m 700 -- "$launch/profile" "$launch/t"
+mkdir -- "$launch/profile/Default"
 printf '{"extensions":{"settings":{"%s":{"disable_reasons":[1]}}}}\n' "$UBO" \
-    >"$profile/Default/Preferences"
+    >"$launch/profile/Default/Preferences"
+export TMPDIR=$launch/t
 
-# In the background so a stop signal can be passed on and the profile still
+# In the background so a stop signal can be passed on and the directory still
 # removed. Without <&0 a background job reads /dev/null instead of the
 # MCP stream.
-"$SERVER" --executablePath "$browser" --userDataDir "$profile" \
+"$SERVER" --executablePath "$browser" --userDataDir "$launch/profile" \
     --headless --no-usage-statistics --no-performance-crux "$@" <&0 &
 server=$!
 trap 'kill -TERM "$server" 2>/dev/null || true' TERM INT HUP

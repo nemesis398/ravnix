@@ -4,11 +4,20 @@
 # exists only then), and then does what $STUB_MODE says:
 #
 #   (unset)  exit with $STUB_RC (default 0)
+#   crash    kill itself with SIGKILL, as a server whose browser took it down
 #   echo     answer every line of stdin with "got LINE"
 #   wait     say "ready" in the log, and wait for TERM; on TERM write "TERM"
 #            to the log and exit 143
 
 log=${STUB_LOG:?the test sets STUB_LOG}
+
+# How many entries (hidden ones too) a directory holds.
+count_entries() {
+	local entries
+	shopt -s nullglob dotglob
+	entries=("$1"/*)
+	echo "${#entries[@]}"
+}
 
 prev=
 dir=
@@ -23,12 +32,24 @@ done
 	printf 'tmpdir:%s\n' "${TMPDIR-unset}"
 	printf 'noupdate:%s\n' "${CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS-unset}"
 	printf 'mode:%s\n' "$(stat -c %a -- "$dir" 2>/dev/null || true)"
+	printf 'launchmode:%s\n' "$(stat -c %a -- "${dir%/*}" 2>/dev/null || true)"
+	printf 'tmpmode:%s\n' "$(stat -c %a -- "${TMPDIR-/nonexistent}" 2>/dev/null || true)"
+	printf 'tmpentries:%s\n' "$(count_entries "${TMPDIR-/nonexistent}")"
 	if [[ -f $dir/Default/Preferences ]]; then
 		printf 'prefs:%s\n' "$(cat -- "$dir/Default/Preferences")"
 	fi
 } >>"$log"
 
+# What the server's tools do: leave a file in os.tmpdir(), which nothing cleans.
+if [[ -d ${TMPDIR-/nonexistent} ]]; then
+	mkdir -p -- "$TMPDIR/chrome-devtools-mcp-stub"
+	echo screenshot >"$TMPDIR/chrome-devtools-mcp-stub/screenshot.png"
+fi
+
 case ${STUB_MODE:-} in
+crash)
+	kill -KILL $$
+	;;
 echo)
 	while IFS= read -r line; do printf 'got %s\n' "$line"; done
 	;;

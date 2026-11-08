@@ -15,16 +15,26 @@
 #     that navigation (net::ERR_ABORTED) and hang new_page; the wrapper gives
 #     every launch a profile in which it is switched off. The probe also reads
 #     that profile's Preferences while the server runs;
-#   - no profile directory and no browser process is left behind, whether the
-#     server ends by its stdin closing or by SIGTERM, which is how Claude Code
-#     stops a server;
+#   - every launch has a directory of its own, cdh.PID.XXXXXX, with the profile
+#     and a TMPDIR (t) in it, in /tmp when TMPDIR is unset; the browser runs
+#     with that TMPDIR, the server's file tools accept a path in it and refuse
+#     one in the user's runtime directory or in /tmp itself, and the runtime
+#     directory is never written to, nor chosen as the directory of a launch
+#     when TMPDIR points into it;
+#   - no launch directory, no file of the server and no browser process is
+#     left behind, whether the server ends by its stdin closing or by SIGTERM,
+#     which is how Claude Code stops a server;
 #   - the server asks Google for nothing (the usage statistics and CrUX
 #     notices of the server are absent), and the browser runs headless: on the
 #     desktop no window appears in the compositor, and the environment the
 #     desktop module sets for Wayland (NIXOS_OZONE_WL, which makes Helium ask
 #     for a Wayland display) does not matter;
-#   - a TMPDIR that is too long for Chromium's singleton socket, as one under
-#     a deep directory is, still works, because the wrapper passes it over;
+#   - the browser runs with its sandbox (no --no-sandbox, and its renderers
+#     under seccomp) and talks to the server over a pipe: no remote-debugging
+#     port, and no TCP socket listening;
+#   - a TMPDIR of 40 bytes, the longest the wrapper accepts, works with the real
+#     Helium, and one too long for Chromium's singleton socket, as one under a
+#     deep directory is, is passed over;
 #   - on the server, Helium is only the browser of the wrapper: no helium on
 #     the PATH, no menu entry, no display variable and no compositor.
 #
@@ -64,6 +74,55 @@ let
     </html>
   '';
 
+  # What the probe's --exec runs while the server is up: a few facts about the
+  # browser the launch started, as key=value lines. (The brackets in the
+  # patterns keep ps and pgrep from finding the command that looks for them.)
+  inspect = pkgs.writeShellApplication {
+    name = "inspect-browser";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.gnugrep
+      pkgs.iproute2
+      pkgs.procps
+    ];
+    text = ''
+      uid=$(id -u)
+      args=$(ps -u "$uid" -o args=)
+      main=$(pgrep -u "$uid" -f -- '[-]-remote-debugging-pipe' | head -n 1 || true)
+      count() { grep -c -- "$1" <<<"$args" || true; }
+
+      echo "main=$main"
+      echo "no_sandbox=$(count '[-]-no-sandbox')"
+      echo "debug_port=$(count '[-]-remote-debugging-port')"
+      echo "debug_pipe=$(count '[-]-remote-debugging-pipe')"
+
+      # The browser's processes: the main one and everything below it.
+      pids=$(pgrep -u "$uid" -f -- '[-]-user-data-dir=|[-]-type=' | paste -sd'|' - || true)
+      if [[ -n $pids ]]; then
+        echo "listening=$(ss -H -ltnp 2>/dev/null | grep -cE "pid=($pids)," || true)"
+      else
+        echo "listening=none-found"
+      fi
+
+      # Renderers run under seccomp (mode 2) when the sandbox is on.
+      renderers=0 unsandboxed=0
+      for p in $(pgrep -u "$uid" -f -- '[-]-type=renderer' || true); do
+        renderers=$((renderers + 1))
+        grep -q '^Seccomp:[[:space:]]*2' "/proc/$p/status" || unsandboxed=$((unsandboxed + 1))
+      done
+      echo "renderers=$renderers"
+      echo "unsandboxed=$unsandboxed"
+
+      if [[ -n $main ]]; then
+        echo "browser_$(tr '\0' '\n' <"/proc/$main/environ" | grep '^TMPDIR=' || echo TMPDIR=unset)"
+      fi
+
+      # Nothing of the launch in the runtime directory.
+      echo "runtime_hits=$(find "$XDG_RUNTIME_DIR" -maxdepth 3 \( -name 'cdh.*' -o -name 'chrome-devtools-mcp*' -o -name '.org.chromium.*' -o -name '.com.google.*' \) 2>/dev/null | wc -l)"
+    '';
+  };
+
   # A Claude Code that is none: the package is not under test, and the real
   # one is a download the VM does not need.
   fakeClaude =
@@ -90,6 +149,7 @@ let
     environment.systemPackages = [
       pkgs.jq
       pkgs.procps
+      pkgs.iproute2
     ]
     ++ extraPackages;
     virtualisation = {
@@ -136,10 +196,17 @@ pkgs.testers.runNixOSTest {
 
 
     def assert_clean(machine, where):
-        """Neither a profile nor a process of the wrapper, or the browser it started, is left."""
-        machine.wait_until_succeeds("! pgrep -u " + USER + " -f chrome-devtools-helium", timeout=30)
-        left = machine.succeed("ls -d " + where + "/chrome-devtools-helium.* 2>/dev/null || true").strip()
-        assert not left, "profile directories are left behind: " + left
+        """No launch directory in WHERE, no file of the server in /tmp, and no process of the browser is left."""
+        machine.wait_until_succeeds("! pgrep -u " + USER + " -f 'cdh[.]'", timeout=30)
+        left = machine.succeed("ls -d " + where + "/cdh.* /tmp/chrome-devtools-mcp-* 2>/dev/null || true").strip()
+        assert not left, "files of a launch are left behind: " + left
+
+
+    def facts(account, index):
+        """The key=value lines that inspect-browser printed, as a dict."""
+        done = account["exec"][index]
+        assert done["status"] == 0, done
+        return dict(l.split("=", 1) for l in done["stdout"].splitlines() if "=" in l)
 
 
     def check_page(account, what):
@@ -159,13 +226,14 @@ pkgs.testers.runNixOSTest {
         machine.wait_for_unit("probe-page.service")
         machine.wait_until_succeeds("curl -sf http://127.0.0.1:8099/probe.html | grep -q probe-ok", timeout=30)
 
-        # The user's runtime directory, where the wrapper puts the profile when
-        # TMPDIR is unset, as it is in a session.
+        # The user's runtime directory: the wrapper must stay out of it, so the
+        # probe sets XDG_RUNTIME_DIR as a session does, and TMPDIR is unset, as
+        # it is in one (the launch then goes to /tmp).
         uid = machine.succeed("id -u " + USER).strip()
         runtime = "/run/user/" + uid
         machine.succeed("loginctl enable-linger " + USER)
         machine.wait_for_unit("user@" + uid + ".service")
-        env = "env XDG_RUNTIME_DIR=" + runtime + " "
+        env = "env -u TMPDIR XDG_RUNTIME_DIR=" + runtime + " "
 
         with subtest("the server is in ~/.claude.json as the wrapper, by its store path"):
             entry = json.loads(machine.succeed("jq -c '.mcpServers[\"chrome-devtools\"]' " + HOME + "/.claude.json"))
@@ -226,19 +294,27 @@ pkgs.testers.runNixOSTest {
                 machine.succeed("rm -r /tmp/window-profile")
 
         tree = "swaymsg -t get_tree" if display else "true"
-        ls_profile = 'ls -d "$XDG_RUNTIME_DIR"/chrome-devtools-helium.*'
-        prefs = "jq -c '.extensions.settings' \"$XDG_RUNTIME_DIR\"/chrome-devtools-helium.*/Default/Preferences"
+        prefs = "jq -c '.extensions.settings' /tmp/cdh.*/profile/Default/Preferences"
+        probe_browser = "${inspect}/bin/inspect-browser"
+        refused = "Access denied"
 
         with subtest("navigate_page right after the launch succeeds, and the profile has uBO off"):
             account, err = run_probe(
                 machine, "navigate",
-                "--first navigate_page --exec " + shlex.quote(ls_profile) + " --exec " + shlex.quote(prefs) + " --exec " + shlex.quote(tree),
+                "--first navigate_page"
+                + " --call " + shlex.quote('take_screenshot={"filePath": "{t}/inside.png"}')
+                + " --call " + shlex.quote('take_screenshot={"filePath": "' + runtime + '/outside.png"}')
+                + " --call " + shlex.quote('take_screenshot={"filePath": "/tmp/outside.png"}')
+                + " --exec " + shlex.quote("ls -d /tmp/cdh.*/profile /tmp/cdh.*/t")
+                + " --exec " + shlex.quote(prefs)
+                + " --exec " + shlex.quote(tree)
+                + " --exec " + shlex.quote(probe_browser)
+                + " --exec " + shlex.quote("ls /tmp/cdh.*/t"),
                 env,
             )
             check_page(account, "navigate_page")
-            profile, settings, windows = account["exec"]
-            assert profile["status"] == 0 and profile["stdout"].count("chrome-devtools-helium.") == 1, profile
-            assert profile["stdout"].startswith(runtime + "/"), "the profile is not in the runtime directory: " + profile["stdout"]
+            dirs, settings, windows, browser, tmp_files = account["exec"]
+            assert dirs["status"] == 0 and len(dirs["stdout"].split()) == 2, dirs
             assert json.loads(settings["stdout"])[UBO]["disable_reasons"] == [1], settings
             if display:
                 # A window of the browser would be a node with a process id.
@@ -247,52 +323,106 @@ pkgs.testers.runNixOSTest {
                 assert clients(nodes) == [], "a window opened on the display: " + str(clients(nodes))
             for notice in ["Google collects usage statistics", "send trace URLs to the Google CrUX API"]:
                 assert notice not in err, "the server printed its Google notice: " + err
+
+            # The server's file tools: the TMPDIR of the launch is their root,
+            # and neither the runtime directory nor /tmp itself is one.
+            inside, outside_runtime, outside_tmp = account["calls"]
+            assert not inside["isError"], "a file in the launch's TMPDIR was refused: " + inside["text"]
+            assert "inside.png" in tmp_files["stdout"], "the screenshot is not in the launch's TMPDIR: " + tmp_files["stdout"]
+            assert outside_runtime["isError"] and refused in outside_runtime["text"], "a file in the runtime directory was accepted: " + str(outside_runtime)
+            assert outside_tmp["isError"] and refused in outside_tmp["text"], "a file in /tmp was accepted: " + str(outside_tmp)
+            machine.fail("ls " + runtime + "/outside.png /tmp/outside.png")
+
+            # The browser: its TMPDIR is the launch's, it runs with its sandbox,
+            # and it talks over a pipe, with no port.
+            f = facts(account, 3)
+            assert f["main"], "no browser process was found: " + str(f)
+            assert f["browser_TMPDIR"].startswith("/tmp/cdh.") and f["browser_TMPDIR"].endswith("/t"), f
+            assert f["debug_pipe"] != "0" and f["debug_port"] == "0", f
+            assert f["no_sandbox"] == "0", "the browser runs with --no-sandbox: " + str(f)
+            assert int(f["renderers"]) >= 1 and f["unsandboxed"] == "0", "a renderer runs without seccomp: " + str(f)
+            assert f["listening"] == "0", "the browser listens on a TCP port: " + str(f)
+            assert f["runtime_hits"] == "0", "the runtime directory holds files of the launch: " + str(f)
+            print("the browser: " + json.dumps(f, sort_keys=True))
+            print("the file tools: " + json.dumps([c["text"][:120] for c in account["calls"]]))
+
             assert account["exit"]["how"] == "stdin-closed" and account["exit"]["code"] == 0, account["exit"]
-            assert_clean(machine, runtime)
+            assert_clean(machine, "/tmp")
+            machine.succeed("test -z \"$(find " + runtime + " -maxdepth 3 \\( -name 'cdh.*' -o -name 'chrome-devtools-mcp*' \\) )\"")
 
         with subtest("new_page right after the launch succeeds"):
             account, err = run_probe(machine, "newpage", "--first new_page", env)
             check_page(account, "new_page")
-            assert_clean(machine, runtime)
+            assert_clean(machine, "/tmp")
 
         with subtest("a server that has to be stopped with SIGTERM leaves nothing behind"):
             account, err = run_probe(machine, "sigterm", "--first navigate_page --stop sigterm", env)
             check_page(account, "sigterm")
             assert account["exit"]["how"] == "sigterm", account["exit"]
-            assert_clean(machine, runtime)
+            assert_clean(machine, "/tmp")
 
         with subtest("a short TMPDIR that is set is used"):
+            as_user(machine, "mkdir -p /tmp/tt")
             account, err = run_probe(
                 machine, "shorttmp",
-                "--first navigate_page --exec " + shlex.quote("ls -d /tmp/chrome-devtools-helium.*"),
-                env + "TMPDIR=/tmp ",
+                "--first navigate_page --launch-base /tmp/tt"
+                + " --call " + shlex.quote('take_screenshot={"filePath": "{t}/inside.png"}')
+                + " --exec " + shlex.quote("ls -d /tmp/tt/cdh.*/t"),
+                env + "TMPDIR=/tmp/tt ",
             )
-            check_page(account, "TMPDIR=/tmp")
+            check_page(account, "TMPDIR=/tmp/tt")
             assert account["exec"][0]["status"] == 0, account["exec"]
+            assert not account["calls"][0]["isError"], account["calls"]
+            assert "not using" not in err, err
+            assert_clean(machine, "/tmp/tt")
             assert_clean(machine, "/tmp")
+            machine.succeed("rmdir /tmp/tt")
+
+        with subtest("a TMPDIR of 40 bytes, the longest accepted, works with the real browser"):
+            edge = "/tmp/" + "e" * 35
+            assert len(edge.encode()) == 40, edge
+            as_user(machine, "mkdir -p " + edge)
+            account, err = run_probe(
+                machine, "edgetmp",
+                "--first navigate_page",
+                env + "TMPDIR=" + edge + " ",
+            )
+            check_page(account, "TMPDIR of 40 bytes")
+            assert "not using" not in err, err
+            assert_clean(machine, edge)
+            machine.succeed("rmdir " + edge)
 
         with subtest("a TMPDIR too long for Chromium's singleton socket is passed over"):
             long_dir = "/tmp/" + "x" * 120
-            machine.succeed("install -d -o " + USER + " " + long_dir)
+            as_user(machine, "mkdir -p " + long_dir)
             account, err = run_probe(machine, "longtmp", "--first navigate_page", env + "TMPDIR=" + long_dir + " ")
             check_page(account, "long TMPDIR")
             assert "not using TMPDIR=" in err, err
             assert_clean(machine, long_dir)
-            assert_clean(machine, runtime)
+            assert_clean(machine, "/tmp")
             machine.succeed("rmdir " + long_dir)
+
+        with subtest("a TMPDIR inside the runtime directory is passed over"):
+            as_user(machine, "mkdir -p " + runtime + "/tt")
+            account, err = run_probe(machine, "runtimetmp", "--first navigate_page", env + "TMPDIR=" + runtime + "/tt ")
+            check_page(account, "TMPDIR in the runtime directory")
+            assert "runtime directory" in err, err
+            machine.succeed("test -z \"$(ls -A " + runtime + "/tt)\"")
+            assert_clean(machine, "/tmp")
+            machine.succeed("rmdir " + runtime + "/tt")
 
         with subtest("several launches in a row all navigate"):
             for n in range(3):
                 account, err = run_probe(machine, "again" + str(n), "--first navigate_page", env)
                 check_page(account, "launch " + str(n + 1))
-            assert_clean(machine, runtime)
+            assert_clean(machine, "/tmp")
 
-        with subtest("a killed wrapper's profile is removed by the next launch"):
-            # Stands in for a wrapper that was killed: a profile of a PID that is gone.
-            as_user(machine, "mkdir -p " + runtime + "/chrome-devtools-helium.999999.ABCDEF/Default")
+        with subtest("a killed wrapper's launch is removed by the next launch"):
+            # Stands in for a wrapper that was killed: a launch of a PID that is gone.
+            as_user(machine, "mkdir -p /tmp/cdh.999999.ABCDEF/profile/Default /tmp/cdh.999999.ABCDEF/t")
             account, err = run_probe(machine, "sweep", "--first navigate_page", env)
             check_page(account, "after a killed wrapper")
-            assert_clean(machine, runtime)
+            assert_clean(machine, "/tmp")
 
 
     desktop.start()

@@ -11,12 +11,14 @@ necessary: Helium's uBlock Origin reloads every tab that made requests before
 its filter lists were loaded, so the server's first `navigate_page` fails with
 `net::ERR_ABORTED` and `new_page` hangs, and no flag keeps the extension out.
 
-Every launch gets a fresh profile whose `Default/Preferences` mark the
-extension (`blockjmkbacgjkknlgpkjjiijinjdanf`) as switched off by the user
-(`disable_reasons: [1]`). The profile is per launch because a second browser on
-a shared profile refuses to start. The wrapper passes `TERM`, `INT` and `HUP`
-on to the server, removes its profile when the server ends, and removes the
-profiles of wrappers that were killed (their PID is in the directory name).
+Every launch gets a directory of its own, `cdh.PID.XXXXXX` (mode 700), with two
+directories in it: `profile/`, whose `Default/Preferences` mark the extension
+(`blockjmkbacgjkknlgpkjjiijinjdanf`) as switched off by the user
+(`disable_reasons: [1]`), and `t/`, an empty directory that is the `TMPDIR` of
+the server and the browser. The profile is per launch because a second browser
+on a shared profile refuses to start. The wrapper passes `TERM`, `INT` and `HUP`
+on to the server, removes the directory when the server ends, and removes the
+directories of wrappers that were killed (their PID is in the name).
 
 ## Changed from the original
 
@@ -26,31 +28,53 @@ profiles of wrappers that were killed (their PID is in the directory name).
 - The server is told not to look for a newer version
   (`CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1`). Its check starts a detached
   process that asks the npm registry; Nix decides the version.
-- Where the profile goes. The original used `${TMPDIR:-/tmp}` and only said "keep
-  TMPDIR short" (Chromium's singleton socket is under TMPDIR, and its path is
-  limited to 107 characters; a longer one makes the browser exit at once, which
+- Where the launch goes. The original used `${TMPDIR:-/tmp}` and only said "keep
+  TMPDIR short" (Chromium's singleton socket is under TMPDIR, and a socket path
+  is limited to 108 bytes; a longer one makes the browser exit at once, which
   the server reports as "Target closed"). The wrapper now takes the first of
-  `TMPDIR`, `XDG_RUNTIME_DIR` and `/tmp` that is a writable directory of at most 60
-  characters, says on stderr why it passed one over, and hands the server that
-  directory as `TMPDIR`. The profile and the socket are never under a path the
-  caller made long.
+  `TMPDIR` and `/tmp` that is a writable directory of at most 40 bytes (bytes,
+  not characters: the length is taken in the C locale) and is not inside
+  `XDG_RUNTIME_DIR`, and says on stderr why it passed one over. Measured with
+  Helium 0.21.1.1: a `TMPDIR` of 62 bytes starts, one of 63 aborts; the socket is
+  46 bytes, `/cdh.PID.XXXXXX/t` is 21 with a 7-digit PID, so 40 leaves a byte to
+  spare. The VM test starts the real Helium with a `TMPDIR` of exactly 40 bytes.
+- A `TMPDIR` of its own for every launch, never the runtime directory. The server
+  writes the files its tools make (screenshots, Lighthouse reports, screencasts)
+  to `chrome-devtools-mcp-XXXXXX` directories under `os.tmpdir()` and never
+  removes them, and its file tools (the `filePath` of screenshots, traces and
+  heap snapshots, `upload_file`) may read and write below it. With
+  `XDG_RUNTIME_DIR` as `TMPDIR`, as the first version of this port had it, those
+  files would pile up in RAM, and the root of the file tools would cover the
+  user's sockets and credentials. With `t/` the root is an empty private
+  directory that goes with the launch. (`XDG_RUNTIME_DIR` itself is left
+  alone: the wrapper does not change it, and the browser needs nothing there.)
+  A client that sends roots of its own adds them, and the server accepts paths
+  in them as well.
 - The test of the original, 12 tests against a stub `npx`, is
   `tests/wrapper.test.sh` on top of `scripts/tests/lib.sh`, against stand-ins for
-  the server (`tests/stub-server.sh`) and the browser, 27 tests in all. The
+  the server (`tests/stub-server.sh`) and the browser, 36 tests in all. The
   check `common-chrome-devtools-mcp-helium` builds the wrapper with the
   stand-ins, runs them, and then looks at the real wrapper. Every path the
-  wrapper reads is a throwaway tree; no test touches `/tmp` or a home.
+  wrapper reads is a throwaway tree (`CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP`
+  names the directory it uses in place of `/tmp`, only so that tests can reach
+  it); no test touches `/tmp` or a home.
   `tests/desktop/chrome-devtools-mcp.nix` runs the real server and the real
   Helium in two VMs, on the desktop and on the server shape.
 
 ## Findings that are not fixed
 
-- A profile of a wrapper killed with SIGKILL is removed by the next launch, not
-  at once, and only from the directory that launch uses. A TMPDIR that changes
-  between launches (short, then long) leaves the first directory's profile
+- A launch of a wrapper killed with SIGKILL is removed by the next launch, not
+  at once, and only from the directory that launch uses. A `TMPDIR` that changes
+  between launches (short, then long) leaves the first directory's launch
   until a launch uses that directory again.
-- A wrapper whose PID was reused by an unrelated process keeps its dead profile
+- A wrapper whose PID was reused by an unrelated process keeps its dead launch
   until that process ends.
+- The sweep skips what is not a directory of the user's own (`stat` does not
+  follow a link, so a link another user planted in `/tmp` is left alone, and a
+  failing removal only prints a line). The tests cover a link of the user's own
+  and a directory that cannot be removed; a link or directory owned by another
+  user needs a second account, which the sandbox of the checks does not have, so
+  that case has no test.
 - Before the wrapper installs its signal trap, a signal kills it by default and
   the server it just started is orphaned. The window is a few milliseconds.
 - uBlock Origin being off is checked in the profile's `Preferences` while the
@@ -61,3 +85,7 @@ profiles of wrappers that were killed (their PID is in the directory name).
   fast machine (six launches with a plain profile all navigated), so no test
   shows the failure without the wrapper. It was measured on Fedora against real
   pages on 2026-11-07.
+- The wrapper package is built without import-from-derivation (the script is
+  read with `builtins.readFile` and its two placeholders replaced in the
+  string). No check enforces it; `nix eval --option allow-import-from-derivation
+  false .#packages.x86_64-linux.chrome-devtools-mcp-helium.outPath` shows it.

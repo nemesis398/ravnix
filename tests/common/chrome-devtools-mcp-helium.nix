@@ -66,19 +66,26 @@ pkgs.runCommand "common-chrome-devtools-mcp-helium"
     for flag in --headless --no-usage-statistics --no-performance-crux --executablePath --userDataDir; do
       grep -qF -- "$flag" "$wrapper" || fail "the wrapper does not pass $flag"
     done
+    # The directory of a launch is looked for in TMPDIR, then in /tmp (the seam
+    # of the tests names the fallback; its default must stay the real /tmp).
+    grep -qF -- 'CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP:-/tmp' "$wrapper" || fail "the fallback of the wrapper is not /tmp"
 
     # The real server starts from the wrapper (--version answers before it
-    # looks for a browser), with a stand-in browser, and the profile is gone.
+    # looks for a browser), with a stand-in browser, and the launch is gone.
+    # The directories are short on purpose: the wrapper passes over a TMPDIR
+    # of more than 40 bytes.
     mkdir -p run tmp
     printf '#!/bin/sh\nexit 0\n' > browser
     chmod +x browser
     got=$(env -i PATH=/nonexistent TMPDIR="$PWD/tmp" XDG_RUNTIME_DIR="$PWD/run" \
+      CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP="$PWD/tmp" \
       CHROME_DEVTOOLS_HELIUM="$PWD/browser" "$wrapper" --version 2>&1) || fail "the real server did not start: $got"
     case $got in
       *${server.version}*) ;;
       *) fail "the real server does not answer with ${server.version}: $got" ;;
     esac
-    [ -z "$(ls -A tmp)" ] || fail "the real server's run left a profile: $(ls tmp)"
+    [ -z "$(ls -A tmp)" ] || fail "the real server's run left a launch behind: $(ls tmp)"
+    [ -z "$(ls -A run)" ] || fail "the real server's run wrote to the runtime directory: $(ls run)"
 
     [ "$failed" = 0 ] && touch $out || exit 1
   ''

@@ -14,19 +14,30 @@ Code does. It prints one JSON document with what happened:
              how long it took, its text, isError
   snapshot   the text of take_snapshot after it
   script     the text of evaluate_script (document.title)
+  calls      the answer to each --call (tool, isError, text), made on the
+             page after the snapshot
   exec       the output of each --exec command, run while the server is up
   exit       how the server ended: "stdin-closed" (it exited by itself when its
              stdin closed), "sigterm" (it needed SIGTERM, or --stop sigterm
              asked for one), and its exit code
 
 usage: chrome-devtools-mcp-probe.py --url URL [--first navigate_page|new_page]
-           [--stop stdin|sigterm] [--exec SHELL-COMMAND ...] -- COMMAND [ARGS...]
+           [--stop stdin|sigterm] [--launch-base DIR]
+           [--call TOOL=JSON-ARGUMENTS ...] [--exec SHELL-COMMAND ...]
+           -- COMMAND [ARGS...]
+
+--call makes one more tool call with the given arguments (JSON), and the id of
+the page is added unless they name one. "{t}" in them stands for the TMPDIR of
+the launch (the wrapper's t directory, which is where the server's file tools
+may read and write): DIR/cdh.PID.*/t, where PID is the server command's own
+process, DIR is --launch-base (default /tmp).
 
 Standard library only. Exit status 1 when the server breaks the protocol or
 does not answer in time, with the reason on stderr.
 """
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -105,6 +116,8 @@ def main():
     parser.add_argument("--first", choices=["navigate_page", "new_page"], default="navigate_page")
     parser.add_argument("--stop", choices=["stdin", "sigterm"], default="stdin")
     parser.add_argument("--exec", action="append", default=[], dest="commands")
+    parser.add_argument("--call", action="append", default=[], dest="calls", metavar="TOOL=JSON")
+    parser.add_argument("--launch-base", default="/tmp")
     parser.add_argument("command", nargs="+")
     args = parser.parse_args()
 
@@ -150,6 +163,19 @@ def main():
         summary["script"], _ = peer.call(
             "evaluate_script", {"pageId": selected, "function": "() => document.title"}, 60
         )
+
+        summary["calls"] = []
+        for spec in args.calls:
+            tool, _, raw = spec.partition("=")
+            if "{t}" in raw:
+                launches = glob.glob(os.path.join(args.launch_base, "cdh.%d.*" % peer.proc.pid))
+                if len(launches) != 1:
+                    raise RuntimeError("expected one launch directory of pid %d in %s, found %r" % (peer.proc.pid, args.launch_base, launches))
+                raw = raw.replace("{t}", launches[0] + "/t")
+            arguments = json.loads(raw or "{}")
+            arguments.setdefault("pageId", selected)
+            call_text, call_error = peer.call(tool, arguments, 60)
+            summary["calls"].append({"tool": tool, "isError": call_error, "text": call_text[:2000]})
 
         summary["exec"] = []
         for command in args.commands:
