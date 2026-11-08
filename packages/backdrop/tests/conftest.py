@@ -173,21 +173,35 @@ def facts_text():
     return text
 
 
+def tinted(img, color, base, least=0.45, slack=14):
+    """The mask of the pixels that are `color` at least `least` strong over
+    `base`, antialiased edges included: on the line from `base` to `color`,
+    to within `slack` of the 0 to 255 scale in each channel's sum of squares."""
+    base, color = np.array(base, dtype=float), np.array(color, dtype=float)
+    d = color - base
+    p = img.astype(float) - base
+    t = (p @ d) / (d @ d)
+    residual = np.linalg.norm(p - t[..., None] * d, axis=-1)
+    return (t >= least) & (residual <= slack)
+
+
 def palette_row_offset(right):
     """How far the Palette row starts from the value column, in glyph advances.
 
     `right` is the facts area of a wall. The row is eight swatches of three
-    glyphs; Green, the third, is the leftmost swatch that no other part of the
-    facts has the color of, so the first swatch starts six glyphs before it.
-    The value column starts at the leftmost pixel that is exactly Text, which
-    is where the values of the rows above begin. A second line of swatches
-    that starts under the frame, as the block symbol prints the bright eight,
-    pulls the leftmost Green far to the left and gives an offset of about 20."""
+    glyphs on one line, and Green, the third, is the leftmost swatch that no
+    other part of the facts has the color of, so the first swatch starts six
+    glyphs before it. The value column starts at the leftmost pixel of Text,
+    antialiased or not, which is where the values of the rows above begin: a
+    line of its own that a failing command prints would be to the left of it.
+    Fails when the swatches are on more than one line, as the block symbol
+    prints the bright eight on a second line that starts under the frame."""
     green = bbox(where(right, rgb("green")))
     assert green, "no Palette row"
     advance = (green[2] - green[0]) / 3
-    values = bbox(where(right, rgb("text")))[0]
-    return (green[0] - 6 * advance - values) / advance
+    assert green[3] - green[1] <= 2.5 * advance, "the Palette swatches are on more than one line"
+    values = bbox(tinted(right, rgb("text"), rgb("base")))
+    return (green[0] - 6 * advance - values[0]) / advance
 
 
 def svg(body):

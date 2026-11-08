@@ -96,8 +96,7 @@ def test_nixos_logo_and_facts_are_top_right(wall):
 
 def test_the_palette_row_starts_in_the_value_column(wall):
     # The Palette row is one line that jumps to the column of the values, like
-    # the rows above it: a second line of swatches that starts under the frame
-    # would put the leftmost Green about 20 glyphs to the left.
+    # the rows above it.
     assert abs(palette_row_offset(facts_area(wall))) < 1.5
 
 
@@ -143,7 +142,13 @@ def test_accent_follows_the_option(lab):
 def test_scale_two_renders_at_the_physical_resolution(lab):
     img, _ = lab.render("wall", size=(2560, 1600), scale=2)
     assert img.shape == (1600, 2560, 3)
-    r = reach(not_base(img) & window(img, 1280, 800, 130 * 2), 1280, 800)
+    ink = not_base(img) & window(img, 1280, 800, 130 * 2)
+    # On a screen of 1280x800 logical px the 22 rows of the facts end close
+    # above the mark, and their logo's lowest rows fall into the mark's square.
+    # The mark has no ink right of 56 % of the width and above 40 % of the
+    # height: at its top it is only 190 px from the center.
+    ink[: int(0.40 * 1600), int(0.56 * 2560) :] = False
+    r = reach(ink, 1280, 800)
     assert 0.93 * MARK_REACH * 2 <= r <= RING_INNER * 2
 
 

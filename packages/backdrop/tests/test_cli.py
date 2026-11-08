@@ -528,6 +528,10 @@ def test_the_real_fastfetch_draws_the_logo_and_the_facts_with_no_network(lab):
         target = lab.home / ".config" / "fastfetch"
         target.mkdir(parents=True)
         (target / "config.jsonc").write_text(open(config).read())
+    # The Failed row asks systemd, which the build sandbox has none of; the
+    # stand-in finds no failed unit, as on a healthy machine, instead of the
+    # row printing a shell's "command not found" in a line of its own.
+    lab.install_stub("systemctl", "#!/usr/bin/env bash\nexit 0\n")
     env = {k: v for k, v in lab.env().items() if k != "BACKDROP_FACTS"}
     out = lab.work / "real.png"
     start = time.monotonic()
@@ -548,7 +552,7 @@ def test_the_real_fastfetch_draws_the_logo_and_the_facts_with_no_network(lab):
     assert len(proc.stderr.splitlines()) <= 1, proc.stderr
     # The Palette row is one line that starts in the value column, as on the
     # terminal: fastfetch's block symbol prints the bright eight on a second
-    # line with no jump to that column, and no reflow here would hide it.
+    # line with no jump to that column, and backdrop does not reflow it.
     assert abs(palette_row_offset(img[: int(0.40 * H), W // 2 :])) < 1.5
 
 
