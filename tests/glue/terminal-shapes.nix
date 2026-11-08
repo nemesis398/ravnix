@@ -66,6 +66,12 @@ let
   infix = a: b: lib.hasInfix (plain a) (plain b);
   execOf = u: lib.concatStringsSep " " (lib.toList u.Service.ExecStart);
   check = cond: msg: lib.optional (!cond) msg;
+  # Whether a command's text sets NAME to a word that matches the regex
+  # VALUE (./terminal/scripts.nix fills each in as a shell word, which
+  # lib.escapeShellArg leaves unquoted when it needs no quotes).
+  sets =
+    name: value: t:
+    builtins.match "(.*\n)?${name}='?${value}'?\n.*" (plain t) != null;
 
   connection = (units h).ravnix-connection or null;
   connectionText = lib.concatMapStrings text (homeNamed "ravnix-connection" h);
@@ -88,10 +94,10 @@ let
     # What the two commands do is tests/glue/terminal-scripts.nix's; here,
     # that the laptop's are built for the alias and with the real programs.
     ++ check (
-      infix "alias='ravnix-server'" terminalText && infix "herdr='${lib.getExe pkgs.herdr}'" terminalText
+      sets "alias" "ravnix-server" terminalText && sets "herdr" "/nix/store/[a-z0-9]{32}-herdr-[^/]*/bin/herdr" terminalText
     ) "ravnix-terminal does not run herdr for ravnix-server"
     ++ check (
-      infix "alias='ravnix-server'" connectionText && infix "ssh='${lib.getExe' pkgs.openssh "ssh"}'" connectionText
+      sets "alias" "ravnix-server" connectionText && sets "ssh" "/nix/store/[a-z0-9]{32}-openssh-[^/]*/bin/ssh" connectionText
     ) "ravnix-connection does not run ssh for ravnix-server"
     ++ check (connection != null) "the laptop has no ravnix-connection unit"
     ++ check (
