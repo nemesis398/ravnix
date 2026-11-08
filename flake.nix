@@ -102,6 +102,25 @@
       toolClashes = lib.attrNames (lib.intersectAttrs tools.checks (discovered // ownChecks));
       # End of the Odin tools.
 
+      # Packages, found like tools: every packages/<name>/default.nix is a
+      # function for callPackage and becomes the package <name>
+      # (lib/discover-packages.nix; packages/README.md has the rest). A name
+      # that a tool or packages.claude-code already holds is an error. Every
+      # package is built through overlays.default, as pkgs.ravnix.<name>, with
+      # the flake's pkgs for packages.<system> and with the package set of
+      # whoever applies the overlay for the modules, so the two are the same
+      # package and a package that needs another finds it as `ravnix`.
+      packageFiles = import ./lib/discover-packages.nix { inherit lib; } ./packages (
+        lib.mapAttrs (name: _: "the tool tools/${name}") tools.packages
+        // {
+          claude-code = "Claude Code itself";
+        }
+      );
+      ravnixOverlay = final: _prev: {
+        ravnix = lib.mapAttrs (_: file: final.callPackage file { }) packageFiles;
+      };
+      # End of the packages.
+
       # Claude Code: the claude-code input's package with the download it was
       # made from, which the full gate verifies against Anthropic's release
       # manifest for the version in this flake's own lock (lib/claude-code.nix,
@@ -147,6 +166,19 @@
           self.homeModules.claude-skills
         ];
       };
+      # The desktop, for the laptop shape: Sway and what runs on it; and the
+      # glue that makes the two hosts one system. Every file and directory of
+      # modules/desktop/ and of modules/glue/ is imported by that directory's
+      # default.nix, so a module is added without editing this file
+      # (lib/import-dir.nix).
+      nixosModules.desktop = {
+        key = "ravnix/nixosModules.desktop";
+        imports = [ ./modules/desktop ];
+      };
+      nixosModules.glue = {
+        key = "ravnix/nixosModules.glue";
+        imports = [ ./modules/glue ];
+      };
       # Claude Code from packages.claude-code, and the skill
       # framework: the skill values, the hooks and the status line
       # (claude/README.md). claude-skills brings claude-code along, whose
@@ -173,11 +205,16 @@
           ./modules/common/claude-skills.nix
         ];
       };
+      # Every package of packages/ as pkgs.ravnix.<name>, so a module reads
+      # pkgs.ravnix.<name> and never needs `self`. nixosModules.common applies
+      # it. It sets the one attribute ravnix, to the same value every time, so
+      # applying it a second time (a host that lists it too) changes nothing.
+      overlays.default = ravnixOverlay;
       packages.${system} =
         if tools.packages ? claude-code then
           throw "tools/claude-code is a tool, and packages.claude-code is Claude Code itself; rename the tool"
         else
-          tools.packages // { claude-code = claudeCode; };
+          tools.packages // (pkgs.extend ravnixOverlay).ravnix // { claude-code = claudeCode; };
       checks.${system} =
         if clashes != [ ] then
           throw "tests/: ${toString clashes} is already a check of flake.nix; pick another name"

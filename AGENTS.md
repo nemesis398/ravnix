@@ -104,6 +104,16 @@ fails when the callgrind instruction count on `bench/` rises more than 2 %
 above `bench/baseline.json`. Start from `tools/_template/`. A baseline
 changes only by the command in `tools/README.md`, never by itself.
 
+A package is a directory, and adding one never touches `flake.nix` either.
+Every `packages/NAME/default.nix` is a function for `callPackage` and becomes
+the package `NAME` and `pkgs.ravnix.NAME`, which is what a module reads;
+`packages/README.md` has the rest. A module of the desktop or the glue is a
+file too: every `modules/desktop/NAME.nix` and `modules/glue/NAME.nix`, and
+every `NAME/default.nix` in those directories, is imported by
+`nixosModules.desktop` and `nixosModules.glue`. Each is a NixOS module, and
+what belongs to home-manager goes through `home-manager.sharedModules`. A
+symlink in either directory, and in `packages/`, is an error.
+
 A host is built from a private flake, against a local checkout of this one:
 
 ```sh
