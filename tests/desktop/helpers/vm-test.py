@@ -17,10 +17,13 @@ def as_user(command, check=True):
     return machine.succeed(full) if check else machine.execute(full)
 
 
-def swaymsg(*args):
+def swaymsg_command(*args):
     sock = machine.succeed(f"ls {RUN}/sway-ipc.{UID}.*.sock | head -n1").strip()
-    cmd = "swaymsg -s " + shlex.quote(sock) + " " + " ".join(shlex.quote(a) for a in args)
-    return json.loads(as_user(cmd))
+    return "swaymsg -s " + shlex.quote(sock) + " " + " ".join(shlex.quote(a) for a in args)
+
+
+def swaymsg(*args):
+    return json.loads(as_user(swaymsg_command(*args)))
 
 
 def workspace_y():
@@ -40,9 +43,15 @@ def diagnose(what):
     machine.screenshot("failure")
 
 
-def wait_for(description, condition, timeout=60):
+def wait_for(description, condition, timeout=60, left=None):
+    """Wait until condition() holds. left, when given, says what was still
+    there when the time ran out, and the failure carries it."""
+
     def check(last_chance):
-        return condition()
+        if condition():
+            return True
+        assert not (last_chance and left), f"gave up waiting for {description} after {timeout} s: {left()}"
+        return False
 
     try:
         with machine.nested(f"waiting for {description}"):
@@ -271,11 +280,13 @@ wait_for("the login layout to be done", lambda: machine.execute(f"pgrep -u {USER
 
 
 def windows():
+    """The views on the tree, as (con_id, app_id or X11 class, pid)."""
     found = []
 
     def walk(node):
         if node.get("pid") and node.get("type") in ("con", "floating_con"):
-            found.append(node["id"])
+            app = node.get("app_id") or (node.get("window_properties") or {}).get("class")
+            found.append((node["id"], app, node["pid"]))
         for child in node.get("nodes", []) + node.get("floating_nodes", []):
             walk(child)
 
@@ -287,18 +298,55 @@ def helium_runs():
     return machine.execute(f"pgrep -u {USER} -f '/share/helium/helium'")[0] == 0
 
 
+def close(window):
+    """Close one view. A view can be gone by the time its kill arrives: the
+    pkill in layout_gone ends Helium's while their list is read. Sway then
+    answers "No matching node." and swaymsg exits 2 (sway/commands.c,
+    swaymsg/main.c), which is what the kill was for, so that one answer is let
+    pass and the next read of the tree decides. Any other failure stops the
+    stage at once with what swaymsg said; a view that stays open is caught by
+    the bounded wait below."""
+    status, out = as_user(swaymsg_command(f"[con_id={window}]", "kill"), check=False)
+    if status == 0:
+        return
+    try:
+        errors = [r.get("error") for r in json.loads(out)]
+    except (ValueError, AttributeError, TypeError):
+        errors = []
+    assert status == 2 and errors == ["No matching node."], (
+        f"swaymsg could not close the window {window}: exit {status}, {out.strip()!r}"
+    )
+
+
+# What the last look found, for the message when the wait gives up.
+last_look: dict = {"windows": [], "helium": False}
+
+
 def layout_gone():
     machine.execute(f"pkill -u {USER} -f '/share/helium/helium'")
-    for window in windows():
-        swaymsg(f"[con_id={window}]", "kill")
+    for window, _app, _pid in windows():
+        close(window)
     for _ in range(3):
         machine.sleep(1)
-        if windows() or helium_runs():
+        last_look["windows"], last_look["helium"] = windows(), helium_runs()
+        if last_look["windows"] or last_look["helium"]:
             return False
     return True
 
 
-wait_for("the apps of the layout to be gone, and no window to map late", layout_gone, 90)
+wait_for(
+    "the apps of the layout to be gone, and no window to map late",
+    layout_gone,
+    90,
+    left=lambda: (
+        f"windows still on the tree (con_id, app, pid): {last_look['windows'] or 'none'}; "
+        f"Helium {'still runs' if last_look['helium'] else 'is gone'}"
+    ),
+)
+# close() takes Sway's answer for a view that is gone as done. That answer is
+# pinned here once, on an id that no view has, so that a Sway that words it
+# otherwise fails this line every time and not, now and then, the race above.
+close(2**31 - 1)
 
 # ── the radial menu ───────────────────────────────────────────────────────────
 # sway-radial is a user service of the session. It reads the trackpad, which the
