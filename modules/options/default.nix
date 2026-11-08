@@ -38,6 +38,7 @@ in
     ./scripts.nix
     ./desktop.nix
     ./laptop-access.nix
+    ./server-access.nix
     ./secrets.nix
     ./matrix.nix
     ./workbench.nix

@@ -36,6 +36,7 @@ let
     "ravnix.hosts.nas.sshTarget"
     "ravnix.server.netbirdAddress"
     "ravnix.laptopAccess.publicKey"
+    "ravnix.serverAccess.publicKey"
     "ravnix.server.deployFrom[0]"
     "ravnix.secrets.rbwBaseUrl"
     "ravnix.matrix.homeserver"

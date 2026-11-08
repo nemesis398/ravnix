@@ -91,11 +91,12 @@
       systems = [ "x86_64-linux" ];
     };
 
-    # How the laptop's main terminal reaches the server.
+    # The server.
     server = {
-      # user@host or an ssh alias; the main terminal key opens herdr there.
+      # user@host or an ssh alias, for an ssh of your own to the server.
       sshTarget = "alice@192.0.2.20";
-      # The server's address in your NetBird network.
+      # The server's address in your NetBird network. The main terminal key
+      # opens herdr there, and the main connection goes there.
       netbirdAddress = "198.51.100.20";
       # The git repository Claude Code's Remote Control works from on the
       # server: every session you start from the phone gets a worktree of
@@ -142,6 +143,23 @@
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey ravnix-laptop@example.org";
       # The laptop's host key (/etc/ssh/ssh_host_ed25519_key.pub on the
       # laptop). Null trusts the first key the laptop shows and remembers it.
+      hostKey = null;
+    };
+
+    # How the laptop reaches the server over NetBird, for the main terminal
+    # and the main connection, with a key of its own. Make it on the laptop
+    # with `ssh-keygen -t ed25519 -N "" -f <identityFile>`; neither the
+    # YubiKey nor Bitwarden's agent is used. Each value can be null, which
+    # leaves that part out.
+    serverAccess = {
+      # The private key, a file on the laptop only you can read. An absolute
+      # path in a string.
+      identityFile = "/home/alice/.ssh/ravnix-server";
+      # Its public half, the line of the .pub file, which the server accepts
+      # for your account. Not a real key.
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey ravnix-server@example.org";
+      # The server's host key (/etc/ssh/ssh_host_ed25519_key.pub on the
+      # server). Null trusts the first key the server shows and remembers it.
       hostKey = null;
     };
 

@@ -31,11 +31,13 @@
 #       unbindsym). The build validates it with the rest. The variables of the
 #       config ($mod, $term, $float, $accent, $base, ...) are in scope.
 #
-#   The main terminal key ($mod+Return), Task 5.2
+#   The main terminal key ($mod+Return)
 #       ravnix.desktop.terminal.main is the command (modules/options/
-#       desktop.nix). Set it from a NixOS module of the glue; the key, the
-#       session layout's terminal on workspace 2 and nothing else read it.
-#       ravnix.desktop.terminal.plain is the second key ($mod+Alt+Return).
+#       desktop.nix). The glue sets it on the laptop shape, to herdr on the
+#       server (modules/glue/terminal.nix); the key, the session layout's
+#       terminal on workspace 2 and nothing else read it.
+#       ravnix.desktop.terminal.plain is the second key ($mod+Alt+Return),
+#       a local shell.
 #
 #   A kanshi hook   ravnix.desktop.kanshi.exec (kanshi.nix)
 #   The GPU          ravnix.desktop.gpu.primary, taken from the PRIME bus id
