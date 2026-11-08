@@ -184,6 +184,8 @@ pkgs.testers.runNixOSTest {
       PASSWORD = "${password}"
       TOKEN = "${token}"
       MUNINN_IP = "${nodes.muninn.networking.primaryIPAddress}"
+      # The main key's herdr, which ravnix-terminal runs by its store path.
+      CLIENTS = "-f '/bin/herdr --remote ravnix-server'"
 
 
       def uid(machine):
@@ -335,10 +337,10 @@ pkgs.testers.runNixOSTest {
 
       with subtest("the main key opens herdr on muninn"):
           before = windows()
-          clients = pids("-f '^herdr --remote ravnix-server'")
+          clients = pids(CLIENTS)
           huginn.send_key("meta_l-ret")
           until("a new window of the main key", lambda: len(windows() - before) == 1)
-          until("herdr attached from huginn", lambda: len(pids("-f '^herdr --remote ravnix-server'") - clients) == 1)
+          until("herdr attached from huginn", lambda: len(pids(CLIENTS) - clients) == 1)
           took, lines = type_marker_until_seen("the first attach", 60)
           FIRST = lines[0]
           assert FIRST.startswith("w") and len(FIRST.split()) == 2, FIRST
@@ -393,16 +395,16 @@ pkgs.testers.runNixOSTest {
       with subtest("exactly one herdr session, and every window of the main key in it"):
           assert len(sessions()) == 1, sessions()
           assert herdr_server_pid() == SERVER
-          clients = huginn.execute("pgrep -u " + USER + " -f -c '^herdr --remote ravnix-server'")[1].strip()
-          assert clients == "2", "the main key's windows: " + clients
+          clients = len(pids(CLIENTS))
+          assert clients == 2, "the main key's windows: " + str(clients)
 
       with subtest("a detach closes the window and leaves the session"):
           before = windows()
-          clients = pids("-f '^herdr --remote ravnix-server'")
+          clients = pids(CLIENTS)
           huginn.send_key("ctrl-b")
           huginn.send_key("d")
           until("the detached window to close", lambda: len(before - windows()) == 1)
-          until("its herdr to end", lambda: len(clients - pids("-f '^herdr --remote ravnix-server'")) == 1)
+          until("its herdr to end", lambda: len(clients - pids(CLIENTS)) == 1)
           assert len(sessions()) == 1, sessions()
           assert herdr_server_pid() == SERVER
 
