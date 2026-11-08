@@ -38,7 +38,10 @@
 #       ravnix.desktop.terminal.plain is the second key ($mod+Alt+Return).
 #
 #   A kanshi hook   ravnix.desktop.kanshi.exec (kanshi.nix)
-#   The GPU          ravnix.desktop.gpu.primary (below)
+#   The GPU          ravnix.desktop.gpu.primary, taken from the PRIME bus id
+#                    of the hardware module (modules/options/desktop.nix);
+#                    --unsupported-gpu is added when the nvidia driver is
+#                    loaded (below)
 #
 # EXCEPTIONS (docs/style.md, rule 9). None for Sway itself. swaynag follows the
 # style (swaynag/config below). The GTK and Qt exceptions are in the theme
@@ -83,6 +86,12 @@ let
     "W503"
     "W504"
   ];
+
+  prime = config.hardware.nvidia.prime;
+  primeOn = prime.offload.enable || prime.sync.enable || prime.reverseSync.enable;
+  # sway refuses the proprietary driver with a red bar at every login unless
+  # told it is understood (sway 1.12 checks for nvidia-drm).
+  nvidiaDriver = lib.elem "nvidia" config.services.xserver.videoDrivers;
 
   askEnabled = cfg.ask != null;
   askHost = lib.head (lib.splitString "/" (lib.removePrefix "https://" (lib.removePrefix "http://" cfg.ask.url)));
@@ -332,6 +341,16 @@ in
       }
     ];
 
+    warnings = lib.optional (primeOn && cfg.gpu.primary == null) ''
+      NVIDIA PRIME is on and ravnix.desktop.gpu.primary is null: Sway will open
+      every GPU, the NVIDIA one included, and the card cannot power off while
+      it is open. The address is taken from hardware.nvidia.prime.amdgpuBusId
+      (or intelBusId) when that is set to the form PCI:bus:device:function
+      (decimal, e.g. PCI:54:0:0). Set it there, or set
+      ravnix.desktop.gpu.primary to the integrated GPU's address from
+      `lspci -D` (e.g. 0000:36:00.0).
+    '';
+
     # ── the compositor ────────────────────────────────────────────────────────
     programs.sway = {
       enable = true;
@@ -347,6 +366,11 @@ in
         swayidle
         swaylock
       ];
+      # Sway refuses the proprietary NVIDIA driver unless it is told to go on
+      # ("Proprietary GPU drivers are not supported by sway. Do not report
+      # issues."): a red swaynag bar at every login. Fedora's setup passes the
+      # same flag and its notes call it a red line.
+      extraOptions = lib.optional nvidiaDriver "--unsupported-gpu";
       extraSessionCommands = ''
         # Wayland where an application can choose; Qt falls back to X11.
         export QT_QPA_PLATFORM="wayland;xcb"

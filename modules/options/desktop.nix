@@ -4,9 +4,19 @@
 # are not values to fill in) and are read by modules/desktop. They sit here,
 # with the other options, so that me.nix is checked against the options module
 # alone and so that home-manager sees them too.
-{ lib, ... }:
+{ config, lib, ... }:
 let
   inherit (lib) mkOption types;
+  pci = import ../../lib/pci.nix { inherit lib; };
+
+  # The bus id of the integrated GPU that NixOS's PRIME options hold, if any.
+  # This module is also imported by home-manager, which has no `hardware`, so
+  # the lookup tolerates its absence.
+  primeBusId =
+    let
+      get = name: lib.attrByPath [ "hardware" "nvidia" "prime" name ] "" config;
+    in
+    if get "amdgpuBusId" != "" then get "amdgpuBusId" else get "intelBusId";
   ravnix = import ./types.nix { inherit lib; };
 
   workspace = types.submodule {
@@ -81,14 +91,21 @@ in
 
     gpu.primary = mkOption {
       type = types.nullOr (types.strMatching "[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}[.][0-7]");
-      default = null;
+      default = if primeBusId == "" then null else pci.fromBusId primeBusId;
+      defaultText = lib.literalMD ''
+        `hardware.nvidia.prime.amdgpuBusId`, or `intelBusId` when there is no
+        AMD one, converted from NixOS's decimal `PCI:54:0:0` to `0000:36:00.0`;
+        null when neither is set or the id is not of that form
+      '';
       internal = true;
       example = "0000:00:02.0";
       description = ''
         The PCI address of the GPU that Sway renders on and every display
-        connector hangs off, as `lspci -D` prints it. Set by the hardware
-        module of a hybrid laptop, which knows it; null on a host with one
-        GPU, where Sway finds it. The desktop module gives that GPU a stable,
+        connector hangs off, as `lspci -D` prints it. A hybrid laptop's
+        hardware module already names it, as the integrated GPU's PRIME bus
+        id, and this takes it from there, so nothing sets it by hand; null
+        on a host with one GPU, where Sway finds it. The desktop module
+        warns when PRIME is on and this is still null. It gives that GPU a stable,
         colon-free device path (`/dev/dri/primary-gpu`, a udev rule matching
         the address, so a renumbered cardN cannot break it) and names it in
         `WLR_DRM_DEVICES`. The by-path name cannot be used there: wlroots
