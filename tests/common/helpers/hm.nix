@@ -14,9 +14,7 @@
 }:
 modules:
 inputs.home-manager.lib.homeManagerConfiguration {
-  # The overlay, as nixosModules.common gives it to a host: the common module
-  # reads ravnix's packages as pkgs.ravnix.NAME.
-  pkgs = pkgs.extend self.overlays.default;
+  inherit pkgs;
   modules = [
     self.homeModules.options
     self.homeModules.theme

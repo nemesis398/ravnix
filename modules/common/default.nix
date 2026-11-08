@@ -10,9 +10,7 @@
 # ravnix.shell, ravnix.editor, ravnix.dictionary and ravnix.theme, so
 # homeModules.options and homeModules.theme must be imported beside it.
 # nixosModules.common does all three, and gives home-manager the user's
-# values; use homeModules.common by itself only outside a ravnix host. The home
-# reads ravnix's packages as pkgs.ravnix.NAME, so its pkgs must carry
-# overlays.default (nixosModules.common applies it to the system's).
+# values; use homeModules.common by itself only outside a ravnix host.
 { config, lib, ... }:
 {
   imports = [

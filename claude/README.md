@@ -206,7 +206,15 @@ in `me.nix`; it replaces the declared one whole, and your servers under other
 names come beside it. A server set with a plain definition in home-manager
 (`home-manager.users.NAME.ravnix.claude.mcpServers`) outranks everything that
 `me.nix` and ravnix declare, `chrome-devtools` included, as it does for every
-value of ravnix (`modules/common/nixos.nix`).
+value of ravnix (`modules/common/nixos.nix`). The declaration needs Claude Code
+on (`programs.claude-code.enable`); with it off, neither the entry nor the
+wrapper, and the browser it brings, is installed.
+
+Used on its own, `homeModules.common` outside a ravnix host, the wrapper is on
+the `PATH` but `chrome-devtools` is not declared: `me.nix` is a home-manager
+module there, and its `claude.mcpServers = { }` is a plain definition, which
+outranks the declaration. Declare the server in that `me.nix` yourself, with
+`command` the path that `command -v chrome-devtools-mcp-helium` prints.
 
 **No token enters the store.** A value under `headers` or `env` must be a
 reference to a variable of Claude Code's environment: `${NAME}`, or

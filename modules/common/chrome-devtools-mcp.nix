@@ -17,8 +17,7 @@
 # To use another server under that name, set it in me.nix:
 #   ravnix.claude.mcpServers.chrome-devtools = { ...your server... };
 # It replaces this one whole, and the servers you declare under other names
-# come beside it. It follows programs.claude-code.enable: with Claude Code
-# off, claude-mcp.nix takes ravnix's servers out of ~/.claude.json.
+# come beside it.
 #
 # Why the priorities are nested. nixosModules.common hands me.nix's value of
 # ravnix.claude.mcpServers to home-manager as one lib.mkDefault on the whole
@@ -34,15 +33,32 @@
 # which is how every value of ravnix reaches home-manager (nixos.nix): it
 # replaces what me.nix and this module declare, not only one entry.
 #
-# It reads pkgs.ravnix, so the pkgs must carry overlays.default:
-# nixosModules.common applies it, and so does any other host that builds the
-# home from a pkgs with it (tests/common/helpers/hm.nix).
-{ lib, pkgs, ... }:
+# Only with Claude Code on (programs.claude-code.enable): the entry would be
+# taken out of ~/.claude.json by claude-mcp.nix anyway, and the wrapper brings
+# Helium, node and the server, several hundred MB nothing else would use.
+#
+# pkgs.ravnix comes from the overlay that nixosModules.common applies. A
+# home-manager configuration that has none (homeModules.common used on its
+# own) gets the same packages from the same overlay here, as scripts.nix does.
+# In that case me.nix is a home-manager module of its own, and the template's
+# `claude.mcpServers = { }` is a plain definition, which outranks the
+# declaration below: the wrapper is on the PATH, but the entry is not declared.
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
-  wrapper = pkgs.ravnix.chrome-devtools-mcp-helium;
+  ravnixPackages = import ../../lib/ravnix-packages.nix { inherit lib; } {
+    packagesDir = ../../packages;
+    toolsDir = ../../tools;
+  };
+  ravnix = pkgs.ravnix or (pkgs.extend ravnixPackages.overlay).ravnix;
+  wrapper = ravnix.chrome-devtools-mcp-helium;
 in
 {
-  config = {
+  config = lib.mkIf config.programs.claude-code.enable {
     ravnix.claude.mcpServers = lib.mkDefault {
       chrome-devtools = lib.mkOptionDefault {
         type = "stdio";

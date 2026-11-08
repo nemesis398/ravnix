@@ -5,7 +5,11 @@
 # the wrapper on the PATH. A server of the same name that the user sets, in
 # me.nix or in home-manager, replaces it whole, instead of merging key by key
 # with it, and the servers of me.nix under other names are not lost beside it.
-# The VM test desktop-chrome-devtools-mcp runs the server from the
+# With Claude Code off the host has neither the entry nor the wrapper (and with
+# it Helium). homeModules.common alone, on a pkgs without ravnix's overlay,
+# finds the wrapper by itself and puts it on the PATH; the template's plain
+# `claude.mcpServers = { }` there outranks the declaration, which the README of
+# claude/ says. The VM test desktop-chrome-devtools-mcp runs the server from the
 # file this declaration is written to.
 {
   self,
@@ -50,6 +54,9 @@ let
       byHome = host shape [
         { home-manager.users.${user}.ravnix.claude.mcpServers.chrome-devtools = mine; }
       ];
+      claudeOff = host shape [
+        { home-manager.users.${user}.programs.claude-code.enable = lib.mkForce false; }
+      ];
       server = (serversOf plain).chrome-devtools or null;
     in
     [
@@ -81,13 +88,24 @@ let
       (lib.optional (
         (serversOf beside).chrome-devtools or null != server
       ) "${name}: a server of me.nix under another name replaces the declared one: ${builtins.toJSON (serversOf beside)}")
+      (lib.optional (failed claudeOff != [ ]) "${name}: with Claude Code off an assertion fails: ${toString (failed claudeOff)}")
+      (lib.optional (
+        (serversOf claudeOff) ? chrome-devtools
+      ) "${name}: with Claude Code off the server is still declared: ${builtins.toJSON (serversOf claudeOff)}")
+      (lib.optional (lib.any (p: p.outPath == wrapper.outPath) (hmOf claudeOff).home.packages)
+        "${name}: with Claude Code off the wrapper, and with it Helium, is still installed"
+      )
     ];
 
-  # homeModules.common by itself, with the overlay on its pkgs, as the helper
-  # of the common tests builds it. The template's me.nix is a home-manager
-  # module there and sets ravnix.claude.mcpServers plain, which outranks the
-  # declaration (see the module), so only that the home evaluates is asked.
+  # homeModules.common by itself, on the plain pkgs of the test (the helper adds
+  # no overlay), so the module finds ravnix's packages on its own. The
+  # template's me.nix is a home-manager module there and sets
+  # ravnix.claude.mcpServers plain, which outranks the declaration (see the
+  # module; claude/README.md says so): the wrapper is on the PATH and the entry
+  # is not declared.
   standalone = (hm [ ]).config;
+  standaloneOff = (hm [ { programs.claude-code.enable = lib.mkForce false; } ]).config;
+  plainPkgs = !(pkgs ? ravnix);
 
   failures = lib.flatten (
     lib.mapAttrsToList perShape shapes
@@ -95,9 +113,19 @@ let
       (map (m: "homeModules.common alone fails: ${m}") (
         map (a: a.message) (lib.filter (a: !a.assertion) standalone.assertions)
       ))
+      (lib.optional (!plainPkgs) "the pkgs of this test carry ravnix's overlay, so the fallback of the module is not tested")
       (lib.optional (
         !lib.any (p: p.outPath == wrapper.outPath) standalone.home.packages
       ) "homeModules.common alone does not put the wrapper on the PATH")
+      (lib.optional (
+        standalone.ravnix.claude.mcpServers ? chrome-devtools
+      ) "homeModules.common alone declares the server, which the README of claude/ says it does not: ${builtins.toJSON standalone.ravnix.claude.mcpServers}")
+      (map (m: "homeModules.common alone with Claude Code off fails: ${m}") (
+        map (a: a.message) (lib.filter (a: !a.assertion) standaloneOff.assertions)
+      ))
+      (lib.optional (
+        lib.any (p: p.outPath == wrapper.outPath) standaloneOff.home.packages
+      ) "homeModules.common alone with Claude Code off still installs the wrapper")
     ]
   );
 in
