@@ -96,8 +96,11 @@ pkgs.testers.runNixOSTest {
       ravnix.link.vault = lib.mkForce "${home}/vault";
       users.users.${user}.openssh.authorizedKeys.keys = [ snakeoil.snakeOilEd25519PublicKey ];
       # The agent that signs the vault's commits, as the agent's module
-      # gives its socket to the user manager (Task 4.3).
-      home-manager.users.${user}.systemd.user.sessionVariables.SSH_AUTH_SOCK = "\${XDG_RUNTIME_DIR}/test-agent.sock";
+      # gives its socket to the user manager (Task 4.3). Forced over rbw's
+      # socket, which modules/common/rbw.nix sets there: rbw's agent is not
+      # in this test, and the test's own agent signs the vault's commits.
+      home-manager.users.${user}.systemd.user.sessionVariables.SSH_AUTH_SOCK =
+        lib.mkForce "\${XDG_RUNTIME_DIR}/test-agent.sock";
       ravnix.server.remoteControlDir = lib.mkForce null;
       ravnix.nextcloud = lib.mkForce null;
       virtualisation.diskSize = 4096;
