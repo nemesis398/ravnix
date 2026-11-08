@@ -508,10 +508,6 @@ in
             # does no Compose handling; the built-in "simple" context does.
             # Drop it if an input method framework is ever installed.
             GTK_IM_MODULE = "simple";
-            # Claude Code's Artifact tool costs a quarter of every session's
-            # fixed baseline and was not used; claude-artifacts drops the
-            # variable for one session.
-            CLAUDE_CODE_DISABLE_ARTIFACT = "1";
           };
 
           # The launcher entries of the two fuzzel popups, so both are findable
