@@ -12,11 +12,11 @@
 # a vault key opens, and for the vault's touch-free keys for the git
 # hosts: Task 5.4 keeps the listed git host names on the security key, but
 # what gets past its blocks reaches those keys here: an alias with that
-# HostName, a trailing dot, an address, -F, and -o IdentityAgent= together
-# with -o IdentitiesOnly=no (modules/glue/sk-agent.nix says which needs
-# what). Closing it would take a vault account for the server with fewer
-# items, or a from= on each node's root keys that leaves out the server's
-# addresses.
+# HostName, a trailing dot, an address, -F, and -o IdentityAgent= naming
+# rbw's agent together with -o IdentitiesOnly=no or an -i naming the key's
+# public half (modules/glue/sk-agent.nix says which needs what). Closing it
+# would take a vault account for the server with fewer items, or a from= on
+# each node's root keys that leaves out the server's addresses.
 #
 # The dedicated Proxmox update key (ravnix.server.proxmoxUpdate) is
 # therefore no boundary on its own; it is the way the server's tools are
