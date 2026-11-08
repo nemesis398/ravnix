@@ -362,6 +362,12 @@ in
         # The look (fonts, colors, padding, cursor) is the theme module's; these
         # are the behavior of the Fedora terminal.
         settings = {
+          # Each window its own process (see above), also without the
+          # service: with ghostty's default a second `ghostty` hands its
+          # window to the one that runs, which drops its command line and
+          # its environment (`env NO_MUX=1`, `-e`), and opened no window at
+          # all in tests/glue/reconnect.nix.
+          gtk-single-instance = false;
           term = "xterm-256color";
           shell-integration = "none";
           confirm-close-surface = false;
