@@ -183,6 +183,25 @@
       };
     };
 
+    # The graphical applications of the laptop.
+    apps = {
+      # The web address of your own Catppuccin userstyles repository, the
+      # styles for sites the official collection does not cover. Helium gets a
+      # bookmark to it; Stylus takes the styles by a step modules/desktop/apps.nix
+      # describes. Null when you have none.
+      userstylesUrl = "https://git.example.org/alice/catppuccin-userstyles";
+
+      # Your self-hosted services as web apps, a Helium window each, found by
+      # the launcher as webapp-NAME. Claude and Apple Music are web apps too,
+      # and need no address. Null installs no launcher for that service.
+      webapps = {
+        mealie.url = "https://recipes.example.org/";
+        nextcloud.url = "https://cloud.example.org/";
+        vaultwarden.url = "https://passwords.example.org/";
+        openwebui.url = "https://ai.example.org/";
+      };
+    };
+
     # Where rbw finds your secrets at runtime. Only the server and the
     # account; no secret goes into this flake.
     secrets = {

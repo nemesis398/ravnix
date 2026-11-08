@@ -31,6 +31,7 @@ in
     ./nix.nix
     ./laptop.nix
     ./peripherals.nix
+    ./apps.nix
     ./server.nix
     ./scripts.nix
     ./secrets.nix
