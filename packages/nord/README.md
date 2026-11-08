@@ -22,6 +22,19 @@ the firewall mark).
   standard input (`-K -`), as `vpn-home` does.
 - A key item that is not named skips the copy to Bitwarden with a message
   instead of calling `rbw add` with an empty name.
+- **`setup` files the key whatever editor the session names.** rbw asks
+  `$VISUAL` before `$EDITOR` (1.15.0, `src/edit.rs`), and ravnix exports
+  `VISUAL=nvim`; the script set only `EDITOR`, so on huginn `rbw add` would
+  have opened nvim on a terminal that `>/dev/null 2>&1` hides, and `setup`
+  would have hung there. It now sets both to a copy command, and quotes the
+  path for the `/bin/sh -c` that rbw runs an editor with a space in it
+  through, so a cache directory with a space in its name works too. The
+  stand-in rbw picks `$VISUAL` before `$EDITOR` the same way, and the VM
+  runs `setup` with `VISUAL` set, so a regression fails both.
+- **`up` and `down` no longer fail for want of a notification daemon.** The
+  Fedora script ended `down` with a bare `notify-send`, so over SSH, with no
+  daemon, `down` took the tunnel down, printed nothing and exited 1.
+  `notify` now ignores a failing `notify-send`, and `down` prints.
 - `tr -d '\\'` is `tr -d '\134'`: the same backslash, and shellcheck
   (SC1003) reads it right.
 - The comments that named people, hosts and domains of the author's setup are
@@ -53,6 +66,10 @@ mark and NetBird's mark rule (priority 120, `fwmark 0x1bd00`, table `main`).
   `$XDG_CACHE_HOME` (disk, not RAM, on purpose) and removes it at once. A kill
   with SIGKILL, or a power cut, between the two leaves it there: the EXIT trap
   cannot run. Remove `~/.cache/tmp.*` by hand after such an interruption.
+- `setup` is for a terminal. When standard input is not one, rbw 1.15.0 reads
+  the new item from standard input and starts no editor, so the copy of the
+  key to Bitwarden would not be what `setup` meant to file (or would fail,
+  with the message that the profile has the key). Run `setup` in a terminal.
 - `rbw add` has no update: a second `setup` (after the profile was deleted)
   files a second item under the same name.
 - `refresh`, `up` and `down` do not lock. Two at once race on `nmcli
