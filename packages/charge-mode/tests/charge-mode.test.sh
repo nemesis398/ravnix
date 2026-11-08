@@ -408,6 +408,15 @@ test_set_with_a_refused_mode_writes_nothing() {
 	content_is "$state" Long_Life
 }
 
+# running PID: the process is there and no zombie. kill -0 passes a zombie
+# too, so it reads the state in /proc/PID/stat, after the name in brackets.
+running() {
+	local stat
+	stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+	stat="${stat##*) }"
+	[[ -n "$stat" && "${stat%% *}" != Z ]]
+}
+
 # The Waybar refresh, against real processes and the real pkill: it reaches
 # Waybar under the name NixOS's wrapper gives the process (.waybar-wrapped)
 # and under the plain one, and nothing else: not waybar-launch, not a
@@ -452,7 +461,7 @@ test_the_refresh_reaches_a_wrapped_waybar_and_nothing_else() {
 		}
 	done
 	for name in waybar-launch waybar-powerdraw not-waybar; do
-		kill -0 "${pid[$name]}" 2>/dev/null || {
+		running "${pid[$name]}" || {
 			echo "  the refresh signalled $name"
 			kill "${pid[@]}" 2>/dev/null || true
 			return 1
