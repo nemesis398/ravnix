@@ -15,8 +15,11 @@
 # that sway-radial needs (it reads the pad's gestures from libinput, which
 # skips a device it cannot open and says nothing). NixOS assembles the rules
 # directory by file name, so a second package that ships a rule file of the
-# same name silently replaces one of the two. Nothing else may ship them; the
-# VM test compares the built files line by line.
+# same name silently replaces one of the two. Nothing else may ship them. The
+# VM test builds a host from this module, printing.nix and vpn.nix only and
+# compares the two files it builds line by line, so it guards what the files
+# hold and not a collision: it cannot see another module that ships a file of
+# the same name.
 #
 # MX Master: the mouse needs no udev rule. logid runs as root, and what it is
 # for is two things only (the file it replaces says so at length):
