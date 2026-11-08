@@ -24,15 +24,24 @@
 #             ravnix-server`, to the one herdr session of the server's
 #             herdr-server unit. herdr 0.9.5 draws the UI on the laptop and
 #             keeps nothing running there, but it does not attach again by
-#             itself: when the connection drops it says so and exits with
-#             status 1 (tests/glue/reconnect.nix showed it). So
-#             ravnix-terminal attaches again whenever herdr ends with
-#             another status than 0, at once after a session that ran a
-#             while and after a second after one that failed at the start,
-#             until a detach (prefix+d) ends herdr with 0 and the window
-#             closes. No mosh: herdr's remote attach is what bridges the
-#             laptop's clipboard and notifications, and mosh would run the
-#             UI on the server.
+#             itself: when the connection drops it prints "lost connection to
+#             remote Herdr ... run `herdr --remote ...` to reattach" and
+#             exits with status 1. That was seen in a VM made to explore
+#             herdr before this module was written, after a killed TCP
+#             connection and after an IP change; it is no test here, because
+#             tests/glue/reconnect.nix runs herdr inside ravnix-terminal,
+#             whose loop hides it. So ravnix-terminal attaches again
+#             whenever herdr ends with another status than 0, until a detach
+#             (prefix+d) ends herdr with 0 and the window closes.
+#             Not mosh: herdr's remote attach is what bridges the laptop's
+#             clipboard and notifications, and mosh would run the UI on the
+#             server, and needs UDP ports open there. Not herdr's saved
+#             machines (`herdr machine add`, `herdr --machine`): they need a
+#             herdr server on the laptop too, with a "Local" entry, and
+#             herdr's documented back-off retries a dropped machine soon only
+#             when its connection had stayed up for a minute, so two drops
+#             in a row, a suspend and then a new network, would take longer
+#             than the few seconds this is for.
 #   the second key ($mod+Alt+Return; ravnix.desktop.terminal.plain) stays
 #             the desktop's: a ghostty with a bash on the laptop.
 #   herdr     The laptop's herdr reads the server's settings
