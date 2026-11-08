@@ -9,8 +9,9 @@
 # the overlay, as packages/README.md describes.
 #
 # The node is evaluated down to its system derivation, not built or booted.
-# Three controls keep the check honest: a module that does define
-# nixpkgs.config on the node, a pkgs that allows nothing unfree, and a pkgs
+# It also imports the hardware module of the laptop, which allows the NVIDIA
+# driver by name and so has the same obligation. Three controls keep the check
+# honest: a module that does define nixpkgs.config on the node, a pkgs that allows nothing unfree, and a pkgs
 # that allows the names of the default host for a node that sets the options
 # for Packet Tracer and Widevine. Each must fail to evaluate.
 {
@@ -24,22 +25,26 @@
 let
   unfree = import ../../lib/unfree.nix { inherit lib; };
 
+  # The pkgs of a node: the names of lib/unfree.nix, and the ones a module that
+  # the node imports names itself (the hardware module's NVIDIA driver).
   nodePkgs =
-    allowed:
+    allowed: others:
     import inputs.nixpkgs {
       inherit system;
-      config.allowUnfreePredicate = unfree.predicate allowed;
+      config.allowUnfreePredicate =
+        pkg: unfree.predicate allowed pkg || lib.elem (lib.getName pkg) others;
       overlays = [ self.overlays.default ];
     };
 
   node =
     {
       allowed ? { },
+      others ? [ ],
       extra ? [ ],
     }:
     pkgs.testers.runNixOSTest {
       name = "desktop-vm-node";
-      node.pkgs = lib.mkForce (nodePkgs allowed);
+      node.pkgs = lib.mkForce (nodePkgs allowed others);
       nodes.machine = {
         imports = [
           self.nixosModules.desktop
@@ -74,6 +79,14 @@ let
         extra = [ both ];
       })
     ) "a VM node with nixosModules.desktop, Packet Tracer and Widevine does not evaluate"
+    # The hardware module names its own unfree package (the NVIDIA driver) and
+    # has to leave nixpkgs.config alone on a read-only pkgs as well.
+    ++ lib.optional (
+      !evaluates (node {
+        others = [ "nvidia-x11" ];
+        extra = [ self.nixosModules.hardware-ideapad-pro-5-16ahp9 ];
+      })
+    ) "a VM node with nixosModules.desktop and the hardware module does not evaluate"
     # The controls.
     ++
       lib.optional

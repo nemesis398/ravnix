@@ -18,8 +18,37 @@
   pkgs,
   ...
 }:
+let
+  # What this module sets on nixpkgs, in a module of its own that a NixOS VM
+  # test node can do without. A node's read-only pkgs
+  # (nixos/modules/misc/nixpkgs/read-only.nix) declares nixpkgs.config, makes
+  # nixpkgs.hostPlatform read-only, and counts every definition of a read-only
+  # option, even one under mkIf false: on such a node the definitions must be
+  # absent, not switched off. The probe is the one of nixosModules.common and of
+  # the desktop's apps module. A node that imports this module allows the driver
+  # itself, with allowUnfreePredicate (tests/desktop/vm-node.nix).
+  nixpkgsSettings =
+    { lib, options, ... }:
+    {
+      config =
+        lib.optionalAttrs
+          (
+            !lib.any (lib.hasSuffix "/misc/nixpkgs/read-only.nix") (
+              map toString options.nixpkgs.config.declarations
+            )
+          )
+          {
+            nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
+
+            # The NVIDIA driver is unfree, and allowed by its name and nothing
+            # else. allowUnfreePackages merges with the lists of other modules,
+            # unlike allowUnfreePredicate.
+            nixpkgs.config.allowUnfreePackages = [ "nvidia-x11" ];
+          };
+    };
+in
 {
-  nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
+  imports = [ nixpkgsSettings ];
 
   # The kernel and the NVIDIA driver of the Fedora power baseline, the one
   # stack measured on this laptop: kernel 7.2.15 and driver 615.78.08 (the
@@ -28,11 +57,6 @@
   # nixpkgs bump drops linuxPackages_7_2, the evaluation fails, loudly, and
   # the kernel is moved on purpose then, with the baseline measured again.
   boot.kernelPackages = lib.mkDefault pkgs.linuxPackages_7_2;
-
-  # The NVIDIA driver is unfree, and allowed by its name and nothing else.
-  # allowUnfreePackages merges with the lists of other modules, unlike
-  # allowUnfreePredicate.
-  nixpkgs.config.allowUnfreePackages = [ "nvidia-x11" ];
 
   hardware = {
     cpu.amd.updateMicrocode = true;
