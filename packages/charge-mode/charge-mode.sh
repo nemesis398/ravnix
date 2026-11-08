@@ -35,7 +35,8 @@
 # gives the user one sudo rule, without a password, for exactly one command:
 # charge-mode-apply, from this package, which validates its argument against
 # the live charge_types list, so the grant cannot be bent into an arbitrary
-# root write. sudo is the setuid wrapper on the caller's PATH.
+# root write. sudo is the setuid wrapper on the caller's PATH; when it
+# fails, the message says why (run_helper).
 #
 # Usage:
 #   charge-mode              # print the active mode
@@ -93,6 +94,33 @@ describe() {
   esac
 }
 
+# Runs the helper through sudo. When that fails, the message is the real
+# cause, sudo's own words or the helper's, with a hint only where the cause
+# is known: no sudo rule, or a sudo that is not the setuid one (a PATH that
+# lost /run/wrappers/bin). The same goes into a notification, since a click
+# on Waybar shows no terminal.
+run_helper() {
+  local said hint=""
+  if ! command -v sudo >/dev/null 2>&1; then
+    said="charge-mode: no sudo on the PATH; on NixOS the setuid one is /run/wrappers/bin/sudo."
+  elif said=$(LC_ALL=C sudo -n "$HELPER" "$@" 2>&1); then
+    return 0
+  else
+    case "$said" in
+      *"a password is required"*)
+        hint="no sudo rule lets you run the helper without a password; the hardware module's battery.nix gives it." ;;
+      *"setuid bit"*|*"effective uid is not 0"*)
+        hint="this sudo is not the setuid one; on NixOS that is /run/wrappers/bin/sudo, which the PATH must name first." ;;
+    esac
+    [ -n "$said" ] || said="charge-mode: sudo or the helper failed without a message."
+  fi
+  printf '%s\n' "$said" >&2
+  [ -z "$hint" ] || printf 'charge-mode: %s\n' "$hint" >&2
+  command -v notify-send >/dev/null 2>&1 &&
+    notify-send -a charge-mode -u critical "Charge mode not changed" "$said${hint:+ $hint}"
+  exit 1
+}
+
 # $2 = "save-only" to change the BOOT DEFAULT and leave the live mode alone.
 # The two are deliberately separable: the cell can stay parked now and still
 # come up in a different mode after a reboot.
@@ -104,22 +132,14 @@ apply() {
     exit 1
   fi
   if [ "$only" = "save-only" ]; then
-    if ! sudo -n "$HELPER" --save-only "$mode"; then
-      echo "charge-mode: the helper refused, or the sudoers rule is absent." >&2
-      echo "             The rule comes with the hardware module's battery.nix." >&2
-      exit 1
-    fi
+    run_helper --save-only "$mode"
     command -v notify-send >/dev/null 2>&1 &&
       notify-send -a charge-mode "Charge mode at boot: $mode" \
         "The live mode is unchanged ($(current))."
     printf '%s\n' "$mode"
     return 0
   fi
-  if ! sudo -n "$HELPER" "$mode"; then
-    echo "charge-mode: the helper refused, or the sudoers rule is absent." >&2
-    echo "             The rule comes with the hardware module's battery.nix." >&2
-    exit 1
-  fi
+  run_helper "$mode"
   command -v notify-send >/dev/null 2>&1 &&
     notify-send -a charge-mode "Charge mode: $mode" "$(describe "$mode")"
   # -x matches the process name exactly. Never `pkill -f` here: that matches the

@@ -33,8 +33,11 @@ cm="$scratch/charge-mode"
 apply="$scratch/charge-mode-apply"
 restore="$scratch/charge-mode-restore"
 
+# sudo: SUDO_SAYS is sudo's own refusal, printed before it fails, as sudo
+# does for a missing rule or when it is not setuid; SUDO_FAILS fails mute.
 write_script "$bin/sudo" \
 	'printf "sudo %s\n" "$*" >>"$CALLS"' \
+	'[ -z "${SUDO_SAYS:-}" ] || { printf "%s\n" "$SUDO_SAYS" >&2; exit 1; }' \
 	'[ -z "${SUDO_FAILS:-}" ] || exit 1' \
 	'[ "$1" = -n ] && shift' \
 	'exec "$@"'
@@ -246,13 +249,58 @@ test_set_leaves_validation_to_the_helper() {
 		"pkill -RTMIN+10 -x waybar"
 }
 
-test_a_refused_sudo_fails_with_a_hint() {
+# A failing sudo: the message is the real cause, sudo's own words or the
+# helper's, with a hint only where the cause is known, and the same in a
+# critical notification, since a Waybar click shows no terminal.
+
+test_a_missing_sudo_rule_is_named() {
+	user_stub
+	firmware "Fast Standard [Long_Life]"
+	SUDO_SAYS="sudo: a password is required" run "$cm" set Standard
+	expect_status 1
+	expect_err "sudo: a password is required"
+	expect_err "charge-mode: no sudo rule lets you run the helper without a password; the hardware module's battery.nix gives it."
+	calls_are "sudo -n $scratch/stub-apply Standard" \
+		"notify-send -a charge-mode -u critical Charge mode not changed sudo: a password is required no sudo rule lets you run the helper without a password; the hardware module's battery.nix gives it."
+}
+
+test_a_sudo_without_setuid_is_named() {
+	user_stub
+	firmware "Fast Standard [Long_Life]"
+	SUDO_SAYS="sudo: /run/current-system/sw/bin/sudo must be owned by uid 0 and have the setuid bit set" \
+		run "$cm" set Standard
+	expect_status 1
+	expect_err "sudo: /run/current-system/sw/bin/sudo must be owned by uid 0 and have the setuid bit set"
+	expect_err "charge-mode: this sudo is not the setuid one; on NixOS that is /run/wrappers/bin/sudo, which the PATH must name first."
+	expect_no_err "sudo rule"
+	SUDO_SAYS="sudo: effective uid is not 0, is sudo installed setuid root?" run "$cm" set Standard
+	expect_status 1
+	expect_err "this sudo is not the setuid one"
+}
+
+test_no_sudo_on_the_path_is_named() {
+	# Outside the sandbox the system's sudo is on the PATH, so the case
+	# means something only in the check, which has none.
+	! command -v sudo >/dev/null 2>&1 || return 0
+	user_stub
+	firmware "Fast Standard [Long_Life]"
+	mv "$bin/sudo" "$scratch/sudo.away"
+	run "$cm" set Standard
+	mv "$scratch/sudo.away" "$bin/sudo"
+	expect_status 1
+	expect_err "charge-mode: no sudo on the PATH; on NixOS the setuid one is /run/wrappers/bin/sudo."
+	[[ "$(cat "$calls")" != *"apply"* ]] || { echo "  the helper ran"; return 1; }
+}
+
+test_a_mute_sudo_failure_says_so() {
 	user_stub
 	firmware "Fast Standard [Long_Life]"
 	SUDO_FAILS=1 run "$cm" set Standard
 	expect_status 1
-	expect_err "the helper refused, or the sudoers rule is absent"
-	calls_are "sudo -n $scratch/stub-apply Standard"
+	expect_err "charge-mode: sudo or the helper failed without a message."
+	expect_no_err "sudo rule"
+	calls_are "sudo -n $scratch/stub-apply Standard" \
+		"notify-send -a charge-mode -u critical Charge mode not changed charge-mode: sudo or the helper failed without a message."
 }
 
 test_a_missing_helper_fails_before_sudo() {
@@ -289,9 +337,11 @@ test_default_with_a_mode_saves_only() {
 test_default_with_a_refused_sudo_fails() {
 	user_stub
 	firmware "Fast Standard [Long_Life]"
-	SUDO_FAILS=1 run "$cm" default Standard
+	SUDO_SAYS="sudo: a password is required" run "$cm" default Standard
 	expect_status 1
-	expect_err "the helper refused"
+	expect_err "sudo: a password is required"
+	expect_err "no sudo rule lets you run the helper"
+	[[ "$out" != Standard ]] || { echo "  printed the mode as if saved"; return 1; }
 }
 
 test_help_and_unknown_commands() {
@@ -348,6 +398,9 @@ test_set_with_a_refused_mode_writes_nothing() {
 	run "$cm" set Bogus
 	expect_status 1
 	expect_err "'Bogus' is not offered by this firmware"
+	expect_err "offered: Fast Standard Long_Life"
+	# The helper's own refusal is the cause; no hint about sudo.
+	expect_no_err "sudo"
 	content_is "$attr" "Fast Standard [Long_Life]"
 	content_is "$state" Long_Life
 }
@@ -621,7 +674,10 @@ tests=(
 	test_set_calls_the_helper_with_the_mode
 	test_set_without_a_mode_lists_the_offer
 	test_set_leaves_validation_to_the_helper
-	test_a_refused_sudo_fails_with_a_hint
+	test_a_missing_sudo_rule_is_named
+	test_a_sudo_without_setuid_is_named
+	test_no_sudo_on_the_path_is_named
+	test_a_mute_sudo_failure_says_so
 	test_a_missing_helper_fails_before_sudo
 	test_default_prints_the_saved_mode
 	test_default_with_a_mode_saves_only
