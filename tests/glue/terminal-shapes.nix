@@ -209,15 +209,24 @@ pkgs.runCommand "glue-terminal-shapes"
       # ssh -G prints what it would use, and connects nowhere. It refuses a
       # file that is neither root's nor the user's, as the store's files are
       # in the sandbox, so it reads copies, each Include pointed at its copy.
-      n=0
+      # An Include line names every file after it (home-manager joins the
+      # Includes of the laptop's modules on one line), so each is copied and
+      # the line is written again with the copies, in the same order. A store
+      # path holds no space, so the line splits on whitespace. Each copy is
+      # named by mktemp: a counter would not survive the subshell of $(...),
+      # and two copies from one line would share a name.
       local_copy() {
-        n=$((n + 1))
-        local out=$PWD/copy-$n line inc
+        local out line inc copies incs
+        out=$(mktemp "$PWD/copy-XXXXXX")
         : >"$out"
         while IFS= read -r line; do
           if [[ $line == Include\ * ]]; then
-            inc=$(local_copy "''${line#Include }")
-            line="Include $inc"
+            copies=
+            read -ra incs <<<"''${line#Include }"
+            for inc in "''${incs[@]}"; do
+              copies="$copies $(local_copy "$inc")"
+            done
+            line="Include$copies"
           fi
           printf '%s\n' "$line" >>"$out"
         done <"$1"
