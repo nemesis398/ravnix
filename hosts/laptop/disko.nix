@@ -28,10 +28,13 @@
 let
   prefix = "/dev/disk/by-id/";
   link = builtins.substring (builtins.stringLength prefix) (builtins.stringLength device) device;
+  # One name in the characters udev writes a by-id link in, so neither a
+  # path nor a shell character reaches the script. udev also keeps UTF-8
+  # and \x escapes, which an NVMe model or serial, ASCII by the NVMe
+  # specification, never needs.
   isById =
     builtins.substring 0 (builtins.stringLength prefix) device == prefix
-    && link != ""
-    && builtins.match ".*/.*" link == null
+    && builtins.match "[0-9A-Za-z#+.:=@_-]+" link != null
     && link != "."
     && link != "..";
   disk =

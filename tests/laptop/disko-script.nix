@@ -3,8 +3,9 @@
 # the disk guard prints. It must touch that disk and nothing else, and lay out
 # a 1 GiB ESP and a LUKS2 volume named cryptroot holding btrfs with the
 # subvolumes @, @home, @nix and @log, compressed with zstd, and no swap. The
-# layout refuses a device that is not a /dev/disk/by-id path, so a kernel
-# name such as /dev/nvme0n1 never reaches it. Nothing here runs the script;
+# layout refuses a device that is not a /dev/disk/by-id path, or whose name
+# holds a character udev does not write, so a kernel name such as
+# /dev/nvme0n1 never reaches it. Nothing here runs the script;
 # tests/laptop/disko.nix does, in a VM.
 {
   inputs,
@@ -44,6 +45,24 @@ let
     "/dev/disk/by-uuid/0000-0000"
     "/dev/mapper/cryptroot"
     ""
+    # A by-id name in udev's characters, [0-9A-Za-z#+.:=@_-], and nothing
+    # else, so no shell character reaches the script. udev itself also keeps
+    # UTF-8 and \x escapes, which an NVMe model or serial, ASCII by the NVMe
+    # specification, never needs: refusing them is the safe side.
+    "/dev/disk/by-id/nvme-x;rm"
+    "/dev/disk/by-id/nvme-a b"
+    "/dev/disk/by-id/nvme-$(x)"
+    "/dev/disk/by-id/nvme-`x`"
+    "/dev/disk/by-id/nvme-x*"
+    "/dev/disk/by-id/nvme-x?"
+    "/dev/disk/by-id/nvme-x|y"
+    "/dev/disk/by-id/nvme-x'y"
+    "/dev/disk/by-id/nvme-x\"y"
+    "/dev/disk/by-id/nvme-x\\y"
+    "/dev/disk/by-id/nvme-x\ny"
+    "/dev/disk/by-id/nvme-x\ty"
+    "/dev/disk/by-id/nvme-Exämple"
+    "/dev/disk/by-id/nvme-x\\x2fy"
   ];
   failures =
     lib.optional (!accepts device) "the layout refuses the by-id path ${device}"
