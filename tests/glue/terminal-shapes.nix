@@ -12,6 +12,8 @@
 #     keepalive, no prompt; with herdr's own configuration in front, as
 #     `herdr --remote` runs ssh, the block's keepalive still wins; without
 #     an identity file, ssh's defaults and the agent stay;
+#   - the server's herdr settings are the laptop's and the shell of its
+#     panes, merged key by key, and the shared ones set no shell;
 #   - ghostty writes OSC 52 into the clipboard and does not let a pane read
 #     it, and each ghostty is its own process;
 #   - the server takes the key for a shell and forwarding and nothing more,
@@ -77,6 +79,8 @@ let
   connectionText = lib.concatMapStrings text (homeNamed "ravnix-connection" h);
   terminalText = lib.concatMapStrings text (homeNamed "ravnix-terminal" h);
   ghostty = (hm h).programs.ghostty.settings;
+  herdrLaptop = (hm h).programs.herdr.settings;
+  herdrServer = (hm m).programs.herdr.settings;
   keyLine = "restrict,port-forwarding,pty ${template.serverAccess.publicKey}";
   forwardingKeys =
     c:
@@ -120,11 +124,20 @@ let
     ++ check (
       h.ravnix.link.socket == "ravnix-link.sock" && h.ravnix.skAgent.socket == "sk-agent.sock"
     ) "a socket's name changed: ${h.ravnix.link.socket}, ${h.ravnix.skAgent.socket}"
+    # The server's settings are the shared ones with the panes' shell merged
+    # in key by key: a `terminal` table of the shared settings keeps its
+    # other keys on the server, and the shared settings never set the shell,
+    # which the server's would replace without a word.
     ++ check (
-      (hm h).programs.herdr.settings == builtins.removeAttrs (hm m).programs.herdr.settings [ "terminal" ]
-    ) "the laptop's herdr settings are not the server's"
+      herdrServer == lib.recursiveUpdate herdrLaptop {
+        terminal.default_shell = herdrServer.terminal.default_shell or null;
+      }
+    ) "the server's herdr settings are not the laptop's with the shell merged in"
     ++ check (
-      (hm m).programs.herdr.settings.terminal.default_shell or null != null
+      !(herdrLaptop.terminal or { } ? default_shell)
+    ) "the shared herdr settings set the panes' shell, which the server's replaces"
+    ++ check (
+      herdrServer.terminal.default_shell or null != null
     ) "the server's herdr has no shell of its panes"
     ++ check (
       lib.toList (ghostty.clipboard-write or [ ]) == [ "allow" ]

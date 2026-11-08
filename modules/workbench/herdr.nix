@@ -21,6 +21,7 @@
 # run as a Claude Code roll (Task 6.1).
 {
   config,
+  lib,
   utils,
   ...
 }:
@@ -38,10 +39,13 @@ in
       programs.herdr = {
         enable = true;
         # Shared with the laptop, whose `herdr --remote` reads them
-        # (./herdr-settings.nix); the panes' shell is the server's alone.
-        settings = import ./herdr-settings.nix { accent = config.ravnix.theme.roles.accent; } // {
-          terminal.default_shell = shell;
-        };
+        # (./herdr-settings.nix); the panes' shell is the server's alone,
+        # merged in key by key, so a `terminal` table of the shared
+        # settings keeps its other keys here (tests/glue/terminal-shapes.nix
+        # checks both, and that the shared ones set no shell).
+        settings = lib.recursiveUpdate (import ./herdr-settings.nix {
+          accent = config.ravnix.theme.roles.accent;
+        }) { terminal.default_shell = shell; };
       };
 
       systemd.user.services.herdr-server = {
