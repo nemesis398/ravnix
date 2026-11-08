@@ -93,3 +93,41 @@ These cannot be declared, because each one is a login or a secret.
   client's source and is still unverified against a real server; the test VM
   has none. The test runs the real client with the unit's command line, but
   only as far as the connection it cannot make.
+
+### The container form (Task 4.4)
+
+`hosts/server/oci.nix` makes muninn an image for Docker; `tests/workbench/oci.md`
+is the record.
+
+- **Root in the container is root on the Docker host.** systemd needs
+  `SYS_ADMIN` and Docker's AppArmor profile off, in the host's own user
+  namespace. That is not fixed here. The narrower ways (rootless Podman with
+  `--systemd=always`, Docker with `userns-remap`, an AppArmor profile that
+  allows only the mounts stage 2 needs) are named in the compose files and
+  none of them was tried.
+- **Steps 2 and 3 of the task are open.** Round 1 ran a first image on a Docker
+  host with stand-ins for what the image now does itself. Round 2 (the committed
+  image, both compose files, a container made again, the cleanup proof) waits
+  for the maintainer's go.
+- The system came up `degraded` in round 1 because `systemd-machine-id-commit`
+  timed out on a starved disk pool. It is plausibly not the image's fault, and
+  in a container that unit only writes a layer the next swap discards, but it
+  was not shown on a quiet pool.
+- `tmpfs` on `/run` and its `exec` option, the health check turning `healthy`,
+  and `/dev/net/tun` for the Podman file are reasoned, not observed.
+- The Kubernetes manifests are validated against the schema with
+  `kubeconform -strict` and never applied. A node on cgroup v1, or a runtime
+  that ignores the image's `StopSignal`, does not stop the pod cleanly.
+- `no_pivot_root` for Podman inside lets a container that Podman runs leave its
+  chroot with the account's rights. In the container form run only images you
+  trust.
+- The list of the laptop's programs that the closure must not hold is written
+  in four places (`workbench-oci`, `docker-checks.sh`, `workbench-server`,
+  `workbench-optional`). One shared list means a change to the other two tests.
+- `docker-checks.sh` is Bash, a record script piped over ssh into a container;
+  it adds a key to the volume's `authorized_keys` and removes it again, and it
+  refuses to run unless the container belongs to the project
+  `ravnix-muninn-test`. It is not part of `nix flake check`.
+- The image is 6.9 GB with one editor language, and grows by several GB with
+  the template's other languages (Odin alone is 2.3 GB). A first `docker load`
+  on a loaded NAS took half an hour.
