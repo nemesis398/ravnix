@@ -16,18 +16,31 @@
 # git.nix), once `gh auth login` has run: such a push needs no key at all.
 # Keep the remotes on ssh where a push should take the touch.
 #
-# The blocks are an Include at the top of ~/.ssh/config, ahead of every block
-# another module or the user adds there, since ssh takes the first value it
-# finds for each option. They are `Match final host`: ssh compares the host
-# without regard to case, as DNS does (a `Host` line would let GitHub.COM
-# past), and after it has read the whole config, so an alias whose HostName
-# is a git host is pinned too (a first-pass match would see only the
-# alias's name). What still gets past, since ssh matches the name it ends up
-# with: the name with a trailing dot, an address, a name that is not listed
-# (GitHub's ssh.github.com is one: list it), and -o IdentityAgent= or
-# GIT_SSH_COMMAND on the command line, which win over every block. The
-# fallback when the security key is not at hand is exactly that, on
-# purpose and by hand:
+# The blocks are an Include at the top of ~/.ssh/config, and each comes
+# twice. ssh takes the first value it finds for each option, and once a
+# `Match final` is in the config it reads it in two passes: the first with
+# the name as given, the second after the whole file, with the HostName it
+# ended up with, and the second fills only what the first left unset. As
+# `Match host <h>` the pin matches in the first pass, ahead of every block
+# another module or the user adds, so a later `Host *` or `Host github.com`
+# that sets IdentityAgent, IdentitiesOnly or ControlMaster loses to it. As
+# `Match final host <h>` it matches in the second, so an alias whose
+# HostName is a git host is pinned too. Both compare the host without
+# regard to case, as DNS does (a `Host` line would let GitHub.COM past).
+#
+# What still gets past:
+# - an alias of a git host, for every option that a block matching the
+#   alias's own name sets: the pin reaches an alias only in the second
+#   pass, so a later `Host *` with IdentityAgent hands it to that agent;
+# - an IdentityFile another block adds, which ssh offers next to the
+#   handles;
+# - the name with a trailing dot, an address, and a name that is not
+#   listed (GitHub's ssh.github.com is one: list it);
+# - -o IdentityAgent= or GIT_SSH_COMMAND on the command line, which win
+#   over every block.
+#
+# The fallback when the security key is not at hand is the last of these,
+# on purpose and by hand:
 #   GIT_SSH_COMMAND="ssh -o IdentityAgent=$SSH_AUTH_SOCK -o IdentitiesOnly=no" git push
 # (tests/laptop/git-hosts.nix).
 {
@@ -40,13 +53,15 @@ let
   keys = config.ravnix.laptop.gitKeys;
   hosts = lib.attrNames keys;
   bad = lib.filter (h: builtins.match "[a-z0-9]([a-z0-9.-]*[a-z0-9])?" h == null) hosts;
-  sshConfig = pkgs.writeText "ravnix-git-hosts.conf" (
+  # The pin under one Match keyword, `Match host` or `Match final host`.
+  pin =
+    match:
     lib.concatMapStrings (host: ''
-      Match final host ${host}
+      ${match} ${host}
         ${lib.concatMapStrings (file: "IdentityFile \"${file}\"\n  ") keys.${host}}
     '') hosts
     + ''
-      Match final host ${lib.concatStringsSep "," hosts}
+      ${match} ${lib.concatStringsSep "," hosts}
         IdentityAgent none
         IdentitiesOnly yes
         ForwardAgent no
@@ -54,8 +69,8 @@ let
         ControlMaster auto
         ControlPath /run/user/%i/ssh-git-%C
         ControlPersist 10m
-    ''
-  );
+    '';
+  sshConfig = pkgs.writeText "ravnix-git-hosts.conf" (pin "Match host" + pin "Match final host");
 in
 {
   assertions = [
