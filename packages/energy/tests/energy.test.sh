@@ -72,6 +72,10 @@ write_script "$bin/gdbus" \
 for c in keep-awake waybar-launch setsid notify-send; do
 	write_script "$bin/$c" "printf '$c %s\n' \"\$*\" >>\"\$CALLS\""
 done
+# keep-awake fails with KEEP_AWAKE_STATUS, as a broken one would.
+write_script "$bin/keep-awake" \
+	'printf "keep-awake %s\n" "$*" >>"$CALLS"' \
+	'exit "${KEEP_AWAKE_STATUS:-0}"'
 # systemctl: is-active answers from $ACTIVE_UNITS, anything else is logged.
 write_script "$bin/systemctl" \
 	'if [ "$1" = is-active ]; then for u in ${ACTIVE_UNITS:-}; do [ "$u" = "${3:-}" ] && exit 0; done; exit 3; fi' \
@@ -487,6 +491,79 @@ test_unplug_turns_keep_awake_off() {
 	calls_are "keep-awake set off" "notify-send -a Energy Keep-awake off Switched off on unplug."
 }
 
+# A dead dependency: keep-awake or waybar-launch missing from the PATH, or
+# keep-awake failing. The watcher says which, in the journal and as a
+# notification, claims no change it did not make, and goes on watching
+# (the profile event after the unplug still refreshes).
+
+test_unplug_without_keep_awake_says_so() {
+	fresh
+	echo 1 >"$RUNTIME/keep-awake"
+	events "online 0" "say OnBattery true" "say ActiveProfile power-saver"
+	mv "$bin/keep-awake" "$scratch/keep-awake.away"
+	run watch
+	mv "$scratch/keep-awake.away" "$bin/keep-awake"
+	expect_status 1
+	expect_err "energy: keep-awake is not on the PATH, so keep-awake stays on after the unplug"
+	calls_are "notify-send -a Energy -u critical keep-awake not found keep-awake stays on after the unplug."
+	content_is "$scratch/refreshes" 3
+}
+
+test_unplug_with_a_failing_keep_awake_says_so() {
+	fresh
+	echo 1 >"$RUNTIME/keep-awake"
+	events "online 0" "say OnBattery true" "say ActiveProfile power-saver"
+	KEEP_AWAKE_STATUS=3 run watch
+	expect_status 1
+	expect_err "energy: keep-awake set off failed (exit 3), so keep-awake may still be on"
+	calls_are "keep-awake set off" \
+		"notify-send -a Energy -u critical keep-awake failed keep-awake set off failed (exit 3), so keep-awake may still be on."
+	content_is "$scratch/refreshes" 3
+}
+
+test_unplug_without_waybar_launch_says_so() {
+	fresh
+	set_state focus_bar on
+	echo full >"$RUNTIME/waybar-mode"
+	events "online 0" "say OnBattery true" "say ActiveProfile power-saver"
+	mv "$bin/waybar-launch" "$scratch/waybar-launch.away"
+	run watch
+	mv "$scratch/waybar-launch.away" "$bin/waybar-launch"
+	expect_status 1
+	expect_err "energy: waybar-launch is not on the PATH, so the bar stays as it is"
+	calls_are "notify-send -a Energy -u critical waybar-launch not found the bar stays as it is."
+	content_is "$RUNTIME/waybar-mode" full
+	[[ ! -e "$RUNTIME/energy-focus-auto" ]] || { echo "  the marker says the watcher switched"; return 1; }
+	content_is "$scratch/refreshes" 3
+}
+
+test_replug_without_waybar_launch_says_so() {
+	fresh
+	echo focus >"$RUNTIME/waybar-mode"
+	: >"$RUNTIME/energy-focus-auto"
+	charger 0
+	events "online 1" "say OnBattery false" "say ActiveProfile power-saver"
+	mv "$bin/waybar-launch" "$scratch/waybar-launch.away"
+	run watch
+	mv "$scratch/waybar-launch.away" "$bin/waybar-launch"
+	expect_status 1
+	expect_err "energy: waybar-launch is not on the PATH, so the bar stays as it is"
+	calls_are "notify-send -a Energy -u critical waybar-launch not found the bar stays as it is."
+	content_is "$RUNTIME/waybar-mode" focus
+	[[ -e "$RUNTIME/energy-focus-auto" ]] || { echo "  the marker went, so a later replug cannot switch back"; return 1; }
+	content_is "$scratch/refreshes" 3
+}
+
+test_menu_keep_awake_without_keep_awake_says_so() {
+	fresh
+	picks "Keep-awake" "on   ("
+	mv "$bin/keep-awake" "$scratch/keep-awake.away"
+	run menu
+	mv "$scratch/keep-awake.away" "$bin/keep-awake"
+	expect_err "energy: keep-awake is not on the PATH, so keep-awake is unchanged"
+	calls_are "notify-send -a Energy -u critical keep-awake not found keep-awake is unchanged."
+}
+
 test_unplug_with_keep_awake_off_leaves_it() {
 	fresh
 	echo 0 >"$RUNTIME/keep-awake"
@@ -806,6 +883,11 @@ tests=(
 	test_idle_suspend_without_a_charger_file_counts_as_charger
 	test_idle_suspend_with_a_garbled_charger_file
 	test_unplug_turns_keep_awake_off
+	test_unplug_without_keep_awake_says_so
+	test_unplug_with_a_failing_keep_awake_says_so
+	test_unplug_without_waybar_launch_says_so
+	test_replug_without_waybar_launch_says_so
+	test_menu_keep_awake_without_keep_awake_says_so
 	test_unplug_with_keep_awake_off_leaves_it
 	test_unplug_switches_to_the_focus_bar
 	test_unplug_without_a_waybar_mode_counts_as_full

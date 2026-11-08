@@ -29,7 +29,9 @@
 #
 # The tools of the session come from its PATH: fuzzel (with the session's
 # theme), swaymsg, keep-awake and waybar-launch. The rest comes with the
-# package, charge-mode by its store path.
+# package, charge-mode by its store path. A missing keep-awake or
+# waybar-launch is said in the journal and a notification, never skipped
+# without a word.
 #
 # Settings persist in ~/.local/state/energy (machine-local, survives reboots).
 #
@@ -47,6 +49,25 @@ IDLE_SUSPEND_MIN=30   # keep-awake's swayidle runs `energy idle-suspend` then
 declare -A DEFAULT=([refresh]=auto [idle_suspend]=on [focus_bar]=off)
 
 notify() { command -v notify-send >/dev/null 2>&1 && notify-send -a "Energy" "$@"; }
+
+# A tool of the desktop session (keep-awake, waybar-launch) that is not on
+# the PATH: says so in the journal and as a notification, naming the tool
+# and what stays as it is, so nothing claims a change that did not happen.
+need() {
+  command -v "$1" >/dev/null 2>&1 && return 0
+  echo "energy: $1 is not on the PATH, so $2" >&2
+  notify -u critical "$1 not found" "$2."
+  return 1
+}
+# keep-awake set STATE, and when it fails, the same kind of message.
+keep_awake() {
+  local rc
+  keep-awake set "$1" && return 0
+  rc=$?
+  echo "energy: keep-awake set $1 failed (exit $rc), so keep-awake may still be $2" >&2
+  notify -u critical "keep-awake failed" "keep-awake set $1 failed (exit $rc), so keep-awake may still be $2."
+  return "$rc"
+}
 
 get() { cat "$STATE_DIR/$1" 2>/dev/null || printf '%s\n' "${DEFAULT[$1]}"; }
 # Saved through a rename, so two sets at once leave one whole value, and a
@@ -113,22 +134,26 @@ idle_suspend() {
 
 # ── power source changes ────────────────────────────────────────────────────
 unplugged() {
-  if [ "$(cat "$RUN/keep-awake" 2>/dev/null)" = 1 ]; then
-    keep-awake set off
+  if [ "$(cat "$RUN/keep-awake" 2>/dev/null)" = 1 ] \
+     && need keep-awake "keep-awake stays on after the unplug" \
+     && keep_awake off on; then
     notify "Keep-awake off" "Switched off on unplug."
   fi
-  if [ "$(get focus_bar)" = on ] && [ "$(cat "$RUN/waybar-mode" 2>/dev/null || echo full)" = full ]; then
+  if [ "$(get focus_bar)" = on ] && [ "$(cat "$RUN/waybar-mode" 2>/dev/null || echo full)" = full ] \
+     && need waybar-launch "the bar stays as it is"; then
     echo focus >"$RUN/waybar-mode"; : >"$RUN/energy-focus-auto"
     setsid -f waybar-launch >/dev/null 2>&1
   fi
 }
 
+# Without waybar-launch the marker stays, so a later replug switches back.
 plugged_in() {
   if [ -e "$RUN/energy-focus-auto" ]; then
-    rm -f "$RUN/energy-focus-auto"
     if [ "$(cat "$RUN/waybar-mode" 2>/dev/null)" = focus ]; then
+      need waybar-launch "the bar stays as it is" || return 0
       echo full >"$RUN/waybar-mode"; setsid -f waybar-launch >/dev/null 2>&1
     fi
+    rm -f "$RUN/energy-focus-auto"
   fi
 }
 
@@ -181,7 +206,8 @@ menu() {
       refresh ;;
     "$r_ka")
       sub=$({ mark "$ka" on "on   (no idle lock or screen-off)"; mark "$ka" off "off  (normal idle)"; } | pick "  Keep-awake   " 2) || exit 0
-      case "$sub" in *on\ *) keep-awake set on ;; *off*) keep-awake set off ;; esac ;;
+      need keep-awake "keep-awake is unchanged" || exit 1
+      case "$sub" in *on\ *) keep_awake on off ;; *off*) keep_awake off on ;; esac ;;
     "$r_is")
       sub=$({ mark "$(get idle_suspend)" on "on   (suspend after $IDLE_SUSPEND_MIN min idle, on battery)"; mark "$(get idle_suspend)" off "off"; } \
             | pick "  Idle suspend   " 2) || exit 0
