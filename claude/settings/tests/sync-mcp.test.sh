@@ -464,11 +464,14 @@ if [[ $RC -eq 0 && $ERR == *"taken from this run"* && $(servers | tr "\n" " ") =
 else bad "expected exit 0 with a message that the lock was taken, the servers written, and no $F.lock of any kind"; fi
 
 setup '{"model": "x"}'
-fake_cmp "rmdir '$F.lock'; mkdir '$F.lock'"
+# The other writer's lock gets an mtime in the past and its stamp is saved;
+# a touch by the step would move the mtime to now.
+fake_cmp "rmdir '$F.lock'; mkdir '$F.lock'; touch -d '5 seconds ago' '$F.lock'; stat -c '%i %.9Y' '$F.lock' >'$D/stamp'"
 PATH="$D/bin:$PATH" "$BASH" "$SYNC" "$F" "$T" "$S" "$STORE" 2>"$D/err"; RC=$? ERR=$(<"$D/err")
-CASE="a lock that someone else took after the step lost its own is left alone: neither touched nor removed"
-if [[ $RC -eq 0 && $ERR == *"taken from this run"* && $(servers | tr "\n" " ") == "alpha beta " && -d $F.lock ]]; then ok
-else bad "expected exit 0, a message that the lock was taken, the servers written, and the other writer's lock still there"; fi
+CASE="a lock that someone else took after the step lost its own is left alone: neither touched (same inode and mtime) nor removed"
+if [[ $RC -eq 0 && $ERR == *"taken from this run"* && $(servers | tr "\n" " ") == "alpha beta " && -d $F.lock ]] &&
+    [[ -s $D/stamp && $(stat -c '%i %.9Y' "$F.lock") == "$(<"$D/stamp")" ]]; then ok
+else bad "expected exit 0, a message that the lock was taken, the servers written, and the other writer's lock still there with the inode and mtime it had"; fi
 
 echo "what it needs beside it"
 

@@ -290,9 +290,13 @@ refuses them), it fails and says so.
 - Both settings steps (`cas.sh`) take a lock beside the file and compare a
   copy before the move. Two programs that take a stale lock in the same
   moment can both hold it, and a writer that takes no lock and writes in the
-  moment between the last comparison and the move is lost. Claude Code takes
-  the lock for `~/.claude.json`; nothing is known to take one for
-  `settings.json`, so the hook step rests on the comparison there.
+  moment between the last comparison and the move is lost. A step that
+  resumes after a stall of 10 s or more in the moment between its check of
+  the lock and the touch or removal that follows can touch, and then remove,
+  the lock of a writer that took it over meanwhile; proper-lockfile, which
+  Claude Code uses, has the same gap. Claude Code takes the lock for
+  `~/.claude.json`; nothing is known to take one for `settings.json`, so the
+  hook step rests on the comparison there.
   home-manager's own merge into `settings.json`, which runs just before the
   hook step, has the same moment.
 - A session that outlives a switch may later write an older copy of
@@ -300,6 +304,12 @@ refuses them), it fails and says so.
   if Claude Code does not read the file again before it writes. The next
   switch puts them right; whether Claude Code reads first is untested for
   that file. For `~/.claude.json` it does read again under its lock.
+- A SIGTERM, SIGINT or SIGHUP that reaches a step in the few milliseconds
+  in which it records the stamp of its own lock (when it makes the lock, and
+  after each touch) leaves that lock behind, because the exit trap no longer
+  recognises it as the step's own. It goes stale after 10 s and is taken
+  over, as after SIGKILL, which leaves the lock and the two temporary files
+  beside the config.
 - A step that finds the lock held fails the activation after about 20 s,
   with nothing written to the config. Run the switch again.
 - A settings link whose target does not exist is followed: the step creates
