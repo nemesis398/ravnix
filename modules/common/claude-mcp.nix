@@ -46,17 +46,8 @@ let
   # Where Claude Code 2.1.319 still reads its config instead, when that old
   # file is not empty (the step says so).
   legacyFile = "${cfg.configDir}/.config.json";
-  # The activation steps and cas.sh, which they source from beside them, and
-  # nothing else of claude/settings (not the tests). claude-code.nix builds
-  # the same tree.
-  steps = lib.fileset.toSource {
-    root = ../../claude/settings;
-    fileset = lib.fileset.unions [
-      ../../claude/settings/cas.sh
-      ../../claude/settings/sync-hooks.sh
-      ../../claude/settings/sync-mcp.sh
-    ];
-  };
+  # The activation steps and cas.sh, which they source from beside them.
+  steps = import ../../claude/settings { inherit lib; };
   servers = json.generate "ravnix-claude-mcp-servers.json" (
     lib.optionalAttrs cfg.enable config.ravnix.claude.mcpServers
   );
