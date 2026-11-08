@@ -133,8 +133,8 @@
     # How the server reaches the laptop over NetBird to run a command there
     # (`ravnix-laptop COMMAND`), with a key of its own. Make it on the
     # server with `ssh-keygen -t ed25519 -N "" -f <identityFile>`; neither
-    # the YubiKey nor Bitwarden's agent is used. Each value can be null,
-    # which leaves that part out.
+    # the YubiKey nor rbw's agent, which serves the vault's SSH keys, is
+    # used. Each value can be null, which leaves that part out.
     laptopAccess = {
       # The private key, a file on the server only you can read. An absolute
       # path in a string.
@@ -150,11 +150,11 @@
     # How the laptop reaches the server over NetBird, for the main terminal
     # and the main connection, with a key of its own. Make it on the laptop
     # with `ssh-keygen -t ed25519 -N "" -f <identityFile>`; neither the
-    # YubiKey nor Bitwarden's agent is used. Each value can be null, which
-    # leaves that part out. The laptop's ~/.ssh/config is then
-    # home-manager's: move the host blocks of an existing one, the git
-    # hosts' above all, into programs.ssh.matchBlocks of your laptop's
-    # home-manager configuration before the first switch
+    # YubiKey nor rbw's agent, which serves the vault's SSH keys, is used.
+    # Each value can be null, which leaves that part out. The laptop's
+    # ~/.ssh/config is then home-manager's: move the host blocks of an
+    # existing one, the git hosts' above all, into programs.ssh.matchBlocks
+    # of your laptop's home-manager configuration before the first switch
     # (docs/install-from-another-distro.md in ravnix says how).
     serverAccess = {
       # The private key, a file on the laptop only you can read. An absolute
@@ -182,8 +182,9 @@
     # The security key for git. The laptop runs an agent of its own that
     # holds the key handles below and nothing else, and the main connection
     # forwards it to the server, so that git there signs in with a touch on
-    # the key at the laptop, and never with Bitwarden's agent. Empty lists
-    # leave both hosts as they are.
+    # the key at the laptop, and never with rbw's agent, which serves the
+    # vault's SSH keys, for the hosts below. Empty lists leave both hosts as
+    # they are.
     skAgent = {
       # Each handle, the file `ssh-keygen -t ed25519-sk` wrote (the one
       # without .pub, made without a passphrase), as an absolute path on the
