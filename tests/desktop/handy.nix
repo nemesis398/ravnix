@@ -1,6 +1,6 @@
 # Handy's launcher and its hold-to-talk driver (packages/handy-launch,
-# packages/handy-ptt), run against stand-ins for Handy, pgrep, pactl and
-# notify-send:
+# packages/handy-ptt), run against stand-ins for Handy, pactl and notify-send
+# and the real pgrep:
 #
 #   handy-launch  pins Handy to the iGPU through two variables, puts the wtype
 #                 of ravnix first on PATH, and passes its arguments on
@@ -8,7 +8,12 @@
 #                 capture stream and not by counting presses, and `up` follows
 #                 the mode `down` used
 #
-# The stand-in Handy is a shell process that logs every signal and every call.
+# handy-launch gets a shell stand-in that logs its environment and arguments.
+# handy-ptt gets a stand-in that looks like nixpkgs' Handy to pgrep: a compiled
+# program behind a makeBinaryWrapper wrapper, which is how nixpkgs ships it
+# (bin/handy execs bin/.handy-wrapped with --inherit-argv0, so the process is
+# named .handy-wrapped and its argv[0] is the name it was started by). The first
+# version of this test replaced pgrep and never met that name.
 {
   self,
   pkgs,
@@ -37,11 +42,48 @@ let
     wtype = fakeWtype;
   };
 
-  # pgrep prints the pid in $FAKE_PID_FILE, and fails when there is none.
-  fakePgrep = stub "pgrep" ''
-    [ -s "$FAKE_PID_FILE" ] || exit 1
-    cat "$FAKE_PID_FILE"
+  # Handy, as nixpkgs packages it: bin/handy is a binary wrapper around
+  # bin/.handy-wrapped, a program that counts SIGUSR2 in $FAKE_DIR/usr2 and
+  # says it is ready in $FAKE_DIR/ready. The name carries a version, as every
+  # store path of Handy does.
+  realHandy = pkgs.runCommandCC "handy-9.9.9" { nativeBuildInputs = [ pkgs.makeBinaryWrapper ]; } ''
+    mkdir -p $out/bin
+    cat > handy.c <<'EOF'
+    #include <fcntl.h>
+    #include <signal.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <unistd.h>
+
+    static int log_fd = -1;
+
+    static void on_usr2(int sig) {
+      (void)sig;
+      if (write(log_fd, "usr2\n", 5) < 0) _exit(1);
+    }
+
+    int main(void) {
+      const char *dir = getenv("FAKE_DIR");
+      char path[4096];
+      if (!dir) return 2;
+      snprintf(path, sizeof path, "%s/usr2", dir);
+      log_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+      if (log_fd < 0) return 3;
+      struct sigaction sa = {.sa_handler = on_usr2};
+      sigemptyset(&sa.sa_mask);
+      sigaction(SIGUSR2, &sa, NULL);
+      snprintf(path, sizeof path, "%s/ready", dir);
+      int ready = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      if (ready < 0 || write(ready, "ready\n", 6) < 0) return 4;
+      close(ready);
+      for (;;) pause();
+    }
+    EOF
+    $CC -O1 -Wall -Werror -o $out/bin/.handy-wrapped handy.c
+    makeBinaryWrapper $out/bin/.handy-wrapped $out/bin/handy \
+      --inherit-argv0 --prefix XDG_DATA_DIRS : /nonexistent/share
   '';
+
   # Handy's capture stream exists while $FAKE_RECORDING exists.
   fakePactl = stub "pactl" ''
     if [ -e "$FAKE_RECORDING" ]; then
@@ -56,7 +98,6 @@ let
   fakeLaunch = stub "handy-launch" ''echo "launch $*" >> "$CALLS"'';
 
   ptt = pkgs.callPackage ../../packages/handy-ptt {
-    procps = fakePgrep;
     pulseaudio = fakePactl;
     libnotify = fakeNotify;
     ravnix.handy-launch = fakeLaunch;
@@ -95,14 +136,21 @@ pkgs.runCommand "desktop-handy"
     state=$XDG_RUNTIME_DIR/handy-ptt.mode
     reset() { : > "$CALLS"; : > "$FAKE_PID_FILE"; rm -f "$FAKE_RECORDING" "$state" "$work/usr2"; }
 
-    # A process that stands for Handy and logs the toggle signal.
-    start_handy() {
-      bash -c 'trap "echo usr2 >> '"$work"'/usr2" USR2; echo ready > '"$work"'/ready; while :; do sleep 0.05; done' &
-      handy_pid=$!
-      echo "$handy_pid" > "$FAKE_PID_FILE"
-      for _ in $(seq 1 50); do [ -e "$work/ready" ] && break; sleep 0.05; done
+    # The stand-in for Handy, started through its binary wrapper. The wrapper
+    # execs, so $! is the pid of the process that pgrep must find, and that
+    # process has to look like the real one: named .handy-wrapped.
+    export FAKE_DIR=$work
+    start_handy_with() {
       rm -f "$work/ready"
+      "$@" &
+      handy_pid=$!
+      for _ in $(seq 1 100); do [ -e "$work/ready" ] && break; sleep 0.05; done
+      [ -e "$work/ready" ] || fail "the stand-in for Handy did not start"
+      echo "$handy_pid" > "$FAKE_PID_FILE"
+      [ "$(cat /proc/$handy_pid/comm)" = .handy-wrapped ] \
+        || fail "the stand-in is called $(cat /proc/$handy_pid/comm), not .handy-wrapped: it does not look like nixpkgs' Handy"
     }
+    start_handy() { start_handy_with ${realHandy}/bin/handy; }
     stop_handy() { kill "$handy_pid" 2>/dev/null || true; wait "$handy_pid" 2>/dev/null || true; }
     signals() { sleep 0.3; if [ -e "$work/usr2" ]; then wc -l < "$work/usr2"; else echo 0; fi; }
 
@@ -157,17 +205,48 @@ pkgs.runCommand "desktop-handy"
     grep -qx 'launch --toggle-post-process' "$CALLS" || fail "a garbage mode file changed the mode: $(cat "$CALLS")"
     stop_handy
 
+    # Handy started by its bare name from a shell has `handy` as argv[0], not
+    # its path (the wrapper inherits it); the process is named the same.
+    reset
+    old_path=$PATH
+    PATH=${realHandy}/bin:$PATH
+    start_handy_with handy
+    PATH=$old_path
+    ${ptt}/bin/handy-ptt down || fail "down fails for a Handy started by name"
+    [ "$(signals)" = 1 ] || fail "down did not find a Handy started by its bare name ($(signals) signals)"
+    stop_handy
+
     # a tap: the release comes and the stream never opens; nothing is toggled
     reset; start_handy
     ${ptt}/bin/handy-ptt up || fail "up on a quick tap fails"
     [ "$(signals)" = 0 ] || fail "up with no stream sent a signal"
     stop_handy
 
-    # no XDG_RUNTIME_DIR: the mode file falls back to /run/user/UID, which the
-    # sandbox lacks, so the script must not take the first press for a crash
-    reset; start_handy
-    (unset XDG_RUNTIME_DIR; ${ptt}/bin/handy-ptt up || true) 2>/dev/null
-    stop_handy
+    # Handy is found by what it is, not by what its name looks like: a process
+    # that only carries the path of Handy in its arguments is not Handy.
+    reset
+    bash -c 'sleep 30' "${realHandy}/bin/.handy-wrapped" &
+    decoy=$!
+    ${ptt}/bin/handy-ptt down || fail "down with a look-alike fails"
+    grep -q 'Handy was not running' "$CALLS" || fail "a process that only mentions Handy's path was taken for Handy"
+    kill "$decoy"; wait "$decoy" 2>/dev/null || true
+
+    # no XDG_RUNTIME_DIR, and no /run/user/UID to fall back on (the sandbox has
+    # none): the mode file cannot be written, which must neither stop the take
+    # nor print an error into the session. `down` still toggles, and `up` has
+    # no mode to follow and takes its own argument.
+    if [ ! -e "/run/user/$(id -u)" ]; then
+      reset; start_handy
+      (unset XDG_RUNTIME_DIR; ${ptt}/bin/handy-ptt down 2> "$work/err") || fail "down without a runtime directory fails"
+      [ "$(signals)" = 1 ] || fail "down without a runtime directory sent $(signals) toggle signals, not 1"
+      [ ! -s "$work/err" ] || fail "down without a runtime directory prints: $(cat "$work/err")"
+      touch "$FAKE_RECORDING"
+      : > "$CALLS"
+      (unset XDG_RUNTIME_DIR; ${ptt}/bin/handy-ptt up clean 2> "$work/err") || fail "up without a runtime directory fails"
+      grep -qx 'launch --toggle-post-process' "$CALLS" || fail "up without a mode file did not take its own argument: $(cat "$CALLS")"
+      [ ! -s "$work/err" ] || fail "up without a runtime directory prints: $(cat "$work/err")"
+      stop_handy
+    fi
 
     [ "$failed" = 0 ] && touch $out || exit 1
   ''
