@@ -73,9 +73,14 @@ in
   # error, for a path the evaluation may not read (desktop-sway-radial-module
   # pins that). Refused are a string naming a file outside the store, a store
   # path typed out as text (no context, so Nix does not know it) or as a path
-  # literal, a path literal outside the store, and a path to a file that is
-  # not there. (An impure evaluation could read a path outside the store, but
-  # would only copy a snapshot of it, not link the live file.)
+  # literal the evaluation may not read, a path literal outside the store, and
+  # a path to a file that is not there. A new file that git does not track
+  # yet looks the same: a flake built from a git checkout sees only tracked
+  # files, and pathExists cannot tell the two apart. Nix's own hint for an
+  # untracked file (git add) comes from the copy, which the refusal stops
+  # first, so the message gives it. (An impure evaluation could read a path
+  # outside the store, but would only copy a snapshot of it, not link the
+  # live file.)
   assertions = [
     {
       assertion =
@@ -88,10 +93,12 @@ in
         );
       message = ''
         ravnix.desktop.radial.menu is ${toString chosen}, which it does not take.
-        Set it to a path that the evaluation can read, such as one of your flake
-        (./radial/menu.toml), or to a store path that comes from a derivation. Refused are a
-        string that names a file outside the store, a store path typed out (as text, or as a path
-        without quotes), a path outside the store and a path to a file that is not there. A flake
+        It takes a path that the evaluation can read, such as one of your flake (./radial/menu.toml,
+        shown under the store), or a store path that comes from a derivation. If the value is a
+        path of your flake, the file is not there or git does not track it yet: check the name, and
+        `git add` a new file, since a flake built from a git checkout sees only what git tracks.
+        Also refused are a string that names a file outside the store, a store path typed out (as
+        text, or as a path the evaluation may not read) and a path outside the store. A flake
         evaluates purely: home-manager copies only what it may read, and stops at anything else
         with an error that does not name this option.
       '';

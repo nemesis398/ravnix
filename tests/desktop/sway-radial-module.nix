@@ -183,6 +183,12 @@ let
     ++ lib.optional (
       lib.length (refusals missing) != 1
     ) "a path of the flake to a missing file is not refused once: ${toString (refusals missing)}"
+    # pathExists is just as false for a new file that git does not track yet,
+    # the likelier cause, and Nix's own hint for that (git add) is never shown,
+    # since the refusal comes first. So the refusal has to give it.
+    ++ lib.optional (
+      !lib.all (lib.hasInfix "git add") (refusals missing)
+    ) "the refusal of a missing file does not say to git add a new one: ${toString (refusals missing)}"
     # A path under a copy of another name is read and linked like a path of
     # the flake: nothing refused, and the file the unit reads is the user's.
     ++ lib.optional (

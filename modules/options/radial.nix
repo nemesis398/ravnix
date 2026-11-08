@@ -17,11 +17,14 @@
       string with string context, or the derivation itself). Nothing else is
       read: a string that names a file outside the store, a store path typed
       out (as plain text, which has no context so Nix does not know it, or as
-      an unquoted path literal, which a pure evaluation may not read), a path
+      an unquoted path literal that a pure evaluation may not read), a path
       literal outside the store and a path to a file that is not there are
       refused with a message that names this option, because a flake
-      evaluates purely and could not copy them. The file is a copy, so a
-      change of the menu takes a rebuild, which restarts the launcher.
+      evaluates purely and could not copy them. A new file that git does not
+      track yet counts as not there: a flake built from a git checkout sees
+      only tracked files, so `git add` a new menu before the rebuild. The
+      file is a copy, so a change of the menu takes a rebuild, which restarts
+      the launcher.
 
       The menu decides what the eight sectors of the ring hold and what each
       one runs; the default menu at `packages/sway-radial/menu.toml` in ravnix
