@@ -19,8 +19,9 @@
 # all is `^chrome-.*-Default$`.
 #
 # Apple Music replaces Sidra, an Electron client. A Helium window plays full
-# tracks only when Helium has a Widevine library (packages/helium; the apps
-# module gives it one). Sidra also answered the media keys through MPRIS under
+# tracks only when Helium has a Widevine library, which is ravnix.apps.widevine
+# (packages/helium, modules/desktop/apps.nix); without it the site plays
+# 30-second previews. Sidra also answered the media keys through MPRIS under
 # its own name; Helium answers them as a Chromium browser, so playerctl bindings
 # that named `sidra` need `chromium` or the generic player instead.
 #
@@ -56,7 +57,9 @@ let
       url = "https://music.apple.com/";
       name = "Apple Music";
       genericName = "Music Player";
-      comment = "Apple Music in a window of its own";
+      comment =
+        "Apple Music in a window of its own"
+        + lib.optionalString (!config.ravnix.apps.widevine) " (full tracks need ravnix.apps.widevine)";
       icon = "apple-music";
       keywords = [
         "apple"

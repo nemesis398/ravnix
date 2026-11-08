@@ -190,6 +190,10 @@
       # Nix store by hand (modules/desktop/apps.nix has the one command).
       packetTracer = false;
 
+      # Helium's Widevine library, for sites with DRM: Apple Music plays full
+      # tracks only with it. Unfree, so it is off unless you say so.
+      widevine = false;
+
       # The web address of your own Catppuccin userstyles repository, the
       # styles for sites the official collection does not cover. Helium gets a
       # bookmark to it; Stylus takes the styles by a step modules/desktop/apps.nix

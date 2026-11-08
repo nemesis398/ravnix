@@ -2,7 +2,8 @@
 # "Apps on huginn" table that this task owns resolves on PATH or as a .desktop
 # file in the profile of the laptop shape; none of the dropped apps is in the
 # system's closure; Flatpak is off; the only unfree packages are the ones the
-# module names; the wtype is 0.5 or later; Handy is pinned to the iGPU; MangoHud
+# module names, and Packet Tracer's and Widevine's only for a host that asks
+# for them; the wtype is 0.5 or later; Handy is pinned to the iGPU; MangoHud
 # has no transparent background; and Helium gets its policies.
 #
 # The rows of the table that belong to other tasks (CUPS, scanning, NetBird,
@@ -46,8 +47,10 @@ let
     }
   ];
   # The default: Packet Tracer is not asked for, so the host builds without
-  # Cisco's download.
+  # Cisco's download, and Widevine is not either.
   withoutPacketTracer = mkHost [ ];
+  withWidevine = mkHost [ { ravnix.apps.widevine = lib.mkForce true; } ];
+  heliumOf = h: lib.findFirst (p: lib.getName p == "helium") null h.config.environment.systemPackages;
   config = host.config;
   user = config.ravnix.user.username;
   hm = config.home-manager.users.${user};
@@ -235,14 +238,19 @@ let
     lib.concatLists (lib.mapAttrsToList (label: names: map (n: "${label}\t${n}") names) dropped)
   );
 
-  unfree = [
-    "CiscoPacketTracer_901_Ubuntu_64bit.deb"
-    "cisco-packet-tracer"
+  # What each host allows, by name. Packet Tracer's names are allowed only for
+  # a host that asks for it, and Widevine's only for one that asks for that.
+  unfreeBase = [
     "obsidian"
     "steam"
     "steam-unwrapped"
-    "widevine-cdm"
   ];
+  unfreePacketTracer = [
+    "CiscoPacketTracer_901_Ubuntu_64bit.deb"
+    "cisco-packet-tracer"
+  ];
+  unfree = unfreeBase ++ unfreePacketTracer;
+  allowedBy = h: lib.sort lib.lessThan (h.config.nixpkgs.config.allowUnfreePackages or [ ]);
 
   # Failures that need no build, found while evaluating.
   policy = builtins.fromJSON (
@@ -274,10 +282,21 @@ let
       (config.nixpkgs.config.allowUnfree or false) != false
     ) "nixpkgs.config.allowUnfree is set; the module names the unfree packages it needs"
     ++
-      lib.optional (lib.sort lib.lessThan (config.nixpkgs.config.allowUnfreePackages or [ ]) != unfree)
-        "allowUnfreePackages is ${
-          builtins.toJSON (config.nixpkgs.config.allowUnfreePackages or [ ])
-        }, expected ${builtins.toJSON unfree}"
+      lib.optional (allowedBy host != lib.sort lib.lessThan unfree)
+        "allowUnfreePackages is ${builtins.toJSON (allowedBy host)}, expected ${builtins.toJSON (lib.sort lib.lessThan unfree)}"
+    ++
+      lib.optional (allowedBy withoutPacketTracer != unfreeBase)
+        "without Packet Tracer, allowUnfreePackages is ${builtins.toJSON (allowedBy withoutPacketTracer)}, expected ${builtins.toJSON unfreeBase}"
+    ++ lib.optional (
+      allowedBy withWidevine != lib.sort lib.lessThan (unfreeBase ++ [ "widevine-cdm" ])
+    ) "with ravnix.apps.widevine, allowUnfreePackages is ${builtins.toJSON (allowedBy withWidevine)}"
+    # Widevine is a non-redistributable DRM blob: only a host that says so gets it.
+    ++ lib.optional (
+      (heliumOf host).withWidevine or null != false
+    ) "Helium carries Widevine although ravnix.apps.widevine is not set"
+    ++ lib.optional (
+      (heliumOf withWidevine).withWidevine or null != true
+    ) "Helium has no Widevine although ravnix.apps.widevine is set"
     ++
       lib.optional (!lib.versionAtLeast host.pkgs.wtype.version "0.5")
         "wtype ${host.pkgs.wtype.version} is older than 0.5, which holds atx/wtype 82bca82 (printable keycodes for literal text)"
@@ -484,6 +503,9 @@ pkgs.runCommand "desktop-apps"
     for w in $droppedWebappFiles; do
       ! grep -q "^$w" closure-names.txt || fail "closure: $w is in the system's closure"
     done
+    # Widevine is off by default (ravnix.apps.widevine): this host's closure is
+    # the default one.
+    ! grep -q '^widevine-cdm-' closure-names.txt || fail "closure: widevine-cdm is in the closure of a host that did not ask for it"
 
     if [ "$failed" = 0 ]; then
       echo "all apps resolve; no dropped app in $(wc -l < "$closureStorePaths") store paths"

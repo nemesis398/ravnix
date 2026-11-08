@@ -167,23 +167,27 @@ let
 in
 {
   # The unfree packages of this module, allowed by name and nothing else.
-  # steam-unwrapped is Steam's download; widevine-cdm is the DRM library of
-  # Helium (Apple Music in a web app streams full tracks only under DRM); the
-  # .deb is Packet Tracer's download, which nixpkgs asks the store for by name.
+  # steam-unwrapped is Steam's download. Packet Tracer's names are allowed for a
+  # host that installs it (the .deb is its download, which nixpkgs asks the
+  # store for by name), and widevine-cdm, the DRM library of Helium, for a host
+  # that sets ravnix.apps.widevine: nothing unfree and not redistributable is
+  # forced on every laptop.
   nixpkgs.config.allowUnfreePackages = [
-    "CiscoPacketTracer_901_Ubuntu_64bit.deb"
-    "cisco-packet-tracer"
     "obsidian"
     "steam"
     "steam-unwrapped"
-    "widevine-cdm"
-  ];
+  ]
+  ++ lib.optionals apps.packetTracer [
+    "CiscoPacketTracer_901_Ubuntu_64bit.deb"
+    "cisco-packet-tracer"
+  ]
+  ++ lib.optional apps.widevine "widevine-cdm";
 
   # No Flatpak at all on NixOS.
   services.flatpak.enable = lib.mkDefault false;
 
   environment.systemPackages = [
-    (pkgs.ravnix.helium.override { widevineCdm = pkgs.widevine-cdm; })
+    (pkgs.ravnix.helium.override { widevineCdm = if apps.widevine then pkgs.widevine-cdm else null; })
     pkgs.ravnix.ghostty-float
     pkgs.ravnix.handy-launch
     pkgs.ravnix.handy-ptt

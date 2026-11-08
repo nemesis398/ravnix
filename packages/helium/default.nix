@@ -285,6 +285,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     # The tarball is signed (helium-VERSION-x86_64_linux.tar.xz.asc); the hash
     # above is of the tarball as fetched over TLS from the release page.
     inherit features;
+    # Whether this build plays DRM-protected media (the module's option reads it).
+    withWidevine = widevineCdm != null;
   };
 
   meta = {
