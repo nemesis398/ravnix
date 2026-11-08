@@ -84,17 +84,6 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 done <"$list"
 ((${#entries[@]} > 0)) || die "the deny list $list has no entries"
 
-# The entries as files for rg, in a directory only this user can enter: all of
-# them in one, and one at a time in another for the searches that say which
-# entry matched. Removed on every way out.
-umask 077
-work="$(mktemp -d "${TMPDIR:-/tmp}/check-public.XXXXXX")" ||
-	die "cannot make a temporary directory"
-trap 'rm -rf -- "$work"' EXIT
-# A write that fails (a full disk) is an error of the check, exit 2. Left to
-# errexit it would end the script with status 1, which is a hit.
-printf '%s\n' "${entries[@]}" >"$work/all" || die "cannot write the entries to $work"
-
 # The same flags for every search: no user configuration, every file, binary
 # files as text, and the entries as literals without regard to case.
 rg_flags=(--no-config --fixed-strings --ignore-case --text --hidden --no-ignore
@@ -152,6 +141,19 @@ for p in "${paths[@]}"; do
 		die "$p: no such file or directory"
 	fi
 done
+
+# The entries as files for rg, in a directory only this user can enter: all of
+# them in one, and one at a time in another for the searches that say which
+# entry matched. Removed on every way out. Made after the paths have been
+# walked, so that a TMPDIR inside a searched tree does not put these files
+# among the ones that are searched.
+umask 077
+work="$(mktemp -d "${TMPDIR:-/tmp}/check-public.XXXXXX")" ||
+	die "cannot make a temporary directory"
+trap 'rm -rf -- "$work"' EXIT
+# A write that fails (a full disk) is an error of the check, exit 2. Left to
+# errexit it would end the script with status 1, which is a hit.
+printf '%s\n' "${entries[@]}" >"$work/all" || die "cannot write the entries to $work"
 
 hits=()
 declare -A seen=()

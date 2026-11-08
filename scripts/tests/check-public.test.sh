@@ -473,6 +473,34 @@ a_failed_write_of_the_entries_is_an_error_and_not_a_hit() {
 	done
 }
 
+a_temporary_directory_inside_the_searched_tree_is_not_searched() {
+	# TMPDIR may be anywhere, a searched tree included: the entries files of
+	# the check are not part of what it checks.
+	new_tree 'alice'
+	put a.md 'clean\n'
+	mkdir -p "$tree/tmp"
+	capture in_tree env TMPDIR="$tree/tmp" "$check" "$list" .
+	expect_status 0
+	[[ -z "$out" ]] || {
+		echo "  expected no output, got: $out"
+		return 1
+	}
+	put b.md 'alice\n'
+	capture in_tree env TMPDIR="$tree" "$check" "$list" .
+	expect_status 1
+	expect_lines 1
+	expect_out "b.md:1:deny-list.txt:1"
+	# Nothing of the check is left behind in the tree.
+	[[ -z "$(ls -A "$tree/tmp")" ]] || {
+		echo "  the check left $(ls -A "$tree/tmp") in the tree"
+		return 1
+	}
+	[[ "$(find "$tree" -name 'check-public.*' | wc -l)" == 0 ]] || {
+		echo "  the check left a directory in the tree"
+		return 1
+	}
+}
+
 # Names and links.
 
 a_file_name_holding_an_entry_is_a_hit() {
@@ -733,6 +761,7 @@ tests=(
 	a_name_hit_names_the_list_line
 	the_summary_names_the_list_by_its_file_name_and_never_its_path
 	a_failed_write_of_the_entries_is_an_error_and_not_a_hit
+	a_temporary_directory_inside_the_searched_tree_is_not_searched
 	the_entries_stay_off_the_command_line_and_in_a_private_file
 	the_private_directory_is_removed_when_the_search_fails
 )
