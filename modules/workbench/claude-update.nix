@@ -225,9 +225,17 @@ in
     };
 
     runningVersion = mkOption {
-      type = types.str;
-      default = home.programs.claude-code.package.version;
-      defaultText = lib.literalExpression "the version of the user's programs.claude-code.package";
+      type = types.nullOr types.str;
+      # null for a package without a version (a test's stand-in) or no
+      # package: the option is read even while the update is off (the
+      # placeholder warnings walk every ravnix value), and while it is on
+      # an assertion refuses null instead of guessing a version.
+      default =
+        let
+          package = home.programs.claude-code.package;
+        in
+        if package != null && package ? version then package.version else null;
+      defaultText = lib.literalExpression "the version of the user's programs.claude-code.package, or null without one";
       internal = true;
       description = "The Claude Code version this system runs.";
     };
@@ -268,6 +276,10 @@ in
       {
         assertion = cfg.remote == null || lib.elem cfg.remote tokenUrls;
         message = "ravnix.claudeUpdate.remote ${toString cfg.remote} has no token in ravnix.secrets.gitTokens, so the update can neither fetch nor push it; add one (the write token on the server, a read-only one on the laptop).";
+      }
+      {
+        assertion = cfg.runningVersion != null;
+        message = "ravnix.claudeUpdate is on, but the user's programs.claude-code.package has no version, so the update cannot tell whether a release is newer; install ravnix's packages.claude-code, or set ravnix.claudeUpdate.enable = false.";
       }
       {
         assertion = config.ravnix.shape != null;

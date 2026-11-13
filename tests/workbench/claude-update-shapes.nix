@@ -2,7 +2,9 @@
 # built (tests/workbench/claude-update.nix runs them): the server bumps and
 # rolls, the laptop follows, rolls nothing and retries hourly while a follow
 # waits for the vault, a host without the private
-# flake's source has no update, a container has none either, and a remote
+# flake's source has no update, a container has none either, a server
+# without the update evaluates with a stand-in Claude Code that has no
+# version or with none (and one with the update refuses it), and a remote
 # without a token, an update without a remote, and one in a container are
 # refused by name.
 {
@@ -84,6 +86,26 @@ let
     update
   ];
   noFlake = server [ token ];
+  # A stand-in Claude Code, as VM tests install, has no version; nor has
+  # none at all. With the update off nothing may need one: the template's
+  # placeholder check walks every ravnix value, runningVersion included.
+  standIn = pkgs.writeShellScriptBin "claude" "exit 0" // {
+    download = null;
+  };
+  package = p: { home-manager.users.${user}.programs.claude-code.package = lib.mkForce p; };
+  versionless = server [
+    token
+    (package standIn)
+  ];
+  noPackage = server [
+    token
+    (package null)
+  ];
+  versionlessOn = server [
+    token
+    update
+    (package standIn)
+  ];
   noToken = server [ update ];
   noRemote = server [
     token
@@ -221,6 +243,24 @@ let
     [
       (lib.any (lib.hasInfix "needs ravnix.claudeUpdate.remote") (failed noRemote))
       "an update without a remote is taken"
+    ]
+    [
+      (
+        builtins.length versionless.config.warnings >= 0
+        && versionless.config.ravnix.claudeUpdate.runningVersion == null
+      )
+      "a server without the update needs a version of a stand-in Claude Code"
+    ]
+    [
+      (
+        builtins.length noPackage.config.warnings >= 0
+        && noPackage.config.ravnix.claudeUpdate.runningVersion == null
+      )
+      "a server without the update needs a Claude Code package"
+    ]
+    [
+      (lib.any (lib.hasInfix "has no version") (failed versionlessOn))
+      "an update on with a Claude Code that has no version is taken"
     ]
     [
       (!container.config.systemd.services ? ravnix-claude-update)
