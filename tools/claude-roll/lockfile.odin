@@ -10,6 +10,12 @@
 // that some other input reaches as well, is refused, because a lock that
 // does any of these points the build somewhere else than the flake.nix
 // that was deployed says.
+//
+// What these rules cannot say is whether the revision is the upstream's:
+// GitHub serves a commit of any fork under the upstream's own URL, so a
+// lock that passes them can still name a fork's commit. That is why root
+// on the laptop runs `nix flake update` itself instead of taking the
+// revision from the server's lock (update.odin).
 package claude_roll
 
 import "base:runtime"
@@ -96,6 +102,19 @@ input_node :: proc(l: Lock, input: string) -> (name: string, err: string) {
 		return "", fmt.tprintf("the input %q points at a node %q that is not there", input, s)
 	}
 	return s, ""
+}
+
+// input_rev is the revision the lock holds the input at: its node's
+// locked.rev, "" when there is none.
+input_rev :: proc(l: Lock, input: string) -> string {
+	name, err := input_node(l, input)
+	if err != "" {
+		return ""
+	}
+	node := l.nodes[name].(json.Object)
+	locked, _ := node["locked"].(json.Object)
+	rev, _ := locked["rev"].(json.String)
+	return rev
 }
 
 // reach is every node reached from start through inputs that name a node,

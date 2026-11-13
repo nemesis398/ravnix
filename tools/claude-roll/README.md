@@ -144,16 +144,32 @@ what the account wrote.
      one. An answer that is no version, or none, ends the run with 75.
    - It starts the user's prepare unit (`systemctl --machine=USER@.host
      --user start`) and reads the lock it leaves as the user (`setpriv ...
-     cat`).
-   - It compares that lock's input nodes with the deployed flake's
+     cat`). On the laptop (`--mode follow`) a prepare that exits 75 (the
+     vault is locked) or a user manager that is not there ends the run with
+     75 and outcome `Waiting`, and tells nobody.
+   - `--mode follow` takes no revision from that lock. The lock was written
+     by the server's account, and GitHub serves a commit of any fork under
+     the upstream's own URL, so a revision in it may be one only a fork has,
+     whose package can name Anthropic's genuine download for
+     claude-code-verify and install something else. The lock is only the
+     sign: when its input revision is the deployed one, the run ends
+     (nothing to follow). Otherwise root copies the deployed flake to
+     `STATE/work` and runs `nix flake update --refresh INPUT` there itself,
+     which asks the input's own repository for the head of its branch; it
+     fails with 75 when that cannot be reached. The result must pass the
+     same rules as the server's candidate, and leave every other node as
+     it was.
+   - It compares the new lock's input nodes with the deployed flake's
      (`lockfile.odin`): the input's node and the nodes only it reaches, with
      the same names, inputs and `original`, and in `locked` nothing but
      `rev`, `narHash`, `lastModified` and `revCount` changed. Anything else
      is refused. A lock that moved nothing ends the run (claude-code-nix has
-     not caught up, or there is nothing to follow).
+     not caught up; on the laptop, the head of the branch is the deployed
+     revision whatever the server's lock names).
    - It copies the deployed flake (`--flake`, a store path) to
-     `STATE/work`, puts the new input nodes into its lock (the other nodes
-     stay the deployed ones), and evaluates the package's version with the
+     `STATE/work` (the server; the laptop has already), puts the new input
+     nodes into its lock (the other nodes stay the deployed ones), and
+     evaluates the package's version with the
      `--override` inputs (the ravnix the host runs). A version that is not
      newer than `--running` is waited for on the server and refused on the
      laptop.
@@ -164,15 +180,26 @@ what the account wrote.
    - It writes `STATE/result.json` (status `switched`, `build-failed`,
      `verify-failed`, `switch-failed` or `refused`, the versions, the
      candidate's sha256 and a message) and starts the user's finish unit.
+     On the laptop the message of a switch names the revision it took, and
+     the one the server's lock named when the two differ; that is a notice,
+     not a failure.
+   - On the laptop it leaves `STATE/pending` after a run that ended with 75
+     for want of the vault, the user's manager, the input's repository or
+     the manifest, and removes it after any other run but a locked one.
+     `ravnix-claude-update-retry.timer` starts the update every hour while
+     the file is there.
 2. `claude-roll update-prepare` (the user): fetches `--branch` of
    `--remote` into a bare repository of its own (`STATE/flake.git`) over
    HTTPS, where git asks the token helper of `ravnix.secrets.gitTokens`. On
    the server it checks the fetched tree out into `STATE/tree` and runs `nix
    flake update INPUT` there, and refuses a result that changed any other
    node. It leaves the lock in `STATE/candidate.lock` and the commit in
-   `STATE/base`. A failed fetch or update is told to the user.
+   `STATE/base`. A failed fetch or update is told to the user. On the
+   laptop it first asks `rbw unlocked`, and with the vault locked exits 75
+   without a word: the token for the private remote is in the vault.
 3. `claude-roll update-finish` (the user): reads root's result once (by its
-   id). A failure is told to the user. On the server a switch is committed
+   id). A failure is told to the user, and on the laptop a switch with
+   root's message. On the server a switch is committed
    without a working tree: the candidate becomes `flake.lock` of a tree made
    from `base`, `git commit-tree -S` signs it through rbw's agent, and `git
    push REMOTE COMMIT:refs/heads/BRANCH` sends it (never forced, so a branch
@@ -226,13 +253,17 @@ itself meanwhile is left alone.
   evaluation, build and download, a manifest mismatch and an unreachable
   manifest, a failed profile and switch, claude-code-nix not caught up, a
   lock that points elsewhere or is none or is huge, a failed prepare and a
-  missing candidate, two runs at once, following, following back to an
-  older version; prepare's bump, a bump that moved more, a locked vault and
-  a refused token, a failed `nix flake update`, a branch without a lock,
-  the lock; finish's signed commit and push, the same result twice, a
-  refused push, a failed signature, a candidate root did not build, a
-  failure, the laptop, results that are none; versions, and the command
-  lines.
+  missing candidate, two runs at once, following by root's own update of
+  the input, a lock that names a fork's revision (with upstream moved and
+  not), root's own update moving more or elsewhere or out of reach,
+  following back to an older version, a locked vault or no user manager on
+  the laptop (a quiet 75, the pending marker, and the run after the unlock);
+  prepare's bump, a bump that moved more, a locked vault (told on the
+  server, a quiet 75 on the laptop) and a refused token, a failed `nix
+  flake update`, a branch without a lock, the lock; finish's signed commit
+  and push, the same result twice, a refused push, a failed signature, a
+  candidate root did not build, a failure, the laptop and root's message
+  there, results that are none; versions, and the command lines.
 - `remote_control_test.odin`: Remote Control against a fake
   `/sys/fs/cgroup`: idle, a session until the deadline, a session that ends,
   a session in a group below, an unreadable or foreign group, a stopped unit,
@@ -297,6 +328,10 @@ The bench classifies six screens (`bench/`), a full viewport among them.
   and the real build and switch time of a Claude Code bump on the server.
 - That `systemctl --machine=USER@.host --user start` reaches the user's
   manager on the real hosts as it does in the VMs.
+- That root on the laptop gets the head of `github:sadjow/claude-code-nix`
+  with `nix flake update --refresh claude-code` and no token (GitHub's
+  limit for anonymous API calls is 60 an hour; the VM's upstream is a git
+  URL on the forge).
 
 ## Known gaps
 
@@ -311,6 +346,17 @@ Findings the tests turned up or the design leaves, not fixed:
 - The update: going back to an older Claude Code is a deploy by hand; the
   timer refuses a lock with an older version on the laptop, and waits on the
   server.
+- The update: on the server root still builds the revision the account's
+  `nix flake update` chose, so a compromised account there can have root
+  install a fork's revision. ravnix takes only the input's package, which
+  runs as that same account, so it gains nothing it lacked; the laptop,
+  whose user is another, takes no revision from the server's lock.
+- The update: on the laptop a fetch that fails for want of the network is
+  told, as on the server, and not retried before the next timer; only a
+  locked vault, a missing user manager, an unreachable input repository or
+  manifest wait for the hourly retry.
+- The update: the laptop's follow can take a newer head of the input's
+  branch than the server built, before the server has run it.
 - The update: a run that stops between prepare and finish (a reboot) leaves
   a candidate behind, which the next prepare replaces; nothing is lost, and
   nothing is committed for it.

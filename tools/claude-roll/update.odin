@@ -6,9 +6,13 @@
 //                                 for the latest version and stops when
 //                                 the host runs it. Then it has the user's
 //                                 side prepare a lock (the unit
-//                                 --prepare-unit), takes only the input's
-//                                 nodes from it into a copy of the flake
-//                                 the host was deployed from, builds that,
+//                                 --prepare-unit). On the server it takes
+//                                 only the input's nodes from it into a
+//                                 copy of the flake the host was deployed
+//                                 from; on the laptop (--mode follow) the
+//                                 lock only says that the server moved,
+//                                 and root runs `nix flake update INPUT`
+//                                 on that copy itself. Then it builds,
 //                                 checks the download with
 //                                 claude-code-verify, switches, and has the
 //                                 user's side finish (--finish-unit).
@@ -16,18 +20,24 @@
 //                                 HTTPS (git asks the user's token helper),
 //                                 and on the server runs `nix flake update
 //                                 INPUT` on it; the lock it leaves is the
-//                                 candidate.
+//                                 candidate. On the laptop a locked vault
+//                                 ends it with 75, quietly.
 //   claude-roll update-finish     the user: on the server commits the
 //                                 candidate, signed, onto what it fetched,
 //                                 pushes it, and starts the roll; on both,
 //                                 tells the user what happened.
 //
 // Root never runs anything the user wrote: the flake it builds is the one
-// the host was deployed from, a store path, and of the user's candidate it
-// takes only the input's nodes, and only a new revision of the same
-// repository (lockfile.odin). The user's side holds the token and the
-// signing key, which live in the user's vault, so the account never gets
-// root and root never reads the vault.
+// the host was deployed from, a store path, and of a new lock it takes only
+// the input's nodes, and only a new revision of the same repository
+// (lockfile.odin). Which revision, a lock cannot vouch for: GitHub serves a
+// fork's commit under the upstream's URL, and claude-code-verify checks the
+// download the revision's own package names. So the laptop takes no
+// revision from the lock the server's account pushed and asks the input's
+// repository itself; the server takes its own account's, whose package runs
+// as that account anyway. The user's side holds the token and the signing
+// key, which live in the user's vault, so the account never gets root and
+// root never reads the vault.
 package claude_roll
 
 import "core:crypto/hash"
@@ -44,7 +54,8 @@ import "core:time"
 Update_Mode :: enum {
 	// The server: bump the input, build, switch, commit and push.
 	Bump,
-	// The laptop: take the lock the server pushed, build and switch.
+	// The laptop: when the lock the server pushed moved the input, move it
+	// to the head of its branch itself, build and switch.
 	Follow,
 }
 
@@ -62,6 +73,7 @@ RESULT_NAME :: "result.json"
 CANDIDATE_NAME :: "candidate.lock"
 BASE_NAME :: "base"
 FINISHED_NAME :: "finished"
+PENDING_NAME :: "pending"
 
 // The most a command of the update may print: a nix build's log.
 MAX_UPDATE_OUTPUT :: 16 << 20
@@ -152,6 +164,9 @@ Update_Outcome :: enum {
 	Verify_Unreachable,
 	Switch_Failed,
 	Switched,
+	// The laptop's user side cannot run: the vault is locked, or no user
+	// manager runs. The retry timer tries again.
+	Waiting,
 }
 
 default_update_config :: proc() -> Update_Config {
@@ -182,7 +197,23 @@ update :: proc(cfg: Update_Config) -> (outcome: Update_Outcome, status: int) {
 	context.allocator = virtual.arena_allocator(&arena)
 	context.temp_allocator = context.allocator
 	u := Updater{hooks = cfg.hooks, log = cfg.log, name = "claude-roll update"}
-	return run_update(&u, cfg)
+	outcome, status = run_update(&u, cfg)
+	if cfg.mode == .Follow && outcome != .Locked {
+		// The laptop's retry timer runs the update while this marker is
+		// there (modules/workbench/claude-update.nix).
+		pending, _ := filepath.join({cfg.state_dir, PENDING_NAME})
+		#partial switch outcome {
+		case .Waiting, .Unreachable, .Verify_Unreachable:
+			if !write_atomic(pending, transmute([]byte)fmt.tprintf("%v\n", outcome)) {
+				ulog(&u, "cannot write %s, so no retry runs before the next timer", pending)
+			}
+		case:
+			if e := os.remove(pending); e != nil && os.exists(pending) {
+				ulog(&u, "cannot remove %s", pending)
+			}
+		}
+	}
+	return outcome, status
 }
 
 @(private = "file")
@@ -224,6 +255,16 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 	// The user's side: fetch, and on the server bump.
 	res := urun(u, {argv = {"systemctl", fmt.tprintf("--machine=%s@.host", cfg.user), "--user", "start", "--", cfg.prepare_unit}, timeout = PREPARE_TIMEOUT})
 	if !succeeded_update(res) {
+		if cfg.mode == .Follow {
+			// The laptop at 06:00, or at boot before anyone logged in: the
+			// vault is locked (prepare exits 75), or no user manager runs to
+			// ask. Nobody is told; the retry timer tries again.
+			show := urun(u, {argv = {"systemctl", fmt.tprintf("--machine=%s@.host", cfg.user), "--user", "show", "--property=ExecMainStatus", "--value", "--", cfg.prepare_unit}, timeout = UNIT_TIMEOUT})
+			if !succeeded_update(show) || strings.trim_space(string(show.stdout)) == "75" {
+				ulog(u, "the user's side cannot run now (%s): %s's vault is locked, or no manager of theirs runs. Nothing was done; the update tries again every hour until it can", tail(describe(res)), cfg.user)
+				return .Waiting, EXIT_LOCKED
+			}
+		}
 		ulog(u, "the user's side (%s of %s) failed, so nothing was built: %s; its journal says why (journalctl --user -u %s)", cfg.prepare_unit, cfg.user, describe(res), cfg.prepare_unit)
 		return .Prepare_Failed, EXIT_LOCKED
 	}
@@ -258,38 +299,80 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 		r.message = fmt.tprintf("The update on %s took nothing from the private flake's lock, which it cannot read: %s. %s stays on Claude Code %s.", cfg.host, cerr, cfg.host, cfg.running)
 		return finish_with(u, cfg, r, .Refused)
 	}
-	moved, names, merr := compare_input(deployed, candidate, cfg.input, context.allocator)
+	nix := [?]string{"nix", "--extra-experimental-features", "nix-command flakes"}
+	work, _ := filepath.join({cfg.state_dir, "work"})
+	lock_file, _ := filepath.join({work, "flake.lock"})
+
+	// What is built. On the server, the candidate's nodes of the input: the
+	// lock the user's side bumped. On the laptop the candidate, which the
+	// server's account wrote, is only the sign that there is something to
+	// follow: root moves the input itself, to the head of its own branch,
+	// so a revision only a fork has (GitHub serves those under the
+	// upstream's URL too) is never taken from the lock.
+	source := candidate
+	pushed := ""
+	if cfg.mode == .Follow {
+		pushed = input_rev(candidate, cfg.input)
+		if pushed == "" || pushed == input_rev(deployed, cfg.input) {
+			ulog(u, "the private flake's lock has not moved the %s input; nothing to follow", cfg.input)
+			return .Not_Moved, EXIT_OK
+		}
+		if !copy_flake(u, cfg.flake, work) {
+			return .Failed, EXIT_FAILED
+		}
+		argv := make([dynamic]string)
+		append(&argv, ..nix[:])
+		append(&argv, "flake", "update", "--refresh", cfg.input, "--flake", fmt.tprintf("path:%s", work))
+		res = urun(u, {argv = argv[:], dir = work, timeout = FLAKE_UPDATE_TIMEOUT})
+		if !succeeded_update(res) {
+			ulog(u, "the private flake's lock names revision %s of the %s input, but the input's own repository could not be asked for its head, so nothing was done; the update tries again within the hour: %s", short_rev(pushed), cfg.input, tail(describe(res)))
+			return .Unreachable, EXIT_LOCKED
+		}
+		own_bytes, oerr := os.read_entire_file(lock_file, context.allocator)
+		if oerr != nil {
+			ulog(u, "nix left no flake.lock in %s", work)
+			return .Failed, EXIT_FAILED
+		}
+		own, perr2 := parse_lock(own_bytes, context.allocator)
+		if perr2 != "" {
+			ulog(u, "the lock nix wrote: %s", perr2)
+			return .Failed, EXIT_FAILED
+		}
+		source = own
+	}
+
+	moved, names, merr := compare_input(deployed, source, cfg.input, context.allocator)
+	if merr == "" && cfg.mode == .Follow {
+		if what, same := others_equal(deployed, source, names); !same {
+			merr = fmt.tprintf("it also changed %s", what)
+		}
+	}
 	if merr != "" {
-		r.message = fmt.tprintf("The update on %s refused the private flake's lock: %s. Only a new revision of the %s input is taken; %s stays on Claude Code %s.", cfg.host, merr, cfg.input, cfg.host, cfg.running)
+		if cfg.mode == .Follow {
+			r.message = fmt.tprintf("The update on %s refused what its own `nix flake update %s` did to the lock: %s. %s stays on Claude Code %s.", cfg.host, cfg.input, merr, cfg.host, cfg.running)
+		} else {
+			r.message = fmt.tprintf("The update on %s refused the private flake's lock: %s. Only a new revision of the %s input is taken; %s stays on Claude Code %s.", cfg.host, merr, cfg.input, cfg.host, cfg.running)
+		}
 		return finish_with(u, cfg, r, .Refused)
 	}
 	if !moved {
 		if cfg.mode == .Bump {
 			ulog(u, "the %s input has no newer revision yet; the next run tries again", cfg.input)
 		} else {
-			ulog(u, "the private flake's lock has not moved the %s input; nothing to follow", cfg.input)
+			ulog(u, "the private flake's lock names revision %s of the %s input, but the head of the input's branch is still the revision %s runs, so nothing was taken", short_rev(pushed), cfg.input, cfg.host)
 		}
 		return .Not_Moved, EXIT_OK
 	}
 
-	// The deployed flake with the candidate's nodes of the input.
-	work, _ := filepath.join({cfg.state_dir, "work"})
-	if e := os.remove_all(work); e != nil && os.exists(work) {
-		ulog(u, "cannot clear %s", work)
+	// The deployed flake with the input's nodes put in.
+	if cfg.mode == .Bump && !copy_flake(u, cfg.flake, work) {
 		return .Failed, EXIT_FAILED
 	}
-	res = urun(u, {argv = {"cp", "-r", "--no-preserve=mode,ownership,timestamps", "-T", "--", cfg.flake, work}, timeout = UNIT_TIMEOUT})
-	if !succeeded_update(res) {
-		ulog(u, "cannot copy the deployed flake %s: %s", cfg.flake, describe(res))
-		return .Failed, EXIT_FAILED
-	}
-	lock_file, _ := filepath.join({work, "flake.lock"})
-	if e := os.write_entire_file(lock_file, splice(deployed, candidate, names, context.allocator)); e != nil {
+	if e := os.write_entire_file(lock_file, splice(deployed, source, names, context.allocator)); e != nil {
 		ulog(u, "cannot write %s", lock_file)
 		return .Failed, EXIT_FAILED
 	}
 
-	nix := [?]string{"nix", "--extra-experimental-features", "nix-command flakes"}
 	root_inputs, _ := node_inputs(deployed, deployed.root)
 	over := make([dynamic]string)
 	for o in cfg.overrides {
@@ -373,6 +456,14 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 	}
 	r.status = "switched"
 	ulog(u, "switched to Claude Code %s (%s)", version, toplevel)
+	if cfg.mode == .Follow {
+		took := input_rev(source, cfg.input)
+		if took == pushed {
+			r.message = fmt.tprintf("%s runs Claude Code %s now (was %s), from the head of the %s input's branch, which the private flake's lock names too; Anthropic's manifest vouches for the binary.", cfg.host, version, cfg.running, cfg.input)
+		} else {
+			r.message = fmt.tprintf("%s runs Claude Code %s now (was %s), from the head of the %s input's branch (%s). The private flake's lock names %s instead, which %s did not take; Anthropic's manifest vouches for the binary.", cfg.host, version, cfg.running, cfg.input, short_rev(took), short_rev(pushed), cfg.host)
+		}
+	}
 	return finish_with(u, cfg, r, .Switched)
 }
 
@@ -448,6 +539,34 @@ fetch_latest :: proc(u: ^Updater, releases: string) -> (version: string, ok: boo
 	return version, true
 }
 
+// copy_flake copies the deployed flake, a store path, to a directory root
+// may write.
+@(private = "file")
+copy_flake :: proc(u: ^Updater, flake, work: string) -> bool {
+	if e := os.remove_all(work); e != nil && os.exists(work) {
+		ulog(u, "cannot clear %s", work)
+		return false
+	}
+	res := urun(u, {argv = {"cp", "-r", "--no-preserve=mode,ownership,timestamps", "-T", "--", flake, work}, timeout = UNIT_TIMEOUT})
+	if !succeeded_update(res) {
+		ulog(u, "cannot copy the deployed flake %s: %s", flake, describe(res))
+		return false
+	}
+	return true
+}
+
+// short_rev is a revision as people read it. The server's lock names it,
+// so what is no hex digit is not passed on into a message.
+short_rev :: proc(rev: string) -> string {
+	short := rev[:min(len(rev), 12)]
+	for c in transmute([]byte)short {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return "(no revision)"
+		}
+	}
+	return short
+}
+
 // ---- The user's side: prepare ----
 
 Prepare_Config :: struct {
@@ -490,6 +609,21 @@ run_prepare :: proc(u: ^Updater, cfg: Prepare_Config) -> int {
 		return status
 	}
 	defer os.close(lock)
+
+	if cfg.mode == .Follow {
+		// On the laptop the vault locks after an hour idle, and is locked at
+		// boot, when the timer catches up. That is no failure to tell: exit
+		// 75, and root's retry tries again once it is unlocked.
+		res := urun(u, {argv = {"rbw", "unlocked"}, timeout = UNIT_TIMEOUT})
+		if res.start_error != "" {
+			tell_update(u, fmt.tprintf("The update on %s cannot ask rbw whether the vault is unlocked (%s); Claude Code stays on its version.", cfg.host, res.start_error))
+			return EXIT_FAILED
+		}
+		if !succeeded_update(res) {
+			ulog(u, "the vault is locked, so the private flake is not fetched now; the update tries again every hour until it is unlocked")
+			return EXIT_LOCKED
+		}
+	}
 
 	base, ok := fetch_flake(u, cfg.repo, cfg.remote, cfg.branch, cfg.host)
 	if !ok {
@@ -660,7 +794,11 @@ run_finish :: proc(u: ^Updater, cfg: Finish_Config) -> int {
 		return EXIT_OK
 	}
 	if cfg.mode == .Follow {
-		tell_update(u, fmt.tprintf("%s runs Claude Code %s now (was %s), as the private flake's lock says; Anthropic's manifest vouches for the binary.", r.host, r.to, r.from))
+		if r.message != "" {
+			tell_update(u, r.message)
+		} else {
+			tell_update(u, fmt.tprintf("%s runs Claude Code %s now (was %s).", r.host, r.to, r.from))
+		}
 		return EXIT_OK
 	}
 

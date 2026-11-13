@@ -28,8 +28,11 @@ Fake_Update :: struct {
 	// curl
 	latest:            string,
 	latest_fails:      bool,
-	// root's systemctl
+	// root's systemctl: the prepare unit fails, and the exit status
+	// `systemctl show` then reports for it ("" fails the show, as with no
+	// user manager).
 	prepare_fails:     bool,
+	prepare_status:    string,
 	finish_fails:      bool,
 	// setpriv cat: the candidate; "" fails the read.
 	candidate:         string,
@@ -42,6 +45,7 @@ Fake_Update :: struct {
 	nix_env_fails:     bool,
 	switch_fails:      bool,
 	// the user's side
+	vault_locked:      bool,
 	fetch_fails:       bool,
 	fetch_error:       string,
 	remote_lock:       string,
@@ -150,6 +154,11 @@ fake_update_run :: proc(data: rawptr, cmd: roll.Cmd) -> roll.Run_Result {
 		return ok_res(fu, "")
 	case argv[0] == "git":
 		return fake_git(fu, cmd)
+	case argv[0] == "rbw":
+		if fu.vault_locked {
+			return fail_res(fu, 1, "")
+		}
+		return ok_res(fu, "")
 	case argv[0] == "ravnix-notify":
 		append(&fu.notified, strings.clone(argv[len(argv) - 1], fu.a))
 		return ok_res(fu, "")
@@ -168,6 +177,11 @@ fake_systemctl :: proc(fu: ^Fake_Update, argv: []string) -> roll.Run_Result {
 		return false
 	}
 	switch {
+	case has(argv, "show") && has(argv, roll.PREPARE_UNIT):
+		if fu.prepare_status == "" {
+			return fail_res(fu, 1, "Failed to connect to bus: No medium found")
+		}
+		return ok_res(fu, strings.concatenate({fu.prepare_status, "\n"}, fu.a))
 	case has(argv, "show"):
 		if len(fu.unit_states) == 0 {
 			return fail_res(fu, 1, "Failed to connect to bus")
@@ -330,6 +344,9 @@ lock_text :: proc(f: ^Fixture, s: Lock_Spec) -> string {
 
 OLD_LOCK :: Lock_Spec{cc_rev = "aaaa", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"}
 NEW_LOCK :: Lock_Spec{cc_rev = "bbbb", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"}
+// A revision of the same repository that only a fork has: GitHub serves it
+// under the upstream's own URL all the same.
+FORK_LOCK :: Lock_Spec{cc_rev = "ffff", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"}
 
 // A deployed flake: a directory with the lock in it.
 deployed_flake :: proc(f: ^Fixture, s: Lock_Spec) -> string {
