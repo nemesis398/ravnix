@@ -70,16 +70,26 @@ What a round has to show, on the image built from the tree as committed:
    output is clean (no `signature mismatch`, no symlink errors), and the system is
    `running` with no failed unit. If `systemd-machine-id-commit.service` still
    times out on a quiet disk pool, that is the image's to fix.
-2. `docker info --format '{{.SecurityOptions}}'` and the container's
-   `HostConfig.UsernsMode`: the reasoning above assumes the daemon uses no
-   `userns-remap`.
+2. `docker version`, `docker compose version` (compose reads the Podman file's
+   `seccomp.json` itself), `docker info --format '{{.SecurityOptions}}'` and the
+   container's `HostConfig.UsernsMode`: the reasoning above assumes the daemon
+   uses no `userns-remap`.
 3. `tests/workbench/oci/docker-checks.sh` three times, with `HOST_PORT` the
    published port: against the base compose file (Podman without the override
    must fail at `/proc`, and say so), against the base and the Podman file
    together, and in a container made again from the same volume. Its output
    includes Task 4.1's Remote Control check, the Nix database check, and `docker
    inspect` of the grants (`Privileged` false, `CapAdd`, `SecurityOpt`,
-   `CgroupnsMode` private, no devices, no binds).
+   `CgroupnsMode` private, no devices, no binds). Since round 3 it also shows:
+   - in every run, `PASS: /etc/ssh/authorized_keys.d/alice is root's, mode 444,
+     and holds the configuration's key`, then the login with a key of that file
+     and the refusal of a key in the home;
+   - with the Podman file, `Devices=[/dev/net/tun]`, a `SecurityOpt` whose
+     seccomp profile allows `pivot_root` (the profile is inlined, so look for
+     the word), and, besides `Hello, world!` on pasta, `PASS: a published port
+     of a rootless container (-p 127.0.0.1:18080:8080) answers in muninn` and
+     `PASS: on a network of its own (podman network), a container reaches
+     another by name`. The hello image for these carries busybox as well.
 4. A health check that says `healthy`, the stop and its exit code, and that a
    container made again from the same volume keeps the home's files and sshd's
    host key.
@@ -90,10 +100,16 @@ What a round has to show, on the image built from the tree as committed:
    networks and images of the project all empty, `docker system df` before and
    after, and the snapshots equal.
 
-The commands, with `HOST` the Docker host, `P` the project `ravnix-muninn-test`:
+The commands, with `HOST` the Docker host, `P` the project `ravnix-muninn-test`,
+run on the host in a directory that holds the three files of
+`deploy/compose/muninn`: the two compose files and `seccomp.json`, which the
+Podman file names as `./seccomp.json`. Compose reads it relative to the first
+compose file's directory, and stops with "opening seccomp profile ... failed"
+when it is not there.
 
 ```sh
 ssh HOST docker load < result                       # prints Loaded image: ravnix/muninn:TAG
+# docker-compose.yaml, docker-compose.podman.yaml and seccomp.json side by side
 MUNINN_TAG=TAG MUNINN_BIND_ADDRESS=127.0.0.1 MUNINN_SSH_PORT=42222 \
   MUNINN_MEM_LIMIT=4g MUNINN_CPUS=4 \
   docker compose -p P -f docker-compose.yaml [-f docker-compose.podman.yaml] up -d
