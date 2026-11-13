@@ -1,0 +1,4 @@
+[0m[38;2;255;255;255m⏺ [0mReading the module.
+  ⎿  read 3 files
+[0m[38;2;255;255;255m⏺ [0mThe build passes.
+[0m[38;2;255;255;255m[48;2;55;55;55m❯ and the tests?[0m

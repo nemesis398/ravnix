@@ -1,0 +1,15 @@
+[0m[38;2;255;255;255m⏺ [0mUpdate(src/main.odin)
+
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ [0m[1mEdit file[0m
+ src/main.odin
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 12 [0m[48;2;61;1;0m-  count := 0[0m
+ 12 [0m[48;2;2;40;0m+  count := 1[0m
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to main.odin?
+ [0m[38;2;177;185;249m❯ 1. Yes[0m
+   2. Yes, allow all edits during this session (shift+tab)
+   3. No, and tell Claude what to do differently (esc)
+
+ [0m[2mEsc to cancel · Tab to amend[0m

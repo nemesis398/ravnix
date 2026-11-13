@@ -1,0 +1,11 @@
+[0m[38;2;255;255;255m⏺ [0mDone.
+
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ [0m[38;2;255;193;7mResume this conversation?[0m
+ This conversation has been inactive for 3h 2m and is 96.0k tokens long. Resuming it will use about
+ [0m[1m5%[0m of your 5-hour usage limit.
+ [0m[2mYour unsent message will still be there after you answer.[0m
+ ❯ 1. Resume
+   2. Start a new conversation
+   3. Resume from summary
+ [0m[2mEnter to confirm · Esc to resume[0m

@@ -1,0 +1,1 @@
+{"id":"cli:pane:get","result":{"pane":{"agent_status":"unknown","cwd":"/home/user/project","focused":true,"pane_id":"wK:p7","revision":0,"scroll":{"max_offset_from_bottom":83,"offset_from_bottom":0,"viewport_rows":25},"tab_id":"wK:t1","terminal_id":"term_65fe5f42b45795","workspace_id":"wK","foreground_cwd":"/home/user/project"},"type":"pane_info"}}

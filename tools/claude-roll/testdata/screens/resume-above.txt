@@ -1,0 +1,12 @@
+ [0m[38;2;255;193;7mResume this conversation?[0m
+ This conversation has been inactive for 2h 14m and is 182.4k tokens long. Resuming it will use about
+ [0m[1m9%[0m of your 5-hour usage limit.
+   Resume
+   Start a new conversation
+ [0m[2mEnter to confirm · Esc to dismiss[0m
+
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+❯ 
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;153;153;153mOpus 5.5 high · ctx 31% · wk 33% ↻Su · cache 1m · 0a1b2c3d[0m
+  [0m[38;2;153;153;153m-- INSERT --[0m [0m[38;2;255;193;7m⏵⏵ auto mode on[0m[0m[38;2;153;153;153m (shift+tab to cycle)[0m

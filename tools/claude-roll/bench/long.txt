@@ -1,0 +1,366 @@
+[0m[38;2;255;255;255m⏺ [0mStep 0: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 1: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 2: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 3: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 4: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 5: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 6: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 7: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 8: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 9: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 10: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 11: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 12: the module builds, and the checks of area 5 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 13: the module builds, and the checks of area 6 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 14: the module builds, and the checks of area 0 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 15: the module builds, and the checks of area 1 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 16: the module builds, and the checks of area 2 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 17: the module builds, and the checks of area 3 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 18: the module builds, and the checks of area 4 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 19: the module builds, and the checks of area 5 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 20: the module builds, and the checks of area 6 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 21: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 22: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 23: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 24: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 25: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 26: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 27: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 28: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 29: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 30: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 31: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 32: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 33: the module builds, and the checks of area 5 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 34: the module builds, and the checks of area 6 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 35: the module builds, and the checks of area 0 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 36: the module builds, and the checks of area 1 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 37: the module builds, and the checks of area 2 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 38: the module builds, and the checks of area 3 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 39: the module builds, and the checks of area 4 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 40: the module builds, and the checks of area 5 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 41: the module builds, and the checks of area 6 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 42: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 43: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 44: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 45: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 46: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 47: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 48: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 49: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 50: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 51: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 52: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 53: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 54: the module builds, and the checks of area 5 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 55: the module builds, and the checks of area 6 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 56: the module builds, and the checks of area 0 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 57: the module builds, and the checks of area 1 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 58: the module builds, and the checks of area 2 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 59: the module builds, and the checks of area 3 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 60: the module builds, and the checks of area 4 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 61: the module builds, and the checks of area 5 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 62: the module builds, and the checks of area 6 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 63: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 64: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 65: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 66: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 67: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 68: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 69: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 70: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 71: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 72: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 73: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 74: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 75: the module builds, and the checks of area 5 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 76: the module builds, and the checks of area 6 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 77: the module builds, and the checks of area 0 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 78: the module builds, and the checks of area 1 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 79: the module builds, and the checks of area 2 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 80: the module builds, and the checks of area 3 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 81: the module builds, and the checks of area 4 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 82: the module builds, and the checks of area 5 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 83: the module builds, and the checks of area 6 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 84: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 85: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 86: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 87: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 88: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 89: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 90: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 91: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 92: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 93: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 94: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 95: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 96: the module builds, and the checks of area 5 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 97: the module builds, and the checks of area 6 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 98: the module builds, and the checks of area 0 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 99: the module builds, and the checks of area 1 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 100: the module builds, and the checks of area 2 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 101: the module builds, and the checks of area 3 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 102: the module builds, and the checks of area 4 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 103: the module builds, and the checks of area 5 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 104: the module builds, and the checks of area 6 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 105: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 106: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 107: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 108: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 109: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 110: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 111: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 112: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 113: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 114: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 115: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 116: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 117: the module builds, and the checks of area 5 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 118: the module builds, and the checks of area 6 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 119: the module builds, and the checks of area 0 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 120: the module builds, and the checks of area 1 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 121: the module builds, and the checks of area 2 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 122: the module builds, and the checks of area 3 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 123: the module builds, and the checks of area 4 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 124: the module builds, and the checks of area 5 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 125: the module builds, and the checks of area 6 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 126: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 127: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 128: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 129: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 130: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 131: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 132: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 133: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 134: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 135: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 136: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 137: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 138: the module builds, and the checks of area 5 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 139: the module builds, and the checks of area 6 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 140: the module builds, and the checks of area 0 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 141: the module builds, and the checks of area 1 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 142: the module builds, and the checks of area 2 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 143: the module builds, and the checks of area 3 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 144: the module builds, and the checks of area 4 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 145: the module builds, and the checks of area 5 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 146: the module builds, and the checks of area 6 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 147: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 148: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 149: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 150: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 151: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 152: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 153: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 154: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 155: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 156: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 157: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 158: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 159: the module builds, and the checks of area 5 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 160: the module builds, and the checks of area 6 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 161: the module builds, and the checks of area 0 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 162: the module builds, and the checks of area 1 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 163: the module builds, and the checks of area 2 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 164: the module builds, and the checks of area 3 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 165: the module builds, and the checks of area 4 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 166: the module builds, and the checks of area 5 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 167: the module builds, and the checks of area 6 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 168: the module builds, and the checks of area 0 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 169: the module builds, and the checks of area 1 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 170: the module builds, and the checks of area 2 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 171: the module builds, and the checks of area 3 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 0 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 172: the module builds, and the checks of area 4 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 1 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 173: the module builds, and the checks of area 5 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 2 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 174: the module builds, and the checks of area 6 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 3 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 175: the module builds, and the checks of area 0 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 4 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 176: the module builds, and the checks of area 1 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 5 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 177: the module builds, and the checks of area 2 pass; next is the bench of tool 0.
+  ⎿  [0m[38;2;153;153;153mread 6 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 178: the module builds, and the checks of area 3 pass; next is the bench of tool 1.
+  ⎿  [0m[38;2;153;153;153mread 7 files (ctrl+o to expand)[0m
+[0m[38;2;255;255;255m⏺ [0mStep 179: the module builds, and the checks of area 4 pass; next is the bench of tool 2.
+  ⎿  [0m[38;2;153;153;153mread 8 files (ctrl+o to expand)[0m
+
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+❯ [0m[2mrun the tests again[0m
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;153;153;153mOpus 5.5 high · ctx 31% · wk 33% ↻Su · cache 1m · 0a1b2c3d[0m
+  [0m[38;2;153;153;153m-- INSERT --[0m [0m[38;2;255;193;7m⏵⏵ auto mode on[0m[0m[38;2;153;153;153m (shift+tab to cycle)[0m

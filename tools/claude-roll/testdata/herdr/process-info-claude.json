@@ -1,0 +1,1 @@
+{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":3318752,"foreground_processes":[{"argv":["claude","--add-dir","/home/user/notes"],"cmdline":"claude","cwd":"/home/user/project","name":"claude","pid":3318752}],"pane_id":"wK:p6","shell_pid":6588},"type":"pane_process_info"}}

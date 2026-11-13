@@ -1,0 +1,9 @@
+[0m[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ [0m[1mSelect model[0m
+ Switch between Claude models. Applies to this session and future Claude Code sessions.
+
+ [0m[38;2;177;185;249m❯ 1. Default (recommended)[0m
+   2. Opus
+   3. Sonnet
+
+ [0m[2mEnter to set as default · Esc to cancel[0m

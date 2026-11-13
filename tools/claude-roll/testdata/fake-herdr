@@ -1,0 +1,32 @@
+#!/bin/sh
+# The herdr of the process tests (tests/cli_test.odin): a symlink named herdr
+# in a test's directory points here. Every run is recorded in the
+# directory's log, its arguments each ended by a NUL and the run by a byte 1.
+# It answers with the files of the directory named after the call: for
+# `herdr agent list`, agent-list.out on stdout, agent-list.err on stderr and
+# the exit status in agent-list.rc; `agent read PANE` looks for
+# agent-read-PANE.* first. A file agent-list.hang makes it spin until it is
+# killed.
+d=${0%/*}
+{
+  printf '%s\000' "$@"
+  printf '\001'
+} >>"$d/log"
+key="$1-$2"
+if [ "$key" = agent-read ] && [ -e "$d/$key-$3.out" ]; then
+  key="$key-$3"
+fi
+if [ -e "$d/$key.hang" ]; then
+  while :; do :; done
+fi
+if [ -e "$d/$key.err" ]; then
+  cat "$d/$key.err" >&2
+fi
+if [ -e "$d/$key.out" ]; then
+  cat "$d/$key.out"
+fi
+rc=0
+if [ -e "$d/$key.rc" ]; then
+  read -r rc <"$d/$key.rc"
+fi
+exit "$rc"

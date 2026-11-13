@@ -1,0 +1,1 @@
+{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":3978385,"foreground_processes":[{"argv":["sudo","dnf","upgrade"],"cmdline":"sudo dnf upgrade","name":"sudo","pid":3978385,"cwd":"/home/user/project"}],"pane_id":"wK:p7","shell_pid":5795},"type":"pane_process_info"}}
