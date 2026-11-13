@@ -59,11 +59,16 @@ let
   # The desktop module on a stubbed host, for the providers below. It is the host
   # of a user who set nothing optional: sway-ask exists only when
   # ravnix.desktop.ask is set, and the default menu is for everyone, so what only
-  # an option installs is not on the list.
+  # an option installs is not on the list. The NetBird client is the glue's
+  # (modules/glue/netbird.nix), which the laptop shape brings beside the
+  # desktop, so that module is on this host too, as the laptop and no other
+  # glue module.
   desktop = inputs.nixpkgs.lib.nixosSystem {
     inherit system;
     modules = hostModules ++ [
       self.nixosModules.desktop
+      ../../modules/glue/netbird.nix
+      { ravnix.shape = "laptop"; }
       { ravnix.desktop.ask = lib.mkForce null; }
     ];
   };
@@ -134,7 +139,7 @@ assert lib.assertMsg (
   !lib.elem "sway-ask" scripts
 ) "tests/desktop/sway-radial.nix: sway-ask is on the list of programs the default menu may run, but it is installed only when ravnix.desktop.ask is set";
 assert lib.assertMsg (missingProviders == [ ])
-  "tests/desktop/sway-radial.nix: the desktop module no longer installs the package behind: ${lib.concatStringsSep ", " missingProviders}";
+  "tests/desktop/sway-radial.nix: the desktop module and the glue's NetBird client no longer install the package behind: ${lib.concatStringsSep ", " missingProviders}";
 pkgs.runCommand "desktop-sway-radial"
   {
     nativeBuildInputs = [
