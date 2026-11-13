@@ -14,6 +14,7 @@ here, each named in its message, so that a regression says which row broke.
 import ast
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -264,7 +265,12 @@ def main():
             expect(f"color='{t['accent']}'" in text and f"color='{args['roles']['mauve']['accent']}'" not in text, f"teal: bin/{name} does not tint its icon with the accent of the option")
 
     g = args["greeter"]
-    expect("tuigreet" in g["command"], "greetd does not run tuigreet")
+    # The command's first word is the wrapper that hands tuigreet the
+    # greeting (modules/desktop/greetd.nix); it has to exec tuigreet itself.
+    # desktop-mark checks the greeting it passes.
+    words = shlex.split(g["command"])
+    wrapper = read(words[0]) if words and words[0].startswith("/nix/store/") else ""
+    expect(re.search(r"^exec /nix/store/[^/\s]+-tuigreet-[^/\s]+/bin/tuigreet ", wrapper, re.M), f"greetd does not run tuigreet: the command starts with {words[:1]}, which does not exec it")
     expect(g["plymouth"] is False, "Plymouth is on")
     expect(g["user"] == "greeter", "greeter user")
     expect(len(g["colors"]) == 16, "console.colors has not 16 entries")

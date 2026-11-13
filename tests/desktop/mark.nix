@@ -44,16 +44,20 @@ let
   inherit ((pkgs.extend self.overlays.default).ravnix) backdrop;
   python = "${backdrop.python}/bin/python3";
 
+  # As many rows as the checked-in art has, so a new height is one edit of the
+  # file; mark-checks.py bounds the rows to 10 to 16.
+  rows = lib.length (lib.splitString "\n" (lib.removeSuffix "\n" (builtins.readFile ../../assets/ravnix-mark.txt)));
   fresh = pkgs.runCommand "ravnix-mark-art" {
     GI_TYPELIB_PATH = backdrop.typelibPath;
     PYTHONDONTWRITEBYTECODE = "1";
-  } "${python} -I ${./helpers/mark-art.py} ${../../assets/ravnix-mark.svg} 14 > $out";
+  } "${python} -I ${./helpers/mark-art.py} ${../../assets/ravnix-mark.svg} ${toString rows} > $out";
 
   args = pkgs.writeText "desktop-mark-args.json" (
     builtins.toJSON {
       palette = import ../../modules/theme/palette.nix;
       svg = ../../assets/ravnix-mark.svg;
       art = ../../assets/ravnix-mark.txt;
+      imageFixture = ./fixtures/waybar-image-no-interval.jsonc;
       inherit fresh;
       variants = {
         mauve = variant mauve;

@@ -14,9 +14,15 @@ The art is cropped to the mark's ink, and no line ends in a space: the
 greeter's module (modules/desktop/greetd.nix) pads every line to the widest,
 because tuigreet centers each line of the greeting on its own.
 
-The check desktop-mark runs this on the shipped mark and fails when the
-result differs from assets/ravnix-mark.txt; to make the file again, take the
-art the failing check prints.
+The check desktop-mark runs this on the shipped mark, at as many rows as
+assets/ravnix-mark.txt has, and fails when the result differs from the file.
+A cell whose coverage sits near the 50 % cutoff can flip after a librsvg or
+cairo update in nixpkgs, with no change in ravnix: desktop-mark then fails
+until the art is made again. The failing check prints the new art; or run
+
+    nix build .#checks.x86_64-linux.desktop-mark -L
+
+and copy the lines after "it makes:" into assets/ravnix-mark.txt.
 """
 import sys
 

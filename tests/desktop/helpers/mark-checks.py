@@ -96,6 +96,24 @@ def pixels(path, size):
     return w, h, rows
 
 
+def image_interval_problems(modules):
+    """(key, interval) of each image module whose interval is not safe.
+
+    Waybar 0.15's image module re-renders every 1 ms when no interval is
+    given (its "render once" branch cannot be reached), and "once" turns into
+    a duration that overflows when it sleeps. Either keeps Waybar and Sway
+    busy enough that a `swaymsg reload` times out. A number of seconds that
+    fits in nanoseconds is the only safe value."""
+    found = []
+    for key, module in modules.items():
+        if key != "image" and not key.startswith("image#"):
+            continue
+        interval = module.get("interval") if isinstance(module, dict) else None
+        if not (isinstance(interval, int) and not isinstance(interval, bool) and 3600 <= interval <= 10**9):
+            found.append((key, interval))
+    return found
+
+
 def check_bar(name, v, args):
     accent = v["accent"].lower()
     full = jsonc(v["config"], f"{name}: waybar/config.jsonc")
@@ -112,16 +130,8 @@ def check_bar(name, v, args):
         return
     expect(mark.get("size") == 16, f"{name}: the mark in the bar is {mark.get('size')} px, not 16")
     expect(mark.get("tooltip") is False, f"{name}: the mark in the bar has a tooltip")
-    # Waybar 0.15's image module re-renders every 1 ms when no interval is
-    # given (its "render once" branch cannot be reached), and "once" turns
-    # into a duration that overflows when it sleeps. Either keeps Waybar and
-    # Sway busy enough that a `swaymsg reload` times out. A number of seconds
-    # that fits in nanoseconds is the only safe value.
-    interval = mark.get("interval")
-    expect(
-        isinstance(interval, int) and not isinstance(interval, bool) and 3600 <= interval <= 10**9,
-        f"{name}: the mark's interval is {interval!r}, not a whole number of seconds from 3600 to 10^9",
-    )
+    for key, interval in image_interval_problems(modules):
+        fail(f"{name}: {key}'s interval is {interval!r}, not a whole number of seconds from 3600 to 10^9")
     path = mark.get("path", "")
     expect(path.startswith("/nix/store/"), f"{name}: the mark's path {path!r} is not in the store")
     if not path.startswith("/nix/store/"):
@@ -231,6 +241,10 @@ def main():
         # tuigreet's wrapper turns a line of spaces alone into two lines.
         expect(line.strip(" "), f"line {n} of the art is blank")
         expect(not line.endswith(" "), f"line {n} of the art ends in a space")
+
+    # The interval check itself, on a fixture with two unsafe image modules.
+    caught = sorted(k for k, _ in image_interval_problems(jsonc(args["imageFixture"], "the image fixture")))
+    expect(caught == ["image", "image#spinner"], f"the interval check names {caught} in the fixture, not image and image#spinner")
 
     for name, v in args["variants"].items():
         check_bar(name, v, args)

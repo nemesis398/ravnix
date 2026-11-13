@@ -1,0 +1,19 @@
+{
+  // For desktop-mark: a modules.jsonc with image modules that Waybar 0.15
+  // would re-render every millisecond (no interval, or "once", which
+  // overflows) next to one with a safe interval. The interval check must
+  // name the first two and pass the third.
+  "image#mark": {
+    "path": "/nix/store/0000000000000000000000000000000-mark.svg",
+    "size": 16,
+    "interval": 86400,
+  },
+  "image#spinner": {
+    "path": "/nix/store/0000000000000000000000000000000-spinner.svg",
+    "size": 16,
+  },
+  "image": {
+    "path": "/nix/store/0000000000000000000000000000000-other.svg",
+    "interval": "once",
+  },
+}
