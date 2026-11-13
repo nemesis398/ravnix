@@ -203,6 +203,8 @@ The mark has two ravens, Mauve for `huginn` and Blue for `muninn`. Those colors 
 - Palette colors only. The logo's Mauve and Blue are brand colors and do **not** follow the accent option. On the running system the mark is drawn in one color, the accent. The two-color version is for paper: the README, the docs and the diagrams.
 - It must read at 16 px. It ships in a one-color version in Text, for use on Base and on Crust.
 - The README header image carries its own Base background, so it looks the same on a light or a dark GitHub theme.
+- The name is drawn, not typed: the wordmark is flat polygons cut in the same facets as the ravens, "rav" in Text and "nix" in Mauve. It is the one place where the font rule does not hold. Anywhere the name is text, it is set in the font.
+- The files, their uses and the clear space are in [the brand guide](brand/README.md).
 
 ## 🗺️ Diagrams and docs
 
@@ -281,6 +283,6 @@ Verified against the configs on 2026-11-07. A later audit of the Fedora setup fo
 - The shape of the theme module, and which applications use `catppuccin/nix` and which are generated from the roles.
 - Producing the wallpaper and the lock image from a user's own image. Today a Python tool called `backdrop` draws both, and it ports to Odin with the other tools. It must accept a user's image and place the marks as described.
 - The login greeter's exact values, within the rules above.
-- The logo itself. No file exists yet, and the wallpaper, the lock image, the README header and the bar icon wait for it. Until it exists, the wordmark `ravnix` in the font and the accent stands in. It must read at 16 px. The ravnix and phyllon marks are drawn at the same size, on the shipped default and on the author's own wallpaper. The phyllon mark exists as an SVG.
+- The logo on the running system. The paper forms are in `docs/brand/`; the wallpaper, the lock image, the bar icon and the greeting still show the word `ravnix` in the font and the accent, until each draws the mark in one color, the accent. The ravnix and phyllon marks are drawn at the same size, on the shipped default and on the author's own wallpaper. The phyllon mark exists as an SVG.
 - GTK and Qt assets for each accent in the option's list.
 - Installing the userstyles. Stylus in the browser plus the userstyles repository is the mechanism. Whether the flake installs them declaratively or documents a manual step depends on what the browser allows.
