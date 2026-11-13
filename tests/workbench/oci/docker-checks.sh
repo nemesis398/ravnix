@@ -19,10 +19,11 @@
 # status is the number of failures, capped at 100; 2 when it refused to run.
 # The user is alice, the template's.
 #
-# It adds a key to the user's authorized_keys and makes a pane, a workspace and
-# a unit run, so it refuses to run in a container that is not the one of a
-# throwaway Compose project named ravnix-muninn-test, whatever else is asked.
-# The key and the files it made are removed at the end.
+# It adds a key to the keys sshd takes for the user and one to the user's
+# ~/.ssh/authorized_keys, and makes a pane, a workspace and a unit run, so it
+# refuses to run in a container that is not the one of a throwaway Compose
+# project named ravnix-muninn-test, whatever else is asked. The keys and the
+# files it made are removed at the end.
 set -u
 
 container=${1:?usage: docker-checks.sh CONTAINER ODIN HOST_PORT [podman]}
@@ -164,9 +165,19 @@ for want in "passwordauthentication no" "kbdinteractiveauthentication no" "permi
 done
 echo "info: $(r ls -la /home/.muninn-ssh | tr '\n' ';')"
 echo "info: host key: $(r $sysbin/ssh-keygen -lf /home/.muninn-ssh/ssh_host_ed25519_key.pub 2>&1)"
-u 'rm -f ~/.ssh/id_test ~/.ssh/id_test.pub; mkdir -p ~/.ssh; chmod 700 ~/.ssh; ssh-keygen -q -t ed25519 -N "" -C ravnix-docker-checks -f ~/.ssh/id_test; cat ~/.ssh/id_test.pub >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys' >/dev/null 2>&1
+# sshd takes keys from the configuration alone (hosts/server/deploy.nix): it
+# reads the file the system writes from users.users.USER.openssh.authorizedKeys
+# at every boot, and never ~/.ssh/authorized_keys. So the key the test logs in
+# with goes, as root, into that file, where a key of the configuration is; and
+# a key in the home must be refused. Both keys end in the comment the cleanup
+# looks for.
+keys=/etc/ssh/authorized_keys.d/$user
+u 'rm -f ~/.ssh/id_test ~/.ssh/id_test.pub ~/.ssh/id_home ~/.ssh/id_home.pub; mkdir -p ~/.ssh; chmod 700 ~/.ssh; ssh-keygen -q -t ed25519 -N "" -C ravnix-docker-checks -f ~/.ssh/id_test; ssh-keygen -q -t ed25519 -N "" -C ravnix-docker-checks -f ~/.ssh/id_home; cat ~/.ssh/id_home.pub >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys' >/dev/null 2>&1
+u 'cat ~/.ssh/id_test.pub' | docker exec -i "$container" $sysbin/tee -a "$keys" >/dev/null
 login=$(u "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/id_test $user@127.0.0.1 'echo login-ok:\$(id -un)'" 2>&1)
-if echo "$login" | grep -q "login-ok:$user"; then ok "ssh with a key logs in as the user"; else bad "ssh login: $login"; fi
+if echo "$login" | grep -q "login-ok:$user"; then ok "ssh with a key of $keys logs in as the user"; else bad "ssh login with a key of $keys: $login"; fi
+home=$(u "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/id_home $user@127.0.0.1 'echo login-ok:\$(id -un)'" 2>&1)
+if echo "$home" | grep -q 'Permission denied (publickey)'; then ok "a key in ~/.ssh/authorized_keys is refused: sshd takes the configuration's keys only"; else bad "ssh with a key in ~/.ssh/authorized_keys: $home"; fi
 nokey=$(u "ssh -o BatchMode=yes -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new $user@127.0.0.1 true" 2>&1)
 if echo "$nokey" | grep -q 'Permission denied'; then ok "ssh without a key is refused: $(echo "$nokey" | tail -1)"; else bad "ssh without a key: $nokey"; fi
 banner=$(bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -c 40 <&3" 2>&1 | head -1)
@@ -198,8 +209,9 @@ else
 	echo "info: podman run without the Podman override: $hello"
 fi
 
-# What the checks added: the key and the files of the ssh check.
-u 'rm -f ~/.ssh/id_test ~/.ssh/id_test.pub ~/pane.out; sed -i "/ ravnix-docker-checks\$/d" ~/.ssh/authorized_keys' >/dev/null 2>&1
+# What the checks added: the keys and the files of the ssh check.
+r $sysbin/sed -i '/ ravnix-docker-checks$/d' "$keys" >/dev/null 2>&1
+u 'rm -f ~/.ssh/id_test ~/.ssh/id_test.pub ~/.ssh/id_home ~/.ssh/id_home.pub ~/pane.out; sed -i "/ ravnix-docker-checks\$/d" ~/.ssh/authorized_keys' >/dev/null 2>&1
 
 echo "SUMMARY: $passed passed, $failed failed"
 exit $((failed > 100 ? 100 : failed))

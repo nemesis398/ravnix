@@ -205,7 +205,9 @@ is the record.
   unless the list is a closure that holds the whole server system. One shared
   list means a change to the other two tests.
 - `docker-checks.sh` is Bash, a record script piped over ssh into a container;
-  it adds a key to the volume's `authorized_keys` and removes it again, and it
+  it puts a key into `/etc/ssh/authorized_keys.d/alice` of the container (the
+  configuration's keys, the only ones sshd reads) and one into the volume's
+  `~/.ssh/authorized_keys`, which must be refused, and removes both, and it
   refuses to run unless the container belongs to the project
   `ravnix-muninn-test`. It is not part of `nix flake check`.
 - The image is 6.9 GB with one editor language, and grows by several GB with

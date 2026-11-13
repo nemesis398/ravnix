@@ -38,7 +38,8 @@ inputs.nixpkgs.lib.nixosSystem {
         ravnix.editor.languages = lib.mkForce [ "nix" ];
 
         # A key that is only the shape of one: the test logs in with a key
-        # it makes itself.
+        # it makes itself and puts, as root, into the file sshd reads these
+        # from (docker-checks.sh).
         users.users.${config.ravnix.user.username}.openssh.authorizedKeys.keys = [
           config.ravnix.user.signingKey
         ];

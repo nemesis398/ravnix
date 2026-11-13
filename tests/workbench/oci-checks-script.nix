@@ -10,6 +10,10 @@
 #     round 2 (readlink not found, then PID 1 in 0::/, then a bus that is not
 #     there) for its first calls, and as a running system after them. With a
 #     system that never comes up, the wait ends and the script says so.
+#   - The key it logs in with goes where the image's sshd reads keys
+#     (/etc/ssh/authorized_keys.d/USER: hosts/server/deploy.nix lets sshd read
+#     keys from the configuration alone), and is taken out again at the end.
+#     That this is the file the image's sshd reads is the check workbench-oci's.
 #   - It refuses a container that is not the throwaway project's.
 { pkgs, ... }:
 let
@@ -89,6 +93,13 @@ pkgs.runCommand "workbench-oci-checks-script" { } ''
   run never BOOTED_AFTER=100000
   grep -q '^FAIL: the system is ' never.out || fail "a system that never came up was not reported: $(tail -3 never.out)"
   grep -q '^SUMMARY: ' never.out || fail "the script did not finish with a system that never came up"
+
+  # The key: it goes where the image's sshd reads keys, as root, and out again.
+  keys=/etc/ssh/authorized_keys.d/alice
+  grep -q "tee -a $keys\$" booting/exec.log || fail "the login key is not put into $keys: $(grep -n 'authorized_keys' booting/exec.log)"
+  grep -q "sed -i .* $keys\$" booting/exec.log || fail "the login key is not taken out of $keys at the end"
+  [ "$(grep -n "tee -a $keys\$" booting/exec.log | cut -d: -f1)" -lt "$(grep -n "sed -i .* $keys\$" booting/exec.log | cut -d: -f1 | tail -1)" ] ||
+    fail "the key is taken out of $keys before it is put in"
 
   # Another container: nothing is run in it.
   run other FAKE_PROJECT=someone-else

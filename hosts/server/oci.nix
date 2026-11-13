@@ -29,8 +29,9 @@
 # would last until the container is made again. What outlives the swap is
 # /home, which is a volume (root's, mode 0755), and it holds what must outlive
 # it:
-#   - the user's home in it: the files, Podman's storage, the keys that may log
-#     in (~/.ssh/authorized_keys) and the login of every program;
+#   - the user's home in it: the files, Podman's storage and the login of
+#     every program (not the keys that may log in: sshd takes those from the
+#     configuration alone, ./deploy.nix);
 #   - the host key of sshd, beside the home in a directory of root's
 #     (/home/.muninn-ssh, the key itself root's and mode 0600), so a swap does
 #     not change the host's identity and nobody has to accept a new key. It is
@@ -44,8 +45,9 @@
 # change hands with an image.
 #
 # Not set here, because they are the host's to decide: who may log in
-# (users.users.<user>.openssh.authorizedKeys.keys, or the volume's
-# authorized_keys) and the time zone. The host name is "muninn" unless the host
+# (users.users.<user>.openssh.authorizedKeys.keys; sshd reads no
+# ~/.ssh/authorized_keys, so a key in the volume does not log in) and the time
+# zone. The host name is "muninn" unless the host
 # sets another; the compose file's hostname should agree with it.
 {
   config,

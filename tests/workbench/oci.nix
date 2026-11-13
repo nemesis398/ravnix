@@ -125,6 +125,10 @@ let
   entryMountFails = entry { mountOk = false; };
 
   home = "/home/${user}";
+  # The one file the image's sshd reads the user's keys from.
+  keysFile = lib.replaceStrings [ "%u" ] [ user ] (lib.head c.services.openssh.authorizedKeysFiles);
+  # The same, as docker-checks.sh writes it.
+  keysFileInScript = lib.replaceStrings [ "%u" ] [ "$user" ] (lib.head c.services.openssh.authorizedKeysFiles);
   hostKey = "/home/.muninn-ssh/ssh_host_ed25519_key";
   failures =
     check c.boot.isContainer "the system is not a container (boot.isContainer)"
@@ -163,6 +167,12 @@ let
     ++ check (
       c.services.openssh.settings.PasswordAuthentication == false
     ) "the shape's sshd takes a password"
+    # The way a key gets in that the compose file and docker-checks.sh name:
+    # the configuration's, and no file in the volume.
+    ++ check (
+      !c.services.openssh.authorizedKeysInHomedir
+      && c.services.openssh.authorizedKeysFiles == [ "/etc/ssh/authorized_keys.d/%u" ]
+    ) "sshd reads keys from more than the configuration: ${builtins.toJSON c.services.openssh.authorizedKeysFiles}, in the home: ${lib.boolToString c.services.openssh.authorizedKeysInHomedir}"
     # Root in the container is root on the Docker host, and the container only
     # updates by an image swap, so a root login has no use there. The shape
     # may allow root with a key (Task 4.2, for the deploy); the container form
@@ -316,6 +326,11 @@ pkgs.runCommand "workbench-oci"
     # and for Helium.
     grep -qF '^(${lib.concatStringsSep "|" notOnPath})$' ${./oci/docker-checks.sh} ||
       fail "docker-checks.sh does not look for the laptop's programs the check does, and Helium"
+    # sshd reads keys from the configuration alone (hosts/server/deploy.nix):
+    # the one file it reads, and never the home's. The script logs in with a
+    # key it puts into that file, and checks that the home's is refused.
+    grep -qxF 'keys=${keysFileInScript}' ${./oci/docker-checks.sh} ||
+      fail "docker-checks.sh does not put its login key into ${keysFile}, the file the image's sshd reads keys from"
 
     # The deploy files. Never pull: the image is loaded by hand, and a missing
     # tag must stop the start and not fetch a stranger's image from a registry

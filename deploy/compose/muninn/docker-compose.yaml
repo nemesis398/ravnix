@@ -59,11 +59,11 @@
 # loaded stop the start, and not fetch ravnix/muninn:TAG from a registry
 # whose namespace nobody here controls and run it with the rights above.
 #
-# The first start has no key that may log in. Put the public key into the
-# volume (docker compose exec muninn su - USER, then ~/.ssh/authorized_keys),
-# or into users.users.USER.openssh.authorizedKeys.keys of the private flake
-# before building. sshd takes keys only. The host key is made in the volume
-# on the first start and stays the same through every swap.
+# sshd takes keys only, and only the configuration's: put the public key into
+# users.users.USER.openssh.authorizedKeys.keys of the private flake before
+# building. A key in the volume's ~/.ssh/authorized_keys does not log in
+# (hosts/server/deploy.nix), so a new key is a new image. The host key is
+# made in the volume on the first start and stays the same through every swap.
 #
 # Update: load the new image, set MUNINN_TAG to its tag, `docker compose up -d`.
 # Compose makes the container again from the new image and keeps the volume.
