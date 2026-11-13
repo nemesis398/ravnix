@@ -75,7 +75,9 @@ OP_NAMES := [Obsidian_Op]string {
 //   open:         target (a URL or an absolute path)
 //   notify:       summary, body, urgency ("" or low|normal|critical), app
 //   obsidian:     op, path, to (move), name (rename)
-//   vault-commit: vault (the repository), message, paths
+//   vault-commit: vault (the repository), message, paths, and from the
+//                 laptop sums: per path, the SHA-256 of its bytes in the
+//                 laptop's copy of the vault, or NO_FILE where it has none
 Request :: struct {
 	id:      string,
 	kind:    Kind,
@@ -92,6 +94,25 @@ Request :: struct {
 	vault:   string,
 	message: string,
 	paths:   []string,
+	sums:    []string,
+}
+
+// The sum of a path the laptop's copy of the vault does not have: the
+// commit takes its removal.
+NO_FILE :: "-"
+
+// is_sum says whether s is a SHA-256 as the laptop writes it: 64
+// lowercase hex digits.
+is_sum :: proc(s: string) -> bool {
+	if len(s) != 64 {
+		return false
+	}
+	for c in transmute([]u8)s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // How the daemon answers: done and failed are final, so the client records
@@ -313,7 +334,7 @@ check_request :: proc(r: Request) -> string {
 		{!is_open && r.target != "", "target"},
 		{!is_notify && (r.summary != "" || r.body != "" || r.urgency != "" || r.app != ""), "a notification's text"},
 		{!is_obsidian && (r.op != .None || r.path != "" || r.to != "" || r.name != ""), "an Obsidian operation"},
-		{!is_commit && (r.vault != "" || r.message != "" || len(r.paths) > 0), "a commit"},
+		{!is_commit && (r.vault != "" || r.message != "" || len(r.paths) > 0 || len(r.sums) > 0), "a commit"},
 	}
 	for s in stray {
 		if s.set {
@@ -418,6 +439,14 @@ check_request :: proc(r: Request) -> string {
 		for p in r.paths {
 			if why := check_vault_path("a path of the commit", p); why != "" {
 				return why
+			}
+		}
+		if len(r.sums) > 0 && len(r.sums) != len(r.paths) {
+			return fmt.tprintf("the commit names %d paths and %d sums, one per path", len(r.paths), len(r.sums))
+		}
+		for sum in r.sums {
+			if sum != NO_FILE && !is_sum(sum) {
+				return fmt.tprintf("the sum %q is neither a SHA-256 in lowercase hex nor %s", sum, NO_FILE)
 			}
 		}
 	}
@@ -528,6 +557,16 @@ encode_request :: proc(r: Request, allocator := context.allocator) -> (line: str
 			write_json_string(&b, p)
 		}
 		strings.write_byte(&b, ']')
+		if len(r.sums) > 0 {
+			strings.write_string(&b, `,"sums":[`)
+			for sum, i in r.sums {
+				if i > 0 {
+					strings.write_byte(&b, ',')
+				}
+				write_json_string(&b, sum)
+			}
+			strings.write_byte(&b, ']')
+		}
 	}
 	strings.write_string(&b, `},"created":`)
 	write_json_string(&b, r.created)
@@ -772,7 +811,7 @@ decode_request :: proc(line: string, allocator := context.allocator) -> (r: Requ
 			return r, why
 		}
 	case .Vault_Commit:
-		if extra := only_keys(args, "vault", "message", "paths"); extra != "" {
+		if extra := only_keys(args, "vault", "message", "paths", "sums"); extra != "" {
 			return r, fmt.tprintf("vault-commit has no argument %q", extra)
 		}
 		if r.vault, why = string_field(args, "vault", true, allocator); why != "" {
@@ -802,6 +841,23 @@ decode_request :: proc(line: string, allocator := context.allocator) -> (r: Requ
 				return r, why
 			}
 			r.paths[i] = strings.clone(s, allocator)
+		}
+		if sums_value, has_sums := args["sums"]; has_sums {
+			sums, sums_list := sums_value.(json.Array)
+			if !sums_list {
+				return r, "sums is not a list"
+			}
+			if len(sums) > MAX_PATHS {
+				return r, fmt.tprintf("the commit names %d sums, more than %d", len(sums), MAX_PATHS)
+			}
+			r.sums = make([]string, len(sums), allocator)
+			for v, i in sums {
+				s, is_string := v.(json.String)
+				if !is_string {
+					return r, "a sum of the commit is not a string"
+				}
+				r.sums[i] = strings.clone(s, allocator)
+			}
 		}
 	}
 	return r, check_request(r)

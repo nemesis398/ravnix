@@ -72,6 +72,8 @@ Config :: struct {
 	program_timeout_ms: int,
 	commit_timeout_ms:  int,
 	retry_now:          bool, // run a commit that waits for its next attempt now (flush)
+	forward:            string, // the laptop's: the program that carries a commit to the server's receive
+	receive_wait_ms:    int, // how long receive waits for the delivery service
 }
 
 // A line of the queue: its request, or why it is none.
@@ -469,6 +471,18 @@ commit_step :: proc(cfg: Config, r: Request, rec: Record, has: bool, expects: ^[
 			return false
 		}
 	}
+	// A commit from the laptop: the files as the laptop had them when it
+	// asked, in this copy, which the sync brings later. Looked at before the
+	// first attempt only; after SYNC_WAIT it goes ahead with what is there.
+	if len(r.sums) > 0 && (!has || rec.attempts == 0) {
+		if missing := unsynced_files(vault, r); missing > 0 {
+			created, _ := parse_timestamp(r.created)
+			if time.diff(created, now) < SYNC_WAIT {
+				return false
+			}
+			report(cfg, "the vault here does not have %d of the files of %s as the laptop wrote them after %d minutes; it goes ahead with what is there", missing, describe(r), int(SYNC_WAIT / time.Minute))
+		}
+	}
 	// The results of the Obsidian operations queued before it, in this copy
 	// of the vault, which the sync brings later than the laptop has them.
 	for &x in expects {
@@ -604,13 +618,34 @@ expectation_of :: proc(r: Request, done: string, allocator: runtime.Allocator) -
 	return x
 }
 
+// unsynced_files is how many paths of the commit r from the laptop the
+// vault does not have as the laptop had them (r.sums): a file with other
+// bytes, one that is missing, or one that is there and gone on the laptop.
+unsynced_files :: proc(vault: string, r: Request) -> int {
+	n := 0
+	for p, i in r.paths {
+		if i >= len(r.sums) {
+			break
+		}
+		sum, why, _ := file_sum(fmt.tprintf("%s/%s", vault, p), context.temp_allocator)
+		if why != "" || sum != r.sums[i] {
+			n += 1
+		}
+	}
+	return n
+}
+
 // brought_by_sync says whether a path of the commit r that the vault does
-// not have is one an Obsidian operation leaves, so the sync may bring it.
+// not have is one an Obsidian operation leaves, or one the laptop had when
+// it asked for the commit, so the sync may bring it.
 brought_by_sync :: proc(vault: string, r: Request, expects: [dynamic]Expectation) -> bool {
-	for p in r.paths {
+	for p, i in r.paths {
 		st: linux.Stat
 		if linux.lstat(cstr(fmt.tprintf("%s/%s", vault, p)), &st) == .NONE {
 			continue
+		}
+		if i < len(r.sums) && r.sums[i] != NO_FILE {
+			return true
 		}
 		for x in expects {
 			if x.created <= r.created && (p == x.present || x.alt != "" && p == x.alt) {

@@ -1,7 +1,8 @@
 #!/bin/sh
-# The programs the tests stand in for: xdg-open, notify-send, obsidian, git
-# and ravnix-notify. Each is a symlink to this file in a test's bin
-# directory, beside a case.sh that says what the program does in that test.
+# The programs the tests stand in for: xdg-open, notify-send, obsidian, git,
+# ravnix-notify and the laptop's forward. Each is a symlink to this file in
+# a test's bin directory, beside a case.sh that says what the program does
+# in that test.
 # Every run is recorded in the directory's log: the program's name and its
 # arguments, each ended by a NUL, and the run ended by a byte 1, so an
 # argument may hold spaces, newlines and anything but a NUL or that byte.

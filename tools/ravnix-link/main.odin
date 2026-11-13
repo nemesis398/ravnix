@@ -11,6 +11,12 @@ import "core:strings"
 import "core:time"
 
 EX_USAGE :: 64
+// What a commit from the laptop may take beyond the server's commit: ssh's
+// connection, and the server's lock.
+FORWARD_EXTRA :: 60_000
+// How long receive waits for the delivery service to resolve a commit
+// whose files are here, before it answers that the commit is queued.
+DEFAULT_RECEIVE_WAIT :: 10_000
 
 USAGE :: `usage: ravnix-link [OPTION...] COMMAND [ARG...]
 
@@ -36,14 +42,22 @@ On the server (muninn), forwarded to the laptop (huginn), queued while it is awa
   drop ID                             let go of a request that waits (its id
                                       as status shows it): it fails, and what
                                       waits behind it goes ahead
+  receive                             queue the commit on standard input, one
+                                      line, which the laptop's vault-commit
+                                      sends; answer with how it came out
 
 On the laptop:
   daemon                              carry out what the server sends
+  vault-commit MESSAGE PATH...        with --forward: ask the server to commit
+                                      PATHs, once its copy of the vault has
+                                      them as they are here
 
 Options:
   --socket PATH         the daemon's socket (default $XDG_RUNTIME_DIR/` + SOCKET_NAME + `)
   --state DIR           the queue and the records (default $XDG_STATE_HOME/ravnix-link)
-  --vault DIR           the vault's git repository, for vault-commit (the server's)
+  --vault DIR           the vault: the server's git repository, where
+                        vault-commit commits; on the laptop, its copy, which
+                        vault-commit reads the paths in
   --git PATH            the git that vault-commit runs
   --ravnix-notify PATH  the ravnix-notify that notify --topic runs
   --xdg-open PATH, --notify-send PATH, --obsidian PATH
@@ -52,6 +66,9 @@ Options:
   --systemd-run PATH    the daemon starts each program in a scope of its own
                         with it (systemd-run --user --scope), so what the
                         program starts outlives a restart of the daemon
+  --forward PATH        the laptop's: vault-commit runs it with the request on
+                        its standard input, for the server's receive, and
+                        reads the server's answer from its output (ssh)
 
 Exit status: 0 done, or queued for the laptop; 1 failed; 64 bad usage.`
 
@@ -62,6 +79,7 @@ Environment :: struct {
 	home:          string, // HOME
 	cwd:           string, // the working directory
 	daemon_marker: string, // RAVNIX_LINK_DAEMON
+	stdin:         ^os.File, // what receive reads; nil is the process's own
 }
 
 // user_manager is the user manager's own socket, where systemd-run --user
@@ -122,6 +140,7 @@ run :: proc(args: []string, env: Environment, stdout, stderr: ^os.File) -> int {
 		{"--notify-send", &cfg.notify_send, false},
 		{"--obsidian", &cfg.obsidian, false},
 		{"--systemd-run", &cfg.systemd_run, false},
+		{"--forward", &cfg.forward, false},
 	}
 	i := 0
 	parse: for ; i < len(args); i += 1 {
@@ -157,7 +176,7 @@ run :: proc(args: []string, env: Environment, stdout, stderr: ^os.File) -> int {
 	command, rest := args[i], args[i + 1:]
 
 	switch command {
-	case "open", "notify", "notify-send", "obsidian", "vault-commit", "flush", "deliver", "status", "dismiss", "drop", "daemon":
+	case "open", "notify", "notify-send", "obsidian", "vault-commit", "receive", "flush", "deliver", "status", "dismiss", "drop", "daemon":
 	case:
 		return usage_error(errf, "unknown command %s", command)
 	}
@@ -190,7 +209,15 @@ run :: proc(args: []string, env: Environment, stdout, stderr: ^os.File) -> int {
 	case "obsidian":
 		return run_obsidian(cfg, rest, errf)
 	case "vault-commit":
+		if cfg.forward != "" {
+			return run_laptop_commit(cfg, rest, errf)
+		}
 		return run_vault_commit(cfg, rest, errf)
+	case "receive":
+		if len(rest) > 0 {
+			return usage_error(errf, "receive takes no argument: the request is on its standard input")
+		}
+		return run_receive(cfg, env, out, errf)
 	case "drop":
 		if len(rest) != 1 {
 			return usage_error(errf, "drop takes one id, as status shows it")
@@ -633,6 +660,179 @@ run_vault_commit :: proc(cfg: Config, args: []string, errf: ^os.File) -> int {
 	return submit_and_tell(cfg, r, errf)
 }
 
+// run_laptop_commit is vault-commit on the laptop: the request, with the
+// sum of each path as the laptop's copy of the vault has it, goes to the
+// server's receive through the program of --forward, and the server's
+// answer is the outcome. Nothing is queued here: a laptop that cannot reach
+// the server says so, and the caller asks again.
+run_laptop_commit :: proc(cfg: Config, args: []string, errf: ^os.File) -> int {
+	if cfg.vault == "" {
+		return usage_error(errf, "on the laptop, vault-commit needs --vault, the laptop's copy of the vault, to tell the server what the files are")
+	}
+	if len(args) == 0 {
+		return usage_error(errf, "vault-commit needs a message")
+	}
+	if len(args) == 1 {
+		return usage_error(errf, "on the laptop, vault-commit names the files to commit: what is staged is the server's")
+	}
+	r := request_base(cfg, .Vault_Commit)
+	r.vault = cfg.vault
+	r.message = args[0]
+	r.paths = args[1:]
+	// The paths are checked before they are read: none leaves the vault.
+	if why := check_request(r); why != "" {
+		return usage_error(errf, "%s", why)
+	}
+	sums := make([]string, len(r.paths))
+	for p, i in r.paths {
+		sum, why, not_a_file := file_sum(strings.concatenate({cfg.vault, "/", p}, context.temp_allocator))
+		if not_a_file {
+			return usage_error(errf, "%s: the server waits for each file the sync brings, so name the files", why)
+		}
+		if why != "" {
+			report(cfg, "%s", why)
+			return 1
+		}
+		sums[i] = sum
+	}
+	r.sums = sums
+	line, why := encode_request(r)
+	if why != "" {
+		return usage_error(errf, "%s", why)
+	}
+	timeout := or_default(cfg.commit_timeout_ms, DEFAULT_COMMIT_TIMEOUT) + FORWARD_EXTRA
+	ran := run_program({cfg.forward}, timeout, input = line, allocator = context.temp_allocator, die_with_parent = true)
+	rest := ran.output
+	for l in strings.split_lines_iterator(&rest) {
+		if !strings.has_prefix(l, "{") {
+			continue
+		}
+		rep, rwhy := decode_reply(l, context.temp_allocator)
+		if rwhy != "" || rep.id != r.id {
+			continue
+		}
+		switch rep.status {
+		case .Done:
+			return 0
+		case .Retry:
+			report(cfg, "the server queued the commit: %s", rep.error)
+			return 0
+		case .Failed:
+			report(cfg, "the commit failed on the server: %s", rep.error)
+			return 1
+		}
+	}
+	how := program_failure(cfg.forward, ran) if !ran.success || ran.why != "" else fmt.tprintf("%s ended without an answer: %s", cfg.forward, first_lines(ran.output, 5))
+	report(cfg, "the server did not answer (%s). It may or may not have queued the commit; asking again is safe, as a second commit of the same files commits nothing", how)
+	return 1
+}
+
+// run_receive is the server's end of a commit from the laptop: one request
+// line on standard input, answered with one reply line on standard output
+// (receive).
+run_receive :: proc(cfg: Config, env: Environment, out, errf: ^os.File) -> int {
+	input := env.stdin if env.stdin != nil else os.stdin
+	buf := make([]u8, MAX_LINE + 1)
+	n := 0
+	for n < len(buf) {
+		k, err := os.read(input, buf[n:])
+		if k > 0 {
+			n += k
+			if strings.index_byte(string(buf[n - k:n]), '\n') >= 0 {
+				break
+			}
+		}
+		if err != nil || k <= 0 {
+			break
+		}
+	}
+	data := string(buf[:n])
+	line := data
+	if end := strings.index_byte(data, '\n'); end >= 0 {
+		line = data[:end + 1]
+	} else if n > MAX_LINE - 1 {
+		line = ""
+	}
+	rep: Reply
+	code: int
+	if line == "" && n > MAX_LINE - 1 {
+		rep, code = Reply{status = .Failed, error = fmt.tprintf("the request is longer than the %d bytes a line may have", MAX_LINE)}, EX_USAGE
+	} else {
+		rep, code = receive(cfg, line)
+	}
+	if rep.status == .Failed {
+		report(cfg, "%s", rep.error)
+	}
+	fmt.fprint(out, encode_reply(rep, context.temp_allocator))
+	return code
+}
+
+// receive takes the line of a commit from the laptop: a vault-commit with
+// its paths and their sums. It is queued as the server's own, in the vault
+// configured here, and the delivery service (ravnix-link-deliver) commits
+// it, in its environment, which has the agent a signed commit needs; the
+// queue's change wakes it. receive runs no git: an ssh session may have no
+// agent. It answers done or failed when the service has resolved the
+// commit within receive_wait_ms, and retry (queued) when the commit waits:
+// for the sync to bring the files, at once, or for the service. A request
+// sent again with its id gets the outcome it had, and runs nothing twice.
+receive :: proc(cfg: Config, line: string) -> (rep: Reply, code: int) {
+	refuse :: proc(id, why: string) -> (Reply, int) {
+		return Reply{id = id, status = .Failed, error = why}, EX_USAGE
+	}
+	if strings.trim_space(line) == "" {
+		return refuse("", "there is no request on standard input")
+	}
+	// In temporary memory, as is what it answers: the caller's run ends soon.
+	r, why := decode_request(line, context.temp_allocator)
+	if why != "" {
+		return refuse(id_of(line, context.temp_allocator), why)
+	}
+	switch {
+	case r.kind != .Vault_Commit:
+		return refuse(r.id, fmt.tprintf("receive takes a vault-commit from the laptop, not %s", KIND_NAMES[r.kind]))
+	case len(r.paths) == 0:
+		return refuse(r.id, "a commit from the laptop names its files: what is staged here is not the laptop's")
+	case len(r.sums) == 0:
+		return refuse(r.id, "a commit from the laptop carries the sum of each file, which the commit waits for")
+	case cfg.vault == "":
+		return refuse(r.id, "no vault is configured here (--vault, ravnix.link.vault)")
+	}
+	// The vault is this host's: the laptop's path for it may be another.
+	r.vault = cfg.vault
+	if why = check_request(r); why != "" {
+		return refuse(r.id, why)
+	}
+	if why = enqueue(cfg, r); why != "" {
+		return Reply{id = r.id, status = .Failed, error = why}, 1
+	}
+	wait := or_default(cfg.receive_wait_ms, DEFAULT_RECEIVE_WAIT)
+	start := time.tick_now()
+	for {
+		outcome, message := outcome_of(cfg, r.id, {})
+		#partial switch outcome {
+		case .Done, .Delivered:
+			return Reply{id = r.id, status = .Done}, 0
+		case .Failed:
+			return Reply{id = r.id, status = .Failed, error = message}, 1
+		case .Retrying:
+			return Reply{id = r.id, status = .Retry, error = fmt.tprintf("the server could not commit it yet, and tries again: %s", message)}, 0
+		}
+		if unsynced_files(cfg.vault, r) > 0 {
+			return Reply {
+					id = r.id,
+					status = .Retry,
+					error = fmt.tprintf("it waits until the server's copy of the vault has the files as the laptop wrote them, which the sync brings (at most %d minutes, then it commits what is there)", int(SYNC_WAIT / time.Minute)),
+				},
+				0
+		}
+		if int(time.duration_milliseconds(time.tick_since(start))) >= wait {
+			return Reply{id = r.id, status = .Retry, error = "it is queued, and the delivery service (ravnix-link-deliver) commits it after what waits before it"}, 0
+		}
+		time.sleep(100 * time.Millisecond)
+	}
+}
+
 run_status :: proc(cfg: Config, out, errf: ^os.File) -> int {
 	snap, why := read_snapshot(cfg)
 	if why != "" {
@@ -669,7 +869,19 @@ run_status :: proc(cfg: Config, out, errf: ^os.File) -> int {
 				fmt.fprintfln(out, "      waits until the vault here shows %s (done on the laptop at %s)", x.what, x.done)
 			}
 		}
-		if rec, ok := snap.records[r.id]; ok && rec.status == .Retry {
+		rec, has := snap.records[r.id]
+		if cfg.vault != "" && len(r.sums) > 0 && (!has || rec.attempts == 0) {
+			created, _ := parse_timestamp(r.created)
+			if n := unsynced_files(cfg.vault, r); n > 0 && time.diff(created, clock(cfg)) < SYNC_WAIT {
+				until := timestamp(time.time_add(created, SYNC_WAIT), context.temp_allocator)
+				if n == 1 {
+					fmt.fprintfln(out, "      waits until the vault here has 1 file as the laptop wrote it (the sync brings it), at most until %s", until)
+				} else {
+					fmt.fprintfln(out, "      waits until the vault here has %d files as the laptop wrote them (the sync brings them), at most until %s", n, until)
+				}
+			}
+		}
+		if has && rec.status == .Retry {
 			fmt.fprintfln(out, "      attempt %d failed, again at %s: %s", rec.attempts, rec.next, first_lines(rec.error, 1))
 		}
 	}

@@ -64,7 +64,7 @@ fixture :: proc(t: ^testing.T) -> ^Fixture {
 			testing.fail_now(t, "cannot make the test's directories")
 		}
 	}
-	for name in ([]string{"xdg-open", "notify-send", "obsidian", "git", "ravnix-notify"}) {
+	for name in ([]string{"xdg-open", "notify-send", "obsidian", "git", "ravnix-notify", "forward"}) {
 		if os.symlink(STUB, join(f, "bin", name)) != nil {
 			testing.fail_now(t, "cannot link the stub")
 		}

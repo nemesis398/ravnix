@@ -4,6 +4,7 @@
 package ravnix_link
 
 import "base:runtime"
+import "core:crypto/sha2"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -174,6 +175,55 @@ write_all_fd :: proc(fd: linux.Fd, data: []u8) -> linux.Errno {
 		rest = rest[n:]
 	}
 	return .NONE
+}
+
+// file_sum is the SHA-256 of the bytes of the file at path, in lowercase
+// hex, or NO_FILE when nothing is there (or a folder on its way is not one).
+// A folder, a symlink or anything else that is no regular file is refused:
+// the sync carries files, and a commit from the laptop names them.
+file_sum :: proc(path: string, allocator := context.allocator) -> (sum: string, why: string, not_a_file: bool) {
+	st: linux.Stat
+	if e := linux.lstat(cstr(path), &st); e != .NONE {
+		if e == .ENOENT || e == .ENOTDIR {
+			return NO_FILE, "", false
+		}
+		return "", fmt.tprintf("cannot look at %s: %s", path, errno_text(e)), false
+	}
+	if !linux.S_ISREG(st.mode) {
+		kind := "a folder" if linux.S_ISDIR(st.mode) else "a symlink" if linux.S_ISLNK(st.mode) else "no file"
+		return "", fmt.tprintf("%s is %s, not a file", path, kind), true
+	}
+	fd, oe := linux.open(cstr(path), {.CLOEXEC, .NOFOLLOW})
+	if oe != .NONE {
+		return "", fmt.tprintf("cannot read %s: %s", path, errno_text(oe)), false
+	}
+	defer linux.close(fd)
+	ctx: sha2.Context_256
+	sha2.init_256(&ctx)
+	buf: [64 * 1024]u8 = ---
+	for {
+		n, re := linux.read(fd, buf[:])
+		if re == .EINTR {
+			continue
+		}
+		if re != .NONE {
+			sha2.reset(&ctx)
+			return "", fmt.tprintf("cannot read %s: %s", path, errno_text(re)), false
+		}
+		if n == 0 {
+			break
+		}
+		sha2.update(&ctx, buf[:n])
+	}
+	digest: [sha2.DIGEST_SIZE_256]u8
+	sha2.final(&ctx, digest[:])
+	hex := "0123456789abcdef"
+	out := make([]u8, 2 * len(digest), allocator)
+	for b, i in digest {
+		out[2 * i] = hex[b >> 4]
+		out[2 * i + 1] = hex[b & 15]
+	}
+	return string(out), "", false
 }
 
 sync_dir :: proc(dir: string) {
@@ -473,7 +523,8 @@ Child :: struct {
 }
 
 // spawn starts argv[0] (a path, or a name on PATH) with argv, in env (the
-// process's own when nil), with stdin from /dev/null and stdout and stderr
+// process's own when nil), with stdin from in_fd (/dev/null when it is -1)
+// and stdout and stderr
 // on the given descriptors, as the leader of a new process group: a
 // timeout then stops the program with everything it started (a hook,
 // ssh-keygen, a helper). Between fork and exec the child makes system
@@ -483,7 +534,7 @@ Child :: struct {
 // started it ends (PR_SET_PDEATHSIG): a run killed by Ctrl-C or a caller's
 // timeout does not leave its git holding index.lock. git removes its locks
 // on SIGTERM. Not for what should outlive the daemon, such as a browser.
-spawn :: proc(argv: []string, env: []string, out_fd, err_fd: linux.Fd, die_with_parent := false) -> (c: Child, why: string) {
+spawn :: proc(argv: []string, env: []string, out_fd, err_fd: linux.Fd, die_with_parent := false, in_fd: linux.Fd = -1) -> (c: Child, why: string) {
 	path, found := find_program(argv[0])
 	if !found {
 		return {}, fmt.tprintf("%s is not installed, or not on the PATH", argv[0])
@@ -535,7 +586,7 @@ spawn :: proc(argv: []string, env: []string, out_fd, err_fd: linux.Fd, die_with_
 				linux.exit_group(127)
 			}
 		}
-		if _, e := linux.dup2(null, 0); e != .NONE {
+		if _, e := linux.dup2(in_fd if in_fd >= 0 else null, 0); e != .NONE {
 			child_fail(report[1], e)
 		}
 		if _, e := linux.dup2(out_fd, 1); e != .NONE {
@@ -614,7 +665,7 @@ Program_Run :: struct {
 	pipe:     linux.Fd, // Pipe: the read end, open, for the caller to drain and close; -1 otherwise
 }
 
-// run_program runs argv with stdin from /dev/null, in env (the process's
+// run_program runs argv with input on its stdin (/dev/null when it is ""), in env (the process's
 // own when nil), its output as output says (pass is the descriptor of
 // Pass). It waits up to timeout_ms; then the program and its process group
 // are killed, unless detach is set, which leaves it running and returns it
@@ -628,10 +679,29 @@ run_program :: proc(
 	output := Output.Capture,
 	pass: linux.Fd = 2,
 	die_with_parent := false,
+	input := "",
 ) -> (
 	r: Program_Run,
 ) {
 	r.pipe = -1
+	in_fd := linux.Fd(-1)
+	if input != "" {
+		memfd, me := linux.memfd_create("ravnix-link-input", {.CLOEXEC})
+		if me != .NONE {
+			r.why = fmt.aprintf("cannot give %s its input: %s", argv[0], errno_text(me), allocator = allocator)
+			return
+		}
+		in_fd = memfd
+		if we := write_all_fd(memfd, transmute([]u8)input); we != .NONE {
+			linux.close(memfd)
+			r.why = fmt.aprintf("cannot give %s its input: %s", argv[0], errno_text(we), allocator = allocator)
+			return
+		}
+		linux.lseek(memfd, 0, .SET)
+	}
+	defer if in_fd >= 0 {
+		linux.close(in_fd)
+	}
 	out_fd, read_fd_ := pass, linux.Fd(-1)
 	switch output {
 	case .Capture:
@@ -658,7 +728,7 @@ run_program :: proc(
 		read_fd_, out_fd = p[0], p[1]
 	case .Pass:
 	}
-	child, why := spawn(argv, env, out_fd, out_fd, die_with_parent)
+	child, why := spawn(argv, env, out_fd, out_fd, die_with_parent, in_fd)
 	if output == .Pipe {
 		// The child holds the write end now; with this one closed, the read
 		// end sees the end of the file once the child and what it started
