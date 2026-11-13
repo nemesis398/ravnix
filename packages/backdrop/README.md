@@ -50,10 +50,15 @@ Everything else is state and stays: text in those colors, blocks in an RGB that
 fastfetch chose, a percent bar of squares in the color of its state followed by
 dashes, and a status dot with words after it.
 
-The ravnix mark is the wordmark `ravnix` in the theme's font, bold, until Task
-12.2 ships the mark. From then on `assets/ravnix-mark.svg` is drawn instead,
-in one color whatever its own fills say, in the square the phyllon mark has. Both
-marks reach 95 px from their center.
+The ravnix mark is `assets/ravnix-mark.svg`, a copy of the brand guide's
+one-color mark (`docs/brand/logo-mono.svg`, the eyes cut out as holes, so they
+stay open when the mark is drawn in the accent). It is drawn in one color
+whatever its own fills say. Both marks reach 95 px from their center: the
+phyllon mark in a square of 205 px, and the ravnix mark scaled until the
+farthest of its drawn pixels, a beak tip, is that far out, because its square
+has less margin and at 205 px the tips would run under the ring. When the
+mark is missing, cannot be read or draws nothing, the wordmark `ravnix` in the
+theme's font, bold, stands in for it, fitted to the same circle.
 
 ## The config
 
@@ -98,6 +103,7 @@ cannot be written fail the command.
 | --- | --- |
 | the picture is missing, unreadable, not an image, truncated, not an absolute path, or larger than 64 megapixels | the default, one line |
 | a tool logo is missing, is not an SVG or draws nothing | that logo is skipped, one line |
+| the ravnix mark cannot be read, is not an SVG or draws nothing | the wordmark, one line |
 | no room for the logos (a tiny output) | the logos that fit, one line |
 | fastfetch is missing, fails or takes more than 10 s | no facts, one line |
 | the facts are hostile (control codes, binary, huge) | cut to 80 lines of 240 columns and drawn |

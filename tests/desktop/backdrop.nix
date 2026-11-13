@@ -57,6 +57,10 @@ pkgs.runCommand "desktop-backdrop"
     LOCK_SCREEN_WRAPPED = "${backdrop}/bin/lock-screen";
     BACKDROP_TEST_PALETTE = palette;
     BACKDROP_TEST_PHYLLON = ../../assets/phyllon-mark.svg;
+    # The marks the package installs, and the brand guide's one-color mark
+    # that the ravnix mark among them is a copy of.
+    BACKDROP_TEST_SHIPPED = "${backdrop}/share/backdrop";
+    BACKDROP_TEST_LOGO_MONO = ../../docs/brand/logo-mono.svg;
     BACKDROP_REAL_FASTFETCH = "1";
     BACKDROP_TEST_FASTFETCH_CONFIG = fastfetchConfig;
     GI_TYPELIB_PATH = backdrop.typelibPath;

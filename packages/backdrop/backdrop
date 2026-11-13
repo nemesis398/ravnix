@@ -25,8 +25,10 @@
 # nothing about the machine can be read on a locked screen. It never runs
 # fastfetch and never draws a logo.
 #
-# Until the ravnix mark ships (assets/ravnix-mark.svg), the wordmark "ravnix"
-# in the theme's font stands in for it, fitted to the same circle.
+# The ravnix mark is assets/ravnix-mark.svg, a copy of the brand guide's
+# one-color mark. When it is missing, cannot be read or draws nothing, the
+# wordmark "ravnix" in the theme's font stands in for it, fitted to the same
+# circle.
 #
 # Sizes are in logical px and multiplied by the output scale: images are drawn
 # at the physical resolution, and swaylock's indicator-radius is logical.
@@ -88,10 +90,13 @@ NEEDED = ("base", "text", "blue", "sapphire", "surface1", "surface2", "red", "gr
           "pink", "teal", "subtext0", "subtext1")
 
 # swaylock's indicator-radius is 110 and its thickness 10, so the ring's inner
-# edge is at 105 (modules/desktop/swaylock.nix sets both). Both marks are drawn in a
-# square of MARK_SIZE; the phyllon spiral's dots reach 92.6 of the SVG's
+# edge is at 105 (modules/desktop/swaylock.nix sets both). The phyllon mark is
+# drawn in a square of MARK_SIZE; its spiral's dots reach 92.6 of the SVG's
 # 100-unit half-width, which puts them at about 95 from the center, clear of
-# the ring. The wordmark is fitted to that same reach.
+# the ring. The ravnix mark and the wordmark are fitted to that same reach:
+# drawn in a square of MARK_SIZE, the ravnix mark's beak tips would reach 107
+# and run under the ring, because its square holds less margin than the
+# phyllon mark's.
 MARK_SIZE = 205
 MARK_REACH = 95
 MARK_FONT_SIZE = 100  # nominal, before the wordmark is fitted
@@ -287,6 +292,29 @@ def ink_box(handle):
     return left, top, right - left, bottom + 1 - top
 
 
+def ink_reach(handle):
+    # How far the drawn pixels reach from the center of the square the SVG
+    # fills, as a fraction of half its side, or None when it draws nothing.
+    # Measured to the outer corner of each pixel, so the mark it sizes stays
+    # inside the circle rather than just touching it.
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, INK_UNIT, INK_UNIT)
+    draw_svg(cairo.Context(surf), handle, 0, 0, INK_UNIT, INK_UNIT)
+    surf.flush()
+    alpha = bytes(surf.get_data())[3 if sys.byteorder == "little" else 0::4]
+    per_row = surf.get_stride() // 4
+    c = INK_UNIT / 2
+    far = None
+    for y in range(INK_UNIT):
+        row = alpha[y * per_row:y * per_row + INK_UNIT]
+        right = len(row.rstrip(b"\0"))
+        if not right:
+            continue
+        left = INK_UNIT - len(row.lstrip(b"\0"))
+        d = math.hypot(max(c - left, right - c), max(c - y, y + 1 - c))
+        far = d if far is None else max(far, d)
+    return None if far is None else far / c
+
+
 def fill_with_mask(cr, tmp, x, y, color):
     # A logo's own fills (black, gray, brand colors) all come out in the one
     # color: the logo is drawn into its own surface and used as a mask.
@@ -325,22 +353,29 @@ def draw_wordmark(cr, theme, cx, cy, reach, color):
 
 
 def ravnix_mark(assets):
-    # The mark once it ships, else None and the wordmark.
+    # The mark and its reach (ink_reach), or None and the wordmark when the
+    # mark is missing, cannot be read or draws nothing.
     path = assets / "ravnix-mark.svg"
     if not path.exists():
         return None
     try:
-        return svg_handle(path.read_bytes())
+        handle = svg_handle(path.read_bytes())
+        reach = ink_reach(handle)
     except (OSError, GLib.Error) as e:
         log(f"cannot use the ravnix mark {path}: {first_line(e)}; drawing the wordmark")
         return None
+    if reach is None:
+        log(f"cannot use the ravnix mark {path}: it draws nothing; drawing the wordmark")
+        return None
+    return handle, reach
 
 
 def draw_ravnix(cr, theme, cx, cy, scale, mark):
     if mark is None:
         draw_wordmark(cr, theme, cx, cy, MARK_REACH * scale, theme.accent)
     else:
-        draw_mark_svg(cr, mark, cx, cy, MARK_SIZE * scale, theme.accent)
+        handle, reach = mark
+        draw_mark_svg(cr, handle, cx, cy, 2 * MARK_REACH * scale / reach, theme.accent)
 
 
 def first_line(error):

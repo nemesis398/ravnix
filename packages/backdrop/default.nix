@@ -77,9 +77,11 @@ stdenvNoCC.mkDerivation {
 
     install -Dm755 backdrop $out/libexec/backdrop/backdrop
     install -Dm755 lock-screen $out/libexec/backdrop/lock-screen
-    # The marks the scripts draw: the phyllon mark today, and the ravnix mark
-    # when it ships (README.md here says what the scripts do with it).
+    # The marks the scripts draw (README.md here says how). The ravnix mark is
+    # a copy of docs/brand/logo-mono.svg, the one-color form whose eyes are
+    # holes: drawn in the accent, its eyes stay open.
     install -Dm644 ${../../assets/phyllon-mark.svg} $out/share/backdrop/phyllon-mark.svg
+    install -Dm644 ${../../assets/ravnix-mark.svg} $out/share/backdrop/ravnix-mark.svg
     patchShebangs $out/libexec/backdrop/lock-screen
 
     makeWrapper ${python}/bin/python3 $out/bin/backdrop \

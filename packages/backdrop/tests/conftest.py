@@ -15,6 +15,11 @@ Environment:
                            that no test holds a color of its own
   BACKDROP_TEST_PHYLLON    the phyllon mark (assets/phyllon-mark.svg), for the
                            tests that build an assets directory of their own
+  BACKDROP_TEST_SHIPPED    the directory of the marks the package installs;
+                           default: assets/ of the source tree
+  BACKDROP_TEST_LOGO_MONO  the one-color mark of the brand guide
+                           (docs/brand/logo-mono.svg), which the shipped
+                           ravnix mark is a copy of
   BACKDROP_REAL_FASTFETCH  set to 1 to run the tests of the real fastfetch
 """
 
@@ -55,6 +60,8 @@ LOCK_SCREEN = command("LOCK_SCREEN", [str(PKG / "lock-screen")])
 
 
 PHYLLON = Path(os.environ.get("BACKDROP_TEST_PHYLLON") or PKG.parents[1] / "assets" / "phyllon-mark.svg")
+SHIPPED = Path(os.environ.get("BACKDROP_TEST_SHIPPED") or PKG.parents[1] / "assets")
+LOGO_MONO = Path(os.environ.get("BACKDROP_TEST_LOGO_MONO") or PKG.parents[1] / "docs" / "brand" / "logo-mono.svg")
 
 
 def load_palette():

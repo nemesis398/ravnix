@@ -373,17 +373,18 @@ def test_render_replaces_its_output_whole(lab):
 # the facts -----------------------------------------------------------------
 
 
-def right_half_is_bare(img):
-    from conftest import not_base
+def right_half_is_bare(img, scale):
+    from conftest import MARK_REACH, not_base
 
-    # Right of the middle and above the ravnix mark.
-    return not not_base(img[: int(0.40 * img.shape[0]), img.shape[1] // 2 :]).any()
+    # Right of the middle and above the circle the ravnix mark reaches.
+    top = int(img.shape[0] / 2 - MARK_REACH * scale)
+    return not not_base(img[:top, img.shape[1] // 2 :]).any()
 
 
 def test_missing_facts_leave_the_wallpaper_without_them_and_say_so_once(lab):
     lab.extra_env["BACKDROP_FACTS"] = str(lab.work / "none")
     img, proc = lab.render("wall")
-    assert proc.returncode == 0 and right_half_is_bare(img)
+    assert proc.returncode == 0 and right_half_is_bare(img, S)
     assert len(lab.journal(proc)) == 1
     assert where(img, rgb("mauve")).sum() > 3000
 
@@ -391,7 +392,7 @@ def test_missing_facts_leave_the_wallpaper_without_them_and_say_so_once(lab):
 def test_empty_facts_draw_nothing(lab):
     lab.facts_path.write_text("")
     img, proc = lab.render("wall")
-    assert right_half_is_bare(img) and lab.journal(proc) == []
+    assert right_half_is_bare(img, S) and lab.journal(proc) == []
 
 
 @pytest.mark.parametrize(
@@ -461,7 +462,7 @@ def test_a_fastfetch_that_fails_leaves_the_wallpaper_without_facts(lab, body, wo
     assert len(lines) == 1 and word in lines[0], lines
     img = load_png(out)
     assert where(img, rgb("mauve")).sum() > 500
-    assert right_half_is_bare(img)
+    assert right_half_is_bare(img, 1)
 
 
 def test_a_fastfetch_that_hangs_is_given_up_on_with_its_children(lab):
@@ -498,7 +499,7 @@ def test_a_fastfetch_that_never_stops_printing_is_cut_and_killed(lab):
     lines = proc.stderr.splitlines()
     assert len(lines) == 1 and "printed more than 1048576 bytes" in lines[0], lines
     assert elapsed < 20
-    assert not right_half_is_bare(load_png(out)), "the first of what it printed is not used"
+    assert not right_half_is_bare(load_png(out), 1), "the first of what it printed is not used"
     assert not alive(int(pid.read_text())), "the runaway fastfetch was left running"
 
 
