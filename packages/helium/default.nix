@@ -18,6 +18,14 @@
 #                                   decoded in software on the 780M (measured on
 #                                   Fedora 2026-10-04). A flag the user adds
 #                                   replaces it as a whole.
+#   --custom-devtools-frontend=file://FRONTEND/
+#                                   when `devtoolsFrontend` is set: DevTools in
+#                                   the theme (packages/helium-devtools-frontend).
+#                                   The desktop module sets it for the Helium on
+#                                   the PATH, which helium.desktop and every web
+#                                   app run; the headless Helium of the Chrome
+#                                   DevTools MCP server is this package without
+#                                   it.
 #
 # With `widevineCdm` set, Helium plays DRM-protected media (Apple Music in a
 # web app streams full tracks only under DRM). Chromium looks for the library
@@ -100,6 +108,8 @@
 
   # The unfree Widevine library, or null for a Helium that plays no DRM media.
   widevineCdm ? null,
+  # A DevTools frontend (a directory), or null for the stock DevTools.
+  devtoolsFrontend ? null,
   # Command line arguments that are always set.
   commandLineArgs ? "",
 }:
@@ -175,6 +185,12 @@ let
   widevineHint = lib.optionalString (widevineCdm != null) ''
     --run 'hint="''${XDG_CONFIG_HOME:-$HOME/.config}/net.imput.helium/WidevineCdm"; { mkdir -p "$hint" && printf "{\"Path\":\"%s\"}" "${widevineCdm}/share/google/chrome/WidevineCdm" > "$hint/latest-component-updated-widevine-cdm"; } 2>/dev/null || true' \
   '';
+
+  # DevTools in the theme, or nothing at all, so the stock build's wrapper
+  # stays the same derivation. It ends in the space before the line's \.
+  devtoolsFlag = lib.optionalString (
+    devtoolsFrontend != null
+  ) ''--add-flags "--custom-devtools-frontend=file://${devtoolsFrontend}/" '';
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "helium";
@@ -277,7 +293,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       --set CHROME_VERSION_EXTRA nixos \
       ${widevineHint} \
       --add-flags "\''${NIXOS_OZONE_WL:+\''${WAYLAND_DISPLAY:+--ozone-platform=wayland}}" \
-      --add-flags "--enable-features=${features}" \
+      --add-flags "--enable-features=${features}" ${devtoolsFlag}\
       --add-flags ${lib.escapeShellArg commandLineArgs}
 
     runHook postInstall
@@ -290,6 +306,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     # Whether this build plays DRM-protected media. The module does not read it;
     # tests/desktop/apps.nix does, to check that ravnix.apps.widevine decides.
     withWidevine = widevineCdm != null;
+    # The DevTools frontend the wrapper passes, or null. tests/desktop/
+    # helium-devtools.nix reads it.
+    inherit devtoolsFrontend;
   };
 
   meta = {

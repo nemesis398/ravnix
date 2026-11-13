@@ -18,6 +18,11 @@ window of every web app (`modules/desktop/webapps.nix`).
   turns on hardware video decoding. Chromium honors only the last
   `--enable-features` it is given, so no launcher adds one of its own; a flag
   you add on the command line replaces ours as a whole.
+- `devtoolsFrontend`: with a directory passed in, the wrapper starts Helium
+  with `--custom-devtools-frontend=file://DIR/`. The desktop module passes
+  `packages/helium-devtools-frontend`, DevTools in the theme, for the Helium on
+  the PATH; the Chrome DevTools MCP server runs this package without it. Left
+  unset, the wrapper is the same derivation as before the option existed.
 - Writes `helium.desktop` (English only), with the MIME types for web pages,
   PDFs and images, and the icon.
 - `widevineCdm`: with the unfree `widevine-cdm` of nixpkgs passed in, Helium
