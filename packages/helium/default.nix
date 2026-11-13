@@ -3,8 +3,9 @@
 # nixpkgs has no Helium. See README.md for the update steps and what was checked.
 #
 # The tarball holds a Chromium build: patchelf'd like nixpkgs' google-chrome,
-# which is the same Chromium version at the time of writing (157.0.8103.38),
-# so its list of libraries is the one to start from. Helium's own
+# which is the same Chromium major at the time of writing (Helium 0.21.3.1 is
+# 157.0.8103.78, google-chrome 157.0.8103.38), so its list of libraries is the
+# one to start from. Helium's own
 # `helium-wrapper` is replaced by one that sets what NixOS needs.
 #
 # The command line the wrapper starts it with (before the user's own, so a
@@ -194,11 +195,11 @@ let
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "helium";
-  version = "0.21.1.1";
+  version = "0.21.3.1";
 
   src = fetchurl {
     url = "https://github.com/imputnet/helium-linux/releases/download/${finalAttrs.version}/helium-${finalAttrs.version}-x86_64_linux.tar.xz";
-    hash = "sha256-bNfyQBU8ucDN+ie/GmZR3crnOomK/ESak90Q2oO0vUU=";
+    hash = "sha256-iPPFOiNxguhyrDBhzIwSnnWuy86Erq2DQiXYEDCWwlQ=";
   };
 
   # Some shebangs are not patched correctly with strictDeps on.

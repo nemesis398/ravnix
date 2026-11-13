@@ -23,8 +23,9 @@ there with Helium 0.21.3.1 (Chromium 157).
 
 The build reads the binary and the pak from Helium's tarball as it is
 (`ravnix.helium.src`), not from the package, which runs patchelf on the binary.
-The frontend of Helium 0.21.1.1 is 859 files with 8 HTML entry points; the
-table reads the same from the patched binary too (checked once by hand).
+The frontend of Helium 0.21.3.1 is 859 files with 8 HTML entry points, as it
+was on 0.21.1.1; on 0.21.1.1 the table read the same from the patched binary
+too (checked once by hand).
 
 ## What changed from Fedora
 

@@ -1,6 +1,6 @@
 # helium
 
-Helium 0.21.1.1 (Chromium 157.0.8103.38), the browser from
+Helium 0.21.3.1 (Chromium 157.0.8103.78), the browser from
 [imputnet](https://github.com/imputnet/helium-linux), from the release tarball.
 nixpkgs has no Helium (checked at the revision `flake.lock` pins, Task 3.3). It
 is the default browser of the laptop shape, its PDF and image viewer, and the
@@ -46,8 +46,11 @@ window of every web app (`modules/desktop/webapps.nix`).
 4. Verify the signature: import the key from the README of the release's
    repository (fingerprint `BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`),
    and `gpg --verify helium-VERSION-x86_64_linux.tar.xz.asc helium-VERSION-x86_64_linux.tar.xz`.
-   0.21.1.1 verified as a good signature from that key.
+   0.21.3.1 verified as a good signature from that key.
 5. `nix build .#checks.x86_64-linux.desktop-helium`, which starts the browser.
+   Then `desktop-helium-devtools`: it pins the number of DevTools files the
+   frontend holds (859 on 0.21.1.1 and 0.21.3.1). A bump must re-check it;
+   when the count moves, read what changed before you change the number.
 6. When Chromium's major version moves, compare `google-chrome`'s version in
    nixpkgs: the list of libraries follows it.
 
