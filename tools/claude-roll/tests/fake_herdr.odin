@@ -52,6 +52,9 @@ Fake_Pane :: struct {
 	session_kind:    string, // "id" unless set
 	statuses:        []string, // one per list; the last repeats
 	screens:         []string, // one per read; the last repeats
+	// The pid of the Claude Code that herdr's process-info shows in the
+	// pane's foreground (0: pid_of(id), the one write_record records).
+	fg_pid:          int,
 	// /exit does not end Claude Code.
 	no_exit:         bool,
 	// The shell shows only after this many process-info calls.
@@ -136,6 +139,8 @@ add_pane :: proc(fk: ^Fake, p: Fake_Pane) -> ^Fake_Pane {
 config :: proc(fk: ^Fake, state: string) -> roll.Config {
 	cfg := roll.default_config()
 	cfg.state_dir = state
+	// write_record's processes are in the /proc beside the state.
+	cfg.proc_root = pj(fk.a, filepath.dir(state), "proc")
 	cfg.hooks = {
 		data  = fk,
 		run   = fake_run,
@@ -235,7 +240,7 @@ fake_run :: proc(data: rawptr, given: []string, timeout: time.Duration) -> roll.
 		}
 		p.polls += 1
 		if !p.exited || p.polls <= p.shell_after {
-			return ok(J_IN_CLAUDE)
+			return ok(in_claude(fk, p))
 		}
 		if p.command_after {
 			return ok(J_IN_COMMAND)
@@ -273,6 +278,13 @@ deep_clone :: proc(words: []string) -> []string {
 		out[i] = strings.clone(w)
 	}
 	return out
+}
+
+// in_claude is process-info for a pane whose Claude Code runs, in the shape
+// of process-info-claude.json: that process leads the foreground group.
+in_claude :: proc(fk: ^Fake, p: ^Fake_Pane) -> string {
+	pid := p.fg_pid if p.fg_pid != 0 else pid_of(p.id)
+	return fmt.aprintf(`{{"id":"cli:pane:process_info","result":{{"process_info":{{"foreground_process_group_id":%d,"foreground_processes":[{{"argv":["claude"],"cmdline":"claude","cwd":"/home/user/project","name":"claude","pid":%d}}],"pane_id":%q,"shell_pid":6588}},"type":"pane_process_info"}}}}`, pid, pid, p.id, allocator = fk.a)
 }
 
 fake_list :: proc(fk: ^Fake) -> string {
@@ -354,12 +366,18 @@ notes :: proc(fk: ^Fake) -> []string {
 }
 
 // write_record writes the record that claude-roll record would have
-// written for pane.
+// written for pane, and the pane's Claude Code into the fake /proc beside
+// the state, at pid_of(pane).
 write_record :: proc(f: ^Fixture, pane, session: string, argv: ..string) {
+	pid := pid_of(pane)
+	words := make([dynamic]string, f.a)
+	append(&words, "claude")
+	append(&words, ..argv)
+	fake_process(f, pj(f.a, f.dir, "proc"), {pid = pid, ppid = 1, pgid = pid, start = start_of(pid), comm = "claude", argv = words[:]})
 	dir := pj(f.a, f.state, "claude-panes")
 	_ = os.make_directory_all(dir)
 	b := strings.builder_make(f.a)
-	fmt.sbprintf(&b, `{{"pane":%q,"session_id":%q,"cwd":"/home/user/project","source":"startup","argv":[`, pane, session)
+	fmt.sbprintf(&b, `{{"pane":%q,"session_id":%q,"pid":%d,"start_time":%d,"cwd":"/home/user/project","source":"startup","argv":[`, pane, session, pid, start_of(pid))
 	for a, i in argv {
 		if i > 0 {
 			strings.write_byte(&b, ',')

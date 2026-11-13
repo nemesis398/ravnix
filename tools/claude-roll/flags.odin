@@ -229,6 +229,10 @@ Pane_Record :: struct {
 	source:     string,
 	// Claude Code's arguments after its name, as it was started.
 	argv:       []string,
+	// The Claude Code process: its pid, and when it started (field 22 of
+	// /proc/PID/stat), so a pid that a later process got is told apart.
+	pid:        int,
+	start_time: u64,
 }
 
 PANES_DIR :: "claude-panes"
@@ -240,6 +244,8 @@ parse_pane_record :: proc(data: []byte, allocator: runtime.Allocator) -> (rec: P
 	Raw :: struct {
 		pane, session_id, cwd, source: string,
 		argv:                          json.Value,
+		pid:                           int,
+		start_time:                    u64,
 	}
 	raw: Raw
 	if e := json.unmarshal(data, &raw, allocator = allocator); e != nil {
@@ -257,7 +263,7 @@ parse_pane_record :: proc(data: []byte, allocator: runtime.Allocator) -> (rec: P
 		}
 		argv[i] = s
 	}
-	return {raw.pane, raw.session_id, raw.cwd, raw.source, argv}, ""
+	return {raw.pane, raw.session_id, raw.cwd, raw.source, argv, raw.pid, raw.start_time}, ""
 }
 
 // read_pane_record reads the record of pane under state.

@@ -6,9 +6,12 @@
 // process above itself in the process tree and reads its command line.
 //
 // It runs again at /clear, /compact and a resume, so the record follows the
-// session the pane runs now. It writes nothing outside a herdr pane
-// (HERDR_PANE_ID), nothing for an id it cannot vouch for, and through a
-// temporary file and a rename, so a reader never sees half a record.
+// session the pane runs now. It records the process too (pid and start
+// time), so the roll can check that the record is of the Claude Code that
+// runs in the pane. It writes nothing outside a herdr pane (HERDR_PANE_ID),
+// nothing for an id it cannot vouch for, nothing for a Claude Code started
+// inside another one (which inherits the pane's HERDR_PANE_ID), and through
+// a temporary file and a rename, so a reader never sees half a record.
 package claude_roll
 
 import "base:runtime"
@@ -16,7 +19,6 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
-import "core:strconv"
 import "core:strings"
 
 Record_Input :: struct {
@@ -52,13 +54,18 @@ record_pane :: proc(r: Record_Input, allocator: runtime.Allocator) -> (path: str
 	if !valid_session_id(hook.session_id) {
 		return "", "the hook input holds no session id claude-roll accepts"
 	}
-	argv, found := claude_argv(r.proc_root, r.start_pid, allocator)
-	if !found {
+	pid, start, argv, nested, found := find_claude(r.proc_root, r.start_pid, allocator)
+	if !found || len(argv) == 0 {
 		return "", "no Claude Code process above the hook"
+	}
+	if nested {
+		// claude -p from the Bash tool, a script: the pane's own session
+		// keeps its record.
+		return "", "a Claude Code started inside another one does not write the pane's record"
 	}
 
 	data, merr := json.marshal(
-		Pane_Record{pane = r.pane, session_id = hook.session_id, cwd = hook.cwd, source = hook.source, argv = argv[1:]},
+		Pane_Record{pane = r.pane, session_id = hook.session_id, cwd = hook.cwd, source = hook.source, argv = argv[1:], pid = pid, start_time = start},
 		{pretty = false},
 		allocator,
 	)
@@ -82,58 +89,45 @@ record_pane :: proc(r: Record_Input, allocator: runtime.Allocator) -> (path: str
 	return path, ""
 }
 
-// claude_argv walks up from pid to the first Claude Code process and
-// returns its command line. Claude Code is the process whose argv[0] or
-// comm is claude, or .claude-wrapped, the name a Nix wrapper gives the
-// program it starts.
-claude_argv :: proc(proc_root: string, pid: int, allocator: runtime.Allocator) -> (argv: []string, found: bool) {
+// find_claude walks up from pid to the first Claude Code process and
+// returns its pid, its start time and its command line. nested is true when
+// that Claude Code was started inside another one: its own environment
+// holds CLAUDECODE, which Claude Code sets for what it runs, or another
+// Claude Code is above it.
+find_claude :: proc(root: string, pid: int, allocator: runtime.Allocator) -> (claude: int, start: u64, argv: []string, nested, found: bool) {
 	pid := pid
 	for _ in 0 ..< MAX_WALK {
 		if pid <= 1 {
 			return
 		}
-		dir, _ := filepath.join({proc_root, fmt.tprint(pid)}, context.temp_allocator)
-		cmd_path, _ := filepath.join({dir, "cmdline"}, context.temp_allocator)
-		cmdline, cerr := os.read_entire_file(cmd_path, context.temp_allocator)
-		if cerr != nil {
+		st := read_stat(root, pid) or_return
+		if is_claude_process(root, pid) {
+			claude, start, found = pid, st.start, true
+			argv = read_words(root, pid, "cmdline", allocator) or_return
+			env, _ := read_words(root, pid, "environ", context.temp_allocator)
+			for e in env {
+				if strings.has_prefix(e, "CLAUDECODE=") {
+					nested = true
+				}
+			}
+			above := st.ppid
+			for _ in 0 ..< MAX_WALK {
+				if above <= 1 {
+					break
+				}
+				if is_claude_process(root, above) {
+					nested = true
+					break
+				}
+				up, read := read_stat(root, above)
+				if !read {
+					break
+				}
+				above = up.ppid
+			}
 			return
 		}
-		words := strings.split(strings.trim_right(string(cmdline), "\x00"), "\x00", context.temp_allocator)
-		comm_path, _ := filepath.join({dir, "comm"}, context.temp_allocator)
-		comm_data, _ := os.read_entire_file(comm_path, context.temp_allocator)
-		comm := strings.trim_right(string(comm_data), "\n")
-		if is_claude(filepath.base(words[0])) || is_claude(comm) {
-			out := make([]string, len(words), allocator)
-			for w, i in words {
-				out[i] = strings.clone(w, allocator)
-			}
-			return out, true
-		}
-		pid = parent_of(dir) or_return
+		pid = st.ppid
 	}
 	return
-}
-
-is_claude :: proc(name: string) -> bool {
-	return name == "claude" || name == ".claude-wrapped"
-}
-
-// parent_of reads the parent's pid from <dir>/stat, whose second field
-// (comm, in parentheses) may hold blanks and parentheses itself.
-parent_of :: proc(dir: string) -> (ppid: int, ok: bool) {
-	stat_path, _ := filepath.join({dir, "stat"}, context.temp_allocator)
-	data, err := os.read_entire_file(stat_path, context.temp_allocator)
-	if err != nil {
-		return
-	}
-	s := string(data)
-	close := strings.last_index_byte(s, ')')
-	if close < 0 {
-		return
-	}
-	fields := strings.fields(s[close + 1:], context.temp_allocator)
-	if len(fields) < 2 {
-		return
-	}
-	return strconv.parse_int(fields[1], 10)
 }

@@ -75,6 +75,8 @@ Config :: struct {
 	state_dir:        string,
 	herdr:            string,
 	notify:           string,
+	// Where the processes are read: /proc.
+	proc_root:        string,
 	poll:             time.Duration,
 	settle:           time.Duration,
 	shell_wait:       time.Duration,
@@ -91,6 +93,7 @@ default_config :: proc() -> Config {
 		deadline = DEFAULT_DEADLINE,
 		herdr = "herdr",
 		notify = "ravnix-notify",
+		proc_root = "/proc",
 		poll = DEFAULT_POLL,
 		settle = DEFAULT_SETTLE,
 		shell_wait = DEFAULT_SHELL_WAIT,
@@ -287,7 +290,8 @@ try_roll :: proc(r: ^Run, p: ^Pane_Result, a: Agent) {
 	}
 	rec, rerr := read_pane_record(cfg.state_dir, p.pane, r.a)
 	if session == "" {
-		// herdr has none: the record, which the hook rewrites at /clear.
+		// herdr has none: the record's, which the hook rewrites at /clear;
+		// the process check below makes sure it is this pane's.
 		if rerr == "" && valid_session_id(rec.session_id) {
 			session = rec.session_id
 		} else {
@@ -298,14 +302,60 @@ try_roll :: proc(r: ^Run, p: ^Pane_Result, a: Agent) {
 	}
 	p.session = session
 	if rerr != "" {
-		settle(r, p, .Cannot, rerr)
-		tell(r, fmt.tprintf("claude-roll left Claude Code in pane %s (session %s) on its version: %s.", p.pane, session, rerr))
+		cannot(r, p, rerr)
+		return
+	}
+	// The record must be of this session and of the Claude Code process that
+	// runs in the pane now. One of another (a Claude Code started inside
+	// this one, a pane moved here, a hook that failed and left an older
+	// record) would resume the session with someone else's flags.
+	if rec.session_id != session {
+		cannot(r, p, "the pane's record is of another session")
+		return
+	}
+	if rec.pid <= 0 {
+		cannot(r, p, "the pane's record names no process (it is older than claude-roll's process check)")
+		return
+	}
+	info := run(r, {cfg.herdr, "pane", "process-info", "--pane", p.pane}, cfg.call_timeout)
+	if !succeeded(info) {
+		code, msg := herdr_error(string(info.stderr), r.a)
+		p.reason = fmt.aprintf("its processes could not be read (%s)", failure(info, code, msg))
+		return
+	}
+	pids, perr := foreground_pids(string(info.stdout), context.temp_allocator)
+	if perr != "" {
+		p.reason = strings.clone(perr, r.a)
+		return
+	}
+	in_front := false
+	for pid in pids {
+		in_front ||= pid == rec.pid
+	}
+	if !in_front {
+		cannot(r, p, "the pane's record is of another process than the Claude Code in the pane")
+		return
+	}
+	st, read := read_stat(cfg.proc_root, rec.pid)
+	if !read || !is_claude_process(cfg.proc_root, rec.pid) {
+		// herdr sees it and /proc does not: nothing can be told.
+		p.reason = "the pane's Claude Code process cannot be read"
+		return
+	}
+	if st.start != rec.start_time {
+		cannot(r, p, "the pane's record is of an earlier process with the same pid")
+		return
+	}
+	if running, why, known := background_work(cfg.proc_root, rec.pid, st.pgid); !known {
+		p.reason = "whether the session runs background work cannot be told"
+		return
+	} else if running {
+		p.reason = why
 		return
 	}
 	flags, ferr := resume_args(rec.argv, r.a)
 	if ferr != "" {
-		settle(r, p, .Cannot, ferr)
-		tell(r, fmt.tprintf("claude-roll left Claude Code in pane %s (session %s) on its version: %s.", p.pane, session, ferr))
+		cannot(r, p, ferr)
 		return
 	}
 	if busy(cfg.state_dir, session) {
@@ -396,6 +446,14 @@ try_roll :: proc(r: ^Run, p: ^Pane_Result, a: Agent) {
 	settle(r, p, .Failed, failure(res, code, msg))
 	tell(r, fmt.tprintf("claude-roll could not resume session %s in pane %s (%s). Resume it by hand: `claude --resume %s`", session, p.pane, failure(res, code, msg), session))
 	r.failed = true
+}
+
+// cannot leaves a pane on its version for a reason that will not pass by
+// itself, and tells the user.
+@(private = "file")
+cannot :: proc(r: ^Run, p: ^Pane_Result, why: string) {
+	settle(r, p, .Cannot, why)
+	tell(r, fmt.tprintf("claude-roll left Claude Code in pane %s (session %s) on its version: %s.", p.pane, p.session, why))
 }
 
 @(private = "file")

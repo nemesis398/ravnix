@@ -131,6 +131,7 @@ proc_config :: proc(pf: Proc_Fixture) -> roll.Config {
 	cfg.state_dir = pf.state
 	cfg.herdr = pj(pf.a, pf.bin, "herdr")
 	cfg.notify = pj(pf.a, pf.bin, "no-ravnix-notify")
+	cfg.proc_root = pj(pf.a, pf.dir, "proc")
 	cfg.log = new(strings.Builder, pf.a)
 	strings.builder_init(cfg.log, pf.a)
 	return cfg
@@ -145,6 +146,9 @@ a_dry_run_through_processes_only_reads :: proc(t: ^testing.T) {
 	answer(pf, "agent-list.out", J_LIST)
 	answer(pf, "agent-read.out", S_EMPTY)
 	write_record(pf.f, "wK:p1", SID_B, "--add-dir", "/home/user/notes")
+	fk := fake_make(t)
+	defer fake_destroy(fk)
+	answer(pf, "pane-process-info.out", in_claude(fk, add_pane(fk, {id = "wK:p1"})))
 	cfg := proc_config(pf)
 	cfg.dry_run = true
 
@@ -153,9 +157,10 @@ a_dry_run_through_processes_only_reads :: proc(t: ^testing.T) {
 	testing.expect_value(t, r.status, 0)
 	testing.expect_value(t, outcome_of(r, "wK:p1"), roll.Outcome.Would_Roll)
 	log := herdr_log(pf)
-	testing.expect_value(t, len(log), 3)
+	testing.expect_value(t, len(log), 4)
 	testing.expect_value(t, log[0], "agent list")
-	for l in log[1:] {
+	testing.expect_value(t, log[1], "pane process-info --pane wK:p1")
+	for l in log[2:] {
 		testing.expectf(t, strings.has_prefix(l, "agent read wK:p1 --source visible --format ansi"), "ran: %s", l)
 	}
 	out := strings.to_string(cfg.log^)

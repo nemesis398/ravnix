@@ -3,29 +3,12 @@
 // from the process tree. The tests give it a /proc of their own.
 package claude_roll_tests
 
-import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import roll ".."
 
 HOOK_INPUT :: `{"session_id":"0a1b2c3d-2222-4222-8333-444455556666","transcript_path":"/home/user/.claude/projects/x/0a1b2c3d-2222-4222-8333-444455556666.jsonl","cwd":"/home/user/project","hook_event_name":"SessionStart","source":"startup"}`
-
-// fake_proc writes one process into the /proc under root.
-fake_proc :: proc(f: ^Fixture, root: string, pid, ppid: int, comm: string, argv: ..string) {
-	dir := pj(f.a, root, fmt.tprint(pid))
-	if os.make_directory_all(dir) != nil {
-		testing.fail_now(f.t, "cannot make the fake /proc")
-	}
-	write_file(f, pj(f.a, dir, "stat"), fmt.tprintf("%d (%s) S %d 1 1 0 -1 4194304", pid, comm, ppid))
-	write_file(f, pj(f.a, dir, "comm"), strings.concatenate({comm, "\n"}, f.a))
-	b := strings.builder_make(f.a)
-	for a in argv {
-		strings.write_string(&b, a)
-		strings.write_byte(&b, 0)
-	}
-	write_file(f, pj(f.a, dir, "cmdline"), strings.to_string(b))
-}
 
 record_input :: proc(f: ^Fixture, pane: string, start: int, input := HOOK_INPUT) -> roll.Record_Input {
 	return roll.Record_Input{pane = pane, state_dir = f.state, proc_root = pj(f.a, f.dir, "proc"), start_pid = start, input = transmute([]byte)input}
@@ -55,6 +38,9 @@ records_the_flags_of_the_claude_above_the_hook :: proc(t: ^testing.T) {
 	testing.expect_value(t, rec.cwd, "/home/user/project")
 	testing.expect_value(t, rec.source, "startup")
 	testing.expect(t, equal_strings(rec.argv, {"--add-dir", "/home/user/notes", "--append-system-prompt", "two\nlines and \"quotes\""}))
+	// The process it describes, so a roll can tell it from another one.
+	testing.expect_value(t, rec.pid, 20)
+	testing.expect_value(t, rec.start_time, start_of(20))
 	// Nothing else in the directory: the write went through a temporary
 	// file that is gone.
 	testing.expect_value(t, count_entries(f, pj(f.a, f.state, "claude-panes")), 1)
@@ -168,4 +154,44 @@ reads_a_missing_or_broken_record_as_an_error :: proc(t: ^testing.T) {
 	write_file(f, pj(f.a, dir, "w1:p4.json"), strings.repeat(" ", 2 << 20, f.a))
 	_, err = roll.read_pane_record(f.state, "w1:p4", f.a)
 	testing.expect(t, err != "")
+}
+
+// A Claude Code started inside the pane's Claude Code (claude -p from its
+// Bash tool, a script) inherits HERDR_PANE_ID and runs the hook too. It must
+// not write over the record of the session the pane runs.
+@(test)
+a_nested_claude_does_not_write_the_pane_record :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	root := pj(f.a, f.dir, "proc")
+	// The pane's Claude Code, and its record.
+	fake_proc(f, root, 40, 20, "bash", "bash", "hook")
+	fake_proc(f, root, 20, 10, "claude", "claude", "--add-dir", "/a")
+	fake_proc(f, root, 10, 1, "bash", "-bash")
+	_, err := roll.record_pane(record_input(f, "w1:p1", 40), f.a)
+	testing.expect_value(t, err, "")
+
+	nested := `{"session_id":"0a1b2c3d-9999-4222-8333-444455556666","hook_event_name":"SessionStart","source":"startup"}`
+	// claude -p from the Bash tool: its own environment says CLAUDECODE=1,
+	// and the outer Claude Code is above it.
+	fake_proc(f, root, 60, 61, "bash", "bash", "hook")
+	fake_process(f, root, {pid = 61, ppid = 62, pgid = 62, start = start_of(61), comm = "claude", env = {"HOME=/home/user", "CLAUDECODE=1"}, argv = {"claude", "-p", "--dangerously-skip-permissions", "hi"}})
+	fake_proc(f, root, 62, 20, "bash", "/bin/bash", "-c", "source /home/user/.claude/shell-snapshots/snapshot-bash-1-x.sh && eval 'claude -p hi'")
+	// The same without CLAUDECODE: the Claude Code above it gives it away.
+	fake_proc(f, root, 70, 71, "bash", "bash", "hook")
+	fake_proc(f, root, 71, 72, "claude", "claude", "--model", "haiku")
+	fake_proc(f, root, 72, 20, "bash", "/bin/bash", "-c", "x")
+	// And CLAUDECODE alone, with no Claude Code above in reach.
+	fake_proc(f, root, 80, 81, "bash", "bash", "hook")
+	fake_process(f, root, {pid = 81, ppid = 1, pgid = 81, start = start_of(81), comm = "claude", env = {"CLAUDECODE=1"}, argv = {"claude"}})
+
+	for start in ([]int{60, 70, 80}) {
+		_, err = roll.record_pane(record_input(f, "w1:p1", start, nested), f.a)
+		testing.expectf(t, strings.contains(err, "inside another"), "from %d: error %q", start, err)
+	}
+	rec, rerr := roll.read_pane_record(f.state, "w1:p1", f.a)
+	testing.expect_value(t, rerr, "")
+	testing.expect_value(t, rec.session_id, "0a1b2c3d-2222-4222-8333-444455556666")
+	testing.expect_value(t, rec.pid, 20)
+	testing.expect(t, equal_strings(rec.argv, {"--add-dir", "/a"}))
 }

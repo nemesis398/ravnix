@@ -16,7 +16,8 @@
 //   herdr agent list
 //   herdr agent read PANE --source visible --format ansi
 //   herdr agent prompt PANE /exit
-//   herdr pane process-info --pane PANE
+//   herdr pane process-info --pane PANE   (before the /exit too: the pid
+//                                        of the pane's Claude Code)
 //   herdr pane get PANE
 //   herdr agent start NAME --kind claude --pane PANE --timeout MS -- ARG...
 package claude_roll
@@ -112,4 +113,29 @@ at_shell :: proc(process_info, pane_get: string) -> (yes: bool, err: string) {
 	}
 	p := info.result.process_info
 	return p.shell_pid != 0 && p.foreground_process_group_id == p.shell_pid && get.result.pane.agent == "", ""
+}
+
+// foreground_pids reads the processes of `herdr pane process-info` that hold
+// the pane's terminal: the foreground process group.
+foreground_pids :: proc(process_info: string, allocator: runtime.Allocator) -> (pids: []int, err: string) {
+	Process :: struct {
+		pid: int,
+	}
+	Info :: struct {
+		result: struct {
+			type:         string,
+			process_info: struct {
+				foreground_processes: []Process,
+			},
+		},
+	}
+	info: Info
+	if json.unmarshal_string(process_info, &info, allocator = context.temp_allocator) != nil || info.result.type != "pane_process_info" {
+		return nil, "herdr pane process-info printed no JSON claude-roll can read"
+	}
+	out := make([]int, len(info.result.process_info.foreground_processes), allocator)
+	for p, i in info.result.process_info.foreground_processes {
+		out[i] = p.pid
+	}
+	return out, ""
 }

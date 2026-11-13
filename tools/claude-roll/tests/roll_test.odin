@@ -180,8 +180,8 @@ skips_a_blocked_pane_and_says_so_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, calls_of(fk, "ravnix-notify", "--topic", "sessions", "--"), 1)
 }
 
-// After /clear the pane runs another session: herdr's id is the one to
-// resume, not the one recorded when the pane started.
+// After /clear the pane runs another session, and the hook has written its
+// record again: the new id is resumed, with the flags of the process.
 @(test)
 resumes_the_session_the_pane_runs_now :: proc(t: ^testing.T) {
 	f := fixture(t)
@@ -189,7 +189,7 @@ resumes_the_session_the_pane_runs_now :: proc(t: ^testing.T) {
 	fk := fake_make(t)
 	defer fake_destroy(fk)
 	p := add_pane(fk, {id = "w1:p1", session = SID_C, statuses = {"idle"}, screens = {S_EMPTY}})
-	write_record(f, "w1:p1", SID_A, "--add-dir", "/a")
+	write_record(f, "w1:p1", SID_C, "--add-dir", "/a")
 	// herdr knows no session for this one: the record (rewritten by the hook
 	// at /clear) has it.
 	q := add_pane(fk, {id = "w1:p2", statuses = {"idle"}, screens = {S_EMPTY}})
@@ -417,6 +417,14 @@ reads_the_recorded_agent_list :: proc(t: ^testing.T) {
 	_, aerr = roll.at_shell("{", J_GET_SHELL)
 	testing.expect(t, aerr != "")
 
+	pids, perr := roll.foreground_pids(J_IN_CLAUDE, f.a)
+	testing.expect_value(t, perr, "")
+	testing.expect(t, len(pids) == 1 && pids[0] == 3318752)
+	pids, perr = roll.foreground_pids(J_AT_SHELL, f.a)
+	testing.expect(t, perr == "" && len(pids) == 1 && pids[0] == 5795)
+	_, perr = roll.foreground_pids(J_GET_SHELL, f.a)
+	testing.expect(t, perr != "")
+
 	code, msg := roll.herdr_error(E_NOT_RUNNING, f.a)
 	testing.expect_value(t, code, "server_not_running")
 	testing.expect(t, strings.contains(msg, "no herdr server"))
@@ -559,7 +567,10 @@ a_refused_exit_starts_nothing :: proc(t: ^testing.T) {
 	write_record(f, "w1:p2", SID_B)
 	r := roll.roll(config(fk, f.state), f.a)
 	testing.expect_value(t, calls_of(fk, "herdr", "agent", "start"), 0)
-	testing.expect_value(t, calls_of(fk, "herdr", "pane", "process-info"), 0)
+	// One look at each pane's processes before the /exit, no wait for a
+	// shell after it.
+	testing.expect_value(t, calls_of(fk, "herdr", "pane", "process-info"), 2)
+	testing.expect_value(t, calls_of(fk, "herdr", "pane", "get"), 0)
 	testing.expect_value(t, outcome_of(r, "w1:p1"), roll.Outcome.Blocked)
 	testing.expect_value(t, outcome_of(r, "w1:p2"), roll.Outcome.Gone)
 	testing.expect_value(t, len(notes(fk)), 1)
@@ -714,4 +725,120 @@ call_order :: proc(fk: ^Fake) -> string {
 		}
 	}
 	return strings.to_string(b)
+}
+
+// The record is of another session than the one herdr says the pane runs:
+// a nested Claude Code wrote it, or a moved pane, or the hook failed and
+// left an old one. Its flags are not used, and the user is told.
+@(test)
+a_record_of_another_session_is_not_used :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	fk := fake_make(t)
+	defer fake_destroy(fk)
+	add_pane(fk, {id = "w1:p1", session = SID_C, statuses = {"idle"}, screens = {S_EMPTY}})
+	write_record(f, "w1:p1", SID_A, "--dangerously-skip-permissions")
+
+	r := roll.roll(config(fk, f.state), f.a)
+
+	testing.expect_value(t, outcome_of(r, "w1:p1"), roll.Outcome.Cannot)
+	testing.expect(t, !sent_anything_but_notes(fk))
+	n := notes(fk)
+	testing.expect(t, len(n) == 1 && strings.contains(n[0], "w1:p1") && strings.contains(n[0], "another session"))
+}
+
+// The record names a process that is not the Claude Code in the pane's
+// foreground now: another pid, a pid reused by a later process, or an old
+// record without one. Not used.
+@(test)
+a_record_of_another_process_is_not_used :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	fk := fake_make(t)
+	defer fake_destroy(fk)
+	add_pane(fk, {id = "w1:p1", session = SID_A, statuses = {"idle"}, screens = {S_EMPTY}, fg_pid = 4242})
+	write_record(f, "w1:p1", SID_A)
+	add_pane(fk, {id = "w1:p2", session = SID_B, statuses = {"idle"}, screens = {S_EMPTY}})
+	write_record(f, "w1:p2", SID_B)
+	// The pid is alive, but another process holds it now.
+	pid := pid_of("w1:p2")
+	fake_process(f, pj(f.a, f.dir, "proc"), {pid = pid, ppid = 1, pgid = pid, start = start_of(pid) + 7, comm = "claude", argv = {"claude"}})
+	add_pane(fk, {id = "w1:p3", session = SID_C, statuses = {"idle"}, screens = {S_EMPTY}})
+	write_record(f, "w1:p3", SID_C)
+	write_file(f, pj(f.a, f.state, "claude-panes", "w1:p3.json"), `{"pane":"w1:p3","session_id":"` + SID_C + `","argv":[]}`)
+
+	r := roll.roll(config(fk, f.state), f.a)
+
+	testing.expect(t, !sent_anything_but_notes(fk))
+	for pane in ([]string{"w1:p1", "w1:p2", "w1:p3"}) {
+		testing.expectf(t, outcome_of(r, pane) == .Cannot, "%s: %v", pane, outcome_of(r, pane))
+	}
+	testing.expect_value(t, len(notes(fk)), 3)
+}
+
+// A session whose turn has ended can still run work: a command started in
+// the background (a dev server, a long build) is a child of Claude Code,
+// in a process group of its own, and /exit would end it. Such a pane waits;
+// the MCP servers Claude Code keeps in its own group do not hold it back.
+@(test)
+a_session_with_a_background_task_is_not_exited :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	fk := fake_make(t)
+	defer fake_destroy(fk)
+	root := pj(f.a, f.dir, "proc")
+	// A Bash tool command in the background.
+	add_pane(fk, {id = "w1:p1", session = SID_A, statuses = {"idle"}, screens = {S_EMPTY}})
+	write_record(f, "w1:p1", SID_A)
+	p1 := pid_of("w1:p1")
+	fake_process(f, root, {pid = 70001, ppid = p1, pgid = 70001, start = 9, comm = "bash", argv = {"/bin/bash", "-c", "source /home/user/.claude/shell-snapshots/snapshot-bash-1-x.sh 2>/dev/null || true && eval 'npm run dev' < /dev/null && pwd -P >| /tmp/claude-1-cwd"}})
+	// A child in a group of its own that is no Bash tool shell: unknown work.
+	add_pane(fk, {id = "w1:p2", session = SID_B, statuses = {"idle"}, screens = {S_EMPTY}})
+	write_record(f, "w1:p2", SID_B)
+	fake_process(f, root, {pid = 70002, ppid = pid_of("w1:p2"), pgid = 70002, start = 9, comm = "sleep", argv = {"sleep", "600"}})
+	// A Bash tool shell in Claude Code's own group still counts.
+	add_pane(fk, {id = "w1:p3", session = SID_C, statuses = {"idle"}, screens = {S_EMPTY}})
+	write_record(f, "w1:p3", SID_C)
+	p3 := pid_of("w1:p3")
+	fake_process(f, root, {pid = 70003, ppid = p3, pgid = p3, start = 9, comm = "bash", argv = {"/bin/bash", "-c", "source /home/user/.claude/shell-snapshots/snapshot-bash-2-y.sh && eval 'make'"}})
+	// Only an MCP server, in Claude Code's group: rolled.
+	add_pane(fk, {id = "w1:p4", session = SID_A, statuses = {"idle"}, screens = {S_EMPTY}})
+	write_record(f, "w1:p4", SID_A)
+	p4 := pid_of("w1:p4")
+	fake_process(f, root, {pid = 70004, ppid = p4, pgid = p4, start = 9, comm = "node", argv = {"node", "/home/user/mcp/server.js"}})
+	cfg := config(fk, f.state)
+	cfg.deadline = 5 * time.Minute
+
+	r := roll.roll(cfg, f.a)
+
+	for pane in ([]string{"w1:p1", "w1:p2", "w1:p3"}) {
+		testing.expectf(t, outcome_of(r, pane) == .Left, "%s: %v", pane, outcome_of(r, pane))
+		testing.expectf(t, calls_of(fk, "herdr", "agent", "prompt", pane) == 0, "%s got /exit", pane)
+	}
+	testing.expect_value(t, outcome_of(r, "w1:p4"), roll.Outcome.Rolled)
+	for p in r.panes {
+		if p.pane == "w1:p1" {
+			testing.expectf(t, strings.contains(p.reason, "background"), "reason: %s", p.reason)
+		}
+	}
+}
+
+// When the processes cannot be read, nobody can say that no background work
+// runs: the pane waits.
+@(test)
+unreadable_processes_hold_a_pane_back :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	fk := fake_make(t)
+	defer fake_destroy(fk)
+	add_pane(fk, {id = "w1:p1", session = SID_A, statuses = {"idle"}, screens = {S_EMPTY}})
+	write_record(f, "w1:p1", SID_A)
+	cfg := config(fk, f.state)
+	cfg.proc_root = pj(f.a, f.dir, "no-proc")
+	cfg.deadline = time.Minute
+
+	r := roll.roll(cfg, f.a)
+
+	testing.expect_value(t, outcome_of(r, "w1:p1"), roll.Outcome.Left)
+	testing.expect(t, !sent_anything(fk))
 }

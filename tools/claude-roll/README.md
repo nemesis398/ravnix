@@ -32,8 +32,23 @@ already runs the new version.
 The session is herdr's `agent_session` when its kind is `id`, else the one
 the pane's record holds; either must be a UUID, or nothing is sent. The
 flags are what the pane's Claude Code was started with, from its record
-(below). `NAME` is the agent's herdr name when it had one, else
-`claude-<pane>`.
+(below). The record must be of that session and of the Claude Code process
+that runs in the pane now: its pid is in the pane's foreground
+(`herdr pane process-info`), and `/proc` gives the same start time for it.
+A record of another session or process (a Claude Code started inside this
+one, a pane moved here, a hook that failed and left an older record) is not
+used: the pane is left, and the user is told. `NAME` is the agent's herdr
+name when it had one, else `claude-<pane>`.
+
+A session whose turn has ended can still run work: a command its Bash tool
+started in the background (a dev server, a long build). Claude Code runs
+each such command in a shell of its own
+(`bash -c source ~/.claude/shell-snapshots/snapshot-… && eval …`), in a
+process group of its own, while its MCP servers stay in its group
+(`proc.odin`, seen on Claude Code 2.1.323). A pane whose Claude Code has a
+child that is such a shell, or that leads another group, waits like a
+working one, and so does a pane whose processes cannot be read: /exit would
+end that work.
 
 Before it types anything it reads the screen twice, 0.5 s apart
 (`herdr agent read PANE --source visible --format ansi`), and types only
@@ -85,15 +100,19 @@ hook (`claude-pane` in `modules/common/claude-skills.nix`), writes
 `$XDG_STATE_HOME/ravnix/claude-panes/<pane>.json`:
 
 ```json
-{"pane":"w1:p1","session_id":"…","cwd":"/home/user/project","source":"startup","argv":["--add-dir","/home/user/notes"]}
+{"pane":"w1:p1","session_id":"…","cwd":"/home/user/project","source":"startup","argv":["--add-dir","/home/user/notes"],"pid":4242,"start_time":28511566}
 ```
 
 It reads the session from the hook's input and `argv` from the command line
 of the Claude Code process above the hook (`/proc`, up to eight parents; a
-process named `claude` or `.claude-wrapped`). It runs again at `/clear`,
+process named `claude` or `.claude-wrapped`), with that process's pid and
+start time (field 22 of `/proc/PID/stat`). It runs again at `/clear`,
 `/compact` and a resume, so the record follows the session the pane runs
 now. Outside a herdr pane (no `HERDR_PANE_ID`), for an id it cannot vouch
-for, or without a Claude Code above it, it writes nothing. It always exits 0
+for, or without a Claude Code above it, it writes nothing. Nor does a Claude
+Code started inside another one, which inherits the pane's `HERDR_PANE_ID`:
+one with `CLAUDECODE` in its own environment (Claude Code sets it for what
+it runs), or with another Claude Code above it. It always exits 0
 and prints nothing on standard output.
 
 On a roll, `flags.odin` keeps from `argv` only flags it knows (those of
@@ -116,7 +135,8 @@ told why.
   loops in the tree, odd ids, no Claude Code above it.
 - `roll_test.odin`: the roll against a herdr in the test
   (`fake_herdr.odin`) that records every call and keeps a clock that only
-  sleeps move: idle, working until idle, working past the deadline, the
+  sleeps move: idle, working until idle, working past the deadline, a record
+  of another session or process, a background task, unreadable processes, the
   deadline in a wait and during a roll, blocked, a dialog that herdr calls
   idle (every dialog screen), a new session after `/clear`, a failed resume,
   a shell that never comes, a start that waits at a dialog, `--dry-run`,
@@ -163,6 +183,11 @@ The bench classifies six screens (`bench/`), a full viewport among them.
   `claude-roll classify`.
 - Whether an older Claude Code reads a transcript a newer one wrote, which
   the rollback (pin the previous version and switch) relies on.
+- The background-work check on the server's Claude Code: that its Bash tool
+  shells still carry `shell-snapshots/snapshot-` and their own process
+  group, and that its MCP servers stay in its group. Record the footer a
+  session shows while a background task runs; a screen check on it would be
+  a second signal beside the process check.
 
 ## Known gaps
 
@@ -192,3 +217,11 @@ Findings the tests turned up or the design leaves, not fixed:
   this reason) fails to resume, and the user gets its id.
 - A pane without a herdr name gets `claude-<pane>` as its name after the
   roll, which herdr shows.
+- The background-work check reads how Claude Code 2.1.323 starts its
+  processes. A version that starts an MCP server in a process group of its
+  own holds every pane with that server back until the deadline (safe, and
+  visible in the log); one that starts Bash tool shells in its own group
+  without the snapshot line would let a background task through.
+- A pane whose shell has `CLAUDECODE` in its environment (herdr started
+  from inside a Claude Code session) writes no record, so its sessions are
+  left and reported on every run.
