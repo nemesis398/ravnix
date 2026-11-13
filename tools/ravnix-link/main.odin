@@ -799,7 +799,10 @@ receive :: proc(cfg: Config, line: string) -> (rep: Reply, code: int) {
 		return refuse(r.id, "no vault is configured here (--vault, ravnix.link.vault)")
 	}
 	// The vault is this host's: the laptop's path for it may be another.
+	// The time is when the server got it, by the server's clock, which
+	// the waits and the order after Obsidian operations compare with.
 	r.vault = cfg.vault
+	r.created = timestamp(clock(cfg), context.temp_allocator)
 	if why = check_request(r); why != "" {
 		return refuse(r.id, why)
 	}

@@ -421,3 +421,121 @@ the_laptop_refuses_a_commit_it_cannot_describe :: proc(t: ^testing.T) {
 	testing.expect(t, contains(r.err, "--vault"), r.err)
 	testing.expect_value(t, len(runs_of(f, "forward")), 0)
 }
+
+// A file the laptop had that never reaches the vault here under its name
+// (renamed or deleted on the laptop before the upload, a name the sync does
+// not carry, a conflict copy): after LAPTOP_FILE_WAIT the commit fails for
+// good, says which file, tells the laptop, and what waits behind it goes
+// ahead, instead of holding the vault's stream for a day.
+@(test)
+a_laptop_file_that_never_arrives_fails_and_releases_the_stream :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	set_case(f, strings.concatenate({"v='", f.vault, "'\n", `[ "$n" = git ] && [ "$4" = commit ] && [ "$6" = "vault: neu" ] && [ ! -e "$v/neu.md" ] && { echo "error: pathspec 'neu.md' did not match any file(s) known to git" >&2; exit 1; }
+`}, f.a))
+	note(f, "da.md")
+	base := link.clock(f.client)
+	f.client.now = base
+	commit := laptop_commit(f, "vault: neu", {"neu.md"}, {SUM_NEU})
+	expect_enqueued(f, commit)
+	after := commit_request(f, "vault: danach", "da.md")
+	expect_enqueued(f, after)
+	f.client.now = time.time_add(base, link.SYNC_WAIT + time.Minute)
+	result, _ := link.flush(f.client)
+	testing.expect_value(t, result.pending, 2)
+	rec, _ := record_of(f, commit.id)
+	testing.expect_value(t, rec.status, link.Record_Status.Retry)
+
+	f.client.now = time.time_add(base, link.LAPTOP_FILE_WAIT + time.Minute)
+	f.client.retry_now = true
+	result, _ = link.flush(f.client)
+	rec, _ = record_of(f, commit.id)
+	testing.expect_value(t, rec.status, link.Record_Status.Failed)
+	testing.expect(t, contains(rec.error, "neu.md"), rec.error)
+	testing.expect(t, contains(rec.error, "never arrived"), rec.error)
+	next, _ := record_of(f, after.id)
+	testing.expect_value(t, next.status, link.Record_Status.Done)
+	failed, _ := link.read_failed(f.client, f.a)
+	testing.expect_value(t, len(failed), 1)
+	// The laptop hears of it: a notification waits for it.
+	told := false
+	for line in queue_lines(f) {
+		if r, why := link.decode_request(line, f.a); why == "" && r.kind == .Notify {
+			told = contains(r.body, "neu.md")
+		}
+	}
+	testing.expect(t, told, "no notification for the laptop")
+}
+
+// The wait counts from when the server got the request, by the server's
+// clock: a laptop whose clock is a day behind does not skip it.
+@(test)
+receive_counts_the_wait_from_the_servers_clock :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	note(f, "a.md")
+	commit := laptop_commit(f, "vault: a", {"a.md"}, {SUM_NEU})
+	commit.created = link.timestamp(time.time_add(link.clock(f.client), -24 * time.Hour), f.a)
+	rep, _ := link.receive(f.client, encoded(f, commit))
+	testing.expect_value(t, rep.status, link.Status.Retry)
+	result, _ := link.flush(f.client)
+	testing.expect_value(t, result.pending, 1)
+	testing.expect_value(t, len(git_runs(f, "commit")), 0)
+}
+
+// After the wait, git finds nothing to commit because the laptop's version
+// never came: that is no commit made, and it is not recorded done.
+@(test)
+a_laptop_version_that_never_arrived_is_not_recorded_done :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	set_case(f, `[ "$n" = git ] && [ "$4" = commit ] && { echo "nothing to commit, working tree clean"; exit 1; }` + "\n")
+	note(f, "a.md")
+	base := link.clock(f.client)
+	f.client.now = base
+	commit := laptop_commit(f, "vault: a", {"a.md"}, {SUM_NEU})
+	expect_enqueued(f, commit)
+	f.client.now = time.time_add(base, link.SYNC_WAIT + time.Minute)
+	result, _ := link.flush(f.client)
+	testing.expect_value(t, result.pending, 0)
+	rec, _ := record_of(f, commit.id)
+	testing.expect_value(t, rec.status, link.Record_Status.Failed)
+	testing.expect(t, contains(rec.error, "never arrived"), rec.error)
+}
+
+// A commit from the laptop waits for the Obsidian operations queued before
+// it, as the server's own do, even when its files are here.
+@(test)
+a_commit_from_the_laptop_waits_for_the_obsidian_operations_before_it :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	note(f, "Notizen/alt.md")
+	note(f, "a.md")
+	set_case_in_vault(f)
+	f.client.receive_wait_ms = 200
+	expect_enqueued(f, obsidian_request(f, .Rename, "Notizen/alt.md", name = "neu"))
+	rep, _ := link.receive(f.client, encoded(f, laptop_commit(f, "vault: a", {"a.md"}, {SUM_TEXT})))
+	testing.expect_value(t, rep.status, link.Status.Retry)
+	link.flush(f.client)
+	testing.expect_value(t, len(git_runs(f, "commit")), 0)
+	start_daemon(f)
+	result, _ := link.flush(f.client)
+	testing.expect_value(t, result.pending, 0)
+	testing.expect_value(t, run_order(f), "obsidian add commit")
+}
+
+@(test)
+an_empty_file_has_the_sum_of_nothing :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	note(f, "leer.md", "")
+	sum, why, not_a_file := link.file_sum(join(f, "vault", "leer.md"), f.a)
+	testing.expect_value(t, why, "")
+	testing.expect(t, !not_a_file)
+	testing.expect_value(t, sum, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	// A path the sync cannot carry is refused on the laptop.
+	set_case(f, FORWARD_ANSWERS)
+	r := laptop(f, "vault-commit", "m", "zwei\nZeilen.md")
+	testing.expect_value(t, r.code, 64)
+	testing.expect_value(t, len(runs_of(f, "forward")), 0)
+}

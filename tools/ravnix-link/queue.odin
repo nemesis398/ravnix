@@ -41,6 +41,12 @@ KEEP_RECORDS :: 64
 // How long a commit waits for the sync to bring the results of the Obsidian
 // operations before it: the server's copy syncs every five minutes.
 SYNC_WAIT :: 15 * time.Minute
+// How long a commit from the laptop is tried again for a file of the
+// laptop's that git does not know here, from when the server got it: past
+// it the file is not coming under that name (renamed or deleted on the
+// laptop before the upload, a name the sync does not carry, a conflict
+// copy), and the commit fails, so the vault's stream goes on.
+LAPTOP_FILE_WAIT :: time.Hour
 // A failed commit runs again after 15 s, then twice as long each time, at
 // most an hour apart, and is given up a day after its first attempt.
 COMMIT_RETRY_FIRST :: 15 * time.Second
@@ -474,14 +480,13 @@ commit_step :: proc(cfg: Config, r: Request, rec: Record, has: bool, expects: ^[
 	// A commit from the laptop: the files as the laptop had them when it
 	// asked, in this copy, which the sync brings later. Looked at before the
 	// first attempt only; after SYNC_WAIT it goes ahead with what is there.
-	if len(r.sums) > 0 && (!has || rec.attempts == 0) {
-		if missing := unsynced_files(vault, r); missing > 0 {
-			created, _ := parse_timestamp(r.created)
-			if time.diff(created, now) < SYNC_WAIT {
-				return false
-			}
-			report(cfg, "the vault here does not have %d of the files of %s as the laptop wrote them after %d minutes; it goes ahead with what is there", missing, describe(r), int(SYNC_WAIT / time.Minute))
+	stale := unsynced_files(vault, r) if len(r.sums) > 0 else 0
+	if stale > 0 && (!has || rec.attempts == 0) {
+		created, _ := parse_timestamp(r.created)
+		if time.diff(created, now) < SYNC_WAIT {
+			return false
 		}
+		report(cfg, "the vault here does not have %d of the files of %s as the laptop wrote them after %d minutes; it goes ahead with what is there", stale, describe(r), int(SYNC_WAIT / time.Minute))
 	}
 	// The results of the Obsidian operations queued before it, in this copy
 	// of the vault, which the sync brings later than the laptop has them.
@@ -522,6 +527,14 @@ commit_step :: proc(cfg: Config, r: Request, rec: Record, has: bool, expects: ^[
 	}
 	switch result {
 	case .Committed, .Nothing:
+		// Nothing to commit while the laptop's version is not here: the
+		// commit it asked for was not made, which is no success.
+		if result == .Nothing && stale > 0 {
+			msg := fmt.tprintf("nothing to commit: the laptop's version of %d of its files never arrived here, so its change is not committed", stale)
+			give_up(cfg, out, r, msg)
+			tell_laptop(cfg, r, msg)
+			return true
+		}
 		out.done += 1
 		note_outcome(cfg, out, Record{id = r.id, status = .Done})
 		return true
@@ -531,6 +544,21 @@ commit_step :: proc(cfg: Config, r: Request, rec: Record, has: bool, expects: ^[
 		// tried again, with the bound of a day.
 		if result == .Missing && brought_by_sync(vault, r, expects^) {
 			break
+		}
+		// A file the laptop had, which the sync may still bring, for
+		// LAPTOP_FILE_WAIT from when the server got the request; then it
+		// is not coming under that name.
+		if result == .Missing && len(r.sums) > 0 {
+			if missing := missing_laptop_files(vault, r); missing != "" {
+				created, _ := parse_timestamp(r.created)
+				if time.diff(created, now) < LAPTOP_FILE_WAIT {
+					break
+				}
+				msg := fmt.tprintf("the laptop's %s never arrived here within %d minutes (renamed or deleted on the laptop before the sync, a name the sync does not carry, or a conflict copy); ask again with the files as they are now", missing, int(LAPTOP_FILE_WAIT / time.Minute))
+				give_up(cfg, out, r, msg)
+				tell_laptop(cfg, r, msg)
+				return true
+			}
 		}
 		// With HEAD where it was, nothing happened, and nothing will on
 		// another attempt: it fails now, and the vault's stream goes on.
@@ -635,17 +663,47 @@ unsynced_files :: proc(vault: string, r: Request) -> int {
 	return n
 }
 
-// brought_by_sync says whether a path of the commit r that the vault does
-// not have is one an Obsidian operation leaves, or one the laptop had when
-// it asked for the commit, so the sync may bring it.
-brought_by_sync :: proc(vault: string, r: Request, expects: [dynamic]Expectation) -> bool {
+// missing_laptop_files names the files of the commit r from the laptop
+// that the laptop had and the vault here does not, "" when there is none.
+missing_laptop_files :: proc(vault: string, r: Request) -> string {
+	b := strings.builder_make(context.temp_allocator)
 	for p, i in r.paths {
+		if i >= len(r.sums) || r.sums[i] == NO_FILE {
+			continue
+		}
 		st: linux.Stat
 		if linux.lstat(cstr(fmt.tprintf("%s/%s", vault, p)), &st) == .NONE {
 			continue
 		}
-		if i < len(r.sums) && r.sums[i] != NO_FILE {
-			return true
+		strings.write_string(&b, ", " if strings.builder_len(b) > 0 else "")
+		strings.write_string(&b, p)
+	}
+	return strings.to_string(b)
+}
+
+// tell_laptop queues a notification for the laptop that the commit r it
+// asked for failed for good: it was told the commit was queued.
+tell_laptop :: proc(cfg: Config, r: Request, msg: string) {
+	n := Request {
+		id      = new_id(context.temp_allocator),
+		kind    = .Notify,
+		created = timestamp(clock(cfg), context.temp_allocator),
+		summary = "A vault commit from the laptop failed",
+		body    = fmt.tprintf("%s: %s", describe(r), msg),
+		app     = "ravnix-link",
+	}
+	if why := enqueue(cfg, n); why != "" {
+		report(cfg, "cannot tell the laptop that %s failed: %s", describe(r), why)
+	}
+}
+
+// brought_by_sync says whether a path of the commit r that the vault does
+// not have is one an Obsidian operation leaves, so the sync may bring it.
+brought_by_sync :: proc(vault: string, r: Request, expects: [dynamic]Expectation) -> bool {
+	for p in r.paths {
+		st: linux.Stat
+		if linux.lstat(cstr(fmt.tprintf("%s/%s", vault, p)), &st) == .NONE {
+			continue
 		}
 		for x in expects {
 			if x.created <= r.created && (p == x.present || x.alt != "" && p == x.alt) {

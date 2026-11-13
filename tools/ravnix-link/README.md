@@ -165,7 +165,9 @@ says the request is queued and exits 0.
   that is no request or longer than 64 KiB, a server without `--vault`) is
   answered `failed` and exits 64, with nothing queued. The commit is queued
   as the server's own, in the vault configured here (the laptop's path for
-  it is ignored), and `receive` runs no git: the delivery service commits
+  it is ignored), with the time the server got it, by the server's clock
+  (the laptop's is ignored too: the waits and the order after the Obsidian
+  operations are the server's), and `receive` runs no git: the delivery service commits
   it, in the user manager's environment, which has the agent a signed
   commit needs and an ssh session may not. The queue's change wakes the
   service. `receive` answers `done` or `failed` (exit 1) when the service
@@ -174,9 +176,16 @@ says the request is queued and exits 0.
   have the files yet. Until the copy has each file with the laptop's
   bytes, and each path the laptop does not have is gone here, the commit
   waits, and what is queued in the vault after it waits too; 15 minutes
-  after the request was made it goes ahead with what is there, and says
-  so. A file the laptop had that git then does not know is tried again,
-  for a day, as a late sync may still bring it. The same request sent
+  after the server got it, it goes ahead with what is there, and says so.
+  A file the laptop had that git then does not know is tried again, as a
+  late sync may still bring it, until an hour after the server got the
+  request; then the file is not coming under that name (renamed or deleted
+  on the laptop before the upload, a name the sync does not carry, a
+  conflict copy), and the commit fails for good, naming the file, and what
+  waits behind it goes ahead. When git finds nothing to commit because the
+  laptop's version never came, the commit fails for good too, rather than
+  counting as done. Either way the failure is in the list `status` shows,
+  and a notification for the laptop is queued. The same request sent
   again, as a laptop that did not get the answer sends it, gets the
   outcome it had and runs nothing twice.
 
@@ -372,7 +381,7 @@ agent there:
 
 ## Tests and bench
 
-`ravnix-link-tests` runs 99 tests. The protocol: every kind round-trips with
+`ravnix-link-tests` runs 104 tests. The protocol: every kind round-trips with
 spaces, umlauts and an en dash in its paths; a 10 MB body, a line of 64 KiB
 and one byte, NUL, control characters, invalid UTF-8, lone surrogates,
 unknown keys and kinds, a key twice, deep nesting, trailing bytes, bad IDs
@@ -414,7 +423,11 @@ appears and sleeps while the laptop is away. The commits from the laptop:
 the sums round-trip and a wrong count, case, length or type is refused;
 a commit waits until the vault here has each file as the laptop wrote it
 and each removed path gone, says so in `status`, goes ahead after the
-wait, and is tried again for a file git does not know yet; `receive`
+wait, is tried again for a file git does not know yet and fails after an
+hour, naming the file, telling the laptop and letting the stream go on,
+fails rather than counting as done when the laptop's version never came,
+counts its wait by the server's clock, and waits for an Obsidian
+operation queued before it; an empty file has the sum of nothing; `receive`
 queues it and runs no git, answers what the service did within its wait,
 gets the outcome it had for the same request again, and refuses another
 kind, no paths, no sums, nonsense, an empty or overlong line and a server
@@ -422,7 +435,8 @@ without a vault; the laptop's `vault-commit` sends the sums of its files
 (`-` for one it does not have) with an odd message, tells `done`, `retry`
 and `failed` apart, says when the server did not answer (ssh's words, an
 answer for another request, no forward), and refuses no paths, a folder,
-a path that leaves the vault, an empty message and a missing `--vault`.
+a path that leaves the vault or holds a newline, an empty message and a
+missing `--vault`.
 
 `tests/glue/link-shapes.nix` (`glue-link-shapes`) evaluates both shapes:
 on the server shape `xdg-open` and `notify-send` are the link's and come
@@ -444,12 +458,15 @@ and the edit made after the rename was queued; nothing runs twice after the
 service and the daemon restart; a request with the laptop there runs at
 once; a program the daemon started outlives a restart of the daemon; and a
 stale socket from a dropped connection does not block the next forward.
-Then the vault on both hosts: the skill values say `git` on the server and
-`ravnix-link` on the laptop; a note written on the laptop, committed there
-with `vault-commit`, goes to the server over ssh and waits there until the
-test copies it over, as the sync would, and the service commits it,
-signed; a commit from the laptop of a file the server has already is
-answered as made; and `vault-commit` on the server commits with git.
+Then the vault on both hosts: the skill values say `ravnix-link` on both,
+with the repository on the server; the commit queued behind the rename is
+asked for with `vault-commit` on the server, so it waits for the rename; a
+note written on the laptop, committed there with `vault-commit`, goes to
+the server over ssh and waits there until the test copies it over, as the
+sync would, and the service commits it, signed; a commit from the laptop
+of a file the server has already is answered as made; `vault-commit` on
+the server commits at once when nothing waits; and three commits asked
+for on each host at once all land, none failing on git's `index.lock`.
 
 `ravnix-link-bench` runs `status` on `bench/queue`, 400 requests of every
 kind with umlauts and escapes and two lines that are not requests, with an
@@ -504,14 +521,20 @@ Findings that are not fixed, so nobody mistakes them for covered.
 - A commit asked for on the laptop is not queued there: a laptop that
   cannot reach the server says so and exits 1, and the caller asks again.
   A laptop that writes notes offline commits them once it is back.
-- The wait for a commit from the laptop counts its 15 minutes from the
-  time the laptop put in the request, by the laptop's clock. After them
-  the sums are not looked at again: the commit takes what the server's
-  copy has then, edits made since included, or a version older than the
-  laptop's when the sync is slower.
+- After the 15 minutes the sums decide nothing more but the failure when
+  git finds nothing to commit: the commit takes what the server's copy
+  has then, edits made since included, or for some of its files a version
+  older than the laptop's when the sync is slower.
 - While a commit from the laptop waits for the sync, the server's own
-  commits and Obsidian operations queued after it wait too, up to those
-  15 minutes.
+  commits and Obsidian operations queued after it wait too: 15 minutes,
+  and up to an hour for a file of the laptop's that git does not know.
+- A note the laptop changes again between two commits it asks for: the
+  first waits for bytes the laptop no longer has, the full 15 minutes,
+  then commits the newer version under its message, and the second finds
+  nothing to commit, which fails as above.
+- git runs in the configured vault with `-C`, so a repository around the
+  vault (before the vault's own `.git` is there) takes its commits.
+  `vault-commit`'s git route checks for that; ravnix-link does not.
 - `receive` answers `retry` when the delivery service has not resolved
   the commit within 10 s (no service running, a commit before it that
   waits); the laptop then does not learn how it ended. `status` and the
