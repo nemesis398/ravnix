@@ -28,7 +28,11 @@
 # roll and Remote Control restarts; a checkout of the user's own stays as it
 # was; huginn fetches with the read token and switches, pushing nothing; a
 # refused push leaves the switch and says so; a locked vault and a second
-# run at the same time do nothing.
+# run at the same time do nothing; a lock that names a revision only a fork
+# has (as GitHub serves them under the upstream's URL) is never followed,
+# huginn takes the head of upstream's branch and says that the two differ;
+# and with huginn's vault locked its run waits without a word, and the
+# hourly retry gets through once the vault is unlocked.
 {
   self,
   pkgs,
@@ -648,5 +652,88 @@ pkgs.testers.runNixOSTest {
         muninn.succeed("journalctl -u ravnix-claude-update.service | grep -q 'another update is running'")
         muninn.succeed("systemctl stop hold")
         assert len(switches(muninn)) == n
+
+    with subtest("huginn never takes a revision only a fork has; it follows upstream's own branch"):
+        git = "git --git-dir=" + PRIVATE + " "
+        cc = "git --git-dir=/srv/git/upstream/claude-code-nix.git "
+        # A fork's commit, served under upstream's URL, with a version
+        # Anthropic released: the download it names passes the check.
+        forge.succeed(
+            "cd /srv/work/cc && git checkout -q -b fork"
+            + " && printf '9.9.9\\n' > version && printf 'fake claude 9.9.9\\n' > binary"
+            + " && git add -A && git commit -qm fork && git push -q origin fork:refs/heads/fork"
+            + " && git checkout -q main"
+        )
+        release("9.9.9")
+        fork = forge.succeed(cc + "rev-parse refs/heads/fork").strip()
+        upstream_head = forge.succeed(cc + "rev-parse refs/heads/main").strip()
+        assert forge.execute(cc + "merge-base --is-ancestor " + fork + " main")[0] != 0
+        meta = json.loads(muninn.succeed(
+            "nix flake metadata --json --refresh "
+            + shlex.quote("git+https://forge/upstream/claude-code-nix.git?ref=refs/heads/fork&rev=" + fork)
+        ))
+        # What an agent on muninn could push: the same URL, another revision.
+        pushed = json.loads(forge.succeed(git + "show main:flake.lock"))
+        node = pushed["nodes"]["claude-code"]["locked"]
+        for k in ("lastModified", "narHash", "rev", "revCount"):
+            node[k] = meta["locked"][k]
+        forge.succeed(
+            "cd /srv/work/private && git fetch -q origin && git reset -q --hard origin/main"
+            + " && printf %s " + shlex.quote(json.dumps(pushed, indent=2) + "\n") + " > flake.lock"
+            + " && git commit -qam 'chore: update Claude Code to 9.9.9' && git push -q origin HEAD:main"
+        )
+        n = len(switches(huginn))
+        huginn.succeed("systemctl start ravnix-claude-update.service")
+        wait_note(huginn, "huginn runs Claude Code 2.4.0 now (was 2.0.0)")
+        lines = switches(huginn)
+        assert len(lines) == n + 1 and lines[-1].split()[:4] == ["huginn", "2.4.0", "new", "switch"], lines
+        assert all(l.split()[1] != "9.9.9" for l in lines), lines
+        took = json.loads(huginn.succeed("cat /var/lib/ravnix-claude-update/work/flake.lock"))["nodes"]["claude-code"]["locked"]["rev"]
+        assert took == upstream_head, (took, upstream_head)
+        # Said, and no failure.
+        assert fork[:12] in notes(huginn) and upstream_head[:12] in notes(huginn), notes(huginn)
+        assert huginn.succeed("systemctl show -p ExecMainStatus --value ravnix-claude-update.service").strip() == "0"
+        # Deployed so, the fork's revision in the lock is still not taken,
+        # and nobody is told again.
+        huginn.succeed("cp /var/lib/ravnix-claude-update/work/flake.lock /var/lib/ravnix-test/deployed/flake.lock")
+        before = notes(huginn)
+        huginn.succeed("systemctl start ravnix-claude-update.service")
+        huginn.succeed("journalctl -u ravnix-claude-update.service | grep -q 'is still the revision huginn runs'")
+        assert len(switches(huginn)) == n + 1
+        assert notes(huginn) == before, notes(huginn)
+
+    with subtest("huginn's follow waits quietly for a locked vault, and the hourly retry gets through after the unlock"):
+        upstream("2.5.0")
+        release("2.5.0")
+        as_user(huginn, "rbw lock")
+        before = notes(huginn)
+        fetches = forge_log().count("read GET")
+        n = len(switches(huginn))
+        huginn.fail("systemctl start ravnix-claude-update.service")
+        assert huginn.succeed("systemctl show -p ExecMainStatus --value ravnix-claude-update.service").strip() == "75"
+        huginn.succeed("journalctl -u ravnix-claude-update.service | grep -q 'vault is locked, or no manager of theirs runs'")
+        huginn.succeed("test -e /var/lib/ravnix-claude-update/pending")
+        assert notes(huginn) == before, notes(huginn)
+        assert forge_log().count("read GET") == fetches, forge_log()
+        assert len(switches(huginn)) == n
+        out = huginn.succeed("systemctl show ravnix-claude-update-retry.timer -p TimersCalendar")
+        assert "OnCalendar=*-*-* *:00:00" in out, out
+        huginn.succeed("systemctl is-active ravnix-claude-update-retry.timer")
+        # Unlocked, the next retry follows, and the waiting ends.
+        out = as_user(huginn, "script -qec " + shlex.quote("bash -ic ai-unlock") + " /dev/null")
+        assert "unlocked" in out, out
+        # The test started the update more often in ten seconds than
+        # systemd's start limit lets through; the timer's hourly retry
+        # never comes near it.
+        huginn.succeed("systemctl reset-failed ravnix-claude-update.service")
+        huginn.succeed("systemctl start ravnix-claude-update-retry.service")
+        wait_note(huginn, "huginn runs Claude Code 2.5.0 now (was 2.0.0)")
+        assert switches(huginn)[-1].split()[:4] == ["huginn", "2.5.0", "new", "switch"], switches(huginn)
+        huginn.wait_until_fails("test -e /var/lib/ravnix-claude-update/pending")
+        # With nothing waiting, the retry does not run the update.
+        runs = huginn.succeed("journalctl -u ravnix-claude-update.service | grep -c 'Starting' || true").strip()
+        huginn.succeed("systemctl start ravnix-claude-update-retry.service")
+        assert huginn.succeed("systemctl show -p ConditionResult --value ravnix-claude-update-retry.service").strip() == "no"
+        assert huginn.succeed("journalctl -u ravnix-claude-update.service | grep -c 'Starting' || true").strip() == runs
   '';
 }

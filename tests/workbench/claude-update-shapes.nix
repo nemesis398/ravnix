@@ -1,6 +1,7 @@
 # The Claude Code update's units as each shape makes them, evaluated and never
 # built (tests/workbench/claude-update.nix runs them): the server bumps and
-# rolls, the laptop follows and rolls nothing, a host without the private
+# rolls, the laptop follows, rolls nothing and retries hourly while a follow
+# waits for the vault, a host without the private
 # flake's source has no update, a container has none either, and a remote
 # without a token, an update without a remote, and one in a container are
 # refused by name.
@@ -175,6 +176,36 @@ let
     [
       (!has (userExec huginn "ravnix-claude-update-finish") "--roll-unit")
       "the laptop's finish starts a roll"
+    ]
+    [
+      (
+        huginn.config.systemd.timers ? ravnix-claude-update-retry
+        && huginn.config.systemd.timers.ravnix-claude-update-retry.timerConfig.OnCalendar == "hourly"
+      )
+      "the laptop has no hourly retry for a follow that waits"
+    ]
+    [
+      (
+        (huginn.config.systemd.services.ravnix-claude-update-retry.unitConfig.ConditionPathExists or null)
+        == "/var/lib/ravnix-claude-update/pending"
+      )
+      "the laptop's retry does not wait for the pending marker"
+    ]
+    [
+      (has (huginn.config.systemd.services.ravnix-claude-update-retry.serviceConfig.ExecStart or ""
+      ) "systemctl start --no-block ravnix-claude-update.service")
+      "the laptop's retry does not start the update"
+    ]
+    [
+      (
+        !muninn.config.systemd.timers ? ravnix-claude-update-retry
+        && !muninn.config.systemd.services ? ravnix-claude-update-retry
+      )
+      "the server has a retry, which only the laptop's follow needs"
+    ]
+    [
+      (has (lib.concatStringsSep " " (hm huginn).ravnix-claude-update-prepare.Service.Environment) "-rbw-")
+      "the laptop's prepare cannot ask rbw whether the vault is locked"
     ]
     [
       (

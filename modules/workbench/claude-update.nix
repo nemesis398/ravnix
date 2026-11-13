@@ -20,9 +20,15 @@
 #           (the herdr panes) and claude-remote-control-roll.service
 #           (Remote Control, restarted once it holds no phone session).
 #   laptop  the user's prepare fetches the private flake with the read token;
-#           if its lock moved the claude-code input, root builds, verifies
-#           and switches the same way, and finish says so. It pushes
-#           nothing, so both hosts converge on the server's one commit.
+#           if its lock moved the claude-code input, that is only the sign
+#           to follow: root runs `nix flake update claude-code` itself, on a
+#           copy of the flake the host was deployed from, and builds,
+#           verifies and switches what that gives, the same way; finish says
+#           so, and says when the server's lock named another revision. It
+#           pushes nothing. While the user's side cannot run (the vault is
+#           locked, or no user manager runs), the run ends with 75 and tells
+#           nobody, and ravnix-claude-update-retry.timer starts it again
+#           every hour until it gets through.
 #
 # Who does what, and why (decided for Task 6.1 from the spec and the modules
 # already there):
@@ -30,12 +36,22 @@
 #     and no trusted Nix user, because every agent runs as the account). So
 #     root must not build what the account wrote either: it builds the flake
 #     the host was deployed from (ravnix.claudeUpdate.flake, the private
-#     flake's own `self`, a store path), and of the user's lock it takes the
+#     flake's own `self`, a store path), and of the new lock it takes the
 #     claude-code nodes only, and only a new revision of the same repository
 #     (another owner, URL, input or node shape is refused), and only a
-#     version newer than the running one. The worst a compromised account
-#     can choose is another revision of claude-code-nix, whose download
-#     claude-code-verify still checks against Anthropic's manifest.
+#     version newer than the running one.
+#   - That still leaves the revision. GitHub serves a commit of any fork
+#     under the upstream's own URL, and claude-code-verify checks the
+#     download the revision's own package names, which a fork can point at
+#     Anthropic's genuine binary while it installs something else. So on
+#     the server, whose account is the one that bumps, a compromised account
+#     can still have root build and install such a revision. The accepted
+#     cut: ravnix takes only the input's package, which runs as that same
+#     account, so it gains nothing it did not have. The laptop's user is
+#     another matter (and in wheel), so the laptop does not trust the
+#     server's lock for the revision: root there asks the input's own
+#     repository for the head of its branch, and the pushed lock only says
+#     when to.
 #   - The tokens and the signing key are the user's, from the user's vault
 #     through rbw (modules/common/tokens.nix, modules/common/rbw.nix): the
 #     prepare and finish steps run as user units, where git finds the token
@@ -61,9 +77,12 @@
 #     }; }
 #
 # and a token for that remote in ravnix.secrets.gitTokens: the write token
-# on the server, a read-only one on the laptop. On the laptop the user's
-# manager must run (a login, or linger) for the prepare step; while it does
-# not, the run fails and the next one tries again.
+# on the server, a read-only one on the laptop. On the laptop a follow needs
+# the user's manager to run (a login, or linger) and the vault to be
+# unlocked: the token for the private remote comes from it. A run at 06:00,
+# or the catch-up at boot before anyone logged in, finds neither; it waits
+# quietly for the hourly retry, which runs only while
+# /var/lib/ravnix-claude-update/pending says a follow waits.
 { self }:
 {
   config,
@@ -90,13 +109,15 @@ let
   tokenUrls = map (t: t.url) config.ravnix.secrets.gitTokens;
 
   # What the user's steps need on PATH: git with ssh-keygen for the
-  # signature, Nix for the bump, systemctl to start the roll.
+  # signature, Nix for the bump, systemctl to start the roll, rbw to ask
+  # whether the vault is unlocked.
   userPath = lib.makeBinPath [
     pkgs.git
     pkgs.openssh
     config.nix.package
     pkgs.coreutils
     config.systemd.package
+    home.programs.rbw.package
   ];
   userEnv = [
     "PATH=${userPath}:${profile}:/run/current-system/sw/bin"
@@ -321,6 +342,23 @@ in
         OnCalendar = cfg.times;
         Persistent = true;
       };
+    };
+
+    # The laptop's follow, again, while it waits: claude-roll writes the
+    # marker when a run ends with 75 (the vault locked, no user manager,
+    # upstream or the manifest out of reach) and removes it when a run gets
+    # through.
+    systemd.services.ravnix-claude-update-retry = lib.mkIf (!server) {
+      description = "Claude Code update: try the follow again while it waits";
+      unitConfig.ConditionPathExists = "${rootState}/pending";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${config.systemd.package}/bin/systemctl start --no-block ravnix-claude-update.service";
+      };
+    };
+    systemd.timers.ravnix-claude-update-retry = lib.mkIf (!server) {
+      wantedBy = [ "timers.target" ];
+      timerConfig.OnCalendar = "hourly";
     };
 
     home-manager.users.${user} = {
