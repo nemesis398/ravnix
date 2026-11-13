@@ -17,7 +17,8 @@ LOCK_WAIT_MS :: 60_000
 USAGE :: `usage: ravnix-dict [--file PATH] [--state DIR] COMMAND [ARG...]
 
   add WORD [--lang de,en] [--heard "A;B"]
-                       add a word, or the languages and mishearings it lacks
+                       add a word, or the mishearings and languages it lacks
+                       (a word without lang= is in every language already)
   remove WORD          remove a word, in any case, from the dictionary here,
                        and from every tool at the next sync
   sync [--adapter NAME] [--allow-empty]
@@ -305,12 +306,19 @@ run_add :: proc(cfg: Config, word: string, langs, heard: []string) -> int {
 	a := Add{word, langs, heard}
 	return edit(cfg, proc(cfg: Config, d: ^Dictionary, data: rawptr) -> (bool, int) {
 			a := (^Add)(data)
-			there := has_word(d^, a.word)
+			spelled := spelling_of(d^, a.word)
+			// --lang adds to a word's languages, and never narrows one that
+			// is in every language: that is an edit of the file.
+			everywhere := spelled != "" && len(a.langs) > 0 && langs_of(d^, a.word, context.temp_allocator).all
+			note := "; it is in every language, which --lang does not narrow (restrict it in the file)" if everywhere else ""
 			if !add_word(d, a.word, a.langs, a.heard, context.allocator) {
-				fmt.fprintf(cfg.out, "%s is already in the dictionary\n", a.word)
+				if spelled != a.word {
+					note = fmt.tprintf("%s; it is spelled %s, which an edit of the file changes", note, spelled)
+				}
+				fmt.fprintf(cfg.out, "%s is already in the dictionary%s\n", a.word, note)
 				return false, 0
 			}
-			fmt.fprintf(cfg.out, "%s %s\n", "updated" if there else "added", a.word)
+			fmt.fprintf(cfg.out, "%s %s%s\n", "updated" if spelled != "" else "added", a.word, note)
 			return true, 0
 		}, &a)
 }

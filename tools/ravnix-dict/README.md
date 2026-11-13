@@ -13,7 +13,8 @@ can wipe it.
 usage: ravnix-dict [--file PATH] [--state DIR] COMMAND [ARG...]
 
   add WORD [--lang de,en] [--heard "A;B"]
-                       add a word, or the languages and mishearings it lacks
+                       add a word, or the mishearings and languages it lacks
+                       (a word without lang= is in every language already)
   remove WORD          remove a word, in any case, from the dictionary here,
                        and from every tool at the next sync
   sync [--adapter NAME] [--allow-empty]
@@ -50,7 +51,19 @@ two-letter languages it belongs to, separated by `,`, and `heard=` what
 speech recognition wrote instead, separated by `;`. A word is one entry
 whatever its case: `GitHub`, `github` and `GITHUB` are one word, spelled
 as its first line spells it, with the languages and mishearings of all its
-lines. The case is folded rune by rune to lower case, so `Ärger` and
+lines.
+
+**Languages.** A word without `lang=` is in every language, as the
+editor's LanguageTool code (`modules/common/nvim/lua/ravnix_languagetool.lua`)
+reads the file; so is a word of which any one line has no `lang=`, or an
+empty one. Only a word whose every line names languages is limited to
+them, the union of those lines. `langs_of` returns `all` for the first
+kind and the codes for the second. `add WORD --lang xx` adds `xx` to a
+limited word, and never narrows a word that is in every language: it
+leaves the word as it is and says so in its one line of output. To limit
+such a word, edit its line in the file. `add` of a word that is there in
+another spelling says how it is spelled; a new spelling is an edit of the
+file too. The case is folded rune by rune to lower case, so `Ärger` and
 `ärger` are one word, but `Straße` and `STRASSE` are two.
 
 **Byte for byte.** Every line is kept as it was written, with its own line
@@ -172,7 +185,9 @@ a tool again is taken out of the tool at the next sync.
 **An emptied dictionary.** A file with no word left, when the last sync
 knew some, is more often an editor that truncated the file before writing
 it, or a checkout gone wrong, than a wish to empty every tool. sync refuses
-it and touches nothing; `sync --allow-empty` says it is meant. A file that
+it and touches nothing; `sync --allow-empty` says it is meant, and then the
+words of the last sync go from every tool. A word added in a tool since
+the last sync is not among them: it comes into the file, as always. A file that
 was only half written when sync read it records the missing words as
 removed and takes them from the tools; once the file is whole they are in
 it again, out of `removed`, and every tool gets them back at the next sync.
@@ -180,7 +195,11 @@ it again, out of `removed`, and every tool gets them back at the next sync.
 The record is per host on purpose: each host has its own tools and its own
 checkout of the dictionary. A removal made on one host and pulled with git
 on another is a line gone from the file there, which that host's next sync
-sees through its own `known`.
+sees through its own `known`, on one condition: that host has synced at
+least once while the word was in its file, and kept its state since. A
+host that never did sees the word in its tools as a new one and adds it
+back, the same gap as a line deleted by hand before a host's first sync
+(below).
 
 ## Adapters
 
@@ -220,6 +239,13 @@ from an old list, the emptied file, a merge conflict, a corrupt and a lost
 state, duplicates and empty words from a tool, a 50 000 word sync each way,
 and a file changed while sync reads the tools.
 
+The leak check of `ravnix-dict-tests` (`ODIN_TEST_FAIL_ON_BAD_MEMORY`)
+covers almost nothing here: `run` puts a whole command into one arena,
+which it frees at the end, and the tests use arenas and the temporary
+allocator for what they parse. The design is the arena (a command runs
+to its end, and nothing outlives it); a leak inside a command is not
+caught, and does not outlive it either.
+
 `ravnix-dict-bench` syncs `bench/dictionary.txt` (2000 made-up words) with
 no adapter against `bench/state`, whose `known` holds two words that the
 file no longer has.
@@ -243,6 +269,29 @@ file no longer has.
   editor's LanguageTool code that appends to the dictionary
   (`modules/common/nvim/lua/ravnix_languagetool.lua`).
 - Folding case rune by rune keeps `Straße` and `STRASSE` apart: a word
-  that differs only so is two entries.
+  that differs only so is two entries. This is on purpose, since full
+  folding would make `Masse` and `Maße` one word.
+- No Unicode normalization: `Ärger` in NFC and in NFD (`A` and U+0308)
+  are two keys, so a tool that returns NFD puts a second spelling of the
+  word into the file. Odin's core has no normalization to apply.
+- A removed word typed into a tool again is taken out of the tool at the
+  next sync, unattended once the watcher (Task 7.2) runs it; sync counts
+  such words on standard output but does not name them. This is the price
+  of a tool restored from an old backup not bringing a word back; whether
+  a word typed into a tool long after its removal should win is a
+  decision for the maintainer.
+- The editor's LanguageTool code refuses fewer words than ravnix-dict: it
+  can append a word that starts with `#` (read as a comment), or one with
+  a control character or over 256 bytes (a line that is skipped, with a
+  warning). Such a word is lost to sync until that code applies the same
+  rules (Task 7.2).
+- The state's place comes from `XDG_STATE_HOME`. A shell and a systemd
+  user unit that see different values have two states and two locks; the
+  watcher of Task 7.2 should give the unit the shell's value, or
+  `--state`.
+- A crash between writing the new file and renaming it leaves
+  `.NAME.ravnix-dict-new` next to the dictionary, in the private flake's
+  checkout, where `git add -A` would commit it. The next command that
+  writes replaces it; until then it can be deleted by hand.
 - A field ravnix-dict does not know is kept, and warned about on every
   run that reads the file, so a deliberate one keeps warning.

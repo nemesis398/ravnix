@@ -72,7 +72,12 @@ reads_words_and_fields :: proc(t: ^testing.T) {
 		}
 	}
 	langs := dict.langs_of(d, "indented", context.temp_allocator)
-	testing.expect_value(t, strings.join(langs, ",", context.temp_allocator), "de,en")
+	testing.expect(t, !langs.all)
+	testing.expect_value(t, strings.join(langs.codes, ",", context.temp_allocator), "de,en")
+	// A word without lang= is known in every language.
+	langs = dict.langs_of(d, "Muninn", context.temp_allocator)
+	testing.expect(t, langs.all)
+	testing.expect_value(t, len(langs.codes), 0)
 	heard := dict.heard_of(d, "Huginn", context.temp_allocator)
 	testing.expect_value(t, strings.join(heard, ";", context.temp_allocator), "Hugin;who gin")
 	heard = dict.heard_of(d, "indented", context.temp_allocator)
@@ -82,12 +87,28 @@ reads_words_and_fields :: proc(t: ^testing.T) {
 @(test)
 words_that_differ_in_case_are_one_entry_and_keep_their_first_spelling :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
-	d, why := dict.parse("GitHub | lang=de\ngithub | lang=en\nGITHUB\nÄrger\närger\n", context.temp_allocator)
+	d, why := dict.parse("GitHub | lang=de\ngithub | lang=en\nÄrger\närger\n", context.temp_allocator)
 	testing.expect_value(t, why, "")
 	words := dict.words(d, context.temp_allocator)
 	testing.expect_value(t, strings.join(words, "/", context.temp_allocator), "GitHub/Ärger")
 	langs := dict.langs_of(d, "GITHUB", context.temp_allocator)
-	testing.expect_value(t, strings.join(langs, ",", context.temp_allocator), "de,en")
+	testing.expect(t, !langs.all)
+	testing.expect_value(t, strings.join(langs.codes, ",", context.temp_allocator), "de,en")
+}
+
+@(test)
+a_word_with_one_line_without_lang_is_in_every_language :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	for text in ([]string{"Foo\nfoo | lang=en\n", "foo | lang=en\nFOO\n", "foo | lang=\n", "foo | heard=fu\n"}) {
+		d, _ := dict.parse(text, context.temp_allocator)
+		langs := dict.langs_of(d, "foo", context.temp_allocator)
+		testing.expectf(t, langs.all, "%q is in every language: %v", text, langs)
+	}
+	// A word that is not there is in no language.
+	d, _ := dict.parse("bar\n", context.temp_allocator)
+	langs := dict.langs_of(d, "foo", context.temp_allocator)
+	testing.expect(t, !langs.all)
+	testing.expect_value(t, len(langs.codes), 0)
 }
 
 @(test)
@@ -105,7 +126,7 @@ warns_about_fields_it_cannot_read_and_keeps_the_word :: proc(t: ^testing.T) {
 	testing.expectf(t, strings.contains(all, "line 4"), "an empty field is named: %s", all)
 	// Both values of a field given twice count.
 	langs := dict.langs_of(d, "two", context.temp_allocator)
-	testing.expect_value(t, strings.join(langs, ",", context.temp_allocator), "de,en")
+	testing.expect_value(t, strings.join(langs.codes, ",", context.temp_allocator), "de,en")
 }
 
 @(test)
@@ -200,12 +221,18 @@ adding_a_word_that_is_there_merges_its_fields_or_changes_nothing :: proc(t: ^tes
 		dict.serialize(d, context.temp_allocator),
 		"# head\nHuginn | lang=de,en | heard=Hugin;who gin | note=kept\nMuninn\n",
 	)
-	testing.expect(t, dict.add_word(&d, "Muninn", {"en"}, nil, context.temp_allocator))
+	// A word without lang= is in every language: --lang never narrows it.
+	before := dict.serialize(d, context.temp_allocator)
+	testing.expect(t, !dict.add_word(&d, "Muninn", {"en"}, nil, context.temp_allocator))
+	testing.expect_value(t, dict.serialize(d, context.temp_allocator), before)
+	// A mishearing still reaches it; the languages stay as they are.
+	testing.expect(t, dict.add_word(&d, "Muninn", {"en"}, {"moon in"}, context.temp_allocator))
 	testing.expect_value(
 		t,
 		dict.serialize(d, context.temp_allocator),
-		"# head\nHuginn | lang=de,en | heard=Hugin;who gin | note=kept\nMuninn | lang=en\n",
+		"# head\nHuginn | lang=de,en | heard=Hugin;who gin | note=kept\nMuninn | heard=moon in\n",
 	)
+	testing.expect(t, dict.langs_of(d, "muninn", context.temp_allocator).all)
 }
 
 @(test)
@@ -269,6 +296,7 @@ a_key_is_the_lower_case_of_any_word :: proc(t: ^testing.T) {
 		{"Ärger", "ärger"},
 		{"Straße", "straße"},
 		{"[@Z]", "[@z]"},
+		{"\u1e9e", "ß"},
 	}
 	for c in cases {
 		testing.expect_value(t, dict.key(c[0], context.temp_allocator), c[1])

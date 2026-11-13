@@ -356,6 +356,7 @@ an_emptied_dictionary_is_refused_until_asked_for :: proc(t: ^testing.T) {
 		r := run(f, adapters(), "sync")
 		testing.expect_value(t, r.code, 1)
 		testing.expectf(t, strings.contains(r.err, "--allow-empty"), "says how: %s", r.err)
+		testing.expectf(t, strings.contains(r.err, "the 2 words of the last sync"), "says which words would go: %s", r.err)
 		testing.expect_value(t, joined(f, ALPHA), "a,b")
 		testing.expect_value(t, read_file(f, f.file), text)
 	}
@@ -466,6 +467,7 @@ a_file_changed_while_sync_reads_the_tools_is_not_overwritten :: proc(t: ^testing
 	defer fixture_destroy(f)
 	write_file(f, f.file, "a\n")
 	sneak_path = f.file
+	sneaked = false
 	defer sneak_path = ""
 	list := [1]dict.Adapter{{name = "sneaky", read = read_sneaky, write = write_sneaky}}
 	r := run(f, list[:], "sync")

@@ -140,9 +140,10 @@ sync_once :: proc(cfg: Config, list: []Adapter, allow_empty: bool) -> Outcome {
 	if len(d.keys) == 0 && known_found && len(known) > 0 && !allow_empty {
 		warn(
 			cfg,
-			"%s holds no word, and the last sync knew %d; if every word is to go from every tool, run ravnix-dict sync --allow-empty",
+			"%s holds no word: the %d %s of the last sync would go from every tool (a tool's word added since would still come in); if that is meant, run ravnix-dict sync --allow-empty",
 			cfg.file,
 			len(known),
+			"word" if len(known) == 1 else "words",
 		)
 		return .Failed
 	}

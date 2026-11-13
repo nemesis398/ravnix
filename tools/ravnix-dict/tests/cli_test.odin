@@ -46,6 +46,35 @@ add_takes_languages_and_mishearings :: proc(t: ^testing.T) {
 }
 
 @(test)
+add_with_a_language_never_narrows_a_word_in_every_language :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, f.file, "Muninn\n")
+	r := run(f, nil, "add", "muninn", "--lang", "en")
+	testing.expectf(t, r.code == 0, "add exits 0: %s", r.err)
+	testing.expect_value(t, read_file(f, f.file), "Muninn\n")
+	testing.expectf(t, strings.contains(r.out, "every language"), "says why the language is not added: %q", r.out)
+	testing.expect_value(t, len(lines(f, r.out)), 1)
+	// With a mishearing, that is added, and the line says both.
+	r = run(f, nil, "add", "muninn", "--lang", "en", "--heard", "moon in")
+	testing.expect_value(t, r.code, 0)
+	testing.expect_value(t, read_file(f, f.file), "Muninn | heard=moon in\n")
+	testing.expectf(t, strings.contains(r.out, "every language"), "says it: %q", r.out)
+	testing.expect_value(t, len(lines(f, r.out)), 1)
+}
+
+@(test)
+add_in_another_case_points_at_the_file_for_the_spelling :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, f.file, "Github\n")
+	r := run(f, nil, "add", "GitHub")
+	testing.expect_value(t, r.code, 0)
+	testing.expect_value(t, read_file(f, f.file), "Github\n")
+	testing.expectf(t, strings.contains(r.out, "Github") && strings.contains(r.out, "file"), "says how to respell it: %q", r.out)
+}
+
+@(test)
 refuses_a_word_the_file_cannot_hold :: proc(t: ^testing.T) {
 	f := fixture(t)
 	defer fixture_destroy(f)

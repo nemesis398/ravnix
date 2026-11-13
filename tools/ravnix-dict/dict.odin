@@ -305,9 +305,47 @@ values :: proc(d: Dictionary, word, name: string, separator: string, allocator: 
 	return out[:]
 }
 
-// langs_of is the languages of word: the union of the lang= of its lines.
-langs_of :: proc(d: Dictionary, word: string, allocator: runtime.Allocator) -> []string {
-	return values(d, word, "lang", ",", allocator)
+// Langs is the languages a word belongs to: every one, or those in codes.
+Langs :: struct {
+	// No line of the word restricts it: a line without lang=, or with an
+	// empty one, puts the word in every language, as the editor's
+	// LanguageTool code reads the file. codes is then empty.
+	all:   bool,
+	codes: []string,
+}
+
+// langs_of is the languages of word: every language when any line of it
+// has no lang=, else the union of its lines' lang=. A word that is not in
+// the dictionary is in none.
+langs_of :: proc(d: Dictionary, word: string, allocator: runtime.Allocator) -> Langs {
+	k := key(word, context.temp_allocator)
+	for l in d.lines {
+		if l.kind != .Entry || l.key != k {
+			continue
+		}
+		restricted := false
+		for f in l.fields {
+			if f.key == "lang" && strings.trim(f.value, " ,") != "" {
+				restricted = true
+			}
+		}
+		if !restricted {
+			return Langs{all = true}
+		}
+	}
+	return Langs{codes = values(d, word, "lang", ",", allocator)}
+}
+
+// spelling_of is how the dictionary spells word: as its first line does,
+// or "" when it is not there.
+spelling_of :: proc(d: Dictionary, word: string) -> string {
+	k := key(word, context.temp_allocator)
+	for l in d.lines {
+		if l.kind == .Entry && l.key == k {
+			return l.word
+		}
+	}
+	return ""
 }
 
 // heard_of is what speech recognition wrote for word: the union of its
@@ -376,7 +414,9 @@ merge_field :: proc(fields: ^[dynamic]Field, name, separator: string, add: []str
 
 // add_word adds word with its languages and mishearings, as a new line at
 // the end in the file's own line break, or, when the word is there in any
-// case, adds what its first line lacks of them. It reports a change; a
+// case, adds what its first line lacks of them. A word that is there in
+// every language stays so: langs never narrows it, which only an edit of
+// the file does. It reports a change; a
 // word that is there with all of them changes nothing. word must pass
 // word_problem, and each value value_problem.
 add_word :: proc(d: ^Dictionary, word: string, langs, heard: []string, allocator: runtime.Allocator) -> bool {
@@ -389,7 +429,10 @@ add_word :: proc(d: ^Dictionary, word: string, langs, heard: []string, allocator
 			}
 			fields := make([dynamic]Field, 0, len(l.fields) + 2)
 			append(&fields, ..l.fields)
-			changed := merge_field(&fields, "lang", ",", langs, langs_of(d^, word, context.temp_allocator), allocator)
+			changed := false
+			if have := langs_of(d^, word, context.temp_allocator); !have.all {
+				changed = merge_field(&fields, "lang", ",", langs, have.codes, allocator)
+			}
 			changed |= merge_field(&fields, "heard", ";", heard, heard_of(d^, word, context.temp_allocator), allocator)
 			if !changed {
 				return false
