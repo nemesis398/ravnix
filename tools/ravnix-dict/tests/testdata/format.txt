@@ -1,0 +1,23 @@
+# The dictionary (ravnix.dictionary.file): the words every tool with a
+# word list gets. ravnix-dict reads and writes it; a word added in any tool
+# comes back here, and a word is removed only here.
+#
+# One entry per line: the word, then optional fields after " | ":
+#   lang=   the languages it belongs to, as two-letter codes (lang=de,en)
+#   heard=  what speech recognition wrote instead, separated by ";"
+# Lines starting with # are comments.
+
+Huginn | heard=Hugin;who gin
+Muninn
+CLAUDE.md
+Open WebUI | lang=en
+Übergrößenträger | lang=de
+Straße
+C#
+self-hosted | lang=en | heard=self hosted
+  indented   |   lang=de,en   |heard=in dented
+Zettelkasten | lang=de | note=a field ravnix-dict does not know
+
+# A block of its own, after a blank line.
+Nix
+nixpkgs

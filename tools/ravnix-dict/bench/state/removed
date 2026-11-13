@@ -1,0 +1,3 @@
+# ravnix-dict: the words removed from the dictionary, in lower case; sync takes them from every tool, until the word is in the dictionary again
+entfernt
+old word

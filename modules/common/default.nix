@@ -5,6 +5,7 @@
 # which the flake's homeModules.common adds to this one: the `claude` function
 # of the shell starts its build (./bash.nix). ./chrome-devtools-mcp.nix gives
 # Claude Code its browser tools, a headless Helium, on both hosts.
+# ./dictionary.nix puts ravnix-dict on the PATH, with the user's dictionary.
 #
 # It reads ravnix.user, ravnix.secrets, ravnix.services, ravnix.dev,
 # ravnix.shell, ravnix.editor, ravnix.dictionary and ravnix.theme, so
@@ -24,6 +25,7 @@
     ./nvim.nix
     ./scripts.nix
     ./chrome-devtools-mcp.nix
+    ./dictionary.nix
   ];
 
   # Outside a host, home-manager is told who it is working for once, here.
