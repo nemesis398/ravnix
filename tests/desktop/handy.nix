@@ -207,13 +207,23 @@ pkgs.runCommand "desktop-handy"
     grep -q 'a == "--toggle-post-process"' "$src/lib.rs" || fail "Handy no longer forwards --toggle-post-process to the running instance"
     grep -q 'SIGUSR2 => ("transcribe", "SIGUSR2")' "$src/signal_handle.rs" || fail "SIGUSR2 is no longer Handy's plain toggle"
     grep -q 'PR_SET_NAME, c"Handy-worker"' "$src/engine_supervisor/worker.rs" || fail "Handy's transcription worker is no longer named Handy-worker: the decoy below models the wrong name"
-    # Handy's settings name the model as repository/filename
-    # (catalog/mod.rs), so settings carried over from another install find
-    # their model only while every catalog entry has both: the catalog parses,
-    # holds models, and each has a repository and files that each have a
-    # .gguf filename. No particular model is asserted.
+    # Handy's settings name the model as repository/filename: the selected
+    # model is looked up by that id in the map of models, which is keyed by
+    # the catalog entry's id for its default file (catalog/mod.rs, From for
+    # ModelDescriptor) and gets the id of every other file found on disk in
+    # managers/model.rs (render_model_info). Settings carried over from
+    # another install find their model only while both say repository/filename
+    # and every catalog entry has both: the catalog parses, holds models, and
+    # each has a repository and files that each have a .gguf filename. No
+    # particular model is asserted.
     catalog=$src/catalog/catalog.json
-    grep -q 'format!("{}/{}", m.repository, f.filename) == model_id' "$src/catalog/mod.rs" || fail "Handy no longer finds a model by repository/filename"
+    grep -qF 'id: format!("{}/{}", m.repository, default_filename),' "$src/catalog/mod.rs" \
+      || fail "Handy's catalog no longer keys a model by repository/filename: settings carried over may not find theirs"
+    # The arm and the line after it, through a file: a pipe into grep -q can
+    # fail under pipefail when grep stops reading early.
+    { grep -A1 -F '(ModelSource::HuggingFace { repo_id, .. }, Some(f)) => {' "$src/managers/model.rs" || true; } > "$work/id-on-disk"
+    grep -qF 'format!("{}/{}", repo_id, f.filename)' "$work/id-on-disk" \
+      || fail "Handy no longer names a model file found on disk repository/filename: settings carried over may not find theirs"
     jq -e '
       (.models | type == "array" and length > 0)
       and all(.models[];
