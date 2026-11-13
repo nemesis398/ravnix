@@ -1,9 +1,10 @@
 # HTTPS tokens for git, from the vault (ravnix.secrets.gitTokens): for each
 # remote, a credential helper that git asks for that remote alone, and that
 # answers with the forge's user and the token, read with rbw at that moment.
-# On the server this is how the update timer (Task 6.1, claude-roll's
-# remote) pushes the private flake with the write token; another remote,
-# even one on the same host, gets nothing from it.
+# On the server this is how the update timer (modules/workbench/
+# claude-update.nix) pushes the private flake with the write token, and on
+# the laptop how it fetches it with a read-only one; another remote, even
+# one on the same host, gets nothing from it.
 #
 # How narrow it is:
 #   - git asks the helper only for URLs under its remote

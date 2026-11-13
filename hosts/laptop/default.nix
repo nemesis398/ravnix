@@ -63,6 +63,9 @@ in
     self.nixosModules.common
     ./hide-other-disks.nix
     ./zram.nix
+    # The Claude Code update, whose laptop end follows the lock the server
+    # pushes (the module says how).
+    (import ../../modules/workbench/claude-update.nix { inherit self; })
   ];
 
   ravnix.shape = "laptop";

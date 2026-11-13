@@ -151,8 +151,10 @@ These cannot be declared, because each one is a login or a secret.
   (`rbw-relock`, and the syncs' own lines): the syncs fail with status 75 and
   stall until you unlock, and a vault copy that does not sync is one the agents
   commit stale. A message to Matrix (Task 5.6) would reach the phone.
-- The Remote Control unit is not rolled by `claude-roll` (it is not a herdr pane),
-  so Task 6.1 must restart it after a Claude Code update.
+- The Remote Control unit is not rolled by `claude-roll` (it is not a herdr pane);
+  after a Claude Code update `claude-remote-control-roll.service` restarts it
+  once it holds no session from the phone (`claude-update.nix`), and tells you
+  when one stays open until the deadline.
 - herdr's notifications are set to `terminal` (ask the terminal that is attached);
   with nobody attached nothing is shown. What must reach the phone goes to Matrix
   (Task 5.6).

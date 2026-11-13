@@ -36,8 +36,8 @@ The full gate of this repository checks the version in ravnix's own
 `flake.lock`. A private flake that makes ravnix's `claude-code` input follow
 its own, as the template does, installs the version of its own lock, which
 that gate never sees. The private flake checks that one itself, with the
-same tool on its own `packages.claude-code.download` (Task 6.1's update
-timer).
+same tool on the download of the version it switches to
+(`modules/workbench/claude-update.nix`, the update timer).
 
 The gate remembers what it verified, in
 `${XDG_STATE_HOME:-$HOME/.local/state}/ravnix/claude-code-verified`. While

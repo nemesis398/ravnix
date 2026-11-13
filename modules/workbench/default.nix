@@ -25,6 +25,7 @@ in
   imports = [
     self.nixosModules.common
     ./calendar.nix
+    (import ./claude-update.nix { inherit self; })
     ./dev.nix
     ./herdr.nix
     ./mail.nix

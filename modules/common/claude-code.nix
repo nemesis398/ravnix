@@ -13,8 +13,8 @@
 # flake.lock. A private flake that makes ravnix's claude-code input follow
 # its own, as templates/default/flake.nix does, installs the version of its
 # own lock, which that gate never sees; the private flake checks that one
-# itself, on its own evaluation's packages.claude-code.download (Task 6.1's
-# update timer).
+# itself: the update timer (modules/workbench/claude-update.nix) runs
+# claude-code-verify on the download of each version before it switches.
 #
 # Why the auto-updater is off: Nix installs Claude Code, and a binary that
 # replaced itself would be one the gate never checked. The package's wrapper

@@ -15,7 +15,8 @@
 # on the version it started with until it is restarted
 # (`systemctl --user restart claude-remote-control`), because the claude-roll
 # tool (Task 6.2) restarts the sessions in herdr's panes and this one is not
-# in a pane; Task 6.1 must include it in a Claude Code update.
+# in a pane; after an update, claude-remote-control-roll.service
+# (./claude-update.nix) restarts it once it holds no phone session.
 #
 # What that VM learned, and what is done about it:
 #   - The first run asks "Enable Remote Control? (y/n)" on a terminal, which a

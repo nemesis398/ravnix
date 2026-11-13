@@ -41,9 +41,9 @@ derivation graph is what ties the patched program to those bytes.
 
 The gate checks the version in ravnix's own `flake.lock`. A private flake
 that makes ravnix's `claude-code` input follow its own installs the version
-of its own lock, which this gate never sees, and runs the same command on
-its own `packages.x86_64-linux.claude-code.download` (Task 6.1's update
-timer).
+of its own lock, which this gate never sees; the update timer
+(`modules/workbench/claude-update.nix`, `claude-roll update`) runs the same
+command on the download of each version before it switches to it.
 
 `scripts/check.sh` runs the check in the full gate, before every push,
 outside the build sandbox because it needs the network:
@@ -58,9 +58,9 @@ The gate records each version and download it verified
 download verified before and fails it for any other: the gate is the only
 check ravnix has, and a push that bumps Claude Code while the manifest
 cannot be reached would otherwise go out unverified, so that push waits until
-`downloads.claude.ai` answers. A mismatch (exit 1) always fails. Task 6.1's
-update timer tells exit 3 (try again at the next run) from exit 1 (do not
-roll this binary).
+`downloads.claude.ai` answers. A mismatch (exit 1) always fails. The update
+timer tells exit 3 (switch nothing, try again at the next run) from exit 1
+(never switch to this binary, and tell the user).
 
 ## Tests and bench
 
