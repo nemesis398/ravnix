@@ -22,7 +22,16 @@
 #     step, not a link into the read-only store: the step replaces a link or
 #     an old file, and leaves a file Bitwarden can write.
 #   - The step creates the profile directory 0700, as Helium does, when it is
-#     missing, and leaves the mode of one that exists.
+#     missing, and leaves the mode of one that exists. It creates
+#     NativeMessagingHosts/ in a profile that lacks it, as one copied from
+#     another machine without that directory does: Bitwarden copies its proxy
+#     into it before it writes its manifest, and does not create it, so
+#     without it generateManifests() throws and listen() is skipped.
+#   - The step runs after writeBoundary and before linkGeneration, so the
+#     Claude manifest's link finds the directories already private; after
+#     linkGeneration, home-manager would create them 0755.
+#   - A step that cannot write only warns: the rest of the home's activation
+#     (the desktop's whole configuration) still runs.
 #   - Nothing of either on a host without the desktop (the server shape), and
 #     no Claude manifest with Claude Code off; Bitwarden's stays, because
 #     Bitwarden desktop is still installed.
@@ -84,6 +93,12 @@ let
       claudeFile desktop != null && !(claudeFile desktop).force
     ) "the Claude manifest does not replace a file in its way")
     (lib.optional (!hasStep desktop) "the desktop has no activation step ${step}")
+    (lib.optional (
+      hasStep desktop && !(lib.elem "writeBoundary" hm.home.activation.${step}.after)
+    ) "the step ${step} does not run after writeBoundary")
+    (lib.optional (
+      hasStep desktop && !(lib.elem "linkGeneration" hm.home.activation.${step}.before)
+    ) "the step ${step} does not run before linkGeneration, whose link would create the profile 0755")
     (lib.optional (claudeFile claudeOff != null) "the Claude manifest is written with Claude Code off")
     (lib.optional (!hasStep claudeOff) "the Bitwarden step is gone with Claude Code off")
     (lib.optional (hostFiles server != [ ]) "the server writes ${toString (hostFiles server)}")
@@ -165,6 +180,7 @@ pkgs.runCommand "desktop-helium-bridges"
     if [ -n "$stepData" ]; then
       export HOME=$TMPDIR/home
       run() { "$@"; }
+      warnEcho() { printf '%s\n' "$*" >> warn.log; }
       config=$HOME''${configHome#"$homeDir"}
       hosts=$config/${dir}
       activate() { eval "$(printf '%s\n' "$stepData" | sed "s|$homeDir|$HOME|g")"; }
@@ -174,7 +190,11 @@ pkgs.runCommand "desktop-helium-bridges"
       bw=$hosts/com.8bit.bitwarden.json
       [ -f "$bw" ] && [ ! -L "$bw" ] || fail "the Bitwarden manifest is not a regular file"
       [ "$(stat -c %a "$config/net.imput.helium")" = 700 ] || fail "the profile directory is $(stat -c %a "$config/net.imput.helium"), not 700"
-      [ "$(stat -c %a "$hosts")" = 700 ] || fail "the hosts directory is $(stat -c %a "$hosts"), not 700"
+      if [ -d "$hosts" ]; then
+        [ "$(stat -c %a "$hosts")" = 700 ] || fail "the hosts directory is $(stat -c %a "$hosts"), not 700"
+      else
+        fail "the step makes no NativeMessagingHosts/: Bitwarden copies its proxy there before it writes its manifest, so without it generateManifests() throws and listen() is skipped for every browser"
+      fi
       [ "$(jq -r .name "$bw")" = com.8bit.bitwarden ] || fail "the Bitwarden manifest's name is $(jq -r .name "$bw")"
       [ "$(jq -r .type "$bw")" = stdio ] || fail "the Bitwarden manifest's type is not stdio"
       [ "$(jq -c .allowed_origins "$bw")" = '["chrome-extension://nngceckbapebfimnlniiiahkandclblb/","chrome-extension://hccnnhgbibccigepcmlgppchkpfdophk/","chrome-extension://jbkfoedolllekgbhcbcoahefnbanhhlh/","chrome-extension://ccnckbpmaceehanjmeomladnmlffdjgn/"]' ] \
@@ -199,6 +219,39 @@ pkgs.runCommand "desktop-helium-bridges"
       chmod 750 "$config/net.imput.helium"
       activate || fail "the step fails on an existing profile"
       [ "$(stat -c %a "$config/net.imput.helium")" = 750 ] || fail "the step changes the mode of an existing profile"
+
+      # A profile copied from another machine, without NativeMessagingHosts/
+      # (the transfer leaves it out): the step makes it.
+      rm -rf "$hosts"
+      activate || fail "the step fails on a profile without NativeMessagingHosts/"
+      [ -d "$hosts" ] || fail "the step makes no NativeMessagingHosts/ in an existing profile: Bitwarden copies its proxy there before it writes its manifest, so without it generateManifests() throws and listen() is skipped for every browser"
+      [ -f "$hosts/com.8bit.bitwarden.json" ] || fail "the step writes no Bitwarden manifest into an existing profile"
+
+      # A profile the user cannot write (owned by another user, a full disk):
+      # the step warns, and the activation goes on to its next step under
+      # set -e, as home-manager runs it.
+      rm -rf "$config/net.imput.helium"
+      mkdir -p "$config/net.imput.helium"
+      chmod 500 "$config/net.imput.helium"
+      if touch "$config/net.imput.helium/probe" 2> /dev/null; then
+        fail "the build user can write a 0500 directory, so the unwritable case proves nothing"
+      fi
+      : > warn.log
+      # Its own bash process: set -e does not apply inside a command whose
+      # status a condition tests, so a subshell under `if` would never stop.
+      {
+        echo 'set -eu'
+        echo 'run() { "$@"; }'
+        echo "warnEcho() { printf '%s\\n' \"\$*\" >> $PWD/warn.log; }"
+        printf '%s\n' "$stepData" | sed "s|$homeDir|$HOME|g"
+        echo 'echo next-step'
+      } > guarded.sh
+      status=0
+      bash guarded.sh > guarded.log 2>&1 || status=$?
+      [ "$status" = 0 ] || fail "a step that cannot write stops the activation ($status): $(cat guarded.log)"
+      grep -qx next-step guarded.log || fail "the activation does not go on after a step that cannot write"
+      [ -s warn.log ] || fail "a step that cannot write does not warn"
+      chmod 700 "$config/net.imput.helium"
 
       # A dry run writes nothing.
       rm -rf "$config"

@@ -179,9 +179,9 @@ let
   # Helium's native-messaging hosts: the manifests in
   # ~/.config/net.imput.helium/NativeMessagingHosts/ that let an extension
   # start a program of the desktop. Claude Code writes none for Helium, and
-  # Bitwarden writes its own at each start but not before it first runs: so
-  # ravnix writes both, each in the way its owner can live with
-  # (tests/desktop/helium-bridges.nix).
+  # Bitwarden writes its own at each start, but only into a hosts directory
+  # that exists (below): so ravnix writes both, each in the way its owner can
+  # live with (tests/desktop/helium-bridges.nix).
   #
   # Claude in Chrome: a home-manager link to the manifest below, whose path is
   # a wrapper that runs the claude of the user's profile. Claude Code is
@@ -194,7 +194,9 @@ let
   # rewrites at each session with the store path of the build that runs it.
   # This manifest does not use that script. Should a later Claude Code write
   # here, its write fails on the read-only link, which it only logs, and this
-  # manifest stays.
+  # manifest stays. The native host runs on the laptop, beside Helium, so
+  # Claude in Chrome reaches only a claude running on the laptop: a herdr pane
+  # on the server cannot see it.
   #
   # Bitwarden desktop: the manifest is a regular file, copied by an activation
   # step, because Bitwarden rewrites it at every start (2026.10.2,
@@ -203,7 +205,12 @@ let
   # points its copy at a proxy it copies beside it (.bitwarden_desktop_proxy);
   # ravnix's at nixpkgs' proxy. Both reach the same running Bitwarden, the
   # name and the origins are the same, and the next switch writes ravnix's
-  # again.
+  # again. The directory matters more than the file: Bitwarden copies its
+  # proxy into NativeMessagingHosts/ before it writes the manifest, and only
+  # the manifest's write creates a missing directory. A profile without it
+  # (one copied from another machine without NativeMessagingHosts/) makes the
+  # copy fail, generateManifests() throw and listen() be skipped. With Claude
+  # Code off, the step's mkdir is the only thing that creates it.
   nativeHostsDir = "net.imput.helium/NativeMessagingHosts";
   bitwardenManifest = pkgs.writeText "com.8bit.bitwarden.json" (
     builtins.toJSON {
@@ -221,9 +228,10 @@ let
       ];
     }
   );
-  # PROFILE MANIFEST: create the profile and its hosts directory private, as
-  # Helium does, where they are missing (the Claude manifest's link would
-  # otherwise create them 0755), and put a writable copy of MANIFEST there,
+  # PROFILE MANIFEST: create the profile and its hosts directory where they
+  # are missing, private as Helium makes them (the Claude manifest's link
+  # would otherwise create them 0755), which also keeps Bitwarden's
+  # listener alive (see above), and put a writable copy of MANIFEST there,
   # replacing a link or an older file.
   heliumHosts = pkgs.writeShellScript "ravnix-helium-hosts" ''
     set -eu
@@ -582,11 +590,14 @@ in
       in
       {
         # Before linkGeneration, so the Claude manifest's link finds the
-        # directories private.
+        # directories private. A failure only warns: the activation runs
+        # under set -e, and a browser bridge is not worth the rest of the
+        # home (the desktop's whole configuration comes after this step).
         home.activation.ravnixHeliumHosts =
           lib.hm.dag.entryBetween [ "linkGeneration" ] [ "writeBoundary" ]
             ''
-              run ${heliumHosts} ${lib.escapeShellArg "${config.xdg.configHome}/net.imput.helium"} ${bitwardenManifest}
+              run ${heliumHosts} ${lib.escapeShellArg "${config.xdg.configHome}/net.imput.helium"} ${bitwardenManifest} \
+                || warnEcho "Helium's native-messaging hosts were not written; Claude in Chrome and the Bitwarden extension may not reach the desktop."
             '';
 
         xdg.configFile."${nativeHostsDir}/com.anthropic.claude_code_browser_extension.json" =
