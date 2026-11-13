@@ -234,9 +234,15 @@ let
               hooks = [
                 (hook "prune-claude-tmp" 30)
                 (hook "session-preflight" 10)
+                (hook "busy-state" 5)
+                (hook "claude-pane" 5)
               ];
             }
           ];
+          UserPromptSubmit = [ { hooks = [ (hook "busy-state" 5) ]; } ];
+          Stop = [ { hooks = [ (hook "busy-state" 5) ]; } ];
+          StopFailure = [ { hooks = [ (hook "busy-state" 5) ]; } ];
+          SessionEnd = [ { hooks = [ (hook "busy-state" 5) ]; } ];
           PreToolUse = [
             {
               matcher = "WebSearch";
@@ -427,7 +433,7 @@ pkgs.runCommand "claude-home"
 
     # Every hook and the status line: an executable wrapper whose script is
     # the file in claude/.
-    for name in prune-claude-tmp session-preflight web-route worktree-create worktree-remove worktree-subagent-stop; do
+    for name in prune-claude-tmp session-preflight web-route worktree-create worktree-remove worktree-subagent-stop busy-state; do
       w=$hf/.claude/ravnix/hooks/$name
       script=$(grep -o '/nix/store/[^ ]*-'"$name"'\.sh' "$w" 2>/dev/null | head -n 1)
       [ -x "$w" ] && [ -n "$script" ] && cmp -s "$script" "$hooksSrc/$name.sh"
@@ -469,6 +475,19 @@ pkgs.runCommand "claude-home"
     got=$(env -i HOME="$PWD/home" "$hf/.claude/ravnix/hooks/web-route" \
       <<<'{"tool_name":"WebSearch","tool_input":{"query":"q"}}' 2>&1)
     check "web-route runs with no PATH" $([ $? = 0 ] && [ -z "$got" ] && echo 0 || echo 1)
+    sid=0a1b2c3d-1111-4222-8333-444455556666
+    got=$(env -i HOME="$PWD/home" "$hf/.claude/ravnix/hooks/busy-state" \
+      <<<"{\"session_id\":\"$sid\",\"hook_event_name\":\"UserPromptSubmit\"}" 2>&1)
+    [ $? = 0 ] && [ -z "$got" ] && [ "$(cat "$PWD/home/.local/state/ravnix/claude-busy/$sid")" = busy ]
+    check "busy-state runs with no PATH" $?
+    # claude-pane is claude-roll's record, from the tool's package.
+    grep -q -E '^exec /nix/store/[a-z0-9]+-claude-roll[^ ]*/bin/claude-roll record$' "$hf/.claude/ravnix/hooks/claude-pane"
+    check "hooks/claude-pane runs claude-roll record" $?
+    got=$(env -i HOME="$PWD/home" "$hf/.claude/ravnix/hooks/claude-pane" <<<'{}' 2>&1)
+    check "claude-pane runs with no PATH, outside herdr" $([ $? = 0 ] && [ -z "$got" ] && echo 0 || echo 1)
+    got=$(env -i HOME="$PWD/home" HERDR_PANE_ID=w1:p1 "$hf/.claude/ravnix/hooks/claude-pane" 2>/dev/null <<<"{\"session_id\":\"$sid\"}")
+    [ $? = 0 ] && [ -z "$got" ] && [ ! -e "$PWD/home/.local/state/ravnix/claude-panes/w1:p1.json" ]
+    check "claude-pane exits 0 and writes nothing without a Claude Code above it" $?
 
     # The settings file home-manager merges into ~/.claude/settings.json:
     # no hooks, which would replace the file's own.
@@ -516,9 +535,9 @@ pkgs.runCommand "claude-home"
     switch ${activation} claudeCodeSettings ravnixClaudeHooks
     rc=$?
     [ "$rc" = 0 ] &&
-      [ "$(commands SessionStart)" = "$(jq -cn --arg h "$herdr" '[$h, "/home/alice/.claude/ravnix/hooks/prune-claude-tmp", "/home/alice/.claude/ravnix/hooks/session-preflight"]')" ] &&
+      [ "$(commands SessionStart)" = "$(jq -cn --arg h "$herdr" '[$h, "/home/alice/.claude/ravnix/hooks/prune-claude-tmp", "/home/alice/.claude/ravnix/hooks/session-preflight", "/home/alice/.claude/ravnix/hooks/busy-state", "/home/alice/.claude/ravnix/hooks/claude-pane"]')" ] &&
       [ "$(commands PreToolUse)" = '["my-check","/home/alice/.claude/ravnix/hooks/web-route"]' ] &&
-      [ "$(jq -c '.hooks | has("Stop")' settings.json)" = false ] &&
+      [ "$(commands Stop)" = '["/home/alice/.claude/ravnix/hooks/busy-state"]' ] &&
       [ "$(jq -r '.model + " " + .env.DISABLE_AUTOUPDATER + " " + .statusLine.command' settings.json)" = "opus 1 /home/alice/.claude/ravnix/statusline" ]
     check "a switch keeps herdr's and a hand-wired entry, adds ravnix's, and drops a stale one of ravnix's" $?
     cp settings.json first.json
@@ -528,7 +547,7 @@ pkgs.runCommand "claude-home"
     cp first.json settings.json
     switch ${ownActivation} claudeCodeSettings ravnixClaudeHooks
     [ $? = 0 ] &&
-      [ "$(commands SessionStart)" = '["my-hook","/home/alice/.claude/ravnix/hooks/prune-claude-tmp","/home/alice/.claude/ravnix/hooks/session-preflight"]' ]
+      [ "$(commands SessionStart)" = '["my-hook","/home/alice/.claude/ravnix/hooks/prune-claude-tmp","/home/alice/.claude/ravnix/hooks/session-preflight","/home/alice/.claude/ravnix/hooks/busy-state","/home/alice/.claude/ravnix/hooks/claude-pane"]' ]
     check "a SessionStart hook declared in Nix replaces the file's list, herdr's too, and ravnix's join it" $?
     cp first.json settings.json
     switch ${offActivation} ravnixClaudeHooks

@@ -103,6 +103,13 @@ needs: it reads the session kind from its parent's environment.
 | WorktreeCreate | `worktree-create` | 600 s | creates and provisions the worktree: ignored files, dependencies, the repository's setup |
 | WorktreeRemove | `worktree-remove` | 60 s | runs the repository's teardown, removes the worktree, and its branch when that is safe |
 | SubagentStop | `worktree-subagent-stop` | 30 s | sweeps idle subagent worktrees, which Claude Code never removes |
+| SessionStart, UserPromptSubmit, Stop, StopFailure, SessionEnd | `busy-state` | 5 s | writes busy or idle per session, the second signal of `claude-roll` beside herdr's state |
+| SessionStart | `claude-pane` | 5 s | `claude-roll record`: writes the session and the launch flags of the herdr pane it starts in, which `claude-roll` passes again when it resumes the session |
+
+`claude-pane` is no script of this directory: it runs
+`tools/claude-roll`, whose README says what it records and why. Both
+it and `busy-state` write under `${XDG_STATE_HOME:-~/.local/state}/ravnix/`
+and nothing else; outside a herdr pane `claude-pane` writes nothing.
 
 The status line is the statusLine command, with `padding` 0 and a
 `refreshInterval` of 60 s.

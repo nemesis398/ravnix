@@ -31,6 +31,15 @@ let
   valuesFile = "${config.xdg.configHome}/ravnix/skill-values.json";
   dir = "${cfg.configDir}/ravnix";
 
+  ravnixPackages = import ../../lib/ravnix-packages.nix { inherit lib; } {
+    packagesDir = ../../packages;
+    toolsDir = ../../tools;
+  };
+  # pkgs.ravnix comes from the overlay that nixosModules.common applies; a
+  # home-manager configuration without it (the tests') gets the same tools
+  # from the same overlay here, as modules/common/scripts.nix does.
+  ravnix = pkgs.ravnix or (pkgs.extend ravnixPackages.overlay).ravnix;
+
   wrap =
     name: script: tools:
     pkgs.writeShellScript "ravnix-claude-${name}" ''
@@ -82,6 +91,17 @@ let
           jq
           util-linux
         ];
+    # busy or idle per session, claude-roll's second signal beside herdr's
+    # state (tools/claude-roll).
+    busy-state = wrap "busy-state" ../../claude/hooks/busy-state.sh [
+      coreutils
+      jq
+    ];
+    # The session and launch flags of the herdr pane a session starts in,
+    # which claude-roll passes again when it resumes the session.
+    claude-pane = pkgs.writeShellScript "ravnix-claude-claude-pane" ''
+      exec ${ravnix.claude-roll}/bin/claude-roll record
+    '';
   };
   statusline = wrap "statusline" ../../claude/statusline/statusline.sh [ jq ];
 
@@ -119,9 +139,15 @@ in
           hooks = [
             (run "prune-claude-tmp" 30)
             (run "session-preflight" 10)
+            (run "busy-state" 5)
+            (run "claude-pane" 5)
           ];
         }
       ];
+      UserPromptSubmit = [ { hooks = [ (run "busy-state" 5) ]; } ];
+      Stop = [ { hooks = [ (run "busy-state" 5) ]; } ];
+      StopFailure = [ { hooks = [ (run "busy-state" 5) ]; } ];
+      SessionEnd = [ { hooks = [ (run "busy-state" 5) ]; } ];
       PreToolUse = [
         {
           matcher = "WebSearch";
