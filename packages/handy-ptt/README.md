@@ -42,10 +42,13 @@ check.
 - The script runs without `errexit`, `nounset` and `pipefail`, on purpose: it is
   a POSIX shell script that handles failure itself, and `pactl ... | grep -q`
   fails under `pipefail` whenever `grep` stops reading early.
-- It finds the take by Handy's PipeWire stream, named `cpal-pulseaudio-PID`.
-  A Handy that names its stream differently makes every `up` a no-op and every
-  `down` a toggle on every press. The stand-in uses the same name; only Handy
-  itself shows whether it holds. The same goes for the process name
+- It finds the take by Handy's capture stream, whose PulseAudio client is
+  named `cpal-pulseaudio-PID`. A Handy that names it differently makes every
+  `up` a no-op and every `down` a toggle on every press. The test asserts the
+  name in the built Handy and in its vendored `handy-cpal` source (with the
+  process id); Handy 0.9.8 had no such client, so this driver needs 0.10.0.
+  The stream itself is only modeled by the `pactl` stand-in. The same goes for
+  the process name
   `.handy-wrapped`: the test builds the wrapper the way nixpkgs does and checks
   the real package's layout, but only the real Handy on huginn shows that it
   runs under that name.

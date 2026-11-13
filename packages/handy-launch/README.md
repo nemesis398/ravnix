@@ -32,3 +32,8 @@ Handy).
 - The autostart entry (`/etc/xdg/autostart/handy.desktop`) runs only if the
   Sway session starts `xdg-desktop-autostart.target` (Task 3.2a), and the tray
   has to be ready by then, as on Fedora.
+- This entry is the only autostart of Handy. Handy's own switch
+  (`autostart_enabled`) must stay off: it writes
+  `~/.config/autostart/Handy.desktop`, which runs `.handy-wrapped` without the
+  wrapper and without this launcher's pin, and both entries race at login
+  (`packages/handy/README.md`).
