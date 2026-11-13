@@ -20,19 +20,20 @@
 #                          /proc/sys read-write for whoever has the
 #                          capability. It is a file of its own because the
 #                          base file does not need it.
-# /dev/net/tun             pasta, which gives a rootless container its
-#                          network, opens it. Without it a container runs
-#                          with `--network host` or `--network none` only.
-#                          (Not tried with it.)
 #
 # Docker's default seccomp profile stays. It blocks keyctl and pivot_root,
 # and the image's containers.conf (hosts/server/oci.nix) makes Podman do
 # without both. Without pivot_root a container that Podman runs can leave its
 # root and reach muninn's file system with the account's rights, so in this
 # form run only images you trust.
+#
+# No /dev/net/tun. pasta, which gives a rootless container a network of its
+# own, opens it, and then sandboxes itself with pivot_root, which the same
+# profile blocks ("Failed to pivot_root() into empty tmpfs", round 2). So the
+# image's containers.conf gives Podman's containers muninn's own network
+# (netns = "host"), and the device would grant what nothing uses. No
+# published port (-p) and no `podman network` inside, for the same reason.
 services:
   muninn:
     security_opt:
       - systempaths=unconfined
-    devices:
-      - /dev/net/tun:/dev/net/tun

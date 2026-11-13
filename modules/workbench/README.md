@@ -183,8 +183,12 @@ is the record.
   timed out on a starved disk pool. It is plausibly not the image's fault, and
   in a container that unit only writes a layer the next swap discards, but it
   was not shown on a quiet pool.
-- `tmpfs` on `/run` and its `exec` option, the health check turning `healthy`,
-  and `/dev/net/tun` for the Podman file are reasoned, not observed.
+- `tmpfs` on `/run` and its `exec` option are reasoned, not observed.
+- Podman inside the container form gives its containers muninn's own network
+  (`netns = "host"`): no network of their own, no published port and no
+  `podman network`. pasta sandboxes itself with `pivot_root`, which Docker's
+  default seccomp profile blocks, and a profile that allows it would be a copy
+  of Docker's to keep in step (`hosts/server/oci.nix`).
 - The Kubernetes manifests are validated against the schema with
   `kubeconform -strict` and never applied. A node on cgroup v1, or a runtime
   that ignores the image's `StopSignal`, does not stop the pod cleanly.

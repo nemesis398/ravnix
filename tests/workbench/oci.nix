@@ -153,6 +153,15 @@ let
       c.virtualisation.containers.containersConf.settings.containers.keyring == false
       && c.virtualisation.containers.containersConf.settings.engine.no_pivot_root == true
     ) "Podman is not set up for Docker's default seccomp profile (no keyring, no pivot_root)"
+    # pasta, Podman's own network for a rootless container, sandboxes itself
+    # with pivot_root, which Docker's default seccomp profile refuses (round 2:
+    # "Failed to pivot_root() into empty tmpfs"); a container in muninn shares
+    # muninn's network instead.
+    ++
+      check (c.virtualisation.containers.containersConf.settings.containers.netns or null == "host")
+        "Podman's containers get a network of their own (pasta), which Docker's default seccomp profile does not let pasta set up: ${
+          toString (c.virtualisation.containers.containersConf.settings.containers.netns or "unset")
+        }"
     ++
       check (map (k: k.path) c.services.openssh.hostKeys == [ hostKey ])
         "sshd's host keys are not the one in the volume, beside the home and not in it: ${
@@ -355,7 +364,11 @@ pkgs.runCommand "workbench-oci"
       yq_is "$compose" ".services.muninn.$key // \"none\"" none
     done
     yq_is "$podman" '.services.muninn.security_opt | join(",")' systempaths=unconfined
-    yq_is "$podman" '.services.muninn.devices | join(",")' /dev/net/tun:/dev/net/tun
+    # No device: pasta is not used (the image's containers.conf), so /dev/net/tun
+    # would grant what nothing needs.
+    for key in privileged network_mode devices pid ipc userns_mode cap_add volumes; do
+      yq_is "$podman" ".services.muninn.$key // \"none\"" none
+    done
     # The files say what the grants add up to, at the top.
     for f in "$compose" "$podman"; do
       head -3 "$f" >top.txt

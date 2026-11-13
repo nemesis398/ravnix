@@ -161,8 +161,21 @@ in
   # root to the account). That is a fair trade against switching the
   # container's seccomp profile off, but in this form run only images you
   # trust.
+  #
+  # The network: a container that Podman runs shares muninn's (netns host).
+  # pasta, which gives a rootless container a network of its own, sandboxes
+  # itself with pivot_root as well and stops when it cannot ("Failed to
+  # pivot_root() into empty tmpfs", round 2 in tests/workbench/oci.md), and
+  # no setting of Podman's turns that off. So no network of its own, no
+  # published port (-p) and no `podman network`: what is asked for with
+  # --network fails the same way. Little isolation is lost, since such a
+  # container can reach muninn's files anyway (above). The way to pasta is a
+  # seccomp profile of Docker's with pivot_root allowed, which a stand-in for
+  # Docker showed to work (tests/workbench/oci.md); it is not taken, because
+  # it is a copy of Docker's profile to keep in step with every release.
   virtualisation.containers.containersConf.settings = {
     containers.keyring = false;
+    containers.netns = "host";
     engine.no_pivot_root = true;
   };
 
