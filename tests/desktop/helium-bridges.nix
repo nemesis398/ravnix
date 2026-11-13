@@ -31,7 +31,9 @@
 #     Claude manifest's link finds the directories already private; after
 #     linkGeneration, home-manager would create them 0755.
 #   - A step that cannot write only warns: the rest of the home's activation
-#     (the desktop's whole configuration) still runs.
+#     (the desktop's whole configuration) still runs. Since the step thus
+#     always exits 0, every case that must succeed asserts that it left no
+#     warning, and that the manifest is there.
 #   - Nothing of either on a host without the desktop (the server shape), and
 #     no Claude manifest with Claude Code off; Bitwarden's stays, because
 #     Bitwarden desktop is still installed.
@@ -180,13 +182,21 @@ pkgs.runCommand "desktop-helium-bridges"
     if [ -n "$stepData" ]; then
       export HOME=$TMPDIR/home
       run() { "$@"; }
-      warnEcho() { printf '%s\n' "$*" >> warn.log; }
+      warn=$PWD/warn.log
+      warnEcho() { printf '%s\n' "$*" >> "$warn"; }
       config=$HOME''${configHome#"$homeDir"}
       hosts=$config/${dir}
       activate() { eval "$(printf '%s\n' "$stepData" | sed "s|$homeDir|$HOME|g")"; }
+      # The step ends in `|| warnEcho`, so it exits 0 whatever happens: a
+      # scenario that must succeed is one that leaves no warning.
+      succeeds() { # SCENARIO
+        : > "$warn"
+        activate || fail "the step fails $1"
+        [ ! -s "$warn" ] || fail "the step warns $1: $(cat "$warn")"
+      }
 
       # A home without a Helium profile: the step makes it, private.
-      activate || fail "the step fails on a home without a profile"
+      succeeds "on a home without a profile"
       bw=$hosts/com.8bit.bitwarden.json
       [ -f "$bw" ] && [ ! -L "$bw" ] || fail "the Bitwarden manifest is not a regular file"
       [ "$(stat -c %a "$config/net.imput.helium")" = 700 ] || fail "the profile directory is $(stat -c %a "$config/net.imput.helium"), not 700"
@@ -205,25 +215,28 @@ pkgs.runCommand "desktop-helium-bridges"
       printf '{}' > "$bw" || fail "the user cannot write the Bitwarden manifest"
 
       # Bitwarden's file, and a link into the store, are replaced by ours.
-      activate || fail "the step fails over Bitwarden's own file"
+      succeeds "over Bitwarden's own file"
       [ "$(jq -r .path "$bw")" = "$proxy" ] || fail "the step leaves Bitwarden's own file"
       rm "$bw"
       ln -s "$claudeManifest" "$bw"
-      activate || fail "the step fails over a link"
+      succeeds "over a link"
       [ -f "$bw" ] && [ ! -L "$bw" ] || fail "the step leaves a link in place"
       [ "$(jq -r .name "$bw")" = com.8bit.bitwarden ] || fail "the step writes through the link"
       printf '{}' > "$bw" || fail "the user cannot write the Bitwarden manifest after a link"
 
-      # A profile that exists keeps its mode.
-      activate
+      # A profile that exists keeps its mode, and gets the manifest.
+      succeeds "before the existing-profile case"
       chmod 750 "$config/net.imput.helium"
-      activate || fail "the step fails on an existing profile"
+      rm "$bw"
+      succeeds "on an existing profile"
       [ "$(stat -c %a "$config/net.imput.helium")" = 750 ] || fail "the step changes the mode of an existing profile"
+      [ -f "$bw" ] && [ ! -L "$bw" ] || fail "the step writes no Bitwarden manifest into an existing profile"
+      [ "$(jq -r .path "$bw" 2> /dev/null)" = "$proxy" ] || fail "the Bitwarden manifest in an existing profile does not name $proxy"
 
       # A profile copied from another machine, without NativeMessagingHosts/
       # (the transfer leaves it out): the step makes it.
       rm -rf "$hosts"
-      activate || fail "the step fails on a profile without NativeMessagingHosts/"
+      succeeds "on a profile without NativeMessagingHosts/"
       [ -d "$hosts" ] || fail "the step makes no NativeMessagingHosts/ in an existing profile: Bitwarden copies its proxy there before it writes its manifest, so without it generateManifests() throws and listen() is skipped for every browser"
       [ -f "$hosts/com.8bit.bitwarden.json" ] || fail "the step writes no Bitwarden manifest into an existing profile"
 
@@ -236,13 +249,13 @@ pkgs.runCommand "desktop-helium-bridges"
       if touch "$config/net.imput.helium/probe" 2> /dev/null; then
         fail "the build user can write a 0500 directory, so the unwritable case proves nothing"
       fi
-      : > warn.log
+      : > "$warn"
       # Its own bash process: set -e does not apply inside a command whose
       # status a condition tests, so a subshell under `if` would never stop.
       {
         echo 'set -eu'
         echo 'run() { "$@"; }'
-        echo "warnEcho() { printf '%s\\n' \"\$*\" >> $PWD/warn.log; }"
+        echo "warnEcho() { printf '%s\\n' \"\$*\" >> $warn; }"
         printf '%s\n' "$stepData" | sed "s|$homeDir|$HOME|g"
         echo 'echo next-step'
       } > guarded.sh
@@ -250,7 +263,7 @@ pkgs.runCommand "desktop-helium-bridges"
       bash guarded.sh > guarded.log 2>&1 || status=$?
       [ "$status" = 0 ] || fail "a step that cannot write stops the activation ($status): $(cat guarded.log)"
       grep -qx next-step guarded.log || fail "the activation does not go on after a step that cannot write"
-      [ -s warn.log ] || fail "a step that cannot write does not warn"
+      [ -s "$warn" ] || fail "a step that cannot write does not warn"
       chmod 700 "$config/net.imput.helium"
 
       # A dry run writes nothing.
