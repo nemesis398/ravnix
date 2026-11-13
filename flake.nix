@@ -69,6 +69,8 @@
                 pkgs.jq
                 pkgs.ripgrep
                 pkgs.shellcheck
+                # flock, for scripts/tests/try-huginn.test.sh.
+                pkgs.util-linux
               ];
             }
             ''

@@ -14,6 +14,7 @@ of each script.
 | `lib/git-snapshot.sh` | lays out the index or a commit as plain files, for the checks to read what git will commit or push |
 | `hooks/stop-gate.sh` | the Claude Code Stop hook: the fast gate before the agent may stop |
 | `hooks/no-verify-guard.sh` | the Claude Code PreToolUse hook: refuses commands that skip or redirect the git hooks |
+| `try-huginn.sh` | boots the installed laptop from its raw disk in QEMU, only after `ravnix-disk-guard` allows it; packaged as `packages/try-huginn`, which `packages/try-huginn/README.md` describes |
 | `../.githooks/` | `pre-commit` (fast gate), `commit-msg` (boundary check on the message), `pre-push` (each pushed commit, message and ref name, then the full gate) |
 
 Tests: `tests/*.test.sh` and `hooks/test.sh`, run by the flake check
