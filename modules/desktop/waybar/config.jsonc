@@ -13,6 +13,7 @@
   "spacing": 2,
 
   "modules-left": [
+    "image#mark",
     "custom/battery",
     "custom/peripherals",
     "custom/powerdraw",

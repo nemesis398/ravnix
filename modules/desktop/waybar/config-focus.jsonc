@@ -1,10 +1,10 @@
 {
   // ── The FOCUS bar ────────────────────────────────────────────────────────────
   // Distraction-light variant: the workspaces AND the whole right cluster (the
-  // tray, which lives on the right, included) are removed. Kept: power draw,
-  // power-mode switch, the focused-window title, and the clock. Toggle with
-  // $mod+Ctrl+space. The geometry is the full bar's (docs/style.md: the bar has
-  // the same height in every mode).
+  // tray, which lives on the right, included) are removed. Kept: the mark,
+  // power draw, power-mode switch, the focused-window title, and the clock.
+  // Toggle with $mod+Ctrl+space. The geometry is the full bar's (docs/style.md:
+  // the bar has the same height in every mode).
   "include": ["~/.config/waybar/modules.jsonc"],
 
   "layer": "top",
@@ -13,6 +13,7 @@
   "spacing": 2,
 
   "modules-left": [
+    "image#mark",
     "custom/battery",
     "custom/peripherals",
     "custom/powerdraw",

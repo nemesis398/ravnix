@@ -1,6 +1,7 @@
 # Waybar, the bar of the Sway session: three layouts (full, focus, none), the
-# modules that show the laptop (battery, power draw, peripherals, network,
-# volume, load and temperatures), and the scripts behind them. NixOS provides
+# raven mark at the left end, the modules that show the laptop (battery, power
+# draw, peripherals, network, volume, load and temperatures), and the scripts
+# behind them. NixOS provides
 # the package, the scripts and the daemons the modules talk to; home-manager
 # writes the four files of ~/.config/waybar:
 #
@@ -125,6 +126,18 @@ let
 
   khalCommand = "ghostty-float -e ssh -t ${config.ravnix.server.sshTarget} khal interactive";
 
+  # The raven mark at the left end of the bar: the one-color mark, whose fills
+  # are Text, with Text made the accent. Made here and not in a build step, so
+  # the bar's mark follows the accent like the spans and the stylesheet.
+  markSvg = builtins.readFile ../../assets/ravnix-mark.svg;
+  mark =
+    if lib.hasInfix palette.text markSvg then
+      pkgs.writeText "ravnix-mark-accent.svg" (
+        builtins.replaceStrings [ palette.text ] [ roles.accent ] markSvg
+      )
+    else
+      throw "modules/desktop/waybar.nix: assets/ravnix-mark.svg has no fill in Text (${palette.text}) to make the accent";
+
   style = helpers.fill (
     {
       inherit defineColors font;
@@ -133,7 +146,7 @@ let
     // lib.mapAttrs' (n: v: lib.nameValuePair "w.${n}" (toString v)) widths
   ) (builtins.readFile ./waybar/style.css);
 
-  modules = helpers.fill (colorTokens // { inherit khalCommand; }) (
+  modules = helpers.fill (colorTokens // { inherit khalCommand; mark = "${mark}"; }) (
     builtins.readFile ./waybar/modules.jsonc
   );
 in

@@ -13,6 +13,21 @@
   // pulseaudio.format*, cpu.format, memory.format, temperature#*.format, plus the
   // custom/{powerdraw,gpu,clock} scripts.
 
+  // The raven mark, at the left end of both bars: assets/ravnix-mark.svg, the
+  // one-color mark, with its Text made the accent by waybar.nix (@mark@ is that
+  // file), so it is drawn in the accent like every icon of the bar. 16 px, the
+  // size it is made to read at. It does nothing when clicked, so it has no
+  // tooltip and no hover. The interval is a day on purpose: Waybar 0.15's image
+  // module re-renders every millisecond when none is given (its man page says
+  // once), and "once" overflows when it sleeps; the busy bar made a sway
+  // reload time out in the desktop-sway VM test.
+  "image#mark": {
+    "path": "@mark@",
+    "size": 16,
+    "interval": 86400,
+    "tooltip": false,
+  },
+
   // Power-profile switch — talks to the net.hadess.PowerProfiles D-Bus API; a
   // left-click cycles the profile. Glyph changes per mode (the "power mode switch").
   // A middle click opens the energy menu: profile, refresh rate (auto = 60 Hz on

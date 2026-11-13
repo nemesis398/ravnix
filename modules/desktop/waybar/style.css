@@ -1,7 +1,8 @@
 /* ── Waybar style · Catppuccin Mocha · the accent of ravnix.theme ───────────────
  * Flat, square, opaque, edge-to-edge — coheres with the borderless / gapless /
  * opaque Sway. The accent = the active workspace + every module icon (set in the
- * modules.jsonc format strings) + the clock + every hover marker. Neutral text
+ * modules.jsonc format strings) + the raven mark (an SVG in the accent, made by
+ * waybar.nix) + the clock + every hover marker. Neutral text
  * everywhere else; the warm palette (peach/red) appears ONLY on warning/critical.
  *
  * The colors are not written here: modules/desktop/waybar.nix puts the
@@ -38,7 +39,7 @@ tooltip label { color: @text; }
 /* Even padding + a 2 px marker reserved up-front, drawn in the color of what is
  * behind it (the bar's Mantle), so :hover never shifts content vertically (the
  * classic border-bottom jump) and nothing is see-through. */
-#custom-battery, #custom-peripherals, #custom-powerdraw, #power-profiles-daemon, #window, #custom-clock,
+#image.mark, #custom-battery, #custom-peripherals, #custom-powerdraw, #power-profiles-daemon, #window, #custom-clock,
 #custom-idle-inhibit, #custom-idle-pad,
 #tray, #custom-gpu, #custom-gputemp, #network, #bluetooth, #pulseaudio,
 #cpu, #temperature, #memory {
@@ -68,6 +69,7 @@ tooltip label { color: @text; }
  * past the floor pushes the clock right by its own width. Truncating the title to
  * the floor keeps the clock still. Focus mode, with lighter sides, stays centered
  * either way. */
+#image.mark            { min-width: @w.icon@px; }
 #custom-powerdraw      { min-width: @w.powerdraw@px; }
 #custom-peripherals    { min-width: @w.peripherals@px; }
 #power-profiles-daemon { min-width: @w.profile@px; color: @accent; }
