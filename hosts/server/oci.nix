@@ -45,7 +45,8 @@
 # change hands with an image.
 #
 # Not set here, because they are the host's to decide: who may log in
-# (users.users.<user>.openssh.authorizedKeys.keys; sshd reads no
+# (ravnix.serverAccess.publicKey, the laptop's key, and
+# users.users.<user>.openssh.authorizedKeys.keys; sshd reads no
 # ~/.ssh/authorized_keys, so a key in the volume does not log in) and the time
 # zone. The host name is "muninn" unless the host
 # sets another; the compose file's hostname should agree with it.

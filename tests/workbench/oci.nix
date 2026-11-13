@@ -129,6 +129,11 @@ let
   keysFile = lib.replaceStrings [ "%u" ] [ user ] (lib.head c.services.openssh.authorizedKeysFiles);
   # The same, as docker-checks.sh writes it.
   keysFileInScript = lib.replaceStrings [ "%u" ] [ "$user" ] (lib.head c.services.openssh.authorizedKeysFiles);
+  # The key line docker-checks.sh expects in that file before it adds its own:
+  # it must be one the configuration gives the user.
+  scriptConfigured = map (l: lib.removeSuffix "'" (lib.removePrefix "configured='" l)) (
+    lib.filter (lib.hasPrefix "configured='") (lib.splitString "\n" (builtins.readFile ./oci/docker-checks.sh))
+  );
   hostKey = "/home/.muninn-ssh/ssh_host_ed25519_key";
   failures =
     check c.boot.isContainer "the system is not a container (boot.isContainer)"
@@ -173,6 +178,13 @@ let
           toString c.users.users.${user}.uid
         }, not 1000: the home volume would change hands with an image swap"
     ++ check (c.users.users.${user}.subUidRanges != [ ]) "the user has no subordinate ids pinned"
+    ++
+      check
+        (
+          lib.length scriptConfigured == 1
+          && lib.elem (lib.head scriptConfigured) c.users.users.${user}.openssh.authorizedKeys.keys
+        )
+        "docker-checks.sh expects a key line (configured=) that is not one of the configuration's keys for ${user}: ${builtins.toJSON scriptConfigured}"
     ++ check (
       c.services.openssh.settings.PasswordAuthentication == false
     ) "the shape's sshd takes a password"

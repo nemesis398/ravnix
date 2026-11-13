@@ -167,17 +167,36 @@ echo "info: $(r ls -la /home/.muninn-ssh | tr '\n' ';')"
 echo "info: host key: $(r $sysbin/ssh-keygen -lf /home/.muninn-ssh/ssh_host_ed25519_key.pub 2>&1)"
 # sshd takes keys from the configuration alone (hosts/server/deploy.nix): it
 # reads the file the system writes from users.users.USER.openssh.authorizedKeys
-# at every boot, and never ~/.ssh/authorized_keys. So the key the test logs in
-# with goes, as root, into that file, where a key of the configuration is; and
-# a key in the home must be refused. Both keys end in the comment the cleanup
-# looks for.
+# at every boot, and never ~/.ssh/authorized_keys. The private half of a key
+# of the configuration is nobody's here, so the test logs in with a key of its
+# own that it puts, as root, into that file; but only into the file the
+# system made, root's and mode 444 with the configuration's key in it, so
+# that the login also shows that the configuration's keys reach sshd in the
+# container. (tee -a would make the file if it were missing.) The line is the
+# template's ravnix.serverAccess.publicKey as modules/glue/terminal.nix gives
+# it; workbench-oci holds it to the image's configuration. A key in the home
+# must be refused, and that counts only when the key is in the home. Both
+# keys end in the comment the cleanup looks for.
 keys=/etc/ssh/authorized_keys.d/$user
+configured='restrict,port-forwarding,pty ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKeyExampleOnlyNotARealKey ravnix-server@example.org'
 u 'rm -f ~/.ssh/id_test ~/.ssh/id_test.pub ~/.ssh/id_home ~/.ssh/id_home.pub; mkdir -p ~/.ssh; chmod 700 ~/.ssh; ssh-keygen -q -t ed25519 -N "" -C ravnix-docker-checks -f ~/.ssh/id_test; ssh-keygen -q -t ed25519 -N "" -C ravnix-docker-checks -f ~/.ssh/id_home; cat ~/.ssh/id_home.pub >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys' >/dev/null 2>&1
-u 'cat ~/.ssh/id_test.pub' | docker exec -i "$container" $sysbin/tee -a "$keys" >/dev/null
-login=$(u "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/id_test $user@127.0.0.1 'echo login-ok:\$(id -un)'" 2>&1)
-if echo "$login" | grep -q "login-ok:$user"; then ok "ssh with a key of $keys logs in as the user"; else bad "ssh login with a key of $keys: $login"; fi
-home=$(u "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/id_home $user@127.0.0.1 'echo login-ok:\$(id -un)'" 2>&1)
-if echo "$home" | grep -q 'Permission denied (publickey)'; then ok "a key in ~/.ssh/authorized_keys is refused: sshd takes the configuration's keys only"; else bad "ssh with a key in ~/.ssh/authorized_keys: $home"; fi
+meta=$(r $sysbin/stat -c '%F %U %a' "$keys" 2>&1)
+times=$(r $sysbin/cat "$keys" 2>/dev/null | grep -cxF "$configured")
+if [ "$meta" = "regular file root 444" ] && [ "$times" -ge 1 ]; then
+	ok "$keys is root's, mode 444, and holds the configuration's key"
+	u 'cat ~/.ssh/id_test.pub' | docker exec -i "$container" $sysbin/tee -a "$keys" >/dev/null
+	login=$(u "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/id_test $user@127.0.0.1 'echo login-ok:\$(id -un)'" 2>&1)
+	if echo "$login" | grep -q "login-ok:$user"; then ok "ssh with a key of $keys logs in as the user"; else bad "ssh login with a key of $keys: $login"; fi
+else
+	bad "$keys is not the configuration's ($meta; the configuration's key in it $times times): no key put into it, no login tried"
+fi
+homekey=$(u 'cut -d" " -f2 ~/.ssh/id_home.pub' 2>/dev/null)
+if [ -n "$homekey" ] && u 'cat ~/.ssh/authorized_keys' 2>/dev/null | grep -qF " $homekey " && u 'test -s ~/.ssh/id_home'; then
+	home=$(u "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/id_home $user@127.0.0.1 'echo login-ok:\$(id -un)'" 2>&1)
+	if echo "$home" | grep -q 'Permission denied (publickey)'; then ok "a key in ~/.ssh/authorized_keys is refused: sshd takes the configuration's keys only"; else bad "ssh with a key in ~/.ssh/authorized_keys: $home"; fi
+else
+	bad "the key for ~/.ssh/authorized_keys was not made or not added; its refusal shows nothing"
+fi
 nokey=$(u "ssh -o BatchMode=yes -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new $user@127.0.0.1 true" 2>&1)
 if echo "$nokey" | grep -q 'Permission denied'; then ok "ssh without a key is refused: $(echo "$nokey" | tail -1)"; else bad "ssh without a key: $nokey"; fi
 banner=$(bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -c 40 <&3" 2>&1 | head -1)
