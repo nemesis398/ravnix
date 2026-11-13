@@ -148,6 +148,12 @@ in
     settings.PermitRootLogin = lib.mkForce "no";
   };
 
+  # The server shape's NetBird client (modules/glue/netbird.nix) needs a tun
+  # device and NET_ADMIN, which this container has neither of: the unit would
+  # fail and restart for ever. The container is reached on the address Docker
+  # gives it, and a mesh peer belongs on the VM or the host.
+  services.netbird.enable = false;
+
   # Rootless Podman inside Docker. Docker's default seccomp profile blocks
   # two things it uses: keyctl, for a session keyring, and pivot_root, which
   # crun gives each container its root with and pasta, Podman's network for

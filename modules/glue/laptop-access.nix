@@ -25,7 +25,7 @@
 # trustedInterfaces other than NetBird's and loopback, where everything is
 # accepted. It refuses as well a host with no firewall, or no NetBird client
 # to take the interface from. The interface is the one NixOS's client has,
-# services.netbird.clients.default (modules/desktop/vpn.nix enables it), not a
+# services.netbird.clients.default (modules/glue/netbird.nix enables it), not a
 # second spelling of "wt0". What no assertion can see is a free-form rule
 # (extraCommands, extraInputRules, a ruleset of nftables' own); the README of
 # packages/ravnix-laptop lists them.
@@ -62,8 +62,8 @@ let
   sshd = config.services.openssh;
   firewall = config.networking.firewall;
 
-  # NetBird's interface on this host, from the client that modules/desktop/
-  # vpn.nix turns on, if there is one.
+  # NetBird's interface on this host, from the client that modules/glue/
+  # netbird.nix turns on, if there is one.
   interface = lib.attrByPath [ "services" "netbird" "clients" "default" "interface" ] null config;
   # huginn's address in the NetBird network, as ravnix.hosts has it.
   huginn = lib.attrByPath [ "ravnix" "hosts" "huginn" "address" ] null config;
@@ -141,7 +141,7 @@ in
         }
         {
           assertion = interface != null;
-          message = "ravnix.laptopAccess: the laptop has no NetBird client to take the interface from; enable services.netbird (modules/desktop/vpn.nix does)";
+          message = "ravnix.laptopAccess: the laptop has no NetBird client to take the interface from; enable services.netbird (modules/glue/netbird.nix does)";
         }
         {
           assertion = everywhere == [ ];

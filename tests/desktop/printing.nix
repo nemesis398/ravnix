@@ -14,7 +14,10 @@
 #      against the real NetworkManager.
 #
 # The VM imports the three modules, not nixosModules.desktop: it needs no
-# Sway, and the other modules of the desktop are other tasks' to test.
+# Sway, and the other modules of the desktop are other tasks' to test. NetBird's
+# client is not vpn.nix's: modules/glue/netbird.nix sets it for both shapes
+# (tests/glue/netbird.nix compares the shapes), so the host here brings that
+# module and the laptop shape as nixosModules.laptop would.
 {
   self,
   inputs,
@@ -30,6 +33,11 @@ let
     "vpn"
     "peripherals"
   ];
+  # The NetBird client, which both shapes share, on the laptop's end.
+  netbirdModules = [
+    ../../modules/glue/netbird.nix
+    { ravnix.shape = "laptop"; }
+  ];
 
   # A NixOS host of the three modules, the options and the template's values,
   # evaluated and never built.
@@ -44,6 +52,7 @@ let
           { nixpkgs.overlays = [ self.overlays.default ]; }
         ]
         ++ moduleFiles
+        ++ netbirdModules
         ++ extra;
     };
   config = (host [ ]).config;
@@ -335,7 +344,8 @@ let
           self.nixosModules.options
           ../../templates/default/me.nix
         ]
-        ++ moduleFiles;
+        ++ moduleFiles
+        ++ netbirdModules;
 
         # The template's values are placeholders and warn about it.
         warnings = lib.mkForce [ ];
