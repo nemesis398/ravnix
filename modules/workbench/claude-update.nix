@@ -20,12 +20,14 @@
 #           (the herdr panes) and claude-remote-control-roll.service
 #           (Remote Control, restarted once it holds no phone session).
 #   laptop  the user's prepare fetches the private flake with the read token;
-#           if its lock moved the claude-code input, that is only the sign
-#           to follow: root runs `nix flake update claude-code` itself, on a
-#           copy of the flake the host was deployed from, and builds,
-#           verifies and switches what that gives, the same way; finish says
-#           so, and says when the server's lock named another revision. It
-#           pushes nothing. While the user's side cannot run (the vault is
+#           if the server pushed a new claude-code revision, that is only the
+#           sign to follow, once per push: root runs `nix flake update
+#           claude-code` itself, on a copy of the flake the host was
+#           deployed from, and builds, verifies and switches what that gives
+#           the same way, but only at the version the server's commit names,
+#           so the laptop never runs ahead of the server; finish says so, and
+#           says when the server's lock named another revision. It pushes
+#           nothing. While the user's side cannot run (the vault is
 #           locked, or no user manager runs), the run ends with 75 and tells
 #           nobody, and ravnix-claude-update-retry.timer starts it again
 #           every hour until it gets through.

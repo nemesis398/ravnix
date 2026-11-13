@@ -34,8 +34,10 @@ Fake_Update :: struct {
 	prepare_fails:     bool,
 	prepare_status:    string,
 	finish_fails:      bool,
-	// setpriv cat: the candidate; "" fails the read.
+	// setpriv cat: the candidate; "" fails the read. And the version the
+	// server's commit names, as prepare left it; "" fails that read.
 	candidate:         string,
+	pushed_version:    string,
 	// nix
 	version:           string,
 	eval_fails:        bool,
@@ -49,6 +51,9 @@ Fake_Update :: struct {
 	fetch_fails:       bool,
 	fetch_error:       string,
 	remote_lock:       string,
+	// The subject of the last commit that changed flake.lock; "" fails
+	// the log.
+	lock_subject:      string,
 	// what `nix flake update` writes; "" fails it.
 	updated_lock:      string,
 	commit_fails:      bool,
@@ -125,6 +130,11 @@ fake_update_run :: proc(data: rawptr, cmd: roll.Cmd) -> roll.Run_Result {
 		return ok_res(fu, fu.latest)
 	case argv[0] == "systemctl":
 		return fake_systemctl(fu, argv)
+	case argv[0] == "setpriv" && strings.has_suffix(argv[len(argv) - 1], roll.VERSION_NAME):
+		if fu.pushed_version == "" {
+			return fail_res(fu, 1, "cat: /home/alice/candidate.version: No such file or directory")
+		}
+		return ok_res(fu, fu.pushed_version)
 	case argv[0] == "setpriv":
 		if fu.candidate == "" {
 			return fail_res(fu, 1, "cat: /home/alice/candidate.lock: No such file or directory")
@@ -273,6 +283,11 @@ fake_git :: proc(fu: ^Fake_Update, cmd: roll.Cmd) -> roll.Run_Result {
 		return ok_res(fu, "")
 	case "rev-parse":
 		return ok_res(fu, BASE + "\n")
+	case "log":
+		if fu.lock_subject == "" {
+			return fail_res(fu, 128, "fatal: bad revision")
+		}
+		return ok_res(fu, strings.concatenate({fu.lock_subject, "\n"}, fu.a))
 	case "show":
 		if fu.remote_lock == "" {
 			return fail_res(fu, 128, "fatal: path 'flake.lock' does not exist in '1111111'")

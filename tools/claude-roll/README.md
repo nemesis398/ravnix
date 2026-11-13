@@ -152,13 +152,22 @@ what the account wrote.
      the upstream's own URL, so a revision in it may be one only a fork has,
      whose package can name Anthropic's genuine download for
      claude-code-verify and install something else. The lock is only the
-     sign: when its input revision is the deployed one, the run ends
-     (nothing to follow). Otherwise root copies the deployed flake to
+     sign: when its input revision is the deployed one, or the one the last
+     follow handled (`STATE/followed`), the run ends (nothing to follow).
+     Each push is followed once, so a laptop that took another head than
+     the server's does not ask upstream again at every run. Otherwise root
+     copies the deployed flake to
      `STATE/work` and runs `nix flake update --refresh INPUT` there itself,
      which asks the input's own repository for the head of its branch; it
      fails with 75 when that cannot be reached. The result must pass the
      same rules as the server's candidate, and leave every other node as
-     it was.
+     it was. A version there that is not newer than the running one ends
+     the run without a word. So does one newer than the version the
+     server's commit names (prepare's `candidate.version`), so the laptop
+     never runs ahead of the server: the server's next push brings it
+     along. One older than that is told once for the push: the server
+     named a version upstream's branch lacks. No commit named a version (a
+     lock committed by hand): no bound.
    - It compares the new lock's input nodes with the deployed flake's
      (`lockfile.odin`): the input's node and the nodes only it reaches, with
      the same names, inputs and `original`, and in `locked` nothing but
@@ -196,7 +205,10 @@ what the account wrote.
    node. It leaves the lock in `STATE/candidate.lock` and the commit in
    `STATE/base`. A failed fetch or update is told to the user. On the
    laptop it first asks `rbw unlocked`, and with the vault locked exits 75
-   without a word: the token for the private remote is in the vault.
+   without a word: the token for the private remote is in the vault. There
+   it also leaves `STATE/candidate.version`, the version in the subject of
+   the last commit that changed `flake.lock` when that is the server's
+   (`chore: update Claude Code to VERSION`), and nothing otherwise.
 3. `claude-roll update-finish` (the user): reads root's result once (by its
    id). A failure is told to the user, and on the laptop a switch with
    root's message. On the server a switch is committed
@@ -256,9 +268,13 @@ itself meanwhile is left alone.
   missing candidate, two runs at once, following by root's own update of
   the input, a lock that names a fork's revision (with upstream moved and
   not), root's own update moving more or elsewhere or out of reach,
-  following back to an older version, a locked vault or no user manager on
+  following back to an older or the same version without a word, a head
+  commit with the same version, each push followed once (and again after a
+  wait), never running ahead of the server's version, a version upstream
+  lacks told once, a locked vault or no user manager on
   the laptop (a quiet 75, the pending marker, and the run after the unlock);
-  prepare's bump, a bump that moved more, a locked vault (told on the
+  prepare's bump, the server's version handed to root (or none), a bump
+  that moved more, a locked vault (told on the
   server, a quiet 75 on the laptop) and a refused token, a failed `nix
   flake update`, a branch without a lock, the lock; finish's signed commit
   and push, the same result twice, a refused push, a failed signature, a
@@ -355,8 +371,14 @@ Findings the tests turned up or the design leaves, not fixed:
   told, as on the server, and not retried before the next timer; only a
   locked vault, a missing user manager, an unreachable input repository or
   manifest wait for the hourly retry.
-- The update: the laptop's follow can take a newer head of the input's
-  branch than the server built, before the server has run it.
+- The update: the laptop's follow takes upstream's head with the version
+  the server pushed, which can be a later revision than the server's (a
+  commit in claude-code-nix after the server's run). The two hosts then run
+  one version from two revisions, and the laptop says so.
+- The update: the bound is the subject of the server's commit, which the
+  account on the server writes. It can only hold the laptop back (no
+  revision is taken from it), and a lock committed by hand carries none, so
+  the laptop then follows upstream's head unbounded.
 - The update: a run that stops between prepare and finish (a reboot) leaves
   a candidate behind, which the next prepare replaces; nothing is lost, and
   nothing is committed for it.
