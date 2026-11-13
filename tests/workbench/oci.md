@@ -42,8 +42,9 @@ Placeholders as elsewhere: `HOST` is the Docker host, `BUILDER` the Nix builder,
 
 ## Status of this record
 
-**Steps 2 and 3 of the task are open.** The run happened in two rounds, because
-the first one found what the image still lacked, and only the first has run.
+**Steps 2 and 3 of the task are open.** Two rounds have run, and each found
+what the image, the compose files or the test script still lacked; a third
+waits.
 
 - **Round 1** ran the first image (`ravnix/muninn:zdrqddvyczgmg1hqqapvd8cdf8gldhsz`)
   on the NAS, with two stand-ins for what the image now does itself: an
@@ -52,16 +53,18 @@ the first one found what the image still lacked, and only the first has run.
   written by hand. Its image, its volume layout (the home at `/home/alice`
   itself) and its compose files are not the committed ones. Everything below
   under "Round 1" is from it.
-- **Round 2** is the run of the final image and the two compose files as
-  committed, and it has **not been run**. Until it has, the committed
-  configuration has never booted on Docker, and neither step is done: Step 2
-  (the checks of Task 4.1 through `docker exec`) has a result for a stand-in
-  configuration only, and Step 3 (nothing of the project remains, `docker ps`
-  as before) has no after-comparison and leaves one image on the host. Round 2
-  also waits for the maintainer's go, because root in the container is root on
-  the NAS, which is shared.
+- **Round 2** ran the image and the two compose files as committed then. The
+  system booted clean and the cleanup proof held (nothing of the project
+  remained, the snapshots before and after were equal, both images were
+  removed), but `docker-checks.sh` failed in all three of its runs: an ssh
+  login with a key, rootless Podman's network, and, in the two runs after a
+  container was made, the checks of PID 1. "Round 2" below has the causes
+  and the fixes.
+- **Round 3** is the same run on the fixed image, and it has **not been run**.
+  Until it has passed, Step 2 is not done. It waits for the maintainer's go,
+  because root in the container is root on the NAS, which is shared.
 
-What round 2 has to show, on the image built from the tree as committed:
+What a round has to show, on the image built from the tree as committed:
 
 1. The entrypoint's guard lets a private cgroup namespace through and the stage 2
    output is clean (no `signature mismatch`, no symlink errors), and the system is
@@ -275,4 +278,43 @@ were validated against the schema with `kubeconform` and never applied.
 
 ## Round 2
 
-Not run yet.
+The image and the compose files as committed after the review, run by the
+script of the task on the same host: Docker with the security options
+`apparmor`, `seccomp` (builtin) and `cgroupns`, no `userns`, and the container's
+`UsernsMode` empty. As inspected: `Privileged=false`, `CapAdd=[CAP_SYS_ADMIN]`,
+`SecurityOpt=[apparmor=unconfined]`, `CgroupnsMode=private`, no device, the
+one volume at `/home`, a tmpfs on `/run`, 24 masked paths, 4096 pids, 4 GiB,
+4 CPUs; with the Podman file `Devices=[/dev/net/tun]` and no masked path.
+
+What held:
+
+- `pull_policy: never` is in the resolved file, and a start with a tag that is
+  not loaded was refused (`No such image`); nothing was pulled.
+- PID 1 is systemd 262 in `0::/init.scope`, `/sys/fs/cgroup` is
+  `rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot`, the
+  system is `running` with no failed unit (`systemd-machine-id-commit` did not
+  time out again), stage 2 is clean, and the health check says `healthy` at
+  0.09 % CPU, 39 MiB and 51 pids.
+- Podman without the Podman file fails at `proc`, as it must.
+- `compose stop` took 6.1 s and the container exited with 0; a container made
+  again from the same volume kept the home's files and sshd's host key.
+- The cleanup: `down -v`, both images removed by their tags, every list of what
+  the project left empty, and the snapshots of the host's other containers
+  (start times, restarts, health), images, volumes and networks equal.
+
+What failed: 44 passed and 1 failed against the base file, 43 and 4 with the
+Podman file and in the container made again. Each failure was reproduced on a
+stand-in for Docker (rootful Podman with Docker's default seccomp profile,
+Docker's capabilities and SELinux labels off in place of AppArmor), where the
+old script gave the same 44 and 1, and found:
+
+| Failure | Cause | Fix |
+| --- | --- | --- |
+| `ssh login: Permission denied (publickey)`, all three runs | the script put its key into `~/.ssh/authorized_keys`, which the server shape's sshd never reads: `hosts/server/deploy.nix` makes `AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u` the only key file (round 1 ran a tree from before it). The home's owner and modes were right; the same key in `/etc/ssh/authorized_keys.d/alice` logged in | the script puts its key there, as root, and checks that a key in the home is refused. The compose file no longer says a key in the volume logs in: a key is the configuration's (`users.users.USER.openssh.authorizedKeys.keys`) |
+| `podman run: Failed to pivot_root() into empty tmpfs: Operation not permitted`, with `/dev/net/tun` | pasta, Podman's network for a rootless container, sandboxes itself with `pivot_root`, and Docker's default seccomp profile allows `pivot_root` to nobody, `SYS_ADMIN` or not. With the same profile plus `pivot_root` the stand-in ran `Hello, world!` on pasta | the image's `containers.conf` gives Podman's containers muninn's own network (`netns = "host"`), and the Podman file drops `/dev/net/tun`, which nothing uses then. Not taken: a seccomp profile of Docker's with `pivot_root`, a copy to keep in step with Docker |
+| `PID 1 is ... "readlink": executable file not found`, `PID 1 is in 0::/`, after a container was made | the script looked at PID 1 first and waited for the system later; only the run against the base file had a wait before it (in the task's script). Right after `up -d`, stage 2 had not made `/run/current-system` (the `PATH` of `docker exec`), and then systemd had not moved into `/init.scope` | the script waits for `systemctl is-system-running` before its first check |
+
+`workbench-oci` now holds the image to `netns = "host"`, the Podman file to no
+device, and the script's key file to the one the image's sshd reads;
+`workbench-oci-checks-script` runs the script against a fake `docker` that
+answers like a container that is still booting.
