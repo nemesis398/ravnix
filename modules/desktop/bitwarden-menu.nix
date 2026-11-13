@@ -47,11 +47,10 @@
 # --- Style exceptions (docs/style.md, rule 9) ---------------------------------
 #   pinentry-qt       a Qt dialog in Fusion style with the qt6ct palette: it has
 #                     rounded buttons and a frame the palette does not square.
-#   fuzzel            no exception: the menu is the launcher's, in the theme.
-#   Password edits    bwm asks `Password` and `Verify password` (when you type a
-#                     password into an item by hand, not when it generates one)
-#                     in fuzzel, which shows what is typed: bwm hides input only
-#                     for dmenu, rofi, bemenu and wofi (menu.py). Not seen on screen.
+#   fuzzel            no exception: the menu is the launcher's, in the theme. bwm
+#                     knows fuzzel only through the package's patch of menu.py
+#                     (packages/bitwarden-menu): it gives every question its prompt
+#                     and hides what is typed for secrets.
 #
 # --- Open, not verified -------------------------------------------------------
 #   - Whether bwm shows, types or edits SSH-key items: its README does not say.

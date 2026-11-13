@@ -35,14 +35,14 @@ let
   # The same wrapper around a program that runs its arguments, so what bwm
   # would see on PATH can be asked for.
   probe = package.override {
-    bitwarden-menu = hostPkgs.writeShellScriptBin "bwm" ''exec "$@"'' // {
+    bitwarden-menu = (hostPkgs.writeShellScriptBin "bwm" ''exec "$@"'').overrideAttrs (_: {
       version = "stand-in";
       meta = {
         description = "runs its arguments";
         license = lib.licenses.mit;
         mainProgram = "bwm";
       };
-    };
+    });
   };
 in
 pkgs.runCommand "desktop-bitwarden-menu-wrapper"

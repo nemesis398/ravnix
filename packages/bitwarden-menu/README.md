@@ -12,6 +12,14 @@ headless Sway with the session's `wl-paste --watch cliphist store` watchers: a
 plain copy is recorded (the control), a copy through the wrapper is not, and
 bwm's clear leaves the history as it was.
 
+`tests/desktop/bitwarden-menu-prompts.nix` covers the patch to `bwm/menu.py`: bwm
+knows dmenu, rofi, bemenu and wofi by name and gives only those a question
+and hidden input, so with `fuzzel --dmenu` every question was a bare `> ` and
+the `Password` and `Verify password` prompts showed what was typed. The package
+adds fuzzel (`--prompt=TEXT --lines=N`, and `--password` for secrets), and the
+check asks `dmenu_cmd` for each kind of prompt and starts the real fuzzel with
+the result. The patch fails the build if upstream changes the lines it matches.
+
 ## Findings that are not fixed
 
 - Nothing here ran against a server: the check makes no network login. The
@@ -25,10 +33,6 @@ bwm's clear leaves the history as it was.
 - bwm's README says a copy is cleared "after 1 paste on Wayland". The 0.6.0
   code does not use `--paste-once`; it clears after 30 seconds. `--paste-once`
   would not help here either, because the history watcher is a paste.
-- bwm hides what is typed only for dmenu, rofi, bemenu and wofi. Under fuzzel
-  the prompts `Password` and `Verify password` (typing a password into an item
-  by hand) show it; the master password and the 2FA code go through the
-  pinentry and are hidden.
 - Whether bwm shows, types or edits SSH-key items is not stated by its README
   and not tried.
 - The pinentry window (pinentry-qt) opens on Wayland, as the check shows, but

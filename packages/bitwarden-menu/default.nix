@@ -11,6 +11,8 @@
 #   fuzzel      the menu of config.ini
 #   wl-copy     a stand-in for wl-clipboard's (below)
 #
+# bwm itself is patched to know fuzzel (see `patched` below).
+#
 # The clipboard. bwm copies a password by running a plain `wl-copy`, and clears
 # the clipboard 30 seconds later by running it again with empty input (read
 # from its source: `bwm/__init__.py`, `bwm/bwtype.py` in 0.6.0; its README says
@@ -43,6 +45,30 @@
   fuzzel,
 }:
 let
+  # bwm gives a question and hides typed input only for the menus it knows by
+  # name (bwm/menu.py, dmenu_cmd: dmenu, rofi, bemenu and wofi). With
+  # `fuzzel --dmenu` every question was fuzzel's bare "> ", and the `Password`
+  # and `Verify password` prompts of an item whose password is typed by hand
+  # showed what was typed. fuzzel 1.15 takes `--prompt=TEXT`, `--lines=N` and
+  # `--password` (read from `fuzzel --help`; `--password` has an optional
+  # argument, so it stands alone). The `=` form keeps a question that starts
+  # with a dash from being read as a flag. The two replacements fail the build
+  # when upstream changes the lines they match, so a newer bwm is looked at
+  # and not silently left unpatched (tests/desktop/bitwarden-menu-prompts.nix).
+  patched = bitwarden-menu.overrideAttrs (old: {
+    postPatch = (old.postPatch or "") + ''
+      substituteInPlace bwm/menu.py \
+        --replace-fail \
+          '"dmenu": ["-p", str(prompt), "-l", str(num_lines)],' \
+          '"dmenu": ["-p", str(prompt), "-l", str(num_lines)],
+              "fuzzel": [f"--prompt={prompt} ", f"--lines={num_lines}"],' \
+        --replace-fail \
+          '"wofi": ["-P"],' \
+          '"wofi": ["-P"],
+              "fuzzel": ["--password"],'
+    '';
+  });
+
   copy = writeShellApplication {
     name = "wl-copy";
     # No runtimeInputs: the real one is called by its store path, and the
@@ -76,15 +102,15 @@ let
   };
 in
 symlinkJoin {
-  name = "bitwarden-menu-${bitwarden-menu.version}";
+  name = "bitwarden-menu-${patched.version}";
   paths = [
-    bitwarden-menu
+    patched
     menu
   ];
   nativeBuildInputs = [ makeWrapper ];
   postBuild = ''
     rm $out/bin/bwm
-    makeWrapper ${lib.getExe bitwarden-menu} $out/bin/bwm \
+    makeWrapper ${lib.getExe patched} $out/bin/bwm \
       --prefix PATH : ${
         lib.makeBinPath [
           copy
