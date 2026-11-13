@@ -31,9 +31,11 @@ in
       example = "/home/alice/notes";
       description = ''
         The Obsidian vault, an absolute path in a string. On the server it
-        is the vault's git repository: `ravnix-link vault-commit` and
-        `vault-commit` commit there, after the Obsidian operations queued
-        before it have run on the laptop. On the laptop it is the copy the
+        is the vault's git repository: `ravnix-link vault-commit` commits
+        there, after the Obsidian operations queued before it have run on
+        the laptop, and so does `vault-commit` with the skill value
+        vault.commitVia = "ravnix-link", the default of both shapes (with
+        "git" it commits at once and keeps no order). On the laptop it is the copy the
         file sync keeps, without `.git`: `vault-commit` there reads the
         files it names and sends the commit to the server, which waits
         until its copy has them. One private flake for both hosts gives one

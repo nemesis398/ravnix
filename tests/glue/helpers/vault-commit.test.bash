@@ -230,6 +230,19 @@ test_a_vault_that_is_no_repository_fails() {
 	expect_err "no git repository"
 }
 
+test_a_vault_inside_another_repository_is_refused() {
+	fresh git
+	# The vault's own .git has not arrived yet; an enclosing repository
+	# must not take its commits.
+	mkdir -p "$scratch/outer/vault"
+	git -C "$scratch/outer" init -q
+	printf 'neu\n' >"$scratch/outer/vault/neu.md"
+	VAULT_COMMIT_VAULT="$scratch/outer/vault" capture "$VAULT_COMMIT" "m" neu.md
+	expect_status 1
+	expect_err "not the vault's own"
+	[[ -z "$(git -C "$scratch/outer" log --oneline 2>/dev/null)" ]]
+}
+
 test_without_a_vault_git_says_which_option() {
 	fresh git
 	VAULT_COMMIT_VAULT="" capture "$VAULT_COMMIT" "m" alt.md
@@ -336,6 +349,7 @@ tests=(
 	test_nothing_to_commit_is_done
 	test_a_path_git_does_not_know_fails
 	test_a_vault_that_is_no_repository_fails
+	test_a_vault_inside_another_repository_is_refused
 	test_without_a_vault_git_says_which_option
 	test_a_hook_that_refuses_fails_with_its_words
 	test_concurrent_runs_each_commit

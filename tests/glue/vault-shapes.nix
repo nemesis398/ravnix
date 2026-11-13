@@ -1,7 +1,9 @@
 # The vault on the two shapes (modules/glue/vault.nix and the laptop's end
 # of modules/glue/link.nix), evaluated as the private flake builds them,
-# with the template's values: vault.commitVia of the skill values is git on
-# the server and ravnix-link on the laptop, in the user's home-manager
+# with the template's values: vault.commitVia of the skill values is
+# ravnix-link on both shapes, so every commit goes through the server's
+# queue, and vault.repositoryHere says where the history is, true on the
+# server and false on the laptop; both are in the user's home-manager
 # configuration, which renders skill-values.json; a value of the private
 # flake wins, and the other skill values stay. vault-commit is in the
 # user's profile on both, with the host's ravnix-link: the server's, which
@@ -44,7 +46,7 @@ let
   mOwn = (build (server ++ [
     {
       ravnix.claude.skillValues = {
-        vault.commitVia = "ravnix-link";
+        vault.commitVia = "git";
         vault.root = "/home/alice/notes";
         nextcloud.root = "/home/alice/cloud";
       };
@@ -65,6 +67,7 @@ let
   infix = a: b: lib.hasInfix (plain a) (plain b);
   values = c: c.home-manager.users.${user}.ravnix.claude.skillValues;
   via = c: (values c).vault.commitVia or null;
+  here = c: (values c).vault.repositoryHere or null;
   homeNamed = name: c: lib.filter (p: lib.getName p == name) c.home-manager.users.${user}.home.packages;
   text = p: p.text or "";
   one = name: c: lib.head (homeNamed name c ++ [ { } ]);
@@ -73,10 +76,13 @@ let
   forwardText = c: text (c.ravnix.link.command.forward or { });
 
   failures =
-    check (via m == "git") "vault.commitVia on the server is ${toString (via m)}, not git"
+    check (via m == "ravnix-link") "vault.commitVia on the server is ${toString (via m)}, not ravnix-link: its commits would bypass the queue"
     ++ check (via h == "ravnix-link") "vault.commitVia on the laptop is ${toString (via h)}, not ravnix-link"
-    ++ check (m.ravnix.claude.skillValues.vault.commitVia or null == "git") "the server's NixOS skill values have no vault.commitVia"
-    ++ check (via mOwn == "ravnix-link") "the private flake's vault.commitVia does not win on the server"
+    ++ check (here m == true) "vault.repositoryHere on the server is not true"
+    ++ check (here h == false) "vault.repositoryHere on the laptop is not false"
+    ++ check (m.ravnix.claude.skillValues.vault.commitVia or null == "ravnix-link") "the server's NixOS skill values have no vault.commitVia"
+    ++ check (via mOwn == "git") "the private flake's vault.commitVia does not win on the server"
+    ++ check (here mOwn == true) "a private vault.commitVia hides vault.repositoryHere"
     ++ check ((values mOwn).vault.root or null == "/home/alice/notes") "the shape's vault.commitVia hides vault.root"
     ++ check ((values mOwn).nextcloud.root or null == "/home/alice/cloud") "the shape's vault.commitVia hides nextcloud.root"
     ++ check (via hOther == "ravnix-link" && (values hOther).vault.root or null == "/home/alice/notes") "vault.commitVia and vault.root do not merge on the laptop"

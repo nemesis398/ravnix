@@ -21,12 +21,16 @@
 # huginn xdg-utils'.
 #
 # The vault on both hosts (modules/glue/vault.nix): the skill values say
-# git on muninn and ravnix-link on huginn. A note written on huginn, where
-# the vault has no .git, and committed there with vault-commit, goes to
-# muninn over ssh and waits until muninn's copy has it as huginn wrote it;
-# the test copies it over, as the sync would, and the delivery service
-# commits it, signed. A note muninn has already is answered as committed;
-# and vault-commit on muninn commits with git.
+# ravnix-link on both, the repository here on muninn and not on huginn. The
+# commit queued behind the rename above is asked for with vault-commit on
+# muninn, so muninn's own commits wait for the Obsidian operations before
+# them. A note written on huginn, where the vault has no .git, and
+# committed there with vault-commit, goes to muninn over ssh and waits
+# until muninn's copy has it as huginn wrote it; the test copies it over,
+# as the sync would, and the delivery service commits it, signed. A note
+# muninn has already is answered as committed; vault-commit on muninn
+# commits at once when nothing waits; and commits asked for on both hosts
+# at once all land, none failing on git's index.lock.
 {
   self,
   pkgs,
@@ -251,9 +255,10 @@ pkgs.testers.runNixOSTest {
         assert "queued" in out, out
         # An edit to the old path, while the rename waits.
         as_user(muninn, "printf 'bearbeitet\\n' >>" + shlex.quote("vault/" + NOTE))
+        # The vault skills' entry point, which goes through the queue.
         out = as_user(
             muninn,
-            "ravnix-link vault-commit 'vault: rename and edit' " + shlex.quote(NOTE) + " " + shlex.quote(RENAMED) + " 2>&1",
+            "vault-commit 'vault: rename and edit' " + shlex.quote(NOTE) + " " + shlex.quote(RENAMED) + " 2>&1",
         )
         assert "queued" in out, out
         as_user(muninn, "notify-send -a herdr -u critical Frage 'Darf ich?'")
@@ -377,10 +382,10 @@ pkgs.testers.runNixOSTest {
 
     with subtest("each host's skill values say how it commits to the vault"):
         values = "~/.config/ravnix/skill-values.json"
-        via = as_user(muninn, JQ + " -r .vault.commitVia " + values).strip()
-        assert via == "git", via
-        via = as_user(huginn, JQ + " -r .vault.commitVia " + values).strip()
-        assert via == "ravnix-link", via
+        got = as_user(muninn, JQ + " -r '.vault.commitVia, .vault.repositoryHere' " + values).split()
+        assert got == ["ravnix-link", "true"], got
+        got = as_user(huginn, JQ + " -r '.vault.commitVia, .vault.repositoryHere' " + values).split()
+        assert got == ["ravnix-link", "false"], got
 
     with subtest("a note made on huginn is committed on muninn once the sync brings it"):
         before = as_user(muninn, "git -C ~/vault log --format=%s").split("\n")
@@ -425,14 +430,49 @@ pkgs.testers.runNixOSTest {
         log = as_user(muninn, "git -C ~/vault log --format=%s").split("\n")
         assert log[0] == "vault: zweite Fassung", log
 
-    with subtest("vault-commit on muninn commits with git"):
+    with subtest("vault-commit on muninn commits at once when nothing waits"):
         as_user(muninn, "printf 'auf muninn\\n' >vault/muninn.md")
-        as_user(
+        out = as_user(
             muninn,
-            "SSH_AUTH_SOCK=\"$XDG_RUNTIME_DIR/test-agent.sock\" vault-commit 'vault: auf muninn' muninn.md",
+            "SSH_AUTH_SOCK=\"$XDG_RUNTIME_DIR/test-agent.sock\" vault-commit 'vault: auf muninn' muninn.md 2>&1",
         )
+        assert "queued" not in out, out
         log = as_user(muninn, "git -C ~/vault log --format=%s").split("\n")
         assert log[0] == "vault: auf muninn", log
         as_user(muninn, "git -C ~/vault verify-commit HEAD")
+
+    with subtest("commits asked for on both hosts at once all land"):
+        for i in range(3):
+            as_user(huginn, "printf 'h%d\\n' >vault/h%d.md" % (i, i))
+            as_user(muninn, "printf 'm%d\\n' >vault/m%d.md" % (i, i))
+        # The sync has brought huginn's files already.
+        as_user(huginn, "tar -C vault -cf - h0.md h1.md h2.md | ssh muninn 'tar -C vault -xf -'")
+        # Three on each host, all at once: each run's output and status go
+        # to files; huginn's runs in the background while muninn's run.
+        batch = (
+            "export SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/test-agent.sock; rm -f ~/rc-* ~/out-*;"
+            + " for i in 0 1 2; do (vault-commit \"vault: %s$i\" %s$i.md >~/out-$i 2>&1; echo $? >~/rc-$i) & done; wait"
+        )
+        uid = huginn.succeed("id -u " + USER).strip()
+        huginn.succeed(
+            "su - " + USER + " -c "
+            + shlex.quote("export XDG_RUNTIME_DIR=/run/user/" + uid + "; " + batch % ("h", "h"))
+            + " >/dev/null 2>&1 &"
+        )
+        as_user(muninn, batch % ("m", "m"))
+        huginn.wait_until_succeeds("test -s " + HOME + "/rc-0 && test -s " + HOME + "/rc-1 && test -s " + HOME + "/rc-2", timeout=120)
+        for machine in (huginn, muninn):
+            for i in range(3):
+                code = machine.succeed("cat " + HOME + "/rc-%d" % i).strip()
+                out = machine.succeed("cat " + HOME + "/out-%d" % i)
+                print(machine.name, i, code, out)
+                assert code == "0", (machine.name, i, out)
+                assert "index.lock" not in out, (machine.name, i, out)
+        muninn.wait_until_succeeds(
+            "su - " + USER + " -c 'ravnix-link status' | grep -q 'nothing waits'", timeout=120
+        )
+        log = as_user(muninn, "git -C ~/vault log --format=%s -6").strip().split("\n")
+        assert sorted(log) == sorted(["vault: h0", "vault: h1", "vault: h2", "vault: m0", "vault: m1", "vault: m2"]), log
+        assert as_user(muninn, "git -C ~/vault status --porcelain").strip() == "", "uncommitted files remain"
   '';
 }

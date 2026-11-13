@@ -176,9 +176,10 @@
     # The link between the hosts: the Obsidian vault, an absolute path in a
     # string, the same on both hosts when the file sync puts it in the same
     # place. On the server it is the git repository, where `vault-commit`
-    # commits once the Obsidian operations before it have run on the laptop;
-    # on the laptop it is the copy without .git, whose files a commit asked
-    # for there names, so the server waits until the sync brings them.
+    # commits through the link's queue, once the Obsidian operations before
+    # it have run on the laptop; on the laptop it is the copy without .git,
+    # whose files a commit asked for there names, so the server waits until
+    # the sync brings them.
     # null refuses vault-commit.
     link.vault = "/home/alice/notes";
 

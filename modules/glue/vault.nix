@@ -6,21 +6,33 @@
 #
 # The one entry point is `vault-commit MESSAGE [PATH...]` (./vault/,
 # installed on both shapes). It reads vault.commitVia from the skill values
-# (~/.config/ravnix/skill-values.json), which this module sets by the
-# host's shape, as a default that the private flake may override:
+# (~/.config/ravnix/skill-values.json). This module sets it to ravnix-link
+# on both shapes, as a default the private flake may override, and sets
+# vault.repositoryHere, which says where the history is:
 #
-#   server  git           git add and git commit in ravnix.link.vault,
-#                         where the repository is
-#   laptop  ravnix-link   `ravnix-link vault-commit`, which sends the
-#                         commit to the server with the SHA-256 of each
-#                         file; the server commits once its copy has them
-#                         (./link.nix, tools/ravnix-link/README.md)
+#   server  ravnix-link, repositoryHere = true: `ravnix-link vault-commit`
+#           commits in ravnix.link.vault, in the queue of the link, so a
+#           commit waits for the Obsidian operations queued before it (the
+#           design's rule: a pending rename and a later edit cannot cross),
+#           and it never runs git beside the delivery service, which
+#           commits the laptop's requests in the same repository. When
+#           nothing waits it commits at once, in the caller's process.
+#   laptop  ravnix-link, repositoryHere = false: `ravnix-link vault-commit`
+#           sends the commit to the server with the SHA-256 of each file;
+#           the server commits once its copy has them (./link.nix,
+#           tools/ravnix-link/README.md).
 #
-# A skill reads vault.commitVia when it must know whether the commit is
-# made here, and calls vault-commit either way. On the server,
-# `ravnix-link vault-commit` (commitVia = "ravnix-link" there too) would
-# order the commit after the Obsidian operations queued for the laptop;
-# git, the default, commits at once.
+# The other value, git, commits at once with git in ravnix.link.vault. It
+# is for a host whose vault no ravnix-link serves. On a ravnix server it
+# gives up what the queue gives: the order after queued Obsidian operations,
+# and one git at a time with the delivery service (a run may fail on git's
+# index.lock, or take what the service has staged).
+#
+# For the skills: commit with vault-commit, never with git commit. On the
+# laptop name the files (no folder, no commit of what is staged), and read
+# exit 1 as "the server did not answer, ask again later": nothing queues
+# on the laptop. Exit 0 may mean queued; vault.repositoryHere says whether
+# `git log` here shows the commit.
 {
   config,
   lib,
@@ -35,13 +47,15 @@ let
     inherit lib pkgs;
     vault = os.ravnix.link.vault;
     link = lib.getExe os.ravnix.link.command;
+    git = lib.getExe os.ravnix.link.programs.git;
   };
 in
 {
   config = lib.mkIf (shape != null) {
-    ravnix.claude.skillValues.vault.commitVia = lib.mkDefault (
-      if shape == "server" then "git" else "ravnix-link"
-    );
+    ravnix.claude.skillValues.vault = {
+      commitVia = lib.mkDefault "ravnix-link";
+      repositoryHere = lib.mkDefault (shape == "server");
+    };
     home-manager.users.${user}.home.packages = [ vaultCommit ];
   };
 }

@@ -4,16 +4,21 @@
 #
 # How is vault.commitVia of the skill values (~/.config/ravnix/
 # skill-values.json, or $RAVNIX_SKILL_VALUES), which modules/glue/vault.nix
-# sets by the host's shape:
+# sets to ravnix-link on both shapes:
 #
-#   git          the vault's repository is here: git add the PATHs that
-#                are there, then git commit them (a PATH that is gone
-#                commits its removal), or commit what is staged. One run at
-#                a time per repository, by a lock in its .git.
-#   ravnix-link  `ravnix-link vault-commit MESSAGE PATH...`: on the laptop
-#                it goes to the server, which commits once its copy of the
-#                vault has the files as they are here; on the server it
-#                commits after the Obsidian operations queued before it.
+#   ravnix-link  `ravnix-link vault-commit MESSAGE PATH...`: on the server
+#                it commits in the link's queue, after the Obsidian
+#                operations queued before it and never beside the delivery
+#                service's git; on the laptop it goes to the server, which
+#                commits once its copy of the vault has the files as they
+#                are here.
+#   git          for a host whose vault no ravnix-link serves: git add the
+#                PATHs that are there, then git commit them (a PATH that is
+#                gone commits its removal), or commit what is staged, at
+#                once. One run at a time per repository, by a lock in its
+#                .git that ravnix-link does not take: on a ravnix server
+#                this gives up the order after queued Obsidian operations
+#                and may race the delivery service.
 #
 # A PATH is relative to the vault's root; an absolute one inside the vault
 # is made relative. The vault is ravnix.link.vault, or $VAULT_COMMIT_VAULT.
@@ -93,6 +98,13 @@ fi
 export LC_ALL=C
 gitdir=$("$git" -C "$vault" rev-parse --absolute-git-dir 2>&1) ||
 	fail "the vault, $vault, is no git repository here: $gitdir"
+# A repository around the vault (its own .git not there yet) is not the
+# vault's: its commits must not go there.
+top=$("$git" -C "$vault" rev-parse --show-toplevel 2>&1) ||
+	fail "the vault, $vault, has no work tree here: $top"
+real=$(cd -- "$vault" && pwd -P) || fail "cannot enter the vault, $vault"
+[[ $top == "$real" ]] ||
+	fail "the repository at $top is not the vault's own; the vault, $vault, has no .git of its own here"
 # One run at a time: git's index.lock would fail the second at once.
 exec 9>>"$gitdir/ravnix-vault-commit.lock" ||
 	fail "cannot open the lock in $gitdir"
