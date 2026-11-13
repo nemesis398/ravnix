@@ -10,7 +10,9 @@
 #   Notes          Obsidian
 #   Office         OnlyOffice
 #   Passwords      Bitwarden desktop; rbw, in the common module, is the
-#                  session's SSH agent
+#                  session's SSH agent; bitwarden-menu (bitwarden-menu.nix),
+#                  when ravnix.apps.bitwardenMenu.enable is true, is a menu
+#                  to the same vault
 #   Dictation      Handy, pinned to the iGPU (packages/handy-launch), with its
 #                  hold-to-talk driver (packages/handy-ptt) and wtype
 #   Games          Steam, Prism Launcher, MangoHud, gamemode

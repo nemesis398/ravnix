@@ -15,6 +15,12 @@ let
     description = "http or https URL without a quote, backslash, dollar sign or backtick";
   };
 
+  # The values of bitwarden-menu's config.ini (modules/desktop/bitwarden-menu.nix)
+  # go through Python's configparser, which reads a line break as a new key, a
+  # section header or a continuation, and a percent sign as interpolation. So
+  # neither, nor a space, may be in them.
+  iniValue = re: description: types.strMatching re // { inherit description; };
+
   # The web apps whose address is the user's. Claude and Apple Music are on
   # the public internet and need no option. There is none for the password
   # vault: Bitwarden desktop and the browser extension are its clients.
@@ -67,6 +73,68 @@ in
         `modules/desktop/apps.nix` says why that step cannot be declarative).
         Null when you have no repository of your own.
       '';
+    };
+
+    bitwardenMenu = mkOption {
+      description = ''
+        bitwarden-menu (`bwm`), a keyboard-driven menu to your Bitwarden or
+        Vaultwarden vault in fuzzel, beside Bitwarden desktop, which it leaves
+        as it is. It drives the official CLI, which sends what a current
+        Vaultwarden asks for when it adds or edits an item. Off by default;
+        when on, the three values must be set in me.nix (an assertion says so).
+      '';
+      default = { };
+      type = types.submodule {
+        options = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            example = true;
+            description = "Install bwm, write its configuration and add its launcher.";
+          };
+          server = mkOption {
+            type = types.nullOr (
+              iniValue "https?://[^[:space:]%]+" "http or https URL without a space or percent sign"
+            );
+            default = null;
+            example = "https://vault.example.org";
+            description = ''
+              The address of your Bitwarden or Vaultwarden server, as `bw
+              config server` takes it. Null until you set it; required when
+              the menu is on.
+            '';
+          };
+          email = mkOption {
+            type = types.nullOr (
+              iniValue "[^@[:space:]%]+@[^@[:space:]%]+[.][^@[:space:]%]+" "mail address without a percent sign"
+            );
+            default = null;
+            example = "alice@example.org";
+            description = ''
+              The mail address of your vault account. Null until you set it;
+              required when the menu is on.
+            '';
+          };
+          twoFactor = mkOption {
+            type = types.nullOr (
+              types.enum [
+                0
+                1
+                3
+              ]
+            );
+            default = null;
+            example = 0;
+            description = ''
+              How the account's second factor is given, by bwm's number for
+              it: 0 for an authenticator app (TOTP), 1 for a code by mail,
+              3 for a YubiKey. Null until you set it; required when the menu
+              is on. An account without two-factor login is not supported by
+              this option.
+            '';
+          };
+        };
+      };
     };
 
     webapps = lib.mapAttrs (

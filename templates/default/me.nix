@@ -316,6 +316,19 @@
       # describes. Null when you have none.
       userstylesUrl = "https://git.example.org/alice/catppuccin-userstyles";
 
+      # bitwarden-menu (`bwm`), a keyboard menu to your vault in fuzzel, beside
+      # Bitwarden desktop. Off unless you turn it on; then it needs the three
+      # values (a build without one stops and names it). server: your
+      # Bitwarden or Vaultwarden address; email: your vault account's;
+      # twoFactor: 0 for an authenticator app, 1 for a code by mail, 3 for a
+      # YubiKey.
+      bitwardenMenu = {
+        enable = false;
+        server = "https://vault.example.org";
+        email = "alice@example.org";
+        twoFactor = 0;
+      };
+
       # Your self-hosted services as web apps, a Helium window each, found by
       # the launcher as webapp-NAME. Claude and Apple Music are web apps too,
       # and need no address. Null installs no launcher for that service.
