@@ -24,8 +24,10 @@
 #      is no sudo policy here to get wrong. The cost is a QEMU window opened
 #      by root, which is why the line above passes the display variables.
 #   3. qemu-system-x86_64 and the firmware must exist, before anything else.
-#   4. One flock on a lock file that the install step takes too
-#      (RAVNIX_HUGINN_LOCK, default /run/lock/ravnix-huginn-disk.lock). The
+#   4. One flock on /run/lock/ravnix-huginn-disk.lock, a fixed path that no
+#      variable changes, and that the install takes too: its guard, disko,
+#      nixos-install and systemd-cryptenroll all run in one shell that holds
+#      the same lock (hosts/laptop/disko.nix). Both sides use this path. The
 #      guard cannot see a disk that a process holds open, such as this very
 #      VM, so the lock is what keeps the installer and a running VM apart.
 #      It stays held until QEMU ends.
@@ -64,7 +66,8 @@ export LC_ALL=C
 # Replaced by the package with the store paths of OVMF's code and variables.
 ovmf_code="@ovmfCode@"
 ovmf_vars="@ovmfVars@"
-lock="${RAVNIX_HUGINN_LOCK:-/run/lock/ravnix-huginn-disk.lock}"
+# The install's lock too, and no variable moves it: one file, or no lock.
+lock="/run/lock/ravnix-huginn-disk.lock"
 by_id="/dev/disk/by-id/"
 
 usage_text='usage: try-huginn --model MODEL --serial SERIAL

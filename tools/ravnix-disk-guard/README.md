@@ -66,12 +66,24 @@ prints no line.
 ## How the install uses it
 
 Task 3.5 runs disko only on the path the guard printed, and only when it
-exited 0, in the same shell:
+exited 0, in the same shell, and that shell holds the disk lock first. The
+guard cannot see a QEMU passthrough VM (see the known gaps), so the lock is
+what keeps the installer and `scripts/try-huginn.sh` apart: the script takes
+the same lock and refuses while it is held. Every command that writes the
+disk runs under it: disko, `nixos-install`, `systemd-cryptenroll`, and any
+rerun of them.
 
 ```sh
+sudo flock -n /run/lock/ravnix-huginn-disk.lock bash   # a shell that holds the lock; exits 1 if it is held
+# in that shell:
 dev=$(ravnix-disk-guard --model "$MODEL" --serial "$SERIAL" --print-device) || exit
 disko --mode destroy,format,mount --argstr device "$dev" hosts/laptop/disko.nix
+# nixos-install and systemd-cryptenroll follow in the same shell
 ```
+
+Both sides must use that path, `/run/lock/ravnix-huginn-disk.lock`: the
+script has it fixed and no variable moves it, so a different path in the
+install takes a lock that protects nothing.
 
 `hosts/laptop/disko.nix` takes nothing but a `/dev/disk/by-id` path. Task
 3.5's QEMU passthrough script is to refuse to start while the guard exits 2,
@@ -140,8 +152,10 @@ Findings that are not fixed, so nobody mistakes them for covered.
 
 - The guard sees what lsblk sees. A disk that a process has open without a
   mount or a mapping, such as a QEMU VM that boots it through passthrough,
-  is not in use to the guard, and exits 0. Do not run disko while the
-  passthrough VM runs. Scanning `/proc/*/fd` as root would find such a
+  is not in use to the guard, and exits 0. The disk lock above is what
+  covers this: run disko, `nixos-install` and `systemd-cryptenroll` only
+  under `flock -n /run/lock/ravnix-huginn-disk.lock`, never without it.
+  Scanning `/proc/*/fd` as root would find such a
   process; the guard does not.
 - The decision holds for the moment it is made. Something that mounts the
   disk between the guard's exit and disko's start, such as a desktop's

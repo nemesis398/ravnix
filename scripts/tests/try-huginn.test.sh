@@ -6,8 +6,10 @@
 # record, to a file, and a fake id says who is running. No test touches a
 # real disk, a real device node or a real guard. The script under test is a
 # copy whose two firmware placeholders are replaced by fake files in the
-# scratch directory, as the package does with the store paths (a test checks
-# that the copy differs from the script in nothing else). Run it with:
+# scratch directory, as the package does with the store paths, and whose lock
+# file is the scratch directory's (a test checks that the copy differs from
+# the script in nothing else, and that the shipped lock path is the install's
+# fixed one). Run it with:
 #
 #   bash scripts/tests/try-huginn.test.sh
 #
@@ -30,6 +32,9 @@ calls="$scratch/calls"
 copy="$scratch/try-huginn"
 code_fd="$scratch/fake-OVMF_CODE.fd"
 vars_fd="$scratch/fake-OVMF_VARS.fd"
+# The one lock path the script and the install step share, and the test copy's.
+shipped_lock="/run/lock/ravnix-huginn-disk.lock"
+lockfile="$scratch/lock"
 mkdir -p "$bin" "$calls"
 printf 'fake code' >"$code_fd"
 printf 'fake vars' >"$vars_fd"
@@ -38,7 +43,7 @@ run_tmp="$scratch/tmp"
 mkdir -p "$run_tmp"
 
 # The script as the package ships it, with the firmware paths filled in.
-sed -e "s|@ovmfCode@|$code_fd|g" -e "s|@ovmfVars@|$vars_fd|g" "$script" >"$copy"
+sed -e "s|@ovmfCode@|$code_fd|g" -e "s|@ovmfVars@|$vars_fd|g" -e "s|$shipped_lock|$lockfile|g" "$script" >"$copy"
 chmod +x "$copy"
 
 # The guard: one line of its arguments per call in $calls/guard, then the
@@ -72,9 +77,9 @@ write_script "$bin/id" 'echo "${FAKE_UID:-0}"'
 setup() {
 	rm -rf "$calls" "$run_tmp"
 	mkdir -p "$calls" "$run_tmp"
-	export CALLS="$calls" TMPDIR="$run_tmp" RAVNIX_HUGINN_LOCK="$scratch/lock"
+	export CALLS="$calls" TMPDIR="$run_tmp"
 	export GUARD_EXITS=0 GUARD_OUTS="$dev"
-	unset FAKE_UID FAKE_GUARD_ERR QEMU_EXIT
+	unset FAKE_UID FAKE_GUARD_ERR QEMU_EXIT RAVNIX_HUGINN_LOCK
 }
 
 run() { capture env PATH="$bin:$PATH" "$copy" "$@"; }
@@ -104,15 +109,43 @@ expect_no_qemu_arg() {
 guard_calls() { wc -l <"$calls/guard" | tr -d ' '; }
 
 test_placeholders_are_the_only_difference() {
-	# The copy the tests run is the shipped script with two strings replaced.
+	# The copy the tests run is the shipped script with three strings replaced.
 	grep -q '@ovmfCode@' "$script"
 	grep -q '@ovmfVars@' "$script"
 	if grep -q '@ovmf' "$copy"; then
 		echo "  a placeholder is left in the copy"
 		return 1
 	fi
-	[[ "$(diff <(sed -e 's|@ovmfCode@||g' -e 's|@ovmfVars@||g' "$script") \
-		<(sed -e "s|$code_fd||g" -e "s|$vars_fd||g" "$copy") | wc -l)" == 0 ]]
+	[[ "$(diff <(sed -e 's|@ovmfCode@||g' -e 's|@ovmfVars@||g' -e "s|$shipped_lock||g" "$script") \
+		<(sed -e "s|$code_fd||g" -e "s|$vars_fd||g" -e "s|$lockfile||g" "$copy") | wc -l)" == 0 ]]
+}
+
+test_the_shipped_lock_is_the_installs_fixed_path() {
+	# The install step takes this very file (hosts/laptop/disko.nix), so the
+	# script names it once, as a constant, and reads no variable for it.
+	local code
+	code="$(grep -v '^[[:space:]]*#' "$script")"
+	[[ "$(grep -cF -- "$shipped_lock" <<<"$code")" == 1 ]]
+	grep -qxF "lock=\"$shipped_lock\"" <<<"$code"
+	if grep -q 'RAVNIX_HUGINN_LOCK' <<<"$code"; then
+		echo "  the script's code reads RAVNIX_HUGINN_LOCK"
+		return 1
+	fi
+}
+
+test_the_environment_cannot_move_the_lock() {
+	setup
+	# The install holds the one lock; a variable pointing elsewhere must not
+	# help a run past it, and must not create another lock file.
+	(
+		exec 9>"$lockfile"
+		flock -n 9
+		RAVNIX_HUGINN_LOCK="$scratch/other-lock" run_ok_args
+		[[ "$status" == 1 ]] || exit 11
+		[[ "$err" == *"is held"* ]] || exit 12
+		[[ ! -e "$scratch/other-lock" ]] || exit 13
+		[[ ! -e "$calls/guard" ]] || exit 14
+	)
 }
 
 test_guard_then_qemu_with_the_printed_device() {
@@ -417,7 +450,7 @@ test_a_held_lock_refuses_before_the_guard() {
 	setup
 	# The install step holds the same lock file; flock here plays it.
 	(
-		exec 9>"$RAVNIX_HUGINN_LOCK"
+		exec 9>"$lockfile"
 		flock -n 9
 		run_ok_args
 		[[ "$status" == 1 ]] || exit 11
@@ -433,18 +466,21 @@ test_the_lock_is_held_while_qemu_runs_and_free_after() {
 	write_script "$scratch/bin2/qemu-system-x86_64" \
 		'if flock -n "$LOCK_FILE" true; then echo free >"$CALLS/lock-state"; else echo held >"$CALLS/lock-state"; fi'
 	cp "$bin/ravnix-disk-guard" "$bin/id" "$scratch/bin2/"
-	LOCK_FILE="$RAVNIX_HUGINN_LOCK" capture env PATH="$scratch/bin2:$PATH" "$copy" --model "$model" --serial "$serial"
+	LOCK_FILE="$lockfile" capture env PATH="$scratch/bin2:$PATH" "$copy" --model "$model" --serial "$serial"
 	expect_status 0
 	[[ "$(cat "$calls/lock-state")" == held ]]
-	flock -n "$RAVNIX_HUGINN_LOCK" true
+	flock -n "$lockfile" true
 }
 
 test_a_lock_file_that_cannot_be_opened_refuses() {
 	setup
-	RAVNIX_HUGINN_LOCK="$scratch/no-such-dir/lock" run_ok_args
+	sed -e "s|@ovmfCode@|$code_fd|g" -e "s|@ovmfVars@|$vars_fd|g" -e "s|$shipped_lock|$scratch/no-such-dir/lock|g" "$script" >"$scratch/nolock"
+	chmod +x "$scratch/nolock"
+	capture env PATH="$bin:$PATH" "$scratch/nolock" --model "$model" --serial "$serial"
 	expect_status 1
 	expect_no_qemu
-	expect_err "lock"
+	expect_err "cannot open the lock file"
+	[[ ! -e "$calls/guard" ]]
 }
 
 test_the_script_never_writes_the_disk_or_takes_a_device_from_outside() {
@@ -468,6 +504,8 @@ test_the_script_never_writes_the_disk_or_takes_a_device_from_outside() {
 
 tests=(
 	test_placeholders_are_the_only_difference
+	test_the_shipped_lock_is_the_installs_fixed_path
+	test_the_environment_cannot_move_the_lock
 	test_guard_then_qemu_with_the_printed_device
 	test_the_guard_is_asked_again_right_before_qemu
 	test_the_guards_stderr_reaches_the_user

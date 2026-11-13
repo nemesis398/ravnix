@@ -6,10 +6,19 @@
 # It takes the disk as `device`, the /dev/disk/by-id path that
 # ravnix-disk-guard printed, and refuses anything else: a kernel name such
 # as /dev/nvme0n1 can be the other disk after the next boot (AGENTS.md,
-# rule 2). The install runs, after the guard exited 0 in the same shell:
+# rule 2). The install takes the disk lock first, so that no QEMU passthrough
+# (scripts/try-huginn.sh, which the guard cannot see) holds the disk while a
+# command writes it, and then runs, in that one shell and after the guard
+# exited 0:
 #
-#   dev=$(ravnix-disk-guard --model "$MODEL" --serial "$SERIAL" --print-device)
+#   sudo flock -n /run/lock/ravnix-huginn-disk.lock bash    # exits 1 if the lock is held
+#   dev=$(ravnix-disk-guard --model "$MODEL" --serial "$SERIAL" --print-device) || exit
 #   disko --mode destroy,format,mount --argstr device "$dev" hosts/laptop/disko.nix
+#
+# The same shell then runs nixos-install and systemd-cryptenroll, and every
+# rerun of any of them starts with the same flock line: all of them write
+# the disk. The path is /run/lock/ravnix-huginn-disk.lock and no other,
+# because try-huginn takes exactly that one and refuses while it is held.
 #
 # disko then lists the one disk it is about to wipe and asks before it does,
 # and asks for the LUKS passphrase twice; no key file ever holds it. The

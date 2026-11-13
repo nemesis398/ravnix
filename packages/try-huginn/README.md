@@ -49,11 +49,15 @@ run and the disk must boot from the removable path, `\EFI\BOOT\BOOTX64.EFI`.
 
 ## The lock
 
-The script holds one `flock` on `/run/lock/ravnix-huginn-disk.lock` (or
-`RAVNIX_HUGINN_LOCK`) while QEMU runs. The guard cannot see a disk that a
-process holds open, such as this VM, so the install step takes the same lock
-(`flock /run/lock/ravnix-huginn-disk.lock disko ...`) and neither starts
-while the other runs.
+The script holds one `flock` on `/run/lock/ravnix-huginn-disk.lock` while
+QEMU runs. The path is fixed in the script and no variable changes it. The
+guard cannot see a disk that a process holds open, such as this VM, so the
+lock is the only thing that keeps the VM and a disk-writing command apart,
+and it works only if both sides use that one path. The install takes it:
+one shell from `sudo flock -n /run/lock/ravnix-huginn-disk.lock bash` runs
+the guard, disko, `nixos-install` and `systemd-cryptenroll`, and so does
+every rerun (`hosts/laptop/disko.nix`, `tools/ravnix-disk-guard/README.md`).
+While either side holds the lock, the other refuses to start.
 
 ## Known gaps
 

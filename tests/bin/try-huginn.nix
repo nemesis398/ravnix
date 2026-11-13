@@ -42,5 +42,8 @@ pkgs.runCommand "bin-try-huginn"
     grep -q 'ravnix-disk-guard' "$TRY_HUGINN" || fail "no guard"
     grep -q 'qemu-kvm\|qemu-host-cpu-only' "$TRY_HUGINN" || fail "no store qemu on the PATH"
     grep -q 'util-linux' "$TRY_HUGINN" || fail "no flock on the PATH"
+    # The lock: the install's fixed path, with no variable to move it.
+    grep -qF 'lock="/run/lock/ravnix-huginn-disk.lock"' "$TRY_HUGINN" || fail "the lock path is not the install's"
+    if grep -q 'RAVNIX_HUGINN_LOCK' "$TRY_HUGINN"; then fail "a variable can move the lock"; fi
     touch "$out"
   ''
