@@ -38,6 +38,18 @@
 #     tools/ravnix-link has the interface). Without it the commit fails and
 #     is tried again, and `ravnix-link status` shows why.
 # On the laptop:
+#   - `ravnix-link` knows the laptop's copy of the vault (ravnix.link.vault,
+#     the same path as the server's when both sync it to the same place) and
+#     a forward: `ravnix-link vault-commit MESSAGE PATH...` reads each PATH
+#     there, and sends the commit with the SHA-256 of each file to the
+#     server, by `ssh ravnix-server /run/current-system/sw/bin/ravnix-link
+#     receive` with the request on ssh's standard input. The remote command
+#     is fixed, so no value of the request passes through a shell; the host
+#     block of ./terminal.nix gives the key, with no agent and no touch of a
+#     security key. The server queues the commit, which waits until its copy
+#     of the vault has each file as the laptop had it (or 15 minutes), and
+#     answers. A laptop that cannot reach the server says so, and nothing is
+#     queued on the laptop (tools/ravnix-link/README.md).
 #   - ravnix-link-daemon, a user unit of the graphical session: everything
 #     it runs needs the session's display and bus. It runs xdg-open and
 #     notify-send from the store, and obsidian from the user's PATH, where
@@ -90,11 +102,55 @@ let
     xdgOpen
     notifySend
   ];
+
+  # The laptop's way to the server's receive. The remote command is fixed:
+  # ssh joins its words into a line for the server's shell, so nothing of
+  # the request may be among them; the request goes on standard input.
+  forward = pkgs.writeShellApplication {
+    name = "ravnix-link-forward";
+    text = ''
+      exec ${lib.escapeShellArg cfg.programs.ssh} -T -o BatchMode=yes -- ${lib.escapeShellArg cfg.programs.server} /run/current-system/sw/bin/ravnix-link receive
+    '';
+  };
+  # The laptop's ravnix-link: the tool with its copy of the vault and the
+  # forward, for vault-commit. The forward rides along, for the tests.
+  laptopLink = pkgs.writeShellApplication {
+    name = "ravnix-link";
+    text = ''
+      exec ${lib.getExe tool} ${
+        lib.escapeShellArgs (
+          lib.optionals (cfg.vault != null) [
+            "--vault"
+            cfg.vault
+          ]
+          ++ [
+            "--forward"
+            (lib.getExe forward)
+          ]
+        )
+      } "$@"
+    '';
+  }
+  // {
+    inherit forward;
+  };
 in
 {
   # Declared here and not in modules/options: they are the glue's alone, and
   # home-manager has no use for them (modules/common/nixos.nix forwards only
   # what modules/options declares).
+  options.ravnix.link.command = lib.mkOption {
+    type = lib.types.nullOr lib.types.package;
+    default = null;
+    internal = true;
+    description = ''
+      The host's ravnix-link, as its shape has it: the server's, which
+      commits in the vault, or the laptop's, which sends a commit to the
+      server; null on a host without a shape. ./vault.nix gives it to
+      vault-commit.
+    '';
+  };
+
   options.ravnix.link.programs = {
     xdgOpen = lib.mkOption {
       type = lib.types.str;
@@ -123,6 +179,22 @@ in
       internal = true;
       description = "The git that vault-commit runs on the server.";
     };
+    ssh = lib.mkOption {
+      type = lib.types.str;
+      default = lib.getExe' os.programs.ssh.package "ssh";
+      defaultText = lib.literalExpression ''lib.getExe' config.programs.ssh.package "ssh"'';
+      internal = true;
+      description = "The ssh that carries a commit from the laptop to the server.";
+    };
+    server = lib.mkOption {
+      type = lib.types.str;
+      default = "ravnix-server";
+      internal = true;
+      description = ''
+        The host the laptop sends a commit to, a name of the user's ssh
+        configuration: ravnix-server, the block of ./terminal.nix.
+      '';
+    };
     systemdRun = lib.mkOption {
       type = lib.types.str;
       default = lib.getExe' pkgs.systemd "systemd-run";
@@ -138,6 +210,7 @@ in
 
   config = lib.mkMerge [
     (lib.mkIf (os.ravnix.shape == "server") {
+      ravnix.link.command = serverLink;
       services.openssh.settings.StreamLocalBindUnlink = true;
       environment.systemPackages = serverPackages;
       home-manager.users.${user} = {
@@ -159,8 +232,9 @@ in
     })
 
     (lib.mkIf (os.ravnix.shape == "laptop") {
+      ravnix.link.command = laptopLink;
       home-manager.users.${user} = {
-        home.packages = [ tool ];
+        home.packages = [ laptopLink ];
         systemd.user.services.ravnix-link-daemon = {
           Unit = {
             Description = "ravnix-link: carry out what the server sends";

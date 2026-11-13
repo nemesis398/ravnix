@@ -19,6 +19,14 @@
 # daemon. A dropped connection that left its socket behind does not keep
 # the next forward from working. And xdg-open on muninn is the link's, on
 # huginn xdg-utils'.
+#
+# The vault on both hosts (modules/glue/vault.nix): the skill values say
+# git on muninn and ravnix-link on huginn. A note written on huginn, where
+# the vault has no .git, and committed there with vault-commit, goes to
+# muninn over ssh and waits until muninn's copy has it as huginn wrote it;
+# the test copies it over, as the sync would, and the delivery service
+# commits it, signed. A note muninn has already is answered as committed;
+# and vault-commit on muninn commits with git.
 {
   self,
   pkgs,
@@ -30,6 +38,8 @@ let
   user = me.ravnix.user.username;
   home = "/home/${user}";
   note = "Notizen/Über Grüße – Entwurf.md";
+  # A session note written on huginn.
+  session = "AI/sessions/2026-11-13 Über – Grüße.md";
   renamed = "Notizen/Neu – Grüße.md";
 
   # huginn's user logs in to muninn with nixpkgs' test key: the server
@@ -136,6 +146,10 @@ pkgs.testers.runNixOSTest {
         notifySend = toString (stub "notify-send" "");
         obsidian = toString obsidian;
       };
+      # huginn's copy of the vault, at the same path as muninn's; the
+      # laptop sends its commits to muninn, the name of the ssh block below.
+      ravnix.link.vault = lib.mkForce "${home}/vault";
+      ravnix.link.programs.server = "muninn";
       # A desktop brings xdg-utils; on the laptop it stays the xdg-open.
       environment.systemPackages = [ pkgs.xdg-utils ];
       # How huginn's user reaches muninn here, in ~/.ssh/config, which
@@ -161,6 +175,8 @@ pkgs.testers.runNixOSTest {
     HOME = "${home}"
     NOTE = "${note}"
     RENAMED = "${renamed}"
+    SESSION = "${session}"
+    JQ = "${pkgs.jq}/bin/jq"
 
 
     def as_user(machine, cmd, check=True):
@@ -358,5 +374,65 @@ pkgs.testers.runNixOSTest {
             "su - " + USER + " -c 'ravnix-link status' | grep -q 'nothing waits'", timeout=60
         )
         assert runs()[-1] == "xdg-open | https://example.org/zwei", runs()
+
+    with subtest("each host's skill values say how it commits to the vault"):
+        values = "~/.config/ravnix/skill-values.json"
+        via = as_user(muninn, JQ + " -r .vault.commitVia " + values).strip()
+        assert via == "git", via
+        via = as_user(huginn, JQ + " -r .vault.commitVia " + values).strip()
+        assert via == "ravnix-link", via
+
+    with subtest("a note made on huginn is committed on muninn once the sync brings it"):
+        before = as_user(muninn, "git -C ~/vault log --format=%s").split("\n")
+        as_user(huginn, "test ! -e ~/vault/.git")
+        as_user(
+            huginn,
+            "mkdir -p ~/vault/AI/sessions && printf 'vom Laptop\\n' >" + shlex.quote("vault/" + SESSION),
+        )
+        out = as_user(huginn, "vault-commit 'vault: Sitzung – „vom Laptop“' " + shlex.quote(SESSION) + " 2>&1")
+        print(out)
+        assert "queued" in out and "sync" in out, out
+        status = as_user(muninn, "ravnix-link status")
+        print(status)
+        assert "waits until the vault here has 1 file as the laptop wrote it" in status, status
+        assert as_user(muninn, "git -C ~/vault log --format=%s").split("\n") == before
+        # The sync, as nextcloudcmd would bring the file to muninn's copy.
+        as_user(
+            huginn,
+            "ssh muninn " + shlex.quote("mkdir -p vault/AI/sessions && cat >" + shlex.quote("vault/" + SESSION))
+            + " <" + shlex.quote("vault/" + SESSION),
+        )
+        muninn.wait_until_succeeds(
+            "su - " + USER + " -c 'ravnix-link status' | grep -q 'nothing waits'", timeout=120
+        )
+        log = as_user(muninn, "git -C ~/vault log --format=%s").split("\n")
+        assert log[0] == "vault: Sitzung – „vom Laptop“", log
+        files = as_user(muninn, "git -C ~/vault -c core.quotePath=false show --format= --name-only HEAD").strip()
+        assert files == SESSION, files
+        as_user(muninn, "git -C ~/vault verify-commit HEAD")
+        content = as_user(muninn, "git -C ~/vault show HEAD:" + shlex.quote(SESSION))
+        assert content == "vom Laptop\n", content
+
+    with subtest("a commit from huginn of what muninn has already is answered as made"):
+        as_user(huginn, "printf 'zweite Fassung\\n' >>" + shlex.quote("vault/" + SESSION))
+        as_user(
+            huginn,
+            "ssh muninn " + shlex.quote("cat >" + shlex.quote("vault/" + SESSION))
+            + " <" + shlex.quote("vault/" + SESSION),
+        )
+        out = as_user(huginn, "vault-commit 'vault: zweite Fassung' " + shlex.quote("${home}/vault/" + SESSION) + " 2>&1")
+        assert "queued" not in out, out
+        log = as_user(muninn, "git -C ~/vault log --format=%s").split("\n")
+        assert log[0] == "vault: zweite Fassung", log
+
+    with subtest("vault-commit on muninn commits with git"):
+        as_user(muninn, "printf 'auf muninn\\n' >vault/muninn.md")
+        as_user(
+            muninn,
+            "SSH_AUTH_SOCK=\"$XDG_RUNTIME_DIR/test-agent.sock\" vault-commit 'vault: auf muninn' muninn.md",
+        )
+        log = as_user(muninn, "git -C ~/vault log --format=%s").split("\n")
+        assert log[0] == "vault: auf muninn", log
+        as_user(muninn, "git -C ~/vault verify-commit HEAD")
   '';
 }

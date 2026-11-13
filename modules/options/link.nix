@@ -1,7 +1,7 @@
 # The link between the hosts (modules/glue/link.nix, tools/ravnix-link): the
-# socket it uses, and the vault's repository on the server, where
-# vault-commit commits. Which end of the link a host is comes from its
-# shape (ravnix.shape, modules/options/shape.nix).
+# socket it uses, and the vault: its repository on the server, where
+# vault-commit commits, and its copy on the laptop. Which end of the link a
+# host is comes from its shape (ravnix.shape, modules/options/shape.nix).
 { lib, ... }:
 let
   inherit (lib) mkOption types;
@@ -30,10 +30,15 @@ in
       default = null;
       example = "/home/alice/notes";
       description = ''
-        The Obsidian vault's git repository on the server, an absolute path
-        in a string: `ravnix-link vault-commit` commits there, after the
-        Obsidian operations queued before it have run on the laptop. Null:
-        vault-commit is refused.
+        The Obsidian vault, an absolute path in a string. On the server it
+        is the vault's git repository: `ravnix-link vault-commit` and
+        `vault-commit` commit there, after the Obsidian operations queued
+        before it have run on the laptop. On the laptop it is the copy the
+        file sync keeps, without `.git`: `vault-commit` there reads the
+        files it names and sends the commit to the server, which waits
+        until its copy has them. One private flake for both hosts gives one
+        path, so the sync must put the vault at the same place on both.
+        Null: vault-commit is refused.
       '';
     };
   };
