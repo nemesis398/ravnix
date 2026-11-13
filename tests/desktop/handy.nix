@@ -23,17 +23,24 @@
 #     - the store path is called handy-VERSION, and VERSION is 0.10.0
 #     - the command line has --start-hidden and --toggle-post-process
 #       (`handy --help`), and a second Handy forwards --toggle-post-process to
-#       the running one; SIGUSR2 is the plain toggle; the model catalog offers
-#       the Qwen3-ASR 1.7B gguf the carried-over settings select (read in the
-#       source)
+#       the running one; SIGUSR2 is the plain toggle; the model catalog
+#       parses and addresses every model as repository/filename, the form
+#       Handy's settings name a model by (read in the source)
+#     - Handy names its PulseAudio client cpal-pulseaudio-PID, the stream
+#       handy-ptt watches: the string is in the built program and in the
+#       vendored handy-cpal source, with the process id (0.9.8, on cpal 0.16,
+#       had no such client at all, so handy-ptt never saw a take with it)
 #     - the transcription worker that 0.10.0 starts beside the app names its
 #       process Handy-worker, which the pattern does not take (a decoy below)
 #     - the wrapper does not set WEBKIT_DISABLE_DMABUF_RENDERER, which would
 #       override 0.10.0's own choice of WebKit renderer (packages/handy)
 #   and the launcher of ravnix runs this Handy, not nixpkgs' 0.9.8
 #   only modeled (the stand-in is a 40-line C program, Handy is a Tauri
-#   application): the signal handling, and the PipeWire stream name, which is
-#   faked by the pactl stand-in
+#   application): the signal handling, and the stream itself, which the pactl
+#   stand-in fakes under the name asserted above
+#
+# The check builds ravnix's Handy from source (no binary cache has it): about
+# half an hour at cores 4, paid again by the full gate after a nixpkgs bump.
 #
 # The unwrapped stand-in is a program named `handy`, the other branch of the
 # pattern. The first version of this test replaced pgrep and never met the name
@@ -152,6 +159,8 @@ pkgs.runCommand "desktop-handy"
     nativeBuildInputs = [
       pkgs.coreutils
       pkgs.gnugrep
+      pkgs.jq
+      pkgs.findutils
     ];
   }
   ''
@@ -177,11 +186,11 @@ pkgs.runCommand "desktop-handy"
 
     # ---- the stand-in matches ravnix's Handy (see the header)
     n=${handy}
-    [ -x "$n/bin/.handy-wrapped" ] || fail "nixpkgs' Handy has no bin/.handy-wrapped any more: handy-ptt looks for that process name"
-    [ "$(head -c 4 "$n/bin/handy" | tail -c 3)" = ELF ] || fail "nixpkgs' bin/handy is no ELF wrapper any more"
-    grep -aq -- '/bin/.handy-wrapped' "$n/bin/handy" || fail "nixpkgs' bin/handy does not exec bin/.handy-wrapped any more"
-    grep -aq -- '--inherit-argv0' "$n/bin/handy" || fail "nixpkgs' bin/handy does not inherit argv0 any more: the stand-in's wrapper must change with it"
-    case $n in */*-handy-[0-9]*) ;; *) fail "nixpkgs' Handy is not in a store path called handy-VERSION: $n";; esac
+    [ -x "$n/bin/.handy-wrapped" ] || fail "Handy has no bin/.handy-wrapped any more: handy-ptt looks for that process name"
+    [ "$(head -c 4 "$n/bin/handy" | tail -c 3)" = ELF ] || fail "Handy's bin/handy is no ELF wrapper any more"
+    grep -aq -- '/bin/.handy-wrapped' "$n/bin/handy" || fail "Handy's bin/handy does not exec bin/.handy-wrapped any more"
+    grep -aq -- '--inherit-argv0' "$n/bin/handy" || fail "Handy's bin/handy does not inherit argv0 any more: the stand-in's wrapper must change with it"
+    case $n in */*-handy-[0-9]*) ;; *) fail "Handy is not in a store path called handy-VERSION: $n";; esac
     case $n in */*-handy-0.10.0) ;; *) fail "ravnix's Handy is not 0.10.0, the version whose settings huginn takes over from Fedora: $n";; esac
     # The launcher of ravnix runs this Handy.
     grep -q "$n/bin/handy" ${realLaunch}/bin/handy-launch || fail "handy-launch does not run ravnix's Handy ($n): $(grep exec ${realLaunch}/bin/handy-launch)"
@@ -198,11 +207,26 @@ pkgs.runCommand "desktop-handy"
     grep -q 'a == "--toggle-post-process"' "$src/lib.rs" || fail "Handy no longer forwards --toggle-post-process to the running instance"
     grep -q 'SIGUSR2 => ("transcribe", "SIGUSR2")' "$src/signal_handle.rs" || fail "SIGUSR2 is no longer Handy's plain toggle"
     grep -q 'PR_SET_NAME, c"Handy-worker"' "$src/engine_supervisor/worker.rs" || fail "Handy's transcription worker is no longer named Handy-worker: the decoy below models the wrong name"
-    # The settings carried over select the Qwen3-ASR 1.7B gguf (Q8_0) by its
-    # path, repository/file, which Handy's model catalog must still offer.
+    # Handy's settings name the model as repository/filename
+    # (catalog/mod.rs), so settings carried over from another install find
+    # their model only while every catalog entry has both: the catalog parses,
+    # holds models, and each has a repository and files that each have a
+    # .gguf filename. No particular model is asserted.
     catalog=$src/catalog/catalog.json
-    grep -q '"repository": "handy-computer/Qwen3-ASR-1.7B-gguf"' "$catalog" || fail "Handy's catalog has no Qwen3-ASR 1.7B gguf repository"
-    grep -q '"filename": "Qwen3-ASR-1.7B-Q8_0.gguf"' "$catalog" || fail "Handy's catalog has no Qwen3-ASR-1.7B-Q8_0.gguf"
+    grep -q 'format!("{}/{}", m.repository, f.filename) == model_id' "$src/catalog/mod.rs" || fail "Handy no longer finds a model by repository/filename"
+    jq -e '
+      (.models | type == "array" and length > 0)
+      and all(.models[];
+        (.repository | type == "string" and test("^[^/]+/[^/]+$"))
+        and (.files | type == "object" and length > 0)
+        and all(.files[]; .filename | type == "string" and endswith(".gguf")))
+    ' "$catalog" > /dev/null || fail "Handy's model catalog does not parse, or an entry lacks a repository or a .gguf filename"
+    # handy-ptt sees a take by Handy's capture stream, cpal-pulseaudio-PID with
+    # the pid of the process pgrep finds. Capture runs in the main process.
+    grep -aq 'cpal-pulseaudio-' "$n/bin/.handy-wrapped" || fail "Handy no longer names its PulseAudio client cpal-pulseaudio-PID: handy-ptt cannot see a take"
+    pulse=$(find ${handy.cargoDeps}/ -path '*/handy-cpal-*/src/host/pulseaudio/mod.rs' | head -1)
+    [ -n "$pulse" ] || fail "Handy's vendored crates have no handy-cpal PulseAudio host"
+    [ -z "$pulse" ] || grep -q 'format!("cpal-pulseaudio-{}", std::process::id())' "$pulse" || fail "handy-cpal no longer names its client cpal-pulseaudio-<process id>: $pulse"
     # The wrapper leaves the WebKit renderer to Handy, and keeps the updater off.
     ! grep -aq WEBKIT_DISABLE_DMABUF_RENDERER "$n/bin/handy" || fail "the wrapper sets WEBKIT_DISABLE_DMABUF_RENDERER, which overrides Handy's renderer choice"
     grep -aq HANDY_DISABLE_UPDATER "$n/bin/handy" || fail "the wrapper no longer turns Handy's updater off"
@@ -229,7 +253,7 @@ pkgs.runCommand "desktop-handy"
       [ -e "$work/ready" ] || fail "the stand-in for Handy did not start"
       echo "$handy_pid" > "$FAKE_PID_FILE"
       [ "$(cat /proc/$handy_pid/comm)" = "$comm" ] \
-        || fail "the stand-in is called $(cat /proc/$handy_pid/comm), not $comm: it does not look like nixpkgs' Handy"
+        || fail "the stand-in is called $(cat /proc/$handy_pid/comm), not $comm: it does not look like ravnix's Handy"
     }
     start_handy() { start_handy_with .handy-wrapped ${realHandy}/bin/handy; }
     stop_handy() { kill "$handy_pid" 2>/dev/null || true; wait "$handy_pid" 2>/dev/null || true; }
