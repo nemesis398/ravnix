@@ -65,6 +65,19 @@ wait_for() {
 	return 1
 }
 
+# A container that was just made runs the entrypoint and stage 2 first: until
+# the system is activated, nothing is on the PATH of docker exec, and until
+# systemd has moved itself into /init.scope, PID 1 is in the namespace's root.
+# So the checks wait for the system, as long as a slow first boot takes.
+echo "== the system is up"
+state=""
+for _ in $(seq 1 40); do
+	state=$(r $sysbin/systemctl is-system-running 2>/dev/null)
+	case "$state" in running | degraded) break ;; esac
+	sleep 5
+done
+echo "info: systemctl is-system-running: $state"
+
 echo "== PID 1 and cgroups"
 exe=$(r readlink /proc/1/exe)
 case "$exe" in
@@ -79,13 +92,6 @@ case ",$opts," in
 *,rw,*) ok "/sys/fs/cgroup is writable inside the container" ;;
 *) bad "/sys/fs/cgroup is not writable: $opts" ;;
 esac
-state=""
-for _ in $(seq 1 40); do
-	state=$(r $sysbin/systemctl is-system-running)
-	case "$state" in running | degraded) break ;; esac
-	sleep 5
-done
-echo "info: systemctl is-system-running: $state"
 failed_units=$(r $sysbin/systemctl --failed --no-legend --no-pager | sed 's/^[^a-z]*//' | awk '{print $1}' | tr '\n' ' ')
 echo "info: failed units: ${failed_units:-none}"
 if [ "$state" = running ]; then ok "the system is running, with no failed unit"; else bad "the system is $state (failed: $failed_units)"; fi
