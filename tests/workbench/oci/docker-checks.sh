@@ -11,9 +11,11 @@
 #            `nix eval --raw .#packages.x86_64-linux.odin` or lib/odin.nix
 #            names; the test compares what a pane resolves to
 # HOST_PORT  the host port that sshd is published on
-# podman     also run a container with rootless Podman inside (the image
-#            must be on stdin of `docker exec -i CONTAINER su - USER -c
-#            'podman load'` first; this script loads nothing)
+# podman     also run containers with rootless Podman inside: the default
+#            network, a published port and a network of their own (the image
+#            localhost/hello:latest, with hello and busybox in /bin, must be
+#            on stdin of `docker exec -i CONTAINER su - USER -c 'podman load'`
+#            first; this script loads nothing)
 #
 # Every check prints PASS or FAIL, and the last line counts them. The exit
 # status is the number of failures, capped at 100; 2 when it refused to run.
@@ -223,6 +225,29 @@ if [ "$mode" = podman ]; then
 	hello=$(u 'podman run --rm localhost/hello:latest' 2>&1 | tail -3)
 	if echo "$hello" | grep -q 'Hello, world!'; then ok "a rootless container ran: Hello, world!"; else bad "podman run: $hello"; fi
 	if [ "$(u 'stat -c %U ~/.local/share/containers/storage')" = "$user" ]; then ok "Podman's storage belongs to the user"; else bad "Podman's storage is not the user's"; fi
+	# What a dev container needs: a published port (-p), and a network of its
+	# own on which containers find each other by name, as a compose stack
+	# makes it. The server is busybox's httpd in the hello image.
+	u 'podman rm -f -i ravnix-checks-web ravnix-checks-srv; podman network rm -f ravnix-checks-net' >/dev/null 2>&1
+	serve='/bin/busybox sh -c "mkdir -p /w && echo ravnix-checks-ok >/w/index.html && exec /bin/busybox httpd -f -p 8080 -h /w"'
+	started=$(u "podman run -d --name ravnix-checks-web -p 127.0.0.1:18080:8080 localhost/hello:latest $serve" 2>&1 | tail -2)
+	published=""
+	for _ in $(seq 1 12); do
+		published=$(u 'exec 3<>/dev/tcp/127.0.0.1/18080 && printf "GET / HTTP/1.0\r\n\r\n" >&3 && cat <&3' 2>&1)
+		case "$published" in *ravnix-checks-ok*) break ;; esac
+		sleep 5
+	done
+	if echo "$published" | grep -q ravnix-checks-ok; then ok "a published port of a rootless container (-p 127.0.0.1:18080:8080) answers in muninn"; else bad "podman run -p: $started $(echo "$published" | tail -1)"; fi
+	u 'podman network create ravnix-checks-net' >/dev/null 2>&1
+	started=$(u "podman run -d --name ravnix-checks-srv --network ravnix-checks-net localhost/hello:latest $serve" 2>&1 | tail -2)
+	byname=""
+	for _ in $(seq 1 12); do
+		byname=$(u 'podman run --rm --network ravnix-checks-net localhost/hello:latest /bin/busybox wget -q -O - http://ravnix-checks-srv:8080/' 2>&1)
+		case "$byname" in *ravnix-checks-ok*) break ;; esac
+		sleep 5
+	done
+	if echo "$byname" | grep -q ravnix-checks-ok; then ok "on a network of its own (podman network), a container reaches another by name"; else bad "podman network: $started $(echo "$byname" | tail -2 | tr '\n' ' ')"; fi
+	u 'podman rm -f -i ravnix-checks-web ravnix-checks-srv; podman network rm -f ravnix-checks-net' >/dev/null 2>&1
 else
 	hello=$(u 'podman run --rm --network host localhost/hello:latest' 2>&1 | tail -2)
 	echo "info: podman run without the Podman override: $hello"
