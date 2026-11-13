@@ -1,0 +1,401 @@
+/*
+ * Catppuccin Mocha for Helium's DevTools: Mauve accent, square corners,
+ * JetBrainsMono Nerd Font.
+ *
+ * Linked last into every DevTools HTML entry point by build-frontend.py, as a
+ * symlink, so an edit here shows up the next time DevTools opens, with no
+ * rebuild. DevTools draws everything from the design tokens in
+ * design_system_tokens.css and application_tokens.css; this file overrides
+ * those tokens and adds nothing else. Every declaration is !important,
+ * because the stock ones sit behind more specific selectors
+ * (:root.platform-linux, :root.baseline-grayscale.theme-with-dark-background).
+ *
+ * Colors apply in dark mode only (DevTools Settings > Appearance > Theme:
+ * Dark, or System preference on this dark desktop). Light mode stays stock.
+ */
+
+/* ── Shape and type: every mode ─────────────────────────────────────── */
+
+:root {
+  --sys-shape-corner-extra-small: 0 !important;
+  --sys-shape-corner-small: 0 !important;
+  --sys-shape-corner-medium-small: 0 !important;
+  --sys-shape-corner-medium: 0 !important;
+  --sys-shape-corner-large: 0 !important;
+  --sys-shape-corner-full: 0 !important;
+
+  --default-font-family: 'JetBrainsMono Nerd Font', monospace !important;
+  --monospace-font-family: 'JetBrainsMono Nerd Font', monospace !important;
+  --source-code-font-family: 'JetBrainsMono Nerd Font', monospace !important;
+}
+
+/* About 80 rules hard-code a radius instead of using the tokens above. This
+ * catches them in the main document; square-shadow-roots.js adds the same
+ * rule to every shadow root, which a document stylesheet cannot reach. */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
+/* ── Colors: dark mode ──────────────────────────────────────────────── */
+
+:root.theme-with-dark-background {
+  /*
+   * Reference palettes. Everything else, the Performance panel's category
+   * colors included, derives from these tones. Hue palettes: tone 80 is the
+   * Catppuccin color, mixed in OKLab toward Crust below and toward white
+   * above. Gray palettes run through the Mocha grays (10 Crust, 15 Mantle,
+   * 20 Base, 25 Surface0, 35 Surface1, 40 Surface2, 50/60/70 Overlay0-2,
+   * 80 Subtext1, 90 Text).
+   */
+  /* primary: mauve */
+  --ref-palette-primary0: #000000 !important;
+  --ref-palette-primary10: #11111b !important;
+  --ref-palette-primary20: #272335 !important;
+  --ref-palette-primary30: #3f3652 !important;
+  --ref-palette-primary40: #594b70 !important;
+  --ref-palette-primary50: #746090 !important;
+  --ref-palette-primary60: #9077b1 !important;
+  --ref-palette-primary70: #ad8ed4 !important;
+  --ref-palette-primary80: #cba6f7 !important;
+  --ref-palette-primary90: #e5d3fc !important;
+  --ref-palette-primary95: #f2e9fe !important;
+  --ref-palette-primary99: #fcfbff !important;
+  --ref-palette-primary100: #ffffff !important;
+  /* secondary: gray */
+  --ref-palette-secondary0: #000000 !important;
+  --ref-palette-secondary10: #11111b !important;
+  --ref-palette-secondary15: #181825 !important;
+  --ref-palette-secondary20: #1e1e2e !important;
+  --ref-palette-secondary25: #313244 !important;
+  --ref-palette-secondary30: #3b3c4f !important;
+  --ref-palette-secondary35: #45475a !important;
+  --ref-palette-secondary40: #585b70 !important;
+  --ref-palette-secondary50: #6c7086 !important;
+  --ref-palette-secondary60: #7f849c !important;
+  --ref-palette-secondary70: #9399b2 !important;
+  --ref-palette-secondary80: #bac2de !important;
+  --ref-palette-secondary90: #cdd6f4 !important;
+  --ref-palette-secondary95: #e6eafa !important;
+  --ref-palette-secondary99: #fafbfe !important;
+  --ref-palette-secondary100: #ffffff !important;
+  /* tertiary: mauve */
+  --ref-palette-tertiary0: #000000 !important;
+  --ref-palette-tertiary10: #11111b !important;
+  --ref-palette-tertiary20: #272335 !important;
+  --ref-palette-tertiary30: #3f3652 !important;
+  --ref-palette-tertiary40: #594b70 !important;
+  --ref-palette-tertiary50: #746090 !important;
+  --ref-palette-tertiary60: #9077b1 !important;
+  --ref-palette-tertiary70: #ad8ed4 !important;
+  --ref-palette-tertiary80: #cba6f7 !important;
+  --ref-palette-tertiary90: #e5d3fc !important;
+  --ref-palette-tertiary95: #f2e9fe !important;
+  --ref-palette-tertiary99: #fcfbff !important;
+  --ref-palette-tertiary100: #ffffff !important;
+  /* neutral: gray */
+  --ref-palette-neutral0: #000000 !important;
+  --ref-palette-neutral10: #11111b !important;
+  --ref-palette-neutral15: #181825 !important;
+  --ref-palette-neutral20: #1e1e2e !important;
+  --ref-palette-neutral25: #313244 !important;
+  --ref-palette-neutral30: #3b3c4f !important;
+  --ref-palette-neutral40: #585b70 !important;
+  --ref-palette-neutral50: #6c7086 !important;
+  --ref-palette-neutral60: #7f849c !important;
+  --ref-palette-neutral70: #9399b2 !important;
+  --ref-palette-neutral80: #bac2de !important;
+  --ref-palette-neutral90: #cdd6f4 !important;
+  --ref-palette-neutral94: #e1e6f9 !important;
+  --ref-palette-neutral95: #e6eafa !important;
+  --ref-palette-neutral98: #f5f7fd !important;
+  --ref-palette-neutral99: #fafbfe !important;
+  --ref-palette-neutral100: #ffffff !important;
+  /* neutral-variant: gray */
+  --ref-palette-neutral-variant0: #000000 !important;
+  --ref-palette-neutral-variant10: #11111b !important;
+  --ref-palette-neutral-variant20: #1e1e2e !important;
+  --ref-palette-neutral-variant30: #3b3c4f !important;
+  --ref-palette-neutral-variant40: #585b70 !important;
+  --ref-palette-neutral-variant50: #6c7086 !important;
+  --ref-palette-neutral-variant60: #7f849c !important;
+  --ref-palette-neutral-variant70: #9399b2 !important;
+  --ref-palette-neutral-variant80: #bac2de !important;
+  --ref-palette-neutral-variant90: #cdd6f4 !important;
+  --ref-palette-neutral-variant95: #e6eafa !important;
+  --ref-palette-neutral-variant99: #fafbfe !important;
+  --ref-palette-neutral-variant100: #ffffff !important;
+  /* error: red */
+  --ref-palette-error0: #000000 !important;
+  --ref-palette-error10: #11111b !important;
+  --ref-palette-error20: #2c202d !important;
+  --ref-palette-error30: #49313f !important;
+  --ref-palette-error40: #684253 !important;
+  --ref-palette-error50: #895367 !important;
+  --ref-palette-error60: #ab657c !important;
+  --ref-palette-error70: #cf7892 !important;
+  --ref-palette-error80: #f38ba8 !important;
+  --ref-palette-error90: #fdc6d3 !important;
+  --ref-palette-error95: #ffe2e9 !important;
+  --ref-palette-error99: #fff9fa !important;
+  --ref-palette-error100: #ffffff !important;
+  /* blue: blue */
+  --ref-palette-blue0: #000000 !important;
+  --ref-palette-blue10: #11111b !important;
+  --ref-palette-blue20: #202536 !important;
+  --ref-palette-blue30: #303a52 !important;
+  --ref-palette-blue40: #405071 !important;
+  --ref-palette-blue50: #526891 !important;
+  --ref-palette-blue60: #6480b3 !important;
+  --ref-palette-blue70: #769ad6 !important;
+  --ref-palette-blue80: #89b4fa !important;
+  --ref-palette-blue90: #c3dafe !important;
+  --ref-palette-blue95: #e1edff !important;
+  --ref-palette-blue99: #f9fbff !important;
+  --ref-palette-blue100: #ffffff !important;
+  /* cyan: sky */
+  --ref-palette-cyan0: #000000 !important;
+  --ref-palette-cyan10: #11111b !important;
+  --ref-palette-cyan20: #212934 !important;
+  --ref-palette-cyan30: #31434f !important;
+  --ref-palette-cyan40: #415f6c !important;
+  --ref-palette-cyan50: #527c8a !important;
+  --ref-palette-cyan60: #649ba9 !important;
+  --ref-palette-cyan70: #76bbca !important;
+  --ref-palette-cyan80: #89dceb !important;
+  --ref-palette-cyan90: #c7eef5 !important;
+  --ref-palette-cyan95: #e3f7fa !important;
+  --ref-palette-cyan99: #fafdfe !important;
+  --ref-palette-cyan100: #ffffff !important;
+  /* green: green */
+  --ref-palette-green0: #000000 !important;
+  --ref-palette-green10: #11111b !important;
+  --ref-palette-green20: #232a2d !important;
+  --ref-palette-green30: #36453f !important;
+  --ref-palette-green40: #4b6251 !important;
+  --ref-palette-green50: #608065 !important;
+  --ref-palette-green60: #77a078 !important;
+  --ref-palette-green70: #8ec18c !important;
+  --ref-palette-green80: #a6e3a1 !important;
+  --ref-palette-green90: #d3f2d0 !important;
+  --ref-palette-green95: #e9f8e8 !important;
+  --ref-palette-green99: #fbfefa !important;
+  --ref-palette-green100: #ffffff !important;
+  /* indigo: lavender */
+  --ref-palette-indigo0: #000000 !important;
+  --ref-palette-indigo10: #11111b !important;
+  --ref-palette-indigo20: #242636 !important;
+  --ref-palette-indigo30: #3a3c53 !important;
+  --ref-palette-indigo40: #505473 !important;
+  --ref-palette-indigo50: #686d94 !important;
+  --ref-palette-indigo60: #8087b6 !important;
+  --ref-palette-indigo70: #9aa2d9 !important;
+  --ref-palette-indigo80: #b4befe !important;
+  --ref-palette-indigo90: #d9dfff !important;
+  --ref-palette-indigo95: #ecefff !important;
+  --ref-palette-indigo99: #fbfcff !important;
+  --ref-palette-indigo100: #ffffff !important;
+  /* orange: peach */
+  --ref-palette-orange0: #000000 !important;
+  --ref-palette-orange10: #11111b !important;
+  --ref-palette-orange20: #2c252a !important;
+  --ref-palette-orange30: #4a3a39 !important;
+  --ref-palette-orange40: #6a5048 !important;
+  --ref-palette-orange50: #8c6858 !important;
+  --ref-palette-orange60: #af8067 !important;
+  --ref-palette-orange70: #d49977 !important;
+  --ref-palette-orange80: #fab387 !important;
+  --ref-palette-orange90: #fed9c3 !important;
+  --ref-palette-orange95: #ffece1 !important;
+  --ref-palette-orange99: #fffbf9 !important;
+  --ref-palette-orange100: #ffffff !important;
+  /* pink: pink */
+  --ref-palette-pink0: #000000 !important;
+  --ref-palette-pink10: #11111b !important;
+  --ref-palette-pink20: #2c2634 !important;
+  --ref-palette-pink30: #493d4e !important;
+  --ref-palette-pink40: #68556a !important;
+  --ref-palette-pink50: #896f88 !important;
+  --ref-palette-pink55: #9a7c97 !important;
+  --ref-palette-pink60: #ac8aa6 !important;
+  --ref-palette-pink70: #d0a5c6 !important;
+  --ref-palette-pink80: #f5c2e7 !important;
+  --ref-palette-pink90: #fbe1f3 !important;
+  --ref-palette-pink95: #fdf0f9 !important;
+  --ref-palette-pink99: #fffcfe !important;
+  --ref-palette-pink100: #ffffff !important;
+  /* purple: mauve */
+  --ref-palette-purple0: #000000 !important;
+  --ref-palette-purple10: #11111b !important;
+  --ref-palette-purple20: #272335 !important;
+  --ref-palette-purple30: #3f3652 !important;
+  --ref-palette-purple40: #594b70 !important;
+  --ref-palette-purple50: #746090 !important;
+  --ref-palette-purple60: #9077b1 !important;
+  --ref-palette-purple70: #ad8ed4 !important;
+  --ref-palette-purple80: #cba6f7 !important;
+  --ref-palette-purple90: #e5d3fc !important;
+  --ref-palette-purple95: #f2e9fe !important;
+  --ref-palette-purple99: #fcfbff !important;
+  --ref-palette-purple100: #ffffff !important;
+  /* yellow: yellow */
+  --ref-palette-yellow0: #000000 !important;
+  --ref-palette-yellow10: #11111b !important;
+  --ref-palette-yellow20: #2c2a2e !important;
+  --ref-palette-yellow30: #494542 !important;
+  --ref-palette-yellow40: #696257 !important;
+  --ref-palette-yellow50: #8b806c !important;
+  --ref-palette-yellow60: #ae9f82 !important;
+  --ref-palette-yellow70: #d3c098 !important;
+  --ref-palette-yellow80: #f9e2af !important;
+  --ref-palette-yellow90: #fcf1d8 !important;
+  --ref-palette-yellow95: #fef8eb !important;
+  --ref-palette-yellow99: #fffefb !important;
+  --ref-palette-yellow100: #ffffff !important;
+
+  /*
+   * System colors, pinned where the derived tone would layer the surfaces
+   * differently from the rest of the desktop: panels on Base, toolbars and
+   * tab strips on Mantle, raised things on Surface0.
+   */
+  --sys-color-cdt-base-container: #1e1e2e !important;
+  --sys-color-base-container: #1e1e2e !important;
+  --sys-color-cdt-base: #181825 !important;
+  --sys-color-base: #181825 !important;
+  --sys-color-surface: #181825 !important;
+  --sys-color-omnibox-container: #181825 !important;
+  --sys-color-base-container-elevated: #313244 !important;
+  --sys-color-neutral-container: #313244 !important;
+  --sys-color-header-container: #313244 !important;
+  --sys-color-surface-variant: #45475a !important;
+  --sys-color-surface1: color-mix(in srgb, #cba6f7 4%, #1e1e2e) !important;
+  --sys-color-surface2: color-mix(in srgb, #cba6f7 6%, #1e1e2e) !important;
+  --sys-color-surface3: color-mix(in srgb, #cba6f7 8%, #1e1e2e) !important;
+  --sys-color-surface4: color-mix(in srgb, #cba6f7 10%, #1e1e2e) !important;
+  --sys-color-surface5: color-mix(in srgb, #cba6f7 12%, #1e1e2e) !important;
+
+  --sys-color-on-surface: #cdd6f4 !important;
+  --sys-color-on-base: #cdd6f4 !important;
+  --sys-color-on-surface-subtle: #bac2de !important;
+  --sys-color-on-surface-secondary: #a6adc8 !important;
+  --sys-color-on-surface-primary: #cba6f7 !important;
+  --sys-color-on-surface-light: #7f849c !important;
+  --sys-color-on-surface-light-graphics: #6c7086 !important;
+
+  --sys-color-primary: #cba6f7 !important;
+  --sys-color-on-primary: #11111b !important;
+  --sys-color-primary-bright: #cba6f7 !important;
+  --sys-color-secondary: #bac2de !important;
+  --sys-color-on-secondary: #11111b !important;
+  --sys-color-tertiary: #cba6f7 !important;
+  --sys-color-on-tertiary: #11111b !important;
+  --sys-color-error: #f38ba8 !important;
+  --sys-color-on-error: #11111b !important;
+  --sys-color-error-bright: #f38ba8 !important;
+
+  --sys-color-tonal-container: color-mix(in srgb, #cba6f7 22%, #1e1e2e) !important;
+  --sys-color-on-tonal-container: #cdd6f4 !important;
+  --sys-color-tertiary-container: color-mix(in srgb, #cba6f7 22%, #1e1e2e) !important;
+  --sys-color-on-tertiary-container: #cdd6f4 !important;
+  --sys-color-error-container: color-mix(in srgb, #f38ba8 22%, #1e1e2e) !important;
+  --sys-color-on-error-container: #f38ba8 !important;
+  --sys-color-yellow-container: color-mix(in srgb, #f9e2af 20%, #1e1e2e) !important;
+  --sys-color-on-yellow-container: #f9e2af !important;
+
+  --sys-color-surface-yellow: color-mix(in srgb, #f9e2af 14%, #1e1e2e) !important;
+  --sys-color-surface-yellow-high: color-mix(in srgb, #f9e2af 22%, #1e1e2e) !important;
+  --sys-color-surface-error: color-mix(in srgb, #f38ba8 16%, #1e1e2e) !important;
+  --sys-color-surface-green: color-mix(in srgb, #a6e3a1 14%, #1e1e2e) !important;
+  --sys-color-on-surface-yellow: #f9e2af !important;
+  --sys-color-on-surface-error: #f38ba8 !important;
+  --sys-color-on-surface-green: #a6e3a1 !important;
+
+  --sys-color-inverse-surface: #cdd6f4 !important;
+  --sys-color-inverse-on-surface: #11111b !important;
+  --sys-color-inverse-primary: #8839ef !important;
+
+  --sys-color-outline: #6c7086 !important;
+  --sys-color-neutral-outline: #585b70 !important;
+  --sys-color-tonal-outline: color-mix(in srgb, #cba6f7 50%, #1e1e2e) !important;
+  --sys-color-error-outline: #f38ba8 !important;
+  --sys-color-divider: #313244 !important;
+  --sys-color-on-base-divider: #313244 !important;
+  --sys-color-divider-on-tonal-container: #45475a !important;
+  --sys-color-divider-prominent: #585b70 !important;
+
+  --sys-color-state-focus-ring: #cba6f7 !important;
+  --sys-color-state-focus-select: color-mix(in srgb, #cba6f7 40%, #1e1e2e) !important;
+  --sys-color-state-text-highlight: #cba6f7 !important;
+  --sys-color-state-on-text-highlight: #11111b !important;
+  --sys-color-state-header-hover: #313244 !important;
+  --sys-color-state-on-header-hover: #cdd6f4 !important;
+
+  /* Accents for icons and text: the Catppuccin colors themselves. */
+  --sys-color-blue-bright: #89b4fa !important;
+  --sys-color-green-bright: #a6e3a1 !important;
+  --sys-color-orange-bright: #fab387 !important;
+  --sys-color-yellow-bright: #f9e2af !important;
+  --sys-color-cyan-bright: #89dceb !important;
+  --sys-color-purple-bright: #cba6f7 !important;
+  --sys-color-pink-bright: #f5c2e7 !important;
+  --sys-color-neutral-bright: #6c7086 !important;
+  --sys-color-blue: #89b4fa !important;
+  --sys-color-green: #a6e3a1 !important;
+  --sys-color-orange: #fab387 !important;
+  --sys-color-yellow: #f9e2af !important;
+  --sys-color-cyan: #89dceb !important;
+  --sys-color-purple: #cba6f7 !important;
+  --sys-color-pink: #f5c2e7 !important;
+  --sys-color-on-blue: #11111b !important;
+  --sys-color-on-green: #11111b !important;
+  --sys-color-on-orange: #11111b !important;
+  --sys-color-on-yellow: #11111b !important;
+  --sys-color-on-cyan: #11111b !important;
+  --sys-color-on-purple: #11111b !important;
+  --sys-color-on-pink: #11111b !important;
+
+  /* Syntax, after Catppuccin's style guide, as in Neovim. */
+  --sys-color-token-keyword: #cba6f7 !important;
+  --sys-color-token-string: #a6e3a1 !important;
+  --sys-color-token-string-special: #f5c2e7 !important;
+  --sys-color-token-number: #fab387 !important;
+  --sys-color-token-atom: #fab387 !important;
+  --sys-color-token-builtin: #f38ba8 !important;
+  --sys-color-token-type: #f9e2af !important;
+  --sys-color-token-definition: #89b4fa !important;
+  --sys-color-token-variable: #cdd6f4 !important;
+  --sys-color-token-variable-special: #f38ba8 !important;
+  --sys-color-token-property: #b4befe !important;
+  --sys-color-token-property-special: #94e2d5 !important;
+  --sys-color-token-tag: #89b4fa !important;
+  --sys-color-token-attribute: #f9e2af !important;
+  --sys-color-token-attribute-value: #a6e3a1 !important;
+  --sys-color-token-pseudo-element: #f5c2e7 !important;
+  --sys-color-token-comment: #9399b2 !important;
+  --sys-color-token-meta: #7f849c !important;
+  --sys-color-token-subtle: #7f849c !important;
+  --sys-color-token-deleted: #f38ba8 !important;
+  --sys-color-token-inserted: #a6e3a1 !important;
+
+  /* Legacy tokens that application_tokens.css still hard-codes as RGB. */
+  --color-background: #1e1e2e !important;
+  --color-background-opacity-50: rgb(30 30 46 / 50%) !important;
+  --color-background-opacity-80: rgb(30 30 46 / 80%) !important;
+  --color-background-elevation-1: #181825 !important;
+  --color-background-elevation-2: #313244 !important;
+  --color-text-primary: #cdd6f4 !important;
+  --color-text-secondary: #a6adc8 !important;
+  --color-text-disabled: #6c7086 !important;
+  --color-primary: #cba6f7 !important;
+  --color-primary-old: #cba6f7 !important;
+  --color-primary-variant: #cba6f7 !important;
+  --color-red: #f38ba8 !important;
+  --color-error-text: #f38ba8 !important;
+  --color-scrollbar-other: #45475a !important;
+  --color-scrollbar-other-hover: #585b70 !important;
+  --legacy-accent-color: #cba6f7 !important;
+  --legacy-focus-ring-inactive-shadow-color: #585b70 !important;
+  --app-color-strokestyle: rgb(203 166 247 / 10%) !important;
+  --app-color-toolbar-background: #181825 !important;
+}

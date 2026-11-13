@@ -6,7 +6,8 @@
 #   Terminal       ghostty, and ghostty-float, the terminal that floats
 #   Browser        Helium (packages/helium): default browser, PDF and image
 #                  viewer; its policies install Stylus and the Bitwarden
-#                  extension
+#                  extension; its DevTools are in the theme
+#                  (packages/helium-devtools-frontend)
 #   Notes          Obsidian
 #   Office         OnlyOffice
 #   Passwords      Bitwarden desktop; rbw, in the common module, is the
@@ -119,8 +120,14 @@
 #                     but keeps newt's boxes). Its background is palette slot 0
 #                     (Surface1), not Base. Open for Task 3.7: slang may take a
 #                     `default` color, which would give Text on Base.
+#   Helium DevTools   in the theme in dark mode only; light mode stays stock.
+#                     Three legacy tokens stay translucent, as the stock ones
+#                     are: --color-background-opacity-50 and -80 and
+#                     --app-color-strokestyle, which DevTools draws over its
+#                     own Network, Performance and Profiler canvases, so an
+#                     opaque value would hide the data beneath.
 # Themed by catppuccin/nix in the accent: yazi, mpv. Generated from the roles:
-# MangoHud, the Helium theme. wiremix and bluetui use the terminal's palette.
+# MangoHud, the Helium theme, Helium's DevTools. wiremix and bluetui use the terminal's palette.
 {
   config,
   lib,
@@ -210,6 +217,15 @@ let
     };
   };
 
+  # Helium's DevTools in the theme (packages/helium-devtools-frontend): the
+  # wrapper of the Helium on the PATH passes it, so helium.desktop and every
+  # web app (webapps.nix runs `helium`) open DevTools in the roles and the
+  # accent. The Chrome DevTools MCP server's headless Helium is
+  # pkgs.ravnix.helium itself and keeps the stock DevTools.
+  devtoolsFrontend = pkgs.ravnix.helium-devtools-frontend.override {
+    theme = { inherit (theme) palette roles font; };
+  };
+
   # MangoHud wants colors without the #.
   bare = lib.removePrefix "#";
 in
@@ -234,7 +250,10 @@ in
   services.flatpak.enable = lib.mkDefault false;
 
   environment.systemPackages = [
-    (pkgs.ravnix.helium.override { widevineCdm = if apps.widevine then pkgs.widevine-cdm else null; })
+    (pkgs.ravnix.helium.override {
+      widevineCdm = if apps.widevine then pkgs.widevine-cdm else null;
+      inherit devtoolsFrontend;
+    })
     pkgs.ravnix.ghostty-float
     pkgs.ravnix.handy-launch
     pkgs.ravnix.handy-ptt
