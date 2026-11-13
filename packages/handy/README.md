@@ -20,11 +20,11 @@ every start of Handy writes `~/.config/autostart/Handy.desktop` through
 tauri-plugin-autostart, with `Exec=` set to the running program, which on NixOS
 is `bin/.handy-wrapped` in the store. That entry skips the wrapper (no updater
 switch, no ALSA plugin directory, no GIO and GStreamer paths) and
-`handy-launch` (no iGPU pin, no wtype on PATH), so the NVIDIA card wakes. Its
-name differs from ravnix's, so both run at login and race: when the pinned one
-loses, it forwards to the unpinned one, which then shows its window. So keep
-Handy's own switch off, also in settings carried over from another install;
-turning it off makes Handy delete its own entry at the next start.
+`handy-launch` (no iGPU pin, no wtype on PATH), so it can keep the NVIDIA card
+awake. Its name differs from ravnix's, so both run at login and race: when the
+pinned one loses, it forwards to the unpinned one, which then shows its window.
+So keep Handy's own switch off, also in settings carried over from another
+install; turning it off makes Handy delete its own entry at the next start.
 
 ## What the override changes
 
