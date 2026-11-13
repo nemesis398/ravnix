@@ -18,7 +18,7 @@ own that imports this one, starting from the template in `templates/default/`.
 
 ## 📈 Status
 
-![ravnix is 65 % built](docs/brand/progress.svg)
+![ravnix is 66 % built](docs/brand/progress.svg)
 
 Not ready to install yet. The figure is the share of steps done in the
 authors' own build plan, and it moves by hand when that plan is recounted.
@@ -59,6 +59,7 @@ flowchart LR
     herdr["herdr sessions"]
     work["Claude Code, mail, chat, calendar"]
     queue["ravnix-link queue"]
+    git["git and ssh"]
   end
   phone["your phone"]
   term -- "ssh over NetBird, reattaches when the link drops" --> herdr
@@ -66,16 +67,16 @@ flowchart LR
   work -- "open a link, notify, move a note" --> queue
   queue -- "delivered in order when the laptop is back" --> linkd
   linkd --> desktop
-  key -- "forwarded agent, a touch per signature" --> work
+  key -- "forwarded agent, a touch per signature" --> git
   work -- "ravnix-notify over Matrix" --> phone
 ```
 
 The terminal key opens a ghostty on the laptop that attaches to herdr on the
 server. What a session on the server wants from the desktop, such as opening
 a link, showing a notification or moving a note in Obsidian, goes through
-`ravnix-link`, and waits in a queue while the laptop is away. Git on the
-server signs in with the security key in the laptop, so every push still
-needs a touch from someone sitting there.
+`ravnix-link`, and waits in a queue while the laptop is away. Git and ssh on
+the server reach the git hosts with the security key in the laptop, so each
+of those connections needs a touch from someone sitting there.
 
 ## 🧰 What you get
 
@@ -91,8 +92,8 @@ needs a touch from someone sitting there.
 - Secrets read from Bitwarden through `rbw` when they are needed, and stored
   in neither repository.
 - The server as a NixOS host, a Proxmox image or an OCI image.
-- An installer that writes only to the disk your configuration names, by model
-  and serial.
+- A disk layout and install steps that touch only the disk your configuration
+  names, by model and serial, checked by a guard before anything is written.
 
 ## 🧭 Principles
 
@@ -100,7 +101,8 @@ needs a touch from someone sitting there.
   option that your private flake sets, and a check against a deny list runs on
   every commit and every commit message.
 - **New tools are written in Odin**, and each comes with tests that hunt for
-  edge cases and a callgrind gate that fails when it gets 2 % slower.
+  edge cases and a callgrind gate that fails when its instruction count rises
+  more than 2 %.
 - **No CI, a strict gate instead.** The git hooks run the fast checks on every
   commit and all of them before every push.
 - **One look.** Square corners, one accent, color only for state, no
