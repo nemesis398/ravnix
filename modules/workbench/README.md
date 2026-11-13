@@ -175,26 +175,24 @@ is the record.
   `--systemd=always`, Docker with `userns-remap`, an AppArmor profile that
   allows only the mounts stage 2 needs) are named in the compose files and
   none of them was tried.
-- **Steps 2 and 3 of the task are open.** Round 1 ran a first image on a Docker
-  host with stand-ins for what the image now does itself. Round 2 (the committed
-  image, both compose files, a container made again, the cleanup proof) waits
-  for the maintainer's go.
-- The system came up `degraded` in round 1 because `systemd-machine-id-commit`
-  timed out on a starved disk pool. It is plausibly not the image's fault, and
-  in a container that unit only writes a layer the next swap discards, but it
-  was not shown on a quiet pool.
+- **Step 2 of the task is open.** Round 1 ran a first image on a Docker host
+  with stand-ins for what the image now does itself. Round 2 ran the committed
+  image: the system came up `running` with no failed unit (round 1's
+  `systemd-machine-id-commit` timeout did not recur) and the cleanup proof
+  held, but the checks failed three ways, which are fixed (`oci.md`). Round 3,
+  on the fixed image, waits for the maintainer's go.
 - `tmpfs` on `/run` and its `exec` option are reasoned, not observed.
-- Podman inside the container form gives its containers muninn's own network
-  (`netns = "host"`): no network of their own, no published port and no
-  `podman network`. pasta sandboxes itself with `pivot_root`, which Docker's
-  default seccomp profile blocks, and a profile that allows it would be a copy
-  of Docker's to keep in step (`hosts/server/oci.nix`).
+- Rootless Podman inside the container form needs the Podman compose file,
+  whose seccomp profile is Docker's default and `pivot_root`
+  (`packages/muninn-seccomp`, copied to `deploy/compose/muninn/seccomp.json`;
+  `workbench-oci` fails when the copy drifts). The profile is the one Docker
+  29.6.2 builds in: a newer Docker's may allow newer system calls, which this
+  one refuses until the package moves to that release. Under any other
+  profile (Docker's builtin, Kubernetes' RuntimeDefault) Podman's containers
+  fail at `pivot_root`.
 - The Kubernetes manifests are validated against the schema with
   `kubeconform -strict` and never applied. A node on cgroup v1, or a runtime
   that ignores the image's `StopSignal`, does not stop the pod cleanly.
-- `no_pivot_root` for Podman inside lets a container that Podman runs leave its
-  chroot with the account's rights. In the container form run only images you
-  trust.
 - The list of the laptop's programs is written in four places
   (`workbench-oci`, `docker-checks.sh`, `workbench-server`,
   `workbench-optional`), and the four are not one list. The server carries a

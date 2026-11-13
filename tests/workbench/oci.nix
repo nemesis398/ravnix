@@ -125,6 +125,21 @@ let
   entryMountFails = entry { mountOk = false; };
 
   home = "/home/${user}";
+  podmanConf = c.virtualisation.containers.containersConf.settings;
+  # The server shape as the VM is made, without the module of the container
+  # form: only what is evaluated here, never built.
+  vm = inputs.nixpkgs.lib.nixosSystem {
+    modules = [
+      self.nixosModules.server
+      ../../templates/default/me.nix
+      {
+        nixpkgs.hostPlatform = system;
+        system.stateVersion = "26.05";
+      }
+    ];
+  };
+  vmPodman = vm.config.virtualisation.containers.containersConf.settings;
+  seccomp = self.packages.${system}.muninn-seccomp;
   # The one file the image's sshd reads the user's keys from.
   keysFile = lib.replaceStrings [ "%u" ] [ user ] (lib.head c.services.openssh.authorizedKeysFiles);
   # The same, as docker-checks.sh writes it.
@@ -154,19 +169,23 @@ let
     ++ check (
       !lib.hasInfix "remount" c.boot.postBootCommands
     ) "stage 2 remounts the cgroup tree without the guard of the entrypoint"
-    ++ check (
-      c.virtualisation.containers.containersConf.settings.containers.keyring == false
-      && c.virtualisation.containers.containersConf.settings.engine.no_pivot_root == true
-    ) "Podman is not set up for Docker's default seccomp profile (no keyring, no pivot_root)"
-    # pasta, Podman's own network for a rootless container, sandboxes itself
-    # with pivot_root, which Docker's default seccomp profile refuses (round 2:
-    # "Failed to pivot_root() into empty tmpfs"); a container in muninn shares
-    # muninn's network instead.
+    # Podman inside: keyctl stays blocked by the seccomp profile, so no
+    # session keyring. pivot_root is allowed by the profile of the Podman
+    # file (packages/muninn-seccomp), so crun pivots, and pasta gives a
+    # container its network: neither no_pivot_root nor a network setting of
+    # the image's own.
     ++
-      check (c.virtualisation.containers.containersConf.settings.containers.netns or null == "host")
-        "Podman's containers get a network of their own (pasta), which Docker's default seccomp profile does not let pasta set up: ${
-          toString (c.virtualisation.containers.containersConf.settings.containers.netns or "unset")
-        }"
+      check
+        (
+          podmanConf.containers.keyring or null == false
+          && !(podmanConf ? containers.netns)
+          && !(podmanConf ? engine.no_pivot_root)
+        )
+        "the image's containers.conf is not keyring = false with no netns and no no_pivot_root: ${builtins.toJSON podmanConf}"
+    # The VM form's Podman is left as the shape makes it.
+    ++
+      check (!(vmPodman ? containers.keyring || vmPodman ? containers.netns || vmPodman ? engine.no_pivot_root))
+        "the server shape without server-oci has settings of the container form in containers.conf: ${builtins.toJSON vmPodman}"
     ++
       check (map (k: k.path) c.services.openssh.hostKeys == [ hostKey ])
         "sshd's host keys are not the one in the volume, beside the home and not in it: ${
@@ -375,12 +394,29 @@ pkgs.runCommand "workbench-oci"
     for key in privileged network_mode devices pid ipc userns_mode; do
       yq_is "$compose" ".services.muninn.$key // \"none\"" none
     done
-    yq_is "$podman" '.services.muninn.security_opt | join(",")' systempaths=unconfined
-    # No device: pasta is not used (the image's containers.conf), so /dev/net/tun
-    # would grant what nothing needs.
-    for key in privileged network_mode devices pid ipc userns_mode cap_add volumes; do
+    # What the Podman file adds: /proc unmasked, a seccomp profile that is
+    # Docker's and pivot_root, and the device pasta opens. Nothing else.
+    yq_is "$podman" '.services.muninn.security_opt | join(",")' systempaths=unconfined,seccomp=./seccomp.json
+    yq_is "$podman" '.services.muninn.devices | join(",")' /dev/net/tun:/dev/net/tun
+    for key in privileged network_mode pid ipc userns_mode cap_add volumes; do
       yq_is "$podman" ".services.muninn.$key // \"none\"" none
     done
+    # The profile next to the compose files is the package's, and that is
+    # Docker's own profile (pinned) with exactly one rule more, for
+    # pivot_root: it cannot drift from either without this failing.
+    profile=${../../deploy/compose/muninn}/seccomp.json
+    if [ ! -f "$profile" ]; then
+      fail "deploy/compose/muninn/seccomp.json is missing: nix build .#muninn-seccomp, then copy it there"
+    else
+      cmp -s "$profile" ${seccomp} ||
+        fail "deploy/compose/muninn/seccomp.json is not the output of .#muninn-seccomp: build it and copy it there (packages/muninn-seccomp)"
+      jq -S . ${seccomp.docker} >docker.json
+      jq -S 'del(.syscalls[] | select(. == { "names": [ "pivot_root" ], "action": "SCMP_ACT_ALLOW" }))' "$profile" >less.json
+      cmp -s docker.json less.json ||
+        fail "deploy/compose/muninn/seccomp.json without its pivot_root rule is not Docker's profile: $(diff docker.json less.json | head -20)"
+      [ "$(jq '[.syscalls[] | select(.names | index("pivot_root"))] | length' "$profile")" = 1 ] ||
+        fail "deploy/compose/muninn/seccomp.json does not have exactly one rule that names pivot_root"
+    fi
     # The files say what the grants add up to, at the top.
     for f in "$compose" "$podman"; do
       head -3 "$f" >top.txt

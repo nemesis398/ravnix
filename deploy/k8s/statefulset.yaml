@@ -17,9 +17,13 @@
 #     entrypoint remounts /sys/fs/cgroup writable inside it, as it did under
 #     Docker, and refuses to start unless /proc/self/cgroup says `0::/`. On a
 #     node with cgroup v1 this does not work at all.
-#   - seccomp: the image's Podman settings and the grants here assume the
-#     runtime's default profile, which a kubelet without --seccomp-default
-#     does not apply; the pod asks for it.
+#   - seccomp: the pod asks for the runtime's default profile, which a
+#     kubelet without --seccomp-default does not apply. systemd runs under
+#     it; rootless Podman inside does not, since its containers need
+#     pivot_root, which the default profile blocks. For Podman, put
+#     deploy/compose/muninn/seccomp.json on the node and use a Localhost
+#     profile instead, with what docker-compose.podman.yaml adds besides
+#     (/proc unmasked, /dev/net/tun).
 #   - the stop signal: the pod has no field for it in a stable release; the
 #     container runtime reads it from the image (containerd does). If yours
 #     does not, systemd gets SIGTERM, which it ignores as PID 1 in a container,

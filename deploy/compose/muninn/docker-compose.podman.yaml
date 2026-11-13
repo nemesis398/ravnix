@@ -20,20 +20,34 @@
 #                          /proc/sys read-write for whoever has the
 #                          capability. It is a file of its own because the
 #                          base file does not need it.
+# seccomp=./seccomp.json  Docker's default seccomp profile with one rule more:
+#                          pivot_root, which Docker's allows to nobody,
+#                          SYS_ADMIN or not. crun gives each container its
+#                          root with it, and pasta, Podman's network for a
+#                          rootless container, sandboxes itself with it
+#                          ("Failed to pivot_root() into empty tmpfs" without
+#                          it). Every process in muninn may already unshare
+#                          a user and a mount namespace and mount in it under
+#                          Docker's profile; pivot_root reaches nothing
+#                          beyond that, and it keeps a nested container in
+#                          its own root. Everything else of Docker's profile
+#                          stays, the block on keyctl among them (the image
+#                          sets keyring = false for it). The file is
+#                          generated (packages/muninn-seccomp, pinned to the
+#                          profile Docker 29.6.2 builds in) and workbench-oci
+#                          fails when it is anything but that profile and
+#                          pivot_root. Docker compose reads it next to
+#                          docker-compose.yaml, on the client, so copy it
+#                          with the compose files.
+# /dev/net/tun             pasta opens it for the container's network.
 #
-# Docker's default seccomp profile stays. It blocks keyctl and pivot_root,
-# and the image's containers.conf (hosts/server/oci.nix) makes Podman do
-# without both. Without pivot_root a container that Podman runs can leave its
-# root and reach muninn's file system with the account's rights, so in this
-# form run only images you trust.
-#
-# No /dev/net/tun. pasta, which gives a rootless container a network of its
-# own, opens it, and then sandboxes itself with pivot_root, which the same
-# profile blocks ("Failed to pivot_root() into empty tmpfs", round 2). So the
-# image's containers.conf gives Podman's containers muninn's own network
-# (netns = "host"), and the device would grant what nothing uses. No
-# published port (-p) and no `podman network` inside, for the same reason.
+# With the three, a container in muninn gets a root and a network of its own,
+# published ports (-p) and `podman network` with names between containers,
+# as on the VM.
 services:
   muninn:
     security_opt:
       - systempaths=unconfined
+      - seccomp=./seccomp.json
+    devices:
+      - /dev/net/tun:/dev/net/tun

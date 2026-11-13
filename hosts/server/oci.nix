@@ -148,36 +148,26 @@ in
     settings.PermitRootLogin = lib.mkForce "no";
   };
 
-  # Rootless Podman inside Docker, with what Docker's default seccomp profile
-  # leaves it: crun must not join a session keyring (keyctl is blocked) and
-  # must not pivot_root (blocked too; it changes root instead). The rest of
-  # what nested containers need, an unmasked /proc, is the compose file's to
-  # grant, and only for those who run containers in this one
-  # (docker-compose.podman.yaml). Without it Podman starts and fails to mount
-  # /proc for the first container, and says so.
+  # Rootless Podman inside Docker. Docker's default seccomp profile blocks
+  # two things it uses: keyctl, for a session keyring, and pivot_root, which
+  # crun gives each container its root with and pasta, Podman's network for
+  # a rootless container, sandboxes itself with ("Failed to pivot_root() into
+  # empty tmpfs", round 2 in tests/workbench/oci.md). The Podman compose file
+  # gives the container Docker's profile with pivot_root allowed
+  # (packages/muninn-seccomp, deploy/compose/muninn/seccomp.json), so crun
+  # pivots and a container cannot leave its root, and pasta runs: a network
+  # of each container's own, published ports (-p) and `podman network` with
+  # names between containers. keyctl stays blocked, so crun joins no keyring.
+  # The rest of what nested containers need, an unmasked /proc and
+  # /dev/net/tun, is that file's to grant too, and only for those who run
+  # containers in this one. Without it Podman starts and fails to mount /proc
+  # for the first container, and says so.
   #
-  # What it costs: a container that Podman runs in muninn changes root
-  # instead of pivoting it, and can leave that root and reach muninn's file
-  # system with the account's rights (rootless Podman maps the container's
-  # root to the account). That is a fair trade against switching the
-  # container's seccomp profile off, but in this form run only images you
-  # trust.
-  #
-  # The network: a container that Podman runs shares muninn's (netns host).
-  # pasta, which gives a rootless container a network of its own, sandboxes
-  # itself with pivot_root as well and stops when it cannot ("Failed to
-  # pivot_root() into empty tmpfs", round 2 in tests/workbench/oci.md), and
-  # no setting of Podman's turns that off. So no network of its own, no
-  # published port (-p) and no `podman network`: what is asked for with
-  # --network fails the same way. Little isolation is lost, since such a
-  # container can reach muninn's files anyway (above). The way to pasta is a
-  # seccomp profile of Docker's with pivot_root allowed, which a stand-in for
-  # Docker showed to work (tests/workbench/oci.md); it is not taken, because
-  # it is a copy of Docker's profile to keep in step with every release.
+  # Under another profile (Docker's builtin, or Kubernetes' RuntimeDefault)
+  # Podman's containers fail at pivot_root; the Podman file is the way to run
+  # them.
   virtualisation.containers.containersConf.settings = {
     containers.keyring = false;
-    containers.netns = "host";
-    engine.no_pivot_root = true;
   };
 
   users.users.${user} = {
