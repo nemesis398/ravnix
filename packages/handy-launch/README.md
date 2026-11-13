@@ -1,7 +1,8 @@
 # handy-launch
 
-Handy (nixpkgs has it, 0.9.8) started on the integrated GPU only, with its menu
-entry and autostart entry. `modules/desktop/apps.nix` installs it.
+Handy (ravnix's 0.10.0, `packages/handy`; nixpkgs has 0.9.8) started on the
+integrated GPU only, with its menu entry and autostart entry.
+`modules/desktop/apps.nix` installs it.
 
 The pinning is two variables, `__EGL_VENDOR_LIBRARY_FILENAMES` (Mesa's) and
 `VK_DRIVER_FILES` (RADV's), taken from the host's graphics driver
@@ -10,7 +11,8 @@ The pinning is two variables, `__EGL_VENDOR_LIBRARY_FILENAMES` (Mesa's) and
 because WebKit's process otherwise opens `/dev/nvidia*` and keeps the RTX 4050
 awake (measured on Fedora 2026-11-04).
 
-`tests/desktop/handy.nix` runs the launcher against a stand-in Handy. The
+`tests/desktop/handy.nix` runs the launcher against a stand-in Handy, and
+checks that the launcher the package set builds runs ravnix's Handy. The
 dictation keys' driver is `handy-ptt` (its README says how it finds the wrapped
 Handy).
 

@@ -10,9 +10,14 @@ builds it (a compiled program behind a `makeBinaryWrapper` wrapper with
 quick tap, a mode file with garbage in it, a Handy started by its bare name, an
 unwrapped Handy, a look-alike process that carries Handy's path in its command
 line, and a runtime directory that is missing or unset. The test also asserts
-the parts of nixpkgs' real Handy that the stand-in copies (the ELF wrapper, the
-`.handy-wrapped` file, `--inherit-argv0`, the `handy-VERSION` store path), so a
-change there fails the check.
+the parts of the real Handy (`packages/handy`, 0.10.0) that the stand-in copies
+(the ELF wrapper, the `.handy-wrapped` file, `--inherit-argv0`, the
+`handy-0.10.0` store path), that `handy --help` lists `--start-hidden` and
+`--toggle-post-process`, and, in Handy's source, that a second Handy forwards
+`--toggle-post-process` to the running one, that SIGUSR2 is the plain toggle,
+and that 0.10.0's transcription worker is named `Handy-worker`, which a decoy
+shows `handy-ptt` does not take for Handy. A bump or a change there fails the
+check.
 
 ## Changed from the original
 

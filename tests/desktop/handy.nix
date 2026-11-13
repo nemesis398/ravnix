@@ -9,18 +9,28 @@
 #                 the mode `down` used
 #
 # handy-launch gets a shell stand-in that logs its environment and arguments.
-# handy-ptt gets stand-ins that look like nixpkgs' Handy to pgrep, and the real
-# pgrep. What the wrapped stand-in shares with nixpkgs' Handy 0.9.8, and what is
-# only assumed:
+# handy-ptt gets stand-ins that look like ravnix's Handy (packages/handy, 0.10.0
+# on nixpkgs' recipe) to pgrep, and the real pgrep. What the wrapped stand-in
+# shares with that Handy, and what is only assumed:
 #
-#   shared (and asserted below against the real package, so a change in
-#   nixpkgs fails this check instead of silently outdating the stand-in)
+#   shared (and asserted below against the real package, so a bump or a change
+#   in nixpkgs fails this check instead of silently outdating the stand-in)
 #     - bin/handy is a small ELF wrapper made by makeCWrapper, and it execs
 #       bin/.handy-wrapped with --inherit-argv0: the process is named
 #       .handy-wrapped (the kernel names it after the file) and its argv[0] is
 #       the name it was started by, the full path of bin/handy from
 #       handy-launch, a bare `handy` from a shell
-#     - the store path is called handy-VERSION
+#     - the store path is called handy-VERSION, and VERSION is 0.10.0
+#     - the command line has --start-hidden and --toggle-post-process
+#       (`handy --help`), and a second Handy forwards --toggle-post-process to
+#       the running one; SIGUSR2 is the plain toggle; the model catalog offers
+#       the Qwen3-ASR 1.7B gguf the carried-over settings select (read in the
+#       source)
+#     - the transcription worker that 0.10.0 starts beside the app names its
+#       process Handy-worker, which the pattern does not take (a decoy below)
+#     - the wrapper does not set WEBKIT_DISABLE_DMABUF_RENDERER, which would
+#       override 0.10.0's own choice of WebKit renderer (packages/handy)
+#   and the launcher of ravnix runs this Handy, not nixpkgs' 0.9.8
 #   only modeled (the stand-in is a 40-line C program, Handy is a Tauri
 #   application): the signal handling, and the PipeWire stream name, which is
 #   faked by the pactl stand-in
@@ -38,6 +48,10 @@
 let
   stub = name: body: pkgs.writeShellScriptBin name body;
 
+  # ravnix's Handy and its launcher, as the laptop shape installs them.
+  handy = self.packages.${system}.handy;
+  realLaunch = self.packages.${system}.handy-launch;
+
   # The stand-in for Handy: logs its environment and arguments, and exits.
   fakeHandy = pkgs.writeShellScriptBin "handy" ''
     {
@@ -52,7 +66,7 @@ let
   fakeWtype = pkgs.writeShellScriptBin "wtype" "exit 0";
 
   launch = pkgs.callPackage ../../packages/handy-launch {
-    handy = fakeHandy;
+    ravnix.handy = fakeHandy;
     wtype = fakeWtype;
   };
 
@@ -161,13 +175,37 @@ pkgs.runCommand "desktop-handy"
     # The exit status is Handy's.
     HANDY_EXIT=7 ${launch}/bin/handy-launch && fail "handy-launch hides Handy's exit status" || [ $? = 7 ] || fail "handy-launch changed Handy's exit status"
 
-    # ---- the stand-in matches nixpkgs' Handy (see the header)
-    n=${pkgs.handy}
+    # ---- the stand-in matches ravnix's Handy (see the header)
+    n=${handy}
     [ -x "$n/bin/.handy-wrapped" ] || fail "nixpkgs' Handy has no bin/.handy-wrapped any more: handy-ptt looks for that process name"
     [ "$(head -c 4 "$n/bin/handy" | tail -c 3)" = ELF ] || fail "nixpkgs' bin/handy is no ELF wrapper any more"
     grep -aq -- '/bin/.handy-wrapped' "$n/bin/handy" || fail "nixpkgs' bin/handy does not exec bin/.handy-wrapped any more"
     grep -aq -- '--inherit-argv0' "$n/bin/handy" || fail "nixpkgs' bin/handy does not inherit argv0 any more: the stand-in's wrapper must change with it"
     case $n in */*-handy-[0-9]*) ;; *) fail "nixpkgs' Handy is not in a store path called handy-VERSION: $n";; esac
+    case $n in */*-handy-0.10.0) ;; *) fail "ravnix's Handy is not 0.10.0, the version whose settings huginn takes over from Fedora: $n";; esac
+    # The launcher of ravnix runs this Handy.
+    grep -q "$n/bin/handy" ${realLaunch}/bin/handy-launch || fail "handy-launch does not run ravnix's Handy ($n): $(grep exec ${realLaunch}/bin/handy-launch)"
+    # The flags handy-launch and handy-ptt pass exist. --help is answered by
+    # clap before any window or GTK comes up.
+    "$n/bin/handy" --help > "$work/help" 2>&1 || fail "handy --help fails: $(head -5 "$work/help")"
+    for flag in --start-hidden --toggle-post-process; do
+      grep -q -- "^ *$flag " "$work/help" || fail "handy --help has no $flag: $(cat "$work/help")"
+    done
+    # A second Handy started with --toggle-post-process forwards it to the
+    # running one (the single-instance plugin), and SIGUSR2 is the plain
+    # toggle; the help text does not say either.
+    src=${handy.src}/src-tauri/src
+    grep -q 'a == "--toggle-post-process"' "$src/lib.rs" || fail "Handy no longer forwards --toggle-post-process to the running instance"
+    grep -q 'SIGUSR2 => ("transcribe", "SIGUSR2")' "$src/signal_handle.rs" || fail "SIGUSR2 is no longer Handy's plain toggle"
+    grep -q 'PR_SET_NAME, c"Handy-worker"' "$src/engine_supervisor/worker.rs" || fail "Handy's transcription worker is no longer named Handy-worker: the decoy below models the wrong name"
+    # The settings carried over select the Qwen3-ASR 1.7B gguf (Q8_0) by its
+    # path, repository/file, which Handy's model catalog must still offer.
+    catalog=$src/catalog/catalog.json
+    grep -q '"repository": "handy-computer/Qwen3-ASR-1.7B-gguf"' "$catalog" || fail "Handy's catalog has no Qwen3-ASR 1.7B gguf repository"
+    grep -q '"filename": "Qwen3-ASR-1.7B-Q8_0.gguf"' "$catalog" || fail "Handy's catalog has no Qwen3-ASR-1.7B-Q8_0.gguf"
+    # The wrapper leaves the WebKit renderer to Handy, and keeps the updater off.
+    ! grep -aq WEBKIT_DISABLE_DMABUF_RENDERER "$n/bin/handy" || fail "the wrapper sets WEBKIT_DISABLE_DMABUF_RENDERER, which overrides Handy's renderer choice"
+    grep -aq HANDY_DISABLE_UPDATER "$n/bin/handy" || fail "the wrapper no longer turns Handy's updater off"
 
     # ---- handy-ptt
     export PGREP_LOG=$work/pgrep.log
@@ -292,6 +330,30 @@ pkgs.runCommand "desktop-handy"
     ${ptt}/bin/handy-ptt down || fail "down with a look-alike fails"
     grep -q 'Handy was not running' "$CALLS" || fail "a process that only carries Handy's path was taken for Handy"
     kill "$decoy"; wait "$decoy" 2>/dev/null || true
+
+    # Handy 0.10.0 runs its transcription in a child process that it names
+    # Handy-worker. pgrep -x is case-sensitive and takes the whole name, so the
+    # worker is not taken for Handy, even when it is the older process (pgrep
+    # -o picks the oldest match).
+    reset
+    ln -s ${plainHandy}/bin/handy "$work/Handy-worker"
+    mkdir -p "$work/worker"
+    (export FAKE_DIR=$work/worker; exec "$work/Handy-worker") &
+    worker=$!
+    for _ in $(seq 1 100); do
+      [ -e "$work/worker/ready" ] && break
+      sleep 0.05
+    done
+    [ "$(cat /proc/$worker/comm 2>/dev/null)" = Handy-worker ] || fail "the worker decoy is called $(cat /proc/$worker/comm 2>/dev/null), not Handy-worker"
+    ${ptt}/bin/handy-ptt down || fail "down with only a worker fails"
+    grep -q 'Handy was not running' "$CALLS" || fail "a process named Handy-worker was taken for Handy"
+    reset; start_handy
+    ${ptt}/bin/handy-ptt down || fail "down with a worker beside Handy fails"
+    [ "$(signals)" = 1 ] || fail "down beside an older Handy-worker sent $(signals) signals to Handy, not 1"
+    # The stand-in opens its log at start, so an empty one means no signal.
+    [ ! -s "$work/worker/usr2" ] || fail "down signalled the worker, not Handy"
+    stop_handy
+    kill "$worker"; wait "$worker" 2>/dev/null || true
 
     # A runtime directory that cannot be used, which neither stops the take nor
     # prints an error into the session: the mode file cannot be written, `down`

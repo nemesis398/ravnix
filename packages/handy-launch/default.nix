@@ -1,6 +1,7 @@
-# Handy, the offline speech-to-text app (nixpkgs has it), started on the iGPU
-# only. Every launcher goes through `handy-launch`: the application menu entry,
-# the autostart entry, and the dictation key's fallback.
+# Handy, the offline speech-to-text app (ravnix's 0.10.0, packages/handy),
+# started on the iGPU only. Every launcher goes through `handy-launch`: the
+# application menu entry, the autostart entry, and the dictation key's
+# fallback.
 #
 # Without the two variables below, Handy's WebKitWebProcess opens /dev/nvidia*
 # through the NVIDIA EGL vendor and the RTX 4050 stays `active` for as long as
@@ -26,10 +27,12 @@
   symlinkJoin,
   makeDesktopItem,
   addDriverRunpath,
-  handy,
   wtype,
+  # The packages of ravnix: handy is one (0.10.0, where nixpkgs has 0.9.8).
+  ravnix,
 }:
 let
+  inherit (ravnix) handy;
   launcher = writeShellApplication {
     name = "handy-launch";
     runtimeInputs = [ wtype ];
