@@ -42,9 +42,9 @@ Placeholders as elsewhere: `HOST` is the Docker host, `BUILDER` the Nix builder,
 
 ## Status of this record
 
-**Steps 2 and 3 of the task are open.** Two rounds have run, and each found
-what the image, the compose files or the test script still lacked; a third
-waits.
+**Steps 2 and 3 of the task are done.** Three rounds have run. The first two
+found what the image, the compose files or the test script still lacked; the
+third passed on the fixed image.
 
 - **Round 1** ran the first image (`ravnix/muninn:zdrqddvyczgmg1hqqapvd8cdf8gldhsz`)
   on the NAS, with two stand-ins for what the image now does itself: an
@@ -60,9 +60,10 @@ waits.
   login with a key, rootless Podman's network, and, in the two runs after a
   container was made, the checks of PID 1. "Round 2" below has the causes
   and the fixes.
-- **Round 3** is the same run on the fixed image, and it has **not been run**.
-  Until it has passed, Step 2 is not done. It waits for the maintainer's go,
-  because root in the container is root on the NAS, which is shared.
+- **Round 3** ran the fixed image on 2026-11-13, with the maintainer's go:
+  47, 51 and 51 checks passed and none failed, and the cleanup left the host
+  as it was. "Round 3" below is the record, and says where it differs from the
+  lines below.
 
 What a round has to show, on the image built from the tree as committed:
 
@@ -293,8 +294,9 @@ mount.
 
 ## Not shown yet
 
-Everything in "Status of this record" under round 3. The Kubernetes manifests
-were validated against the schema with `kubeconform` and never applied.
+Round 3 did not capture the stage 2 output (`docker logs`) of the image it
+ran. The Kubernetes manifests were validated against the
+schema with `kubeconform` and never applied.
 
 ## Round 2
 
@@ -343,3 +345,79 @@ answers like a container that is still booting, or has a key file the system
 did not make. With the Podman file the script now also runs a dev container
 with a published port and two containers on a `podman network` that find each
 other by name.
+
+## Round 3
+
+The fixed image and the three files of `deploy/compose/muninn` as committed,
+run on 2026-11-13 by the script of the task on the same host, the NAS, with
+the maintainer's go. The image, `ravnix/muninn:989336x63mcwvs1wsqws7vij4lxn9acq`,
+was built from the tree of `ef4e2f3`. The script ended with status 0 after
+623 seconds, every call over ssh bounded at an hour; the load took 5 minutes.
+
+The host: Docker 29.6.2, client and server, and Docker Compose v5.1.3, with
+the security options `apparmor`, `seccomp` (builtin) and `cgroupns`; no
+`userns`, and the container's `UsernsMode` empty. 11 containers of other
+projects were running before and after.
+
+| Run | Result |
+| --- | --- |
+| A, base file | **47 passed, 0 failed** |
+| B, base and Podman file | **51 passed, 0 failed** |
+| C, container made again | **51 passed, 0 failed** (the same lines as B; only the id of the pane differs) |
+
+What the run showed, against "What a round has to show" above:
+
+1. PID 1 is systemd 262 in `0::/init.scope`, `/sys/fs/cgroup` is
+   `rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot`, and the
+   system is `running` with no failed unit, in all three runs.
+2. The versions and security options above, and `UsernsMode` empty.
+3. The grants against the base file, as inspected: `Privileged=false`,
+   `CapAdd=[CAP_SYS_ADMIN]`, `SecurityOpt=[apparmor=unconfined]`,
+   `CgroupnsMode=private`, no device, `Binds=[ravnix-muninn-test_home:/home:rw]`,
+   a tmpfs on `/run` (`exec,mode=755,size=256m`), 24 masked paths, 4096 pids,
+   4 GiB, 4 CPUs. Podman without the Podman file fails at `proc`, as it must.
+   With the Podman file: `Devices=[{/dev/net/tun /dev/net/tun rwm}]`, no masked
+   path, and two security options, `apparmor=unconfined` and the seccomp
+   profile that compose inlined. That profile is exactly
+   `deploy/compose/muninn/seccomp.json` (compared as JSON after the run), with
+   its one rule for `pivot_root`. In every run the key file of the
+   configuration passed (`/etc/ssh/authorized_keys.d/alice` root's, mode 444,
+   with the configuration's key), a key of it logged in, a key in the home was
+   refused, and a login without a key was refused. With the Podman file:
+   `Hello, world!` on pasta, `PASS: a published port of a rootless container
+   (-p 127.0.0.1:18080:8080) answers in muninn` and `PASS: on a network of its
+   own (podman network), a container reaches another by name`, under Docker
+   with runc and AppArmor unconfined, which the stand-in of the fix could not
+   show. The Remote Control and Nix database checks passed, and so did the
+   sync units with the vault locked (status 75).
+4. Health `healthy`; `docker stats` showed 0.10 % CPU, 38.88 MiB and 53 pids.
+   `compose stop` took 4.2 s and the container exited with 0. The container
+   made again kept the home's marker file and sshd's host key (the same
+   fingerprint in A and C).
+5. A start with a tag that is not loaded was refused (`No such image`), and
+   nothing was pulled.
+6. `down -v` removed the container, the volume and the network; the image was
+   removed by its tag (round 1's tag was no longer loaded); the staging
+   directory was removed. The lists of what the project left were empty,
+   `docker system df` was the same before and after, and the snapshot of the
+   host's other containers (start times, restarts, health), images, volumes
+   and networks was identical, byte for byte.
+
+Where the record differs from the expected lines:
+
+- Item 1 asks for a clean stage 2 output. The run did not capture
+  `docker logs`, so no `signature mismatch` or symlink error is shown either
+  way for round 3. Round 2's stage 2 was clean; round 3 shows the system
+  `running` with no failed unit in all three runs, but not the stage 2 output
+  itself.
+- Item 3 says "no devices, no binds" for the base file. `Binds` lists the
+  named volume, `ravnix-muninn-test_home:/home:rw`, as Docker reports a named
+  volume there; there is no host path. It did the same in round 2.
+- Item 3 writes the device as `Devices=[/dev/net/tun]`; Docker prints the
+  mapping as `[{/dev/net/tun /dev/net/tun rwm}]`. The same device.
+- `systempaths=unconfined` is not among the security options Docker reports:
+  it shows as `MaskedPaths=0` instead.
+
+With this, Steps 2 and 3 of the task are done: the checks of Task 4.1 pass
+through `docker exec` in all three forms, the grants Docker needed are the
+ones recorded above, and nothing of the project remains on the host.

@@ -175,12 +175,12 @@ is the record.
   `--systemd=always`, Docker with `userns-remap`, an AppArmor profile that
   allows only the mounts stage 2 needs) are named in the compose files and
   none of them was tried.
-- **Step 2 of the task is open.** Round 1 ran a first image on a Docker host
-  with stand-ins for what the image now does itself. Round 2 ran the committed
-  image: the system came up `running` with no failed unit (round 1's
-  `systemd-machine-id-commit` timeout did not recur) and the cleanup proof
-  held, but the checks failed three ways, which are fixed (`oci.md`). Round 3,
-  on the fixed image, waits for the maintainer's go.
+- **Steps 2 and 3 of the task are done** (`oci.md`). Round 1 ran a first image
+  on a Docker host with stand-ins for what the image now does itself. Round 2
+  ran the committed image: the system came up `running` with no failed unit
+  and the cleanup proof held, but the checks failed three ways. Round 3 ran
+  the fixed image on Docker 29.6.2: 47, 51 and 51 checks passed, none failed,
+  and the host was left as it was.
 - `tmpfs` on `/run` and its `exec` option are reasoned, not observed.
 - Rootless Podman inside the container form needs the Podman compose file,
   whose seccomp profile is Docker's default and `pivot_root`
