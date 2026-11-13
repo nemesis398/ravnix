@@ -11,7 +11,14 @@ once, whatever its state.
 claude-roll [--dry-run] [--deadline 3h] [--state DIR] [--herdr PATH] [--ravnix-notify PATH]
 claude-roll record              # Claude Code's SessionStart hook
 claude-roll classify FILE...    # what claude-roll makes of a recorded screen
+claude-roll update ...          # the update timer, root's step
+claude-roll update-prepare ...  # the update, the user's first step
+claude-roll update-finish ...   # the update, the user's last step
+claude-roll remote-control      # restart Remote Control once no session is open
 ```
+
+The update's three steps and the Remote Control restart are described in
+"The update" below; `modules/workbench/claude-update.nix` runs them.
 
 `claude-roll --help` has the options and the exit status: 0 done (sessions
 left on their version included), 1 herdr could not be read or a session did
@@ -123,6 +130,68 @@ and a first prompt. A flag it does not know, one a resume must not repeat
 missing or broken record leaves the pane on its version, and the user is
 told why.
 
+## The update
+
+The twice-daily Claude Code update (`modules/workbench/claude-update.nix`,
+06:00 and 18:00, Persistent) is three steps, because two parties hold what
+it needs: root may switch the system, and only the user's vault holds the
+git tokens and the signing key. Root never reads the vault, and never builds
+what the account wrote.
+
+1. `claude-roll update` (root, `ravnix-claude-update.service`):
+   - `--mode bump` (the server) reads `RELEASES/latest` with curl (https
+     only, 30 s, 1 KiB) and stops when the host runs that version or a newer
+     one. An answer that is no version, or none, ends the run with 75.
+   - It starts the user's prepare unit (`systemctl --machine=USER@.host
+     --user start`) and reads the lock it leaves as the user (`setpriv ...
+     cat`).
+   - It compares that lock's input nodes with the deployed flake's
+     (`lockfile.odin`): the input's node and the nodes only it reaches, with
+     the same names, inputs and `original`, and in `locked` nothing but
+     `rev`, `narHash`, `lastModified` and `revCount` changed. Anything else
+     is refused. A lock that moved nothing ends the run (claude-code-nix has
+     not caught up, or there is nothing to follow).
+   - It copies the deployed flake (`--flake`, a store path) to
+     `STATE/work`, puts the new input nodes into its lock (the other nodes
+     stay the deployed ones), and evaluates the package's version with the
+     `--override` inputs (the ravnix the host runs). A version that is not
+     newer than `--running` is waited for on the server and refused on the
+     laptop.
+   - It builds the host's toplevel and the package's download, runs
+     `claude-code-verify --releases RELEASES DOWNLOAD VERSION` (exit 3, an
+     unreachable manifest, ends the run with 75 and switches nothing), sets
+     the system profile and runs `switch-to-configuration switch`.
+   - It writes `STATE/result.json` (status `switched`, `build-failed`,
+     `verify-failed`, `switch-failed` or `refused`, the versions, the
+     candidate's sha256 and a message) and starts the user's finish unit.
+2. `claude-roll update-prepare` (the user): fetches `--branch` of
+   `--remote` into a bare repository of its own (`STATE/flake.git`) over
+   HTTPS, where git asks the token helper of `ravnix.secrets.gitTokens`. On
+   the server it checks the fetched tree out into `STATE/tree` and runs `nix
+   flake update INPUT` there, and refuses a result that changed any other
+   node. It leaves the lock in `STATE/candidate.lock` and the commit in
+   `STATE/base`. A failed fetch or update is told to the user.
+3. `claude-roll update-finish` (the user): reads root's result once (by its
+   id). A failure is told to the user. On the server a switch is committed
+   without a working tree: the candidate becomes `flake.lock` of a tree made
+   from `base`, `git commit-tree -S` signs it through rbw's agent, and `git
+   push REMOTE COMMIT:refs/heads/BRANCH` sends it (never forced, so a branch
+   that moved meanwhile refuses it). Then it starts the roll units
+   (`--roll-unit`, `claude-roll.service` and
+   `claude-remote-control-roll.service`) and tells the user. It publishes
+   only the candidate whose sha256 root built.
+
+The messages go to the `updates` topic of ravnix-notify; the roll's and
+Remote Control's to `sessions`.
+
+`claude-roll remote-control` restarts Claude Code's Remote Control unit
+(`--unit`, by default `claude-remote-control.service`) once its control
+group holds its main process alone; each phone session is a process beside
+it, and a restart ends them all. It looks every minute until the deadline,
+then leaves the unit on its version and tells the user how to restart it. A
+group it cannot read counts as busy; a unit that stopped or restarted by
+itself meanwhile is left alone.
+
 ## Tests
 
 `claude-roll-tests` runs `tests/`:
@@ -144,12 +213,39 @@ told why.
   between list and read, a screen that changes between the reads, odd
   session ids, missing and broken records, the busy file, a refused and an
   unanswered `/exit`, a failing ravnix-notify, the lock.
+- `lockfile_test.odin`: which nodes an input owns (follows paths, a node
+  another input shares, a dangling node), what a new revision may change
+  (another owner, `original`, type, field, node, input or `flake` is
+  refused), locks that are none, too large or nested 200 000 deep (root
+  parses what the user wrote, so the nesting is bounded before the
+  parser recurses), and the splice, escapes included.
+- `update_test.odin`: the update against a world in the test
+  (`fake_update.odin`) that answers and records every program: an equal or
+  older version, an unreachable or garbled `latest`, the whole bump in
+  order (the overrides, the input nodes taken, the others kept), a failed
+  evaluation, build and download, a manifest mismatch and an unreachable
+  manifest, a failed profile and switch, claude-code-nix not caught up, a
+  lock that points elsewhere or is none or is huge, a failed prepare and a
+  missing candidate, two runs at once, following, following back to an
+  older version; prepare's bump, a bump that moved more, a locked vault and
+  a refused token, a failed `nix flake update`, a branch without a lock,
+  the lock; finish's signed commit and push, the same result twice, a
+  refused push, a failed signature, a candidate root did not build, a
+  failure, the laptop, results that are none; versions, and the command
+  lines.
+- `remote_control_test.odin`: Remote Control against a fake
+  `/sys/fs/cgroup`: idle, a session until the deadline, a session that ends,
+  a session in a group below, an unreadable or foreign group, a stopped unit,
+  a unit that restarted by itself, a failed restart.
 - `cli_test.odin`: the command line, durations, and the runner through real
   processes (`testdata/fake-herdr`): `--dry-run`, a herdr that is not there,
   one whose server is gone, one that hangs, one that prints without end.
 
 `claude/hooks/tests/busy-state.test.sh` tests the busy hook, and
 `tests/claude/home.nix` both hooks as a home wires them.
+`tests/workbench/claude-update.nix` runs the update in three VMs: the server,
+the laptop, and a forge that stands in for Forgejo and for
+downloads.claude.ai.
 
 The bench classifies six screens (`bench/`), a full viewport among them.
 
@@ -189,9 +285,37 @@ The bench classifies six screens (`bench/`), a full viewport among them.
   session shows while a background task runs; a screen check on it would be
   a second signal beside the process check.
 
+## Unverified, for the first unattended update on the hosts (Task 6.1)
+
+- That `claude remote-control --spawn worktree` runs each phone session as a
+  process of its own in the unit's control group, and nothing else beside
+  its main process while idle. If it ran sessions inside the main process,
+  the restart would end them; if it kept a helper process, it would never
+  restart and the user is told after the deadline.
+- That `switch-to-configuration switch`, run from root's update unit, leaves
+  that unit running (restartIfChanged is off, as for system.autoUpgrade),
+  and the real build and switch time of a Claude Code bump on the server.
+- That `systemctl --machine=USER@.host --user start` reaches the user's
+  manager on the real hosts as it does in the VMs.
+
 ## Known gaps
 
 Findings the tests turned up or the design leaves, not fixed:
+
+- The update: a refused push (the branch moved, the forge is down) leaves
+  the server switched and the laptop behind until a later update pushes;
+  nothing retries the push before then.
+- The update: the laptop runs at the same 06:00 and 18:00 as the server, so
+  a laptop awake at 18:00 sees the server's push only at the next run
+  (`ravnix.claudeUpdate.times` sets other times per host).
+- The update: going back to an older Claude Code is a deploy by hand; the
+  timer refuses a lock with an older version on the laptop, and waits on the
+  server.
+- The update: a run that stops between prepare and finish (a reboot) leaves
+  a candidate behind, which the next prepare replaces; nothing is lost, and
+  nothing is committed for it.
+- The update: the manifest's signature is not checked
+  (`tools/claude-code-verify/README.md`).
 
 - A session that shows `Resume this conversation?` while idle is never
   rolled, and the user is told on every run. Escape would dismiss the idle

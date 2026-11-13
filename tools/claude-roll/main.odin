@@ -13,7 +13,12 @@ import "core:time"
 
 USAGE :: `usage: claude-roll [--dry-run] [--deadline DURATION] [OPTION...]
        claude-roll record
-       claude-roll classify FILE...`
+       claude-roll classify FILE...
+       claude-roll update --mode bump|follow --flake DIR --host NAME --user NAME
+                          --group NAME --running VERSION --candidate FILE [OPTION...]
+       claude-roll update-prepare --mode bump|follow --remote URL --host NAME [OPTION...]
+       claude-roll update-finish --mode bump|follow --remote URL [OPTION...]
+       claude-roll remote-control [--unit UNIT] [--deadline DURATION] [OPTION...]`
 
 HELP :: USAGE + `
 
@@ -41,14 +46,24 @@ input and the command line of the Claude Code above it. It always exits 0.
 claude-roll classify reads screens as herdr agent read --format ansi prints
 them and says, for each, what claude-roll would make of it.
 
+claude-roll update, update-prepare and update-finish are the Claude Code
+update timer's three steps, root's and the user's; remote-control restarts
+Remote Control's unit once it holds no session. README.md has their
+options and what each does.
+
 Exit status: 0 done (sessions left on their version included); 1 herdr could
-not be read, or a session did not come back; 64 bad usage; 75 another
-claude-roll is running.`
+not be read, or a session did not come back, or an update step failed; 64
+bad usage; 75 another claude-roll is running, or an update could not reach
+what it needs and tries again at the next run.`
 
 Command :: enum {
 	Roll,
 	Record,
 	Classify,
+	Update,
+	Update_Prepare,
+	Update_Finish,
+	Remote_Control,
 	Help,
 }
 
@@ -62,6 +77,10 @@ Args :: struct {
 	command: Command,
 	cfg:     Config,
 	files:   []string,
+	update:  Update_Config,
+	prepare: Prepare_Config,
+	finish:  Finish_Config,
+	rc:      RC_Config,
 }
 
 MAX_DEADLINE :: 168 * time.Hour
@@ -82,6 +101,8 @@ parse_args :: proc(args: []string, env: Environment, allocator: runtime.Allocato
 			a.command = .Classify
 			a.files = args[1:]
 			return a, ""
+		case "update", "update-prepare", "update-finish", "remote-control":
+			return parse_update_args(args, env, allocator)
 		}
 	}
 	state := ""
@@ -207,6 +228,14 @@ main :: proc() {
 		status = run_classify(a.files)
 	case .Roll:
 		status = roll(a.cfg, context.allocator).status
+	case .Update:
+		_, status = update(a.update)
+	case .Update_Prepare:
+		status = prepare(a.prepare)
+	case .Update_Finish:
+		status = finish(a.finish)
+	case .Remote_Control:
+		_, status = remote_control(a.rc)
 	}
 	virtual.arena_destroy(&arena)
 	os.exit(status)
@@ -252,4 +281,269 @@ run_classify :: proc(files: []string) -> int {
 		free_all(context.temp_allocator)
 	}
 	return status
+}
+
+// parse_update_args reads the options of update, update-prepare,
+// update-finish and remote-control. Each takes --NAME VALUE or
+// --NAME=VALUE; --override and --roll-unit may be given more than once.
+parse_update_args :: proc(args: []string, env: Environment, allocator: runtime.Allocator) -> (a: Args, err: string) {
+	known: []string
+	switch args[0] {
+	case "update":
+		a.command = .Update
+		known = {"--mode", "--flake", "--host", "--user", "--group", "--running", "--candidate", "--input", "--package", "--releases", "--state", "--prepare-unit", "--finish-unit", "--profile", "--override"}
+	case "update-prepare":
+		a.command = .Update_Prepare
+		known = {"--mode", "--remote", "--branch", "--input", "--state", "--repo", "--host", "--ravnix-notify"}
+	case "update-finish":
+		a.command = .Update_Finish
+		known = {"--mode", "--remote", "--branch", "--state", "--repo", "--result", "--ravnix-notify", "--roll-unit"}
+	case "remote-control":
+		a.command = .Remote_Control
+		known = {"--unit", "--deadline", "--ravnix-notify", "--sys-root"}
+	}
+	values := make(map[string]string, allocator)
+	overrides := make([dynamic]Override, allocator)
+	units := make([dynamic]string, allocator)
+	for i := 1; i < len(args); i += 1 {
+		arg := args[i]
+		if arg == "--help" || arg == "-h" {
+			a.command = .Help
+			return a, ""
+		}
+		name, value := arg, ""
+		has_value := false
+		if eq := strings.index_byte(arg, '='); eq >= 0 && strings.has_prefix(arg, "--") {
+			name, value, has_value = arg[:eq], arg[eq + 1:], true
+		}
+		found := false
+		for k in known {
+			found ||= k == name
+		}
+		if !found {
+			return a, fmt.aprintf("%s: unknown argument %q", args[0], arg, allocator = allocator)
+		}
+		if !has_value {
+			if i + 1 >= len(args) {
+				return a, fmt.aprintf("%s needs a value", name, allocator = allocator)
+			}
+			i += 1
+			value = args[i]
+		}
+		if value == "" || strings.contains_any(value, "\n\x00") {
+			return a, fmt.aprintf("%s needs a value on one line", name, allocator = allocator)
+		}
+		switch name {
+		case "--override":
+			eq := strings.index_byte(value, '=')
+			if eq <= 0 || !valid_attr_name(value[:eq]) || !strings.has_prefix(value[eq + 1:], "/") {
+				return a, fmt.aprintf("--override %q is not NAME=/PATH", value, allocator = allocator)
+			}
+			append(&overrides, Override{value[:eq], value[eq + 1:]})
+		case "--roll-unit":
+			if !valid_unit(value) {
+				return a, fmt.aprintf("--roll-unit %q is no unit name", value, allocator = allocator)
+			}
+			append(&units, value)
+		case:
+			if name in values {
+				return a, fmt.aprintf("%s is given twice", name, allocator = allocator)
+			}
+			values[name] = value
+		}
+	}
+	mode := Update_Mode.Bump
+	if a.command != .Remote_Control {
+		switch values["--mode"] {
+		case "bump":
+			mode = .Bump
+		case "follow":
+			mode = .Follow
+		case "":
+			return a, "--mode is needed: bump or follow"
+		case:
+			return a, fmt.aprintf("--mode %q is not bump or follow", values["--mode"], allocator = allocator)
+		}
+	}
+	need :: proc(values: map[string]string, names: ..string) -> string {
+		for n in names {
+			if values[n] == "" {
+				return n
+			}
+		}
+		return ""
+	}
+	or_default :: proc(values: map[string]string, name, fallback: string) -> string {
+		v := values[name]
+		return v if v != "" else fallback
+	}
+	user_state := ""
+	switch {
+	case env.state_home != "":
+		user_state, _ = filepath.join({env.state_home, "ravnix", "claude-update"}, allocator)
+	case env.home != "":
+		user_state, _ = filepath.join({env.home, ".local", "state", "ravnix", "claude-update"}, allocator)
+	}
+
+	switch a.command {
+	case .Update:
+		if missing := need(values, "--flake", "--host", "--user", "--group", "--running", "--candidate"); missing != "" {
+			return a, fmt.aprintf("update needs %s", missing, allocator = allocator)
+		}
+		c := default_update_config()
+		c.mode = mode
+		c.flake = values["--flake"]
+		c.host = values["--host"]
+		c.user = values["--user"]
+		c.group = values["--group"]
+		c.running = values["--running"]
+		c.candidate = values["--candidate"]
+		c.input = or_default(values, "--input", c.input)
+		c.package_attr = or_default(values, "--package", fmt.aprintf("home-manager.users.%s.programs.claude-code.package", c.user, allocator = allocator))
+		c.releases = or_default(values, "--releases", c.releases)
+		c.state_dir = or_default(values, "--state", c.state_dir)
+		c.prepare_unit = or_default(values, "--prepare-unit", c.prepare_unit)
+		c.finish_unit = or_default(values, "--finish-unit", c.finish_unit)
+		c.profile = or_default(values, "--profile", c.profile)
+		c.overrides = overrides[:]
+		switch {
+		case !valid_attr_name(c.host):
+			return a, fmt.aprintf("--host %q is no attribute name", c.host, allocator = allocator)
+		case !valid_attr_name(c.user) || !valid_attr_name(c.group):
+			return a, "--user and --group take a name"
+		case !valid_attr_name(c.input):
+			return a, fmt.aprintf("--input %q is no input name", c.input, allocator = allocator)
+		case !valid_attr_path(c.package_attr):
+			return a, fmt.aprintf("--package %q is no attribute path", c.package_attr, allocator = allocator)
+		case !valid_version(c.running):
+			return a, fmt.aprintf("--running %q is no version", c.running, allocator = allocator)
+		case !strings.has_prefix(c.flake, "/") || !strings.has_prefix(c.candidate, "/") || !strings.has_prefix(c.state_dir, "/") || !strings.has_prefix(c.profile, "/"):
+			return a, "--flake, --candidate, --state and --profile take absolute paths"
+		case !strings.has_prefix(c.releases, "https://"):
+			return a, fmt.aprintf("--releases %q is not an https URL", c.releases, allocator = allocator)
+		case !valid_unit(c.prepare_unit) || !valid_unit(c.finish_unit):
+			return a, "--prepare-unit and --finish-unit take unit names"
+		}
+		a.update = c
+	case .Update_Prepare, .Update_Finish:
+		if missing := need(values, "--remote"); missing != "" {
+			return a, fmt.aprintf("%s needs %s", args[0], missing, allocator = allocator)
+		}
+		remote := values["--remote"]
+		if !strings.has_prefix(remote, "https://") || strings.contains_any(remote, " \t") {
+			return a, fmt.aprintf("--remote %q is not an https URL", remote, allocator = allocator)
+		}
+		branch := or_default(values, "--branch", DEFAULT_BRANCH)
+		if !valid_branch(branch) {
+			return a, fmt.aprintf("--branch %q is no branch name", branch, allocator = allocator)
+		}
+		state := or_default(values, "--state", user_state)
+		if state == "" {
+			return a, "neither XDG_STATE_HOME nor HOME is set; give --state"
+		}
+		repo := or_default(values, "--repo", fmt.aprintf("%s/flake.git", state, allocator = allocator))
+		notify := or_default(values, "--ravnix-notify", "ravnix-notify")
+		if a.command == .Update_Prepare {
+			if missing := need(values, "--host"); missing != "" {
+				return a, "update-prepare needs --host"
+			}
+			input := or_default(values, "--input", DEFAULT_INPUT)
+			if !valid_attr_name(input) {
+				return a, fmt.aprintf("--input %q is no input name", input, allocator = allocator)
+			}
+			a.prepare = {
+				mode      = mode,
+				remote    = remote,
+				branch    = branch,
+				input     = input,
+				state_dir = state,
+				repo      = repo,
+				host      = values["--host"],
+				notify    = notify,
+			}
+		} else {
+			result := or_default(values, "--result", DEFAULT_ROOT_STATE + "/" + RESULT_NAME)
+			a.finish = {
+				mode       = mode,
+				remote     = remote,
+				branch     = branch,
+				state_dir  = state,
+				repo       = repo,
+				result     = result,
+				notify     = notify,
+				roll_units = units[:],
+			}
+		}
+	case .Remote_Control:
+		c := default_rc_config()
+		c.unit = or_default(values, "--unit", c.unit)
+		c.notify = or_default(values, "--ravnix-notify", c.notify)
+		c.sys_root = or_default(values, "--sys-root", c.sys_root)
+		if !valid_unit(c.unit) {
+			return a, fmt.aprintf("--unit %q is no unit name", c.unit, allocator = allocator)
+		}
+		if d := values["--deadline"]; d != "" {
+			dl, ok := parse_duration(d)
+			if !ok {
+				return a, fmt.aprintf("--deadline %q is no duration such as 3h, 90m or 1h30m, up to 168h", d, allocator = allocator)
+			}
+			c.deadline = dl
+		}
+		a.rc = c
+	case .Roll, .Record, .Classify, .Help:
+	}
+	return a, ""
+}
+
+// valid_attr_name: a Nix attribute name, an input name, a user or a group
+// as the update puts them into an attribute path or a command.
+valid_attr_name :: proc(s: string) -> bool {
+	if s == "" || len(s) > 64 || s[0] == '-' {
+		return false
+	}
+	for i in 0 ..< len(s) {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') && c != '_' && c != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+valid_attr_path :: proc(s: string) -> bool {
+	rest := s
+	parts := 0
+	for part in strings.split_iterator(&rest, ".") {
+		if !valid_attr_name(part) {
+			return false
+		}
+		parts += 1
+	}
+	return parts > 0 && !strings.has_suffix(s, ".")
+}
+
+valid_unit :: proc(s: string) -> bool {
+	if s == "" || len(s) > 255 || s[0] == '-' {
+		return false
+	}
+	for i in 0 ..< len(s) {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') && !strings.contains_rune("_-.@:\\", rune(c)) {
+			return false
+		}
+	}
+	return strings.contains_rune(s, '.')
+}
+
+valid_branch :: proc(s: string) -> bool {
+	if s == "" || len(s) > 200 || s[0] == '-' || strings.contains(s, "..") || strings.has_suffix(s, "/") || strings.has_prefix(s, "/") {
+		return false
+	}
+	for i in 0 ..< len(s) {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') && !strings.contains_rune("_-./", rune(c)) {
+			return false
+		}
+	}
+	return true
 }

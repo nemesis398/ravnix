@@ -31,7 +31,8 @@ spawn_mutex: sync.Mutex
 CHUNK :: 4096
 
 // run_child runs command with input on its standard input, and returns what
-// it printed. It waits for the child to exit, however long its pipes stay
+// it printed, in dir when it is not "", with env as its whole environment
+// when it is not nil. It waits for the child to exit, however long its pipes stay
 // open: a daemon it starts (rbw starts its agent) may keep them. It kills the
 // child when timeout is over, or when it prints more than max_output bytes.
 //
@@ -39,7 +40,7 @@ CHUNK :: 4096
 // input in pieces that fit the pipe, so a child that never reads cannot stall
 // the write, and a child that is gone does not kill this process (SIGPIPE is
 // ignored).
-run_child :: proc(command: []string, input: []byte, timeout: time.Duration, max_output: int, allocator := context.allocator) -> (res: Child_Result) {
+run_child :: proc(command: []string, input: []byte, timeout: time.Duration, max_output: int, allocator := context.allocator, dir := "", env: []string = nil) -> (res: Child_Result) {
 	_ = posix.sigignore(.SIGPIPE)
 
 	stdin_r, stdin_w, stdout_r, stdout_w, stderr_r, stderr_w: ^os.File
@@ -53,7 +54,7 @@ run_child :: proc(command: []string, input: []byte, timeout: time.Duration, max_
 			}
 		}
 		if err == nil {
-			process, err = os.process_start({command = command, stdin = stdin_r, stdout = stdout_w, stderr = stderr_w})
+			process, err = os.process_start({command = command, working_dir = dir, env = env, stdin = stdin_r, stdout = stdout_w, stderr = stderr_w})
 		}
 		// The child has its ends, or there is no child; the parent keeps none.
 		close_files(stdin_r, stdout_w, stderr_w)
