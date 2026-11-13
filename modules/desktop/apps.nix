@@ -7,7 +7,8 @@
 #   Browser        Helium (packages/helium): default browser, PDF and image
 #                  viewer; its policies install Stylus and the Bitwarden
 #                  extension; its DevTools are in the theme
-#                  (packages/helium-devtools-frontend)
+#                  (packages/helium-devtools-frontend); its native-messaging
+#                  hosts reach Claude Code and Bitwarden desktop
 #   Notes          Obsidian
 #   Office         OnlyOffice
 #   Passwords      Bitwarden desktop; rbw, in the common module, is the
@@ -174,6 +175,62 @@ let
     '';
     inherit (pkgs.bitwarden-desktop) meta;
   };
+
+  # Helium's native-messaging hosts: the manifests in
+  # ~/.config/net.imput.helium/NativeMessagingHosts/ that let an extension
+  # start a program of the desktop. Claude Code writes none for Helium, and
+  # Bitwarden writes its own at each start but not before it first runs: so
+  # ravnix writes both, each in the way its owner can live with
+  # (tests/desktop/helium-bridges.nix).
+  #
+  # Claude in Chrome: a home-manager link to the manifest below, whose path is
+  # a wrapper that runs the claude of the user's profile. Claude Code is
+  # updated twice a day (modules/workbench/claude-update.nix), and the
+  # profile is the same path after every switch where a store path of one
+  # build would go stale (bash.nix does the same for the shell). Claude Code
+  # writes its own manifest only into the directories of the browsers it
+  # knows (Chrome, Chromium, Brave, Edge, Vivaldi, Opera; checked in 2.1.325),
+  # not Helium's, pointing at ~/.claude/chrome/chrome-native-host, a script it
+  # rewrites at each session with the store path of the build that runs it.
+  # This manifest does not use that script. Should a later Claude Code write
+  # here, its write fails on the read-only link, which it only logs, and this
+  # manifest stays.
+  #
+  # Bitwarden desktop: the manifest is a regular file, copied by an activation
+  # step, because Bitwarden rewrites it at every start (2026.10.2,
+  # native-messaging.main.ts: Helium is in its Linux list) and a failed write
+  # there skips the IPC listener, which would cut every browser off. Bitwarden
+  # points its copy at a proxy it copies beside it (.bitwarden_desktop_proxy);
+  # ravnix's at nixpkgs' proxy. Both reach the same running Bitwarden, the
+  # name and the origins are the same, and the next switch writes ravnix's
+  # again.
+  nativeHostsDir = "net.imput.helium/NativeMessagingHosts";
+  bitwardenManifest = pkgs.writeText "com.8bit.bitwarden.json" (
+    builtins.toJSON {
+      name = "com.8bit.bitwarden";
+      description = "Bitwarden desktop <-> browser bridge";
+      path = "${pkgs.bitwarden-desktop}/libexec/desktop_proxy";
+      type = "stdio";
+      # Bitwarden's own list: the Chrome store's extension, its beta, Edge's
+      # and Opera's.
+      allowed_origins = [
+        "chrome-extension://nngceckbapebfimnlniiiahkandclblb/"
+        "chrome-extension://hccnnhgbibccigepcmlgppchkpfdophk/"
+        "chrome-extension://jbkfoedolllekgbhcbcoahefnbanhhlh/"
+        "chrome-extension://ccnckbpmaceehanjmeomladnmlffdjgn/"
+      ];
+    }
+  );
+  # PROFILE MANIFEST: create the profile and its hosts directory private, as
+  # Helium does, where they are missing (the Claude manifest's link would
+  # otherwise create them 0755), and put a writable copy of MANIFEST there,
+  # replacing a link or an older file.
+  heliumHosts = pkgs.writeShellScript "ravnix-helium-hosts" ''
+    set -eu
+    hosts="$1/NativeMessagingHosts"
+    (umask 077 && ${pkgs.coreutils}/bin/mkdir -p "$hosts")
+    ${pkgs.coreutils}/bin/install -m 0644 -T "$2" "$hosts/com.8bit.bitwarden.json"
+  '';
 
   # "#rrggbb" as the three bytes of a Chromium theme color.
   rgb =
@@ -511,5 +568,42 @@ in
 
       xdg.dataFile."helium/themes/ravnix/manifest.json".text = heliumTheme;
     }
+
+    # Helium's native-messaging hosts (see nativeHostsDir above).
+    (
+      { config, lib, ... }:
+      let
+        claudeOn = config.programs.claude-code.enable && config.programs.claude-code.package != null;
+        # Helium passes the extension's origin as an argument; Claude Code's
+        # own script passes nothing, and neither does this one.
+        claudeHost = pkgs.writeShellScript "claude-chrome-native-host" ''
+          exec ${lib.escapeShellArg "${config.home.profileDirectory}/bin/claude"} --chrome-native-host
+        '';
+      in
+      {
+        # Before linkGeneration, so the Claude manifest's link finds the
+        # directories private.
+        home.activation.ravnixHeliumHosts =
+          lib.hm.dag.entryBetween [ "linkGeneration" ] [ "writeBoundary" ]
+            ''
+              run ${heliumHosts} ${lib.escapeShellArg "${config.xdg.configHome}/net.imput.helium"} ${bitwardenManifest}
+            '';
+
+        xdg.configFile."${nativeHostsDir}/com.anthropic.claude_code_browser_extension.json" =
+          lib.mkIf claudeOn
+            {
+              # The file is ravnix's: one left there by hand is replaced, where
+              # home-manager would otherwise stop the whole activation.
+              force = true;
+              text = builtins.toJSON {
+                name = "com.anthropic.claude_code_browser_extension";
+                description = "Claude Code Browser Extension Native Host";
+                path = "${claudeHost}";
+                type = "stdio";
+                allowed_origins = [ "chrome-extension://fcoeoabgfenejglbffodgkkbkcdhcgfn/" ];
+              };
+            };
+      }
+    )
   ];
 }
