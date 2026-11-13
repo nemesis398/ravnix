@@ -73,9 +73,9 @@ a_new_revision_moves_and_nothing_else_may :: proc(t: ^testing.T) {
 		// another owner, original, repository type
 		lock_text(f, {cc_rev = "bbbb", cc_owner = "mallory", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"}),
 		lock_text(f, {cc_rev = "bbbb", cc_original = "mallory", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"}),
-		replace(f, text, `"repo":"claude-code-nix","rev":"bbbb","type":"github"`, `"repo":"claude-code-nix","rev":"bbbb","type":"tarball"`),
+		replace(f, text, `"type":"github"},"original":{"owner":"sadjow"`, `"type":"tarball"},"original":{"owner":"sadjow"`),
 		// a field more in locked, a node more, an input less
-		replace(f, text, `"rev":"bbbb",`, `"rev":"bbbb","ref":"evil",`),
+		replace(f, text, `"type":"github"},"original":{"owner":"sadjow"`, `"ref":"evil","type":"github"},"original":{"owner":"sadjow"`),
 		lock_text(f, {cc_rev = "bbbb", cc_extra = true, systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"}),
 		replace(f, text, `"inputs":{"nixpkgs":["nixpkgs"],"systems":"systems"}`, `"inputs":{"nixpkgs":["nixpkgs"]}`),
 		// claude-code no longer follows nixpkgs

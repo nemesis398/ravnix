@@ -14,8 +14,8 @@
 // What these rules cannot say is whether the revision is the upstream's:
 // GitHub serves a commit of any fork under the upstream's own URL, so a
 // lock that passes them can still name a fork's commit. That is why root
-// on the laptop runs `nix flake update` itself instead of taking the
-// revision from the server's lock (update.odin).
+// on the laptop takes the server's revision only once it has found it on
+// the input's own branch, fetched by root itself (upstream_of, update.odin).
 package claude_roll
 
 import "base:runtime"
@@ -115,6 +115,87 @@ input_rev :: proc(l: Lock, input: string) -> string {
 	locked, _ := node["locked"].(json.Object)
 	rev, _ := locked["rev"].(json.String)
 	return rev
+}
+
+// Where root fetches the input's branch to check a revision on it, and how
+// it has Nix lock the input at that revision.
+Upstream :: struct {
+	// The repository, over https.
+	url: string,
+	// The branch to fetch, as the deployed lock names it, or HEAD.
+	ref: string,
+	// The flake reference of the revision, for --override-input.
+	pin: string,
+}
+
+// upstream_of reads them from the deployed lock's node of the input, for
+// a GitHub input or a git one over https; any other is refused.
+upstream_of :: proc(l: Lock, input, rev: string) -> (up: Upstream, err: string) {
+	name, e := input_node(l, input)
+	if e != "" {
+		return up, e
+	}
+	node := l.nodes[name].(json.Object)
+	locked, _ := node["locked"].(json.Object)
+	original, _ := node["original"].(json.Object)
+	str :: proc(o: json.Object, key: string) -> string {
+		s, _ := o[key].(json.String)
+		return s
+	}
+	plain :: proc(s: string, slash: bool) -> bool {
+		if s == "" || s[0] == '-' || s[0] == '.' || strings.contains(s, "..") {
+			return false
+		}
+		for c in transmute([]byte)s {
+			ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-' || slash && c == '/'
+			if !ok {
+				return false
+			}
+		}
+		return true
+	}
+	switch str(locked, "type") {
+	case "github":
+		owner, repo, ref := str(locked, "owner"), str(locked, "repo"), str(original, "ref")
+		if !plain(owner, false) || !plain(repo, false) || str(original, "host") != "" || (ref != "" && !plain(ref, true)) {
+			return up, fmt.tprintf("the input %q names a GitHub repository this update does not fetch", input)
+		}
+		up.url = fmt.tprintf("https://github.com/%s/%s.git", owner, repo)
+		up.ref = ref if ref != "" else "HEAD"
+		up.pin = fmt.tprintf("github:%s/%s/%s", owner, repo, rev)
+	case "git":
+		url, ref := str(locked, "url"), str(locked, "ref")
+		host := strings.trim_prefix(url, "https://")
+		if host == url || host == "" || strings.contains_any(url, "?&#@ \t\n\\") || (ref != "" && !plain(ref, true)) {
+			return up, fmt.tprintf("the input %q is a git repository this update does not fetch (https only)", input)
+		}
+		up.url = url
+		up.ref = ref if ref != "" else "HEAD"
+		if ref != "" {
+			up.pin = fmt.tprintf("git+%s?ref=%s&rev=%s", url, ref, rev)
+		} else {
+			up.pin = fmt.tprintf("git+%s?rev=%s", url, rev)
+		}
+	case:
+		return up, fmt.tprintf("the input %q is neither a GitHub repository nor a git one", input)
+	}
+	return up, ""
+}
+
+// keep_original puts the input's `original` of from into into's node.
+keep_original :: proc(into, from: Lock, input: string) {
+	a, ea := input_node(into, input)
+	b, eb := input_node(from, input)
+	if ea != "" || eb != "" {
+		return
+	}
+	src := from.nodes[b].(json.Object)
+	dst := into.nodes[a].(json.Object)
+	if v, has := src["original"]; has {
+		dst["original"] = v
+		nodes := into.nodes
+		nodes[a] = dst
+	}
 }
 
 // reach is every node reached from start through inputs that name a node,

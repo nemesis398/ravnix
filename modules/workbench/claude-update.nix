@@ -20,14 +20,14 @@
 #           (the herdr panes) and claude-remote-control-roll.service
 #           (Remote Control, restarted once it holds no phone session).
 #   laptop  the user's prepare fetches the private flake with the read token;
-#           if the server pushed a new claude-code revision, that is only the
-#           sign to follow, once per push: root runs `nix flake update
-#           claude-code` itself, on a copy of the flake the host was
-#           deployed from, and builds, verifies and switches what that gives
-#           the same way, but only at the version the server's commit names,
-#           so the laptop never runs ahead of the server; finish says so, and
-#           says when the server's lock named another revision. It pushes
-#           nothing. While the user's side cannot run (the vault is
+#           if the server pushed a new claude-code revision, root fetches
+#           the input's branch itself, anonymously, and takes that revision
+#           only when it is on the branch; then it locks the input at it on
+#           a copy of the flake the host was deployed from, and builds,
+#           verifies and switches the same way, so both hosts run the
+#           server's revision. A revision that is not on the branch (a
+#           fork's) is refused and told once. It pushes nothing. A failed
+#           build or switch is told once and retried hourly. While the user's side cannot run (the vault is
 #           locked, or no user manager runs), the run ends with 75 and tells
 #           nobody, and ravnix-claude-update-retry.timer starts it again
 #           every hour until it gets through.
@@ -51,9 +51,8 @@
 #     cut: ravnix takes only the input's package, which runs as that same
 #     account, so it gains nothing it did not have. The laptop's user is
 #     another matter (and in wheel), so the laptop does not trust the
-#     server's lock for the revision: root there asks the input's own
-#     repository for the head of its branch, and the pushed lock only says
-#     when to.
+#     server's lock for the revision: root there takes it only once it has
+#     found it on the input's own branch, fetched by root itself.
 #   - The tokens and the signing key are the user's, from the user's vault
 #     through rbw (modules/common/tokens.nix, modules/common/rbw.nix): the
 #     prepare and finish steps run as user units, where git finds the token
@@ -348,8 +347,8 @@ in
 
     # The laptop's follow, again, while it waits: claude-roll writes the
     # marker when a run ends with 75 (the vault locked, no user manager,
-    # upstream or the manifest out of reach) and removes it when a run gets
-    # through.
+    # upstream or the manifest out of reach) or with a failed build or
+    # switch, and removes it when a run gets through.
     systemd.services.ravnix-claude-update-retry = lib.mkIf (!server) {
       description = "Claude Code update: try the follow again while it waits";
       unitConfig.ConditionPathExists = "${rootState}/pending";

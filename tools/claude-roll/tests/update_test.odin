@@ -12,6 +12,20 @@ import roll ".."
 
 // ---- root ----
 
+// update_retried runs the update as the timer would, again while it finds
+// its lock held: another test's child can hold a copy of the lock's file
+// between its fork and its exec (the file is close-on-exec).
+update_retried :: proc(cfg: roll.Update_Config) -> (outcome: roll.Update_Outcome, status: int) {
+	for _ in 0 ..< 100 {
+		if outcome, status = roll.update(cfg); outcome != .Locked {
+			return
+		}
+		time.sleep(10 * time.Millisecond)
+	}
+	return
+}
+
+
 @(test)
 does_nothing_when_the_latest_version_runs :: proc(t: ^testing.T) {
 	for latest in ([]string{"2.1.0", "2.1.0\n", "2.0.9", "1.99.99"}) {
@@ -20,7 +34,7 @@ does_nothing_when_the_latest_version_runs :: proc(t: ^testing.T) {
 		fu := fake_update(f)
 		fu.latest = latest
 		log := strings.builder_make(f.a)
-		outcome, status := roll.update(root_config(f, fu, .Bump, &log))
+		outcome, status := update_retried(root_config(f, fu, .Bump, &log))
 		testing.expect_value(t, outcome, roll.Update_Outcome.Current)
 		testing.expect_value(t, status, 0)
 		testing.expect_value(t, len(fu.calls), 1)
@@ -40,7 +54,7 @@ does_nothing_when_the_latest_version_cannot_be_read :: proc(t: ^testing.T) {
 		fu.latest = latest
 		fu.latest_fails = latest == ""
 		log := strings.builder_make(f.a)
-		outcome, status := roll.update(root_config(f, fu, .Bump, &log))
+		outcome, status := update_retried(root_config(f, fu, .Bump, &log))
 		testing.expectf(t, outcome == .Unreachable, "%q: %v", latest, outcome)
 		testing.expect_value(t, status, roll.EXIT_LOCKED)
 		testing.expect_value(t, len(fu.calls), 1)
@@ -63,7 +77,7 @@ bumps_builds_verifies_and_switches_a_newer_version :: proc(t: ^testing.T) {
 	fu.candidate = lock_text(f, cand)
 	log := strings.builder_make(f.a)
 	cfg := root_config(f, fu, .Bump, &log)
-	outcome, status := roll.update(cfg)
+	outcome, status := update_retried(cfg)
 	testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
 	testing.expect_value(t, status, 0)
 
@@ -102,7 +116,7 @@ bumps_builds_verifies_and_switches_a_newer_version :: proc(t: ^testing.T) {
 		s, _ := locked["rev"].(json.String)
 		return s
 	}
-	testing.expect_value(t, rev(built, "claude-code"), "bbbb")
+	testing.expect_value(t, rev(built, "claude-code"), rev40(f, "bbbb"))
 	testing.expect_value(t, rev(built, "systems"), "tttt")
 	testing.expect_value(t, rev(built, "nixpkgs"), "nnnn")
 	testing.expect_value(t, rev(built, "ravnix"), "rrrr")
@@ -138,7 +152,7 @@ a_failed_build_switches_nothing :: proc(t: ^testing.T) {
 		fu.build_fails = what == "build"
 		fu.download_fails = what == "download"
 		log := strings.builder_make(f.a)
-		outcome, status := roll.update(root_config(f, fu, .Bump, &log))
+		outcome, status := update_retried(root_config(f, fu, .Bump, &log))
 		testing.expectf(t, outcome == .Build_Failed, "%s: %v", what, outcome)
 		testing.expect_value(t, status, 1)
 		expect_untouched(t, fu)
@@ -162,7 +176,7 @@ a_download_anthropic_did_not_release_is_never_switched_to :: proc(t: ^testing.T)
 	fu.candidate = lock_text(f, NEW_LOCK)
 	fu.verify_exit = 1
 	log := strings.builder_make(f.a)
-	outcome, status := roll.update(root_config(f, fu, .Bump, &log))
+	outcome, status := update_retried(root_config(f, fu, .Bump, &log))
 	testing.expect_value(t, outcome, roll.Update_Outcome.Verify_Failed)
 	testing.expect_value(t, status, 1)
 	expect_untouched(t, fu)
@@ -179,7 +193,7 @@ an_unreachable_manifest_waits_for_the_next_run :: proc(t: ^testing.T) {
 	fu.candidate = lock_text(f, NEW_LOCK)
 	fu.verify_exit = 3
 	log := strings.builder_make(f.a)
-	outcome, status := roll.update(root_config(f, fu, .Bump, &log))
+	outcome, status := update_retried(root_config(f, fu, .Bump, &log))
 	testing.expect_value(t, outcome, roll.Update_Outcome.Verify_Unreachable)
 	testing.expect_value(t, status, roll.EXIT_LOCKED)
 	expect_untouched(t, fu)
@@ -197,7 +211,7 @@ a_failed_switch_is_told :: proc(t: ^testing.T) {
 		fu.nix_env_fails = which == "profile"
 		fu.switch_fails = which == "switch"
 		log := strings.builder_make(f.a)
-		outcome, status := roll.update(root_config(f, fu, .Bump, &log))
+		outcome, status := update_retried(root_config(f, fu, .Bump, &log))
 		testing.expect_value(t, outcome, roll.Update_Outcome.Switch_Failed)
 		testing.expect_value(t, status, 1)
 		testing.expect_value(t, called(fu, TOPLEVEL), which == "switch")
@@ -215,7 +229,7 @@ waits_when_claude_code_nix_has_not_caught_up :: proc(t: ^testing.T) {
 	fu.latest = "2.2.0"
 	fu.candidate = lock_text(f, OLD_LOCK)
 	log := strings.builder_make(f.a)
-	outcome, status := roll.update(root_config(f, fu, .Bump, &log))
+	outcome, status := update_retried(root_config(f, fu, .Bump, &log))
 	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
 	testing.expect_value(t, status, 0)
 	testing.expect(t, !called(fu, "nix "))
@@ -225,7 +239,7 @@ waits_when_claude_code_nix_has_not_caught_up :: proc(t: ^testing.T) {
 	gu := fake_update(g)
 	gu.latest, gu.version = "2.2.0", "2.1.0"
 	gu.candidate = lock_text(g, NEW_LOCK)
-	outcome, status = roll.update(root_config(g, gu, .Bump, &log))
+	outcome, status = update_retried(root_config(g, gu, .Bump, &log))
 	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Newer)
 	testing.expect_value(t, status, 0)
 	testing.expect(t, !called(gu, "nix --extra-experimental-features nix-command flakes build"))
@@ -246,7 +260,7 @@ refuses_a_lock_that_points_claude_code_elsewhere :: proc(t: ^testing.T) {
 		fu.latest, fu.version = "2.2.0", "2.2.0"
 		fu.candidate = lock_text(f, spec)
 		log := strings.builder_make(f.a)
-		outcome, status := roll.update(root_config(f, fu, .Bump, &log))
+		outcome, status := update_retried(root_config(f, fu, .Bump, &log))
 		testing.expect_value(t, outcome, roll.Update_Outcome.Refused)
 		testing.expect_value(t, status, 1)
 		testing.expect(t, !called(fu, "nix "))
@@ -261,7 +275,7 @@ refuses_a_lock_that_points_claude_code_elsewhere :: proc(t: ^testing.T) {
 		fu.latest = "2.2.0"
 		fu.candidate = text
 		log := strings.builder_make(f.a)
-		outcome, _ := roll.update(root_config(f, fu, .Bump, &log))
+		outcome, _ := update_retried(root_config(f, fu, .Bump, &log))
 		testing.expect_value(t, outcome, roll.Update_Outcome.Refused)
 		testing.expect(t, !called(fu, "nix "))
 	}
@@ -282,7 +296,7 @@ nothing_is_built_when_the_users_side_fails :: proc(t: ^testing.T) {
 			fu.candidate = lock_text(f, NEW_LOCK)
 		}
 		log := strings.builder_make(f.a)
-		outcome, _ := roll.update(root_config(f, fu, .Bump, &log))
+		outcome, _ := update_retried(root_config(f, fu, .Bump, &log))
 		testing.expect_value(t, outcome, roll.Update_Outcome.Prepare_Failed)
 		testing.expect(t, !called(fu, "nix "))
 		testing.expect(t, !called(fu, "cp "))
@@ -318,14 +332,34 @@ a_second_update_at_once_does_nothing :: proc(t: ^testing.T) {
 	testing.expect_value(t, outcome, roll.Update_Outcome.Current)
 }
 
-// The follow's own update: what root runs, as root, on its copy of the
-// deployed flake.
-own_update :: proc(f: ^Fixture, cfg: roll.Update_Config) -> string {
-	return cat(f, "nix --extra-experimental-features nix-command flakes flake update --refresh claude-code --flake path:", pj(f.a, cfg.state_dir, "work"))
+// A test revision as the lock holds it.
+rev40 :: proc(f: ^Fixture, short: string) -> string {
+	return strings.repeat(short, 10, f.a)
+}
+
+// What root runs on the laptop: its own fetch of upstream's branch, the
+// ancestry check, and the lock of the input at the pushed revision.
+upstream_fetch :: proc(f: ^Fixture, cfg: roll.Update_Config) -> string {
+	return cat(f, "git --git-dir=", pj(f.a, cfg.state_dir, "upstream.git"), " fetch --quiet --no-tags -- https://github.com/sadjow/claude-code-nix.git +HEAD:refs/upstream/head")
+}
+
+ancestry :: proc(f: ^Fixture, cfg: roll.Update_Config, short: string) -> string {
+	return cat(f, "git --git-dir=", pj(f.a, cfg.state_dir, "upstream.git"), " merge-base --is-ancestor ", rev40(f, short), " refs/upstream/head")
+}
+
+own_lock :: proc(f: ^Fixture, cfg: roll.Update_Config, short: string) -> string {
+	return cat(f, "nix --extra-experimental-features nix-command flakes flake lock --override-input claude-code github:sadjow/claude-code-nix/", rev40(f, short), " path:", pj(f.a, cfg.state_dir, "work"))
+}
+
+finish_start :: proc(f: ^Fixture) -> string {
+	return cat(f, "systemctl --machine=alice@.host --user start --no-block -- ", roll.FINISH_UNIT)
 }
 
 @(test)
-follows_by_updating_the_input_itself_when_the_lock_moves :: proc(t: ^testing.T) {
+follows_the_revision_the_server_pushed_once_upstream_has_it :: proc(t: ^testing.T) {
+	// Upstream may have moved on since the server's push; the laptop takes
+	// the pushed revision itself, not the head, so both hosts run one
+	// revision.
 	f := fixture(t)
 	defer fixture_destroy(f)
 	fu := fake_update(f)
@@ -335,85 +369,95 @@ follows_by_updating_the_input_itself_when_the_lock_moves :: proc(t: ^testing.T) 
 	log := strings.builder_make(f.a)
 	cfg := root_config(f, fu, .Follow, &log)
 	cfg.host = "huginn"
-	outcome, status := roll.update(cfg)
+	outcome, status := update_retried(cfg)
 	testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
 	testing.expect_value(t, status, 0)
 	testing.expect(t, !called(fu, "curl"))
-	// Root moved the input itself, and built what it got.
-	testing.expect(t, called(fu, own_update(f, cfg)), own_update(f, cfg))
-	testing.expect(t, strings.contains(read_text(f, cfg.state_dir, "work", "flake.lock"), `"rev":"bbbb"`))
+	testing.expect(t, called(fu, upstream_fetch(f, cfg)), upstream_fetch(f, cfg))
+	testing.expect(t, called(fu, ancestry(f, cfg, "bbbb")), ancestry(f, cfg, "bbbb"))
+	testing.expect(t, called(fu, own_lock(f, cfg, "bbbb")), own_lock(f, cfg, "bbbb"))
+	testing.expect(t, !called(fu, "nix --extra-experimental-features nix-command flakes flake update"))
+	testing.expect(t, strings.contains(read_text(f, cfg.state_dir, "work", "flake.lock"), rev40(f, "bbbb")))
 	testing.expect(t, called(fu, TOPLEVEL + "/bin/switch-to-configuration switch"))
 	r, _ := roll.parse_result(read_result(f), f.a)
 	testing.expect_value(t, r.mode, "follow")
 	testing.expect(t, strings.has_prefix(r.message, "huginn runs Claude Code 2.2.0 now (was 2.1.0)"), r.message)
-	testing.expect(t, !strings.contains(r.message, "ffff"), r.message)
+	testing.expect(t, strings.contains(r.message, "bbbbbbbbbbbb"), r.message)
 	testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.PENDING_NAME)))
 
-	// A lock that has not moved: nothing, not even root's own update.
+	// The same push again: followed already, nothing fetched.
+	outcome, status = update_retried(cfg)
+	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
+	testing.expect_value(t, status, 0)
+	testing.expect_value(t, count(fu, upstream_fetch(f, cfg)), 1)
+
+	// A lock that has not moved: nothing.
 	g := fixture(t)
 	defer fixture_destroy(g)
 	gu := fake_update(g)
 	gu.candidate = lock_text(g, OLD_LOCK)
-	gu.updated_lock = lock_text(g, NEW_LOCK)
-	outcome, status = roll.update(root_config(g, gu, .Follow, &log))
+	outcome, status = update_retried(root_config(g, gu, .Follow, &log))
 	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
-	testing.expect_value(t, status, 0)
 	testing.expect_value(t, len(gu.calls), 2)
 }
 
 @(test)
-follows_upstreams_head_and_never_a_revision_the_lock_names :: proc(t: ^testing.T) {
-	// The server's account pushed a lock with a revision only a fork has.
-	// Root takes the head of the input's own branch, and says that the two
-	// differ; that is no failure.
+refuses_a_revision_upstream_does_not_have_and_says_so_once :: proc(t: ^testing.T) {
+	// The server's account pushed a revision only a fork has (GitHub
+	// serves it under the upstream's URL all the same).
 	f := fixture(t)
 	defer fixture_destroy(f)
 	fu := fake_update(f)
-	fu.version = "2.2.0"
+	fu.version = "9.9.9"
 	fu.candidate = lock_text(f, FORK_LOCK)
-	fu.updated_lock = lock_text(f, NEW_LOCK)
+	fu.updated_lock = lock_text(f, FORK_LOCK)
+	fu.not_ancestor = true
 	log := strings.builder_make(f.a)
 	cfg := root_config(f, fu, .Follow, &log)
 	cfg.host = "huginn"
-	outcome, status := roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
-	testing.expect_value(t, status, 0)
-	work_lock := read_text(f, cfg.state_dir, "work", "flake.lock")
-	testing.expect(t, strings.contains(work_lock, `"rev":"bbbb"`), work_lock)
-	testing.expect(t, !strings.contains(work_lock, "ffff"), work_lock)
+	outcome, status := update_retried(cfg)
+	testing.expect_value(t, outcome, roll.Update_Outcome.Refused)
+	testing.expect_value(t, status, 1)
+	testing.expect(t, !called(fu, "nix "))
+	expect_untouched(t, fu)
 	r, _ := roll.parse_result(read_result(f), f.a)
-	testing.expect_value(t, r.status, "switched")
-	testing.expect(t, strings.has_prefix(r.message, "huginn runs Claude Code 2.2.0 now (was 2.1.0)"), r.message)
-	testing.expect(t, strings.contains(r.message, "ffff") && strings.contains(r.message, "bbbb"), r.message)
-
-	// Upstream's branch has not moved: the lock's revision is not taken,
-	// quietly, as often as the lock names it.
-	g := fixture(t)
-	defer fixture_destroy(g)
-	gu := fake_update(g)
-	gu.version = "9.9.9"
-	gu.candidate = lock_text(g, FORK_LOCK)
-	gu.updated_lock = lock_text(g, OLD_LOCK)
-	glog := strings.builder_make(g.a)
-	gcfg := root_config(g, gu, .Follow, &glog)
-	outcome, status = roll.update(gcfg)
+	testing.expect_value(t, r.status, "refused")
+	testing.expect(t, strings.contains(r.message, "ffffffffffff") && strings.contains(r.message, "not on"), r.message)
+	testing.expect_value(t, count(fu, finish_start(f)), 1)
+	// Told once: the same push again does nothing.
+	outcome, status = update_retried(cfg)
 	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
 	testing.expect_value(t, status, 0)
-	testing.expect(t, called(gu, own_update(g, gcfg)))
-	testing.expect(t, !called(gu, "nix --extra-experimental-features nix-command flakes eval"))
-	testing.expect(t, !called(gu, "nix --extra-experimental-features nix-command flakes build"))
-	testing.expect(t, !called(gu, cat(g, "systemctl --machine=alice@.host --user start --no-block -- ", roll.FINISH_UNIT)))
-	testing.expect(t, strings.contains(strings.to_string(glog), "ffff"), strings.to_string(glog))
-	expect_untouched(t, gu)
+	testing.expect_value(t, count(fu, finish_start(f)), 1)
+	testing.expect_value(t, count(fu, upstream_fetch(f, cfg)), 1)
+	testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.PENDING_NAME)))
 }
 
 @(test)
-refuses_what_its_own_update_moved_beyond_the_input :: proc(t: ^testing.T) {
+refuses_a_pushed_lock_that_names_no_revision :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	fu := fake_update(f)
+	fu.candidate = lock_text(f, Lock_Spec{cc_rev = "zzzz", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"})
+	log := strings.builder_make(f.a)
+	outcome, status := update_retried(root_config(f, fu, .Follow, &log))
+	testing.expect_value(t, outcome, roll.Update_Outcome.Refused)
+	testing.expect_value(t, status, 1)
+	testing.expect(t, !called(fu, "git"))
+	testing.expect(t, !called(fu, "nix "))
+	r, _ := roll.parse_result(read_result(f), f.a)
+	testing.expect(t, !strings.contains(r.message, "zzzz"), r.message)
+}
+
+@(test)
+refuses_what_its_own_lock_moved_beyond_the_pushed_revision :: proc(t: ^testing.T) {
 	moved := []Lock_Spec {
 		// Another input moved too.
 		{cc_rev = "bbbb", systems_rev = "ssss", nixpkgs_rev = "mmmm", ravnix_rev = "rrrr"},
 		// The input points at another owner.
 		{cc_rev = "bbbb", cc_owner = "mallory", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"},
+		// Nix locked another revision than the pushed one.
+		{cc_rev = "cccc", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"},
 	}
 	for spec in moved {
 		f := fixture(t)
@@ -423,7 +467,7 @@ refuses_what_its_own_update_moved_beyond_the_input :: proc(t: ^testing.T) {
 		fu.candidate = lock_text(f, NEW_LOCK)
 		fu.updated_lock = lock_text(f, spec)
 		log := strings.builder_make(f.a)
-		outcome, status := roll.update(root_config(f, fu, .Follow, &log))
+		outcome, status := update_retried(root_config(f, fu, .Follow, &log))
 		testing.expect_value(t, outcome, roll.Update_Outcome.Refused)
 		testing.expect_value(t, status, 1)
 		testing.expect(t, !called(fu, "nix --extra-experimental-features nix-command flakes eval"))
@@ -432,25 +476,51 @@ refuses_what_its_own_update_moved_beyond_the_input :: proc(t: ^testing.T) {
 }
 
 @(test)
-an_unreachable_upstream_waits_for_the_retry :: proc(t: ^testing.T) {
+keeps_the_deployed_original_of_the_input :: proc(t: ^testing.T) {
+	// A Nix that writes the override into `original`: the deployed one is
+	// put back, so the build reads the lock as the deployed flake.nix says.
 	f := fixture(t)
 	defer fixture_destroy(f)
 	fu := fake_update(f)
+	fu.version = "2.2.0"
 	fu.candidate = lock_text(f, NEW_LOCK)
+	fu.updated_lock = lock_text(f, Lock_Spec{cc_rev = "bbbb", cc_original = "override", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"})
 	log := strings.builder_make(f.a)
 	cfg := root_config(f, fu, .Follow, &log)
-	outcome, status := roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Unreachable)
-	testing.expect_value(t, status, roll.EXIT_LOCKED)
-	testing.expect(t, !called(fu, "nix --extra-experimental-features nix-command flakes eval"))
-	testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.RESULT_NAME)))
-	testing.expect(t, os.exists(pj(f.a, cfg.state_dir, roll.PENDING_NAME)))
+	outcome, _ := update_retried(cfg)
+	testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
+	work_lock := read_text(f, cfg.state_dir, "work", "flake.lock")
+	testing.expect(t, !strings.contains(work_lock, "override"), work_lock)
+}
+
+@(test)
+an_unreachable_upstream_waits_for_the_retry :: proc(t: ^testing.T) {
+	for which in ([]string{"fetch", "lock"}) {
+		f := fixture(t)
+		defer fixture_destroy(f)
+		fu := fake_update(f)
+		fu.candidate = lock_text(f, NEW_LOCK)
+		fu.upstream_fetch_fails = which == "fetch"
+		log := strings.builder_make(f.a)
+		cfg := root_config(f, fu, .Follow, &log)
+		outcome, status := update_retried(cfg)
+		testing.expect_value(t, outcome, roll.Update_Outcome.Unreachable)
+		testing.expect_value(t, status, roll.EXIT_LOCKED)
+		testing.expect(t, !called(fu, "nix --extra-experimental-features nix-command flakes eval"))
+		testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.RESULT_NAME)))
+		testing.expect(t, os.exists(pj(f.a, cfg.state_dir, roll.PENDING_NAME)))
+		// The push stays to be followed: the retry gets through.
+		fu.upstream_fetch_fails = false
+		fu.version = "2.2.0"
+		fu.updated_lock = lock_text(f, NEW_LOCK)
+		outcome, status = update_retried(cfg)
+		testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
+		testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.PENDING_NAME)))
+	}
 }
 
 @(test)
 never_follows_back_to_an_older_version_and_says_nothing :: proc(t: ^testing.T) {
-	// Root's own update found an older or the same version at the head:
-	// nothing to follow, and nothing the lock said to tell about.
 	for version in ([]string{"2.0.0", "2.1.0"}) {
 		f := fixture(t)
 		defer fixture_destroy(f)
@@ -460,126 +530,53 @@ never_follows_back_to_an_older_version_and_says_nothing :: proc(t: ^testing.T) {
 		fu.updated_lock = lock_text(f, NEW_LOCK)
 		log := strings.builder_make(f.a)
 		cfg := root_config(f, fu, .Follow, &log)
-		outcome, status := roll.update(cfg)
+		outcome, status := update_retried(cfg)
 		testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
 		testing.expect_value(t, status, 0)
 		testing.expect(t, !called(fu, "nix --extra-experimental-features nix-command flakes build"))
 		testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.RESULT_NAME)))
 		testing.expect_value(t, len(fu.notified), 0)
 		expect_untouched(t, fu)
+		// A definite answer: the push is not followed again.
+		outcome, _ = update_retried(cfg)
+		testing.expect_value(t, count(fu, own_lock(f, cfg, "bbbb")), 1)
 	}
 }
 
 @(test)
-a_head_commit_with_the_same_version_is_no_notice :: proc(t: ^testing.T) {
-	// The laptop once took a head the server never pushed; since then the
-	// pushed revision differs from the deployed one, and upstream's head
-	// moves on without a release. Twice a day, nothing is told.
-	f := fixture(t)
-	defer fixture_destroy(f)
-	fu := fake_update(f)
-	fu.version = "2.1.0"
-	fu.candidate = lock_text(f, NEW_LOCK)
-	fu.updated_lock = lock_text(f, Lock_Spec{cc_rev = "cccc", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"})
-	log := strings.builder_make(f.a)
-	cfg := root_config(f, fu, .Follow, &log)
-	for _ in 0 ..< 2 {
-		outcome, status := roll.update(cfg)
-		testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
-		testing.expect_value(t, status, 0)
+a_failed_build_or_switch_is_retried_and_told_once :: proc(t: ^testing.T) {
+	for which in ([]string{"build", "switch"}) {
+		f := fixture(t)
+		defer fixture_destroy(f)
+		fu := fake_update(f)
+		fu.version = "2.2.0"
+		fu.candidate = lock_text(f, NEW_LOCK)
+		fu.updated_lock = lock_text(f, NEW_LOCK)
+		fu.build_fails = which == "build"
+		fu.switch_fails = which == "switch"
+		log := strings.builder_make(f.a)
+		cfg := root_config(f, fu, .Follow, &log)
+		pending := pj(f.a, cfg.state_dir, roll.PENDING_NAME)
+		want := roll.Update_Outcome.Build_Failed if which == "build" else roll.Update_Outcome.Switch_Failed
+		outcome, status := update_retried(cfg)
+		testing.expect_value(t, outcome, want)
+		testing.expect_value(t, status, 1)
+		testing.expect_value(t, count(fu, finish_start(f)), 1)
+		testing.expect(t, os.exists(pending))
+		// The hourly retry tries the push again, and tells nothing new.
+		outcome, _ = update_retried(cfg)
+		testing.expect_value(t, outcome, want)
+		testing.expect_value(t, count(fu, own_lock(f, cfg, "bbbb")), 2)
+		testing.expect_value(t, count(fu, finish_start(f)), 1)
+		testing.expect(t, os.exists(pending))
+		// Once it gets through, it says so.
+		fu.build_fails = false
+		fu.switch_fails = false
+		outcome, _ = update_retried(cfg)
+		testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
+		testing.expect_value(t, count(fu, finish_start(f)), 2)
+		testing.expect(t, !os.exists(pending))
 	}
-	testing.expect(t, !called(fu, "nix --extra-experimental-features nix-command flakes build"))
-	testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.RESULT_NAME)))
-	testing.expect(t, !called(fu, cat(f, "systemctl --machine=alice@.host --user start --no-block -- ", roll.FINISH_UNIT)))
-	testing.expect_value(t, len(fu.notified), 0)
-	// And the second run did not even ask upstream: the server has pushed
-	// nothing new.
-	testing.expect_value(t, count(fu, own_update(f, cfg)), 1)
-}
-
-@(test)
-the_trigger_fires_once_for_each_revision_the_server_pushes :: proc(t: ^testing.T) {
-	f := fixture(t)
-	defer fixture_destroy(f)
-	fu := fake_update(f)
-	fu.candidate = lock_text(f, NEW_LOCK)
-	log := strings.builder_make(f.a)
-	cfg := root_config(f, fu, .Follow, &log)
-	// Upstream out of reach: the push stays to be followed.
-	outcome, _ := roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Unreachable)
-	fu.version = "2.2.0"
-	fu.updated_lock = lock_text(f, Lock_Spec{cc_rev = "cccc", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"})
-	outcome, _ = roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
-	testing.expect_value(t, count(fu, own_update(f, cfg)), 2)
-	// The same push again: followed already, nothing asked.
-	outcome, _ = roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
-	testing.expect_value(t, count(fu, own_update(f, cfg)), 2)
-	// A new push: followed.
-	fu.candidate = lock_text(f, Lock_Spec{cc_rev = "dddd", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"})
-	fu.version = "2.3.0"
-	outcome, _ = roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
-	testing.expect_value(t, count(fu, own_update(f, cfg)), 3)
-}
-
-@(test)
-never_runs_ahead_of_the_version_the_server_pushed :: proc(t: ^testing.T) {
-	// The server pushed 2.2.0; upstream's head has 2.3.0 by now. The laptop
-	// waits for the server's next push, without a word.
-	f := fixture(t)
-	defer fixture_destroy(f)
-	fu := fake_update(f)
-	fu.version = "2.3.0"
-	fu.pushed_version = "2.2.0\n"
-	fu.candidate = lock_text(f, NEW_LOCK)
-	fu.updated_lock = lock_text(f, Lock_Spec{cc_rev = "cccc", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"})
-	log := strings.builder_make(f.a)
-	cfg := root_config(f, fu, .Follow, &log)
-	outcome, status := roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
-	testing.expect_value(t, status, 0)
-	testing.expect(t, !called(fu, "nix --extra-experimental-features nix-command flakes build"))
-	testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.RESULT_NAME)))
-	expect_untouched(t, fu)
-	// The server's next push names 2.3.0: followed.
-	fu.pushed_version = "2.3.0\n"
-	fu.candidate = lock_text(f, Lock_Spec{cc_rev = "cccc", systems_rev = "ssss", nixpkgs_rev = "nnnn", ravnix_rev = "rrrr"})
-	outcome, status = roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
-	testing.expect_value(t, status, 0)
-	r, _ := roll.parse_result(read_result(f), f.a)
-	testing.expect(t, strings.contains(r.message, "names too"), r.message)
-}
-
-@(test)
-tells_once_when_the_server_names_a_version_upstream_lacks :: proc(t: ^testing.T) {
-	// A fork's revision with its own version, pushed by the server's
-	// account: the laptop stays, says so once, and not again for that push.
-	f := fixture(t)
-	defer fixture_destroy(f)
-	fu := fake_update(f)
-	fu.version = "2.2.0"
-	fu.pushed_version = "9.9.9"
-	fu.candidate = lock_text(f, FORK_LOCK)
-	fu.updated_lock = lock_text(f, NEW_LOCK)
-	log := strings.builder_make(f.a)
-	cfg := root_config(f, fu, .Follow, &log)
-	cfg.host = "huginn"
-	outcome, status := roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
-	testing.expect_value(t, status, 0)
-	testing.expect(t, !called(fu, "nix --extra-experimental-features nix-command flakes build"))
-	expect_untouched(t, fu)
-	r, _ := roll.parse_result(read_result(f), f.a)
-	testing.expect_value(t, r.status, "not-moved")
-	testing.expect(t, strings.contains(r.message, "9.9.9") && strings.contains(r.message, "ffff") && strings.contains(r.message, "2.2.0"), r.message)
-	testing.expect_value(t, count(fu, cat(f, "systemctl --machine=alice@.host --user start --no-block -- ", roll.FINISH_UNIT)), 1)
-	outcome, _ = roll.update(cfg)
-	testing.expect_value(t, outcome, roll.Update_Outcome.Not_Moved)
-	testing.expect_value(t, count(fu, cat(f, "systemctl --machine=alice@.host --user start --no-block -- ", roll.FINISH_UNIT)), 1)
 }
 
 @(test)
@@ -595,7 +592,7 @@ waits_quietly_while_the_users_side_cannot_run :: proc(t: ^testing.T) {
 		log := strings.builder_make(f.a)
 		cfg := root_config(f, fu, .Follow, &log)
 		cfg.host = "huginn"
-		outcome, status := roll.update(cfg)
+		outcome, status := update_retried(cfg)
 		testing.expect_value(t, outcome, roll.Update_Outcome.Waiting)
 		testing.expect_value(t, status, roll.EXIT_LOCKED)
 		testing.expect(t, !called(fu, "nix "))
@@ -611,7 +608,7 @@ waits_quietly_while_the_users_side_cannot_run :: proc(t: ^testing.T) {
 		fu.version = "2.2.0"
 		fu.candidate = lock_text(f, NEW_LOCK)
 		fu.updated_lock = lock_text(f, NEW_LOCK)
-		outcome, status = roll.update(cfg)
+		outcome, status = update_retried(cfg)
 		testing.expect_value(t, outcome, roll.Update_Outcome.Switched)
 		testing.expect_value(t, status, 0)
 		testing.expect(t, !os.exists(pending))
@@ -625,7 +622,7 @@ waits_quietly_while_the_users_side_cannot_run :: proc(t: ^testing.T) {
 	fu.prepare_status = "1"
 	log := strings.builder_make(f.a)
 	cfg := root_config(f, fu, .Follow, &log)
-	outcome, _ := roll.update(cfg)
+	outcome, _ := update_retried(cfg)
 	testing.expect_value(t, outcome, roll.Update_Outcome.Prepare_Failed)
 	testing.expect(t, !os.exists(pj(f.a, cfg.state_dir, roll.PENDING_NAME)))
 
@@ -637,7 +634,7 @@ waits_quietly_while_the_users_side_cannot_run :: proc(t: ^testing.T) {
 	gu.prepare_fails = true
 	gu.prepare_status = "75"
 	gcfg := root_config(g, gu, .Bump, &log)
-	outcome, _ = roll.update(gcfg)
+	outcome, _ = update_retried(gcfg)
 	testing.expect_value(t, outcome, roll.Update_Outcome.Prepare_Failed)
 	testing.expect(t, !os.exists(pj(g.a, gcfg.state_dir, roll.PENDING_NAME)))
 }
@@ -795,31 +792,6 @@ prepare_waits_quietly_for_a_locked_vault :: proc(t: ^testing.T) {
 	status = roll.prepare(cfg)
 	testing.expect_value(t, status, 0)
 	testing.expect_value(t, read_text(f, f.dir, "user", "candidate.lock"), fu.remote_lock)
-}
-
-@(test)
-prepare_hands_root_the_version_the_server_pushed :: proc(t: ^testing.T) {
-	cases := [][2]string {
-		{"chore: update Claude Code to 2.2.0", "2.2.0\n"},
-		// A lock committed by hand names no version: root has no bound.
-		{"chore: update nixpkgs", ""},
-		{"", ""},
-	}
-	for c in cases {
-		f := fixture(t)
-		defer fixture_destroy(f)
-		fu := fake_update(f)
-		fu.remote_lock = lock_text(f, NEW_LOCK)
-		fu.lock_subject = c[0]
-		log := strings.builder_make(f.a)
-		cfg := prepare_config(f, fu, .Follow, &log)
-		_ = os.make_directory_all(pj(f.a, f.dir, "user"))
-		write_file(f, pj(f.a, f.dir, "user", roll.VERSION_NAME), "1.0.0\n")
-		status := roll.prepare(cfg)
-		testing.expect_value(t, status, 0)
-		testing.expect(t, called(fu, cat(f, "git --git-dir=", cfg.repo, " log -1 --format=%s ", BASE, " -- flake.lock")))
-		testing.expect_value(t, read_text(f, f.dir, "user", roll.VERSION_NAME), c[1])
-	}
 }
 
 @(test)

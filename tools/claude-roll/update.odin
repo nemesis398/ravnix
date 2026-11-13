@@ -9,12 +9,12 @@
 //                                 --prepare-unit). On the server it takes
 //                                 only the input's nodes from it into a
 //                                 copy of the flake the host was deployed
-//                                 from; on the laptop (--mode follow) the
-//                                 lock only says that the server moved
-//                                 (each push once), root runs `nix flake
-//                                 update INPUT` on that copy itself, and
-//                                 takes the head only with the version
-//                                 the server's commit names. Then it builds,
+//                                 from; on the laptop (--mode follow) it
+//                                 takes only the revision the server
+//                                 pushed, checks it on the input's own
+//                                 branch, fetched by root, and has Nix
+//                                 lock the input at it in that copy
+//                                 (each push once). Then it builds,
 //                                 checks the download with
 //                                 claude-code-verify, switches, and has the
 //                                 user's side finish (--finish-unit).
@@ -34,10 +34,10 @@
 // the input's nodes, and only a new revision of the same repository
 // (lockfile.odin). Which revision, a lock cannot vouch for: GitHub serves a
 // fork's commit under the upstream's URL, and claude-code-verify checks the
-// download the revision's own package names. So the laptop takes no
-// revision from the lock the server's account pushed and asks the input's
-// repository itself; the server takes its own account's, whose package runs
-// as that account anyway. The user's side holds the token and the signing
+// download the revision's own package names. So the laptop takes the
+// pushed revision only once root has found it on the input's own branch,
+// which root fetches itself; the server takes its own account's, whose
+// package runs as that account anyway. The user's side holds the token and the signing
 // key, which live in the user's vault, so the account never gets root and
 // root never reads the vault.
 package claude_roll
@@ -56,8 +56,8 @@ import "core:time"
 Update_Mode :: enum {
 	// The server: bump the input, build, switch, commit and push.
 	Bump,
-	// The laptop: when the lock the server pushed moved the input, move it
-	// to the head of its branch itself, build and switch.
+	// The laptop: when the server pushed a new revision of the input, check
+	// it on the input's own branch, lock the input at it, build and switch.
 	Follow,
 }
 
@@ -76,10 +76,13 @@ CANDIDATE_NAME :: "candidate.lock"
 BASE_NAME :: "base"
 FINISHED_NAME :: "finished"
 PENDING_NAME :: "pending"
-// Beside the candidate: the version the server's commit names (prepare).
-VERSION_NAME :: "candidate.version"
-// Root's: the server's last pushed revision a follow has handled.
+// Root's: the server's last pushed revision a follow has handled, the last
+// one a failed build or switch was told for, and root's own copy of the
+// input's repository.
 FOLLOWED_NAME :: "followed"
+TOLD_NAME :: "told"
+UPSTREAM_REPO :: "upstream.git"
+UPSTREAM_HEAD :: "refs/upstream/head"
 // The subject of the server's commit, before the version.
 COMMIT_SUBJECT :: "chore: update Claude Code to "
 
@@ -209,9 +212,9 @@ update :: proc(cfg: Update_Config) -> (outcome: Update_Outcome, status: int) {
 	u := Updater{hooks = cfg.hooks, log = cfg.log, name = "claude-roll update"}
 	outcome, status = run_update(&u, cfg)
 	#partial switch outcome {
-	case .Failed, .Locked, .Waiting, .Unreachable, .Verify_Unreachable:
-	case:
-		// The push is handled: the next run follows only a new one.
+	case .Switched, .Refused, .Not_Moved, .Not_Newer, .Verify_Failed:
+		// The push is handled for good: taken, or refused for what it is.
+		// A wait, a failed build or a failed switch leaves it to the retry.
 		if cfg.mode == .Follow && u.pushed != "" {
 			followed, _ := filepath.join({cfg.state_dir, FOLLOWED_NAME})
 			if !write_atomic(followed, transmute([]byte)fmt.tprintf("%s\n", u.pushed)) {
@@ -224,7 +227,7 @@ update :: proc(cfg: Update_Config) -> (outcome: Update_Outcome, status: int) {
 		// there (modules/workbench/claude-update.nix).
 		pending, _ := filepath.join({cfg.state_dir, PENDING_NAME})
 		#partial switch outcome {
-		case .Waiting, .Unreachable, .Verify_Unreachable:
+		case .Waiting, .Unreachable, .Verify_Unreachable, .Build_Failed, .Switch_Failed:
 			if !write_atomic(pending, transmute([]byte)fmt.tprintf("%v\n", outcome)) {
 				ulog(&u, "cannot write %s, so no retry runs before the next timer", pending)
 			}
@@ -326,45 +329,70 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 
 	// What is built. On the server, the candidate's nodes of the input: the
 	// lock the user's side bumped. On the laptop the candidate, which the
-	// server's account wrote, is only the sign that there is something to
-	// follow: root moves the input itself, to the head of its own branch,
-	// so a revision only a fork has (GitHub serves those under the
-	// upstream's URL too) is never taken from the lock.
+	// server's account wrote, gives one thing: the revision P it pushed.
+	// GitHub serves a fork's commit under the upstream's URL too, so root
+	// fetches the input's branch itself and takes P only when it is on that
+	// branch; then it has Nix lock the input at P, so both hosts run one
+	// revision.
 	source := candidate
 	pushed := ""
-	bound := ""
 	if cfg.mode == .Follow {
 		pushed = input_rev(candidate, cfg.input)
 		if pushed == "" || pushed == input_rev(deployed, cfg.input) {
 			ulog(u, "the private flake's lock has not moved the %s input; nothing to follow", cfg.input)
 			return .Not_Moved, EXIT_OK
 		}
-		// Each push is followed once, whatever came of it but a wait: the
-		// head this host takes may differ from the pushed revision, which
-		// then never equals the deployed one again.
+		// Each push is handled once; a revision that is none is kept by
+		// its hash.
+		key := pushed if valid_commit(pushed) else sha256_hex(transmute([]byte)pushed)
 		followed_path, _ := filepath.join({cfg.state_dir, FOLLOWED_NAME})
-		if last, ferr := os.read_entire_file(followed_path, context.allocator); ferr == nil && strings.trim_space(string(last)) == pushed {
+		if last, ferr := os.read_entire_file(followed_path, context.allocator); ferr == nil && strings.trim_space(string(last)) == key {
 			ulog(u, "the server's push of revision %s of the %s input is followed already; nothing new", short_rev(pushed), cfg.input)
 			return .Not_Moved, EXIT_OK
 		}
-		u.pushed = pushed
-		// The version the server's commit names: no revision is taken from
-		// it, only the bound that keeps this host from running ahead of the
-		// server.
-		version_path, _ := filepath.join({filepath.dir(cfg.candidate), VERSION_NAME})
-		res = urun(u, {argv = {"setpriv", fmt.tprintf("--reuid=%s", cfg.user), fmt.tprintf("--regid=%s", cfg.group), "--clear-groups", "--", "cat", "--", version_path}, timeout = UNIT_TIMEOUT})
-		if v := strings.trim_space(string(res.stdout)); succeeded_update(res) && valid_version(v) {
-			bound = v
+		u.pushed = key
+		if !valid_commit(pushed) {
+			r.message = fmt.tprintf("The private flake's lock names no revision of the %s input that %s could take, so it stays on Claude Code %s.", cfg.input, cfg.host, cfg.running)
+			return finish_with(u, cfg, r, .Refused)
+		}
+		up, uerr := upstream_of(deployed, cfg.input, pushed)
+		if uerr != "" {
+			r.message = fmt.tprintf("The update on %s cannot check revision %s of the %s input against its repository: %s. %s stays on Claude Code %s.", cfg.host, short_rev(pushed), cfg.input, uerr, cfg.host, cfg.running)
+			return finish_with(u, cfg, r, .Refused)
+		}
+		repo, _ := filepath.join({cfg.state_dir, UPSTREAM_REPO})
+		repo_head, _ := filepath.join({repo, "HEAD"})
+		if !os.exists(repo_head) {
+			res = urun(u, {argv = {"git", "init", "--bare", "--quiet", "--", repo}, env = GIT_ENV[:], timeout = GIT_TIMEOUT})
+			if !succeeded_update(res) {
+				ulog(u, "cannot make the repository %s: %s", repo, describe(res))
+				return .Failed, EXIT_FAILED
+			}
+		}
+		git_dir := fmt.tprintf("--git-dir=%s", repo)
+		res = urun(u, {argv = {"git", git_dir, "fetch", "--quiet", "--no-tags", "--", up.url, fmt.tprintf("+%s:%s", up.ref, UPSTREAM_HEAD)}, env = GIT_ENV[:], timeout = GIT_TIMEOUT})
+		if !succeeded_update(res) {
+			ulog(u, "the server pushed revision %s of the %s input, but %s could not be fetched to check it, so nothing was done; the update tries again within the hour: %s", short_rev(pushed), cfg.input, up.url, tail(describe(res)))
+			return .Unreachable, EXIT_LOCKED
+		}
+		res = urun(u, {argv = {"git", git_dir, "merge-base", "--is-ancestor", pushed, UPSTREAM_HEAD}, env = GIT_ENV[:], timeout = GIT_TIMEOUT})
+		if res.start_error != "" || res.timed_out {
+			ulog(u, "cannot check revision %s against %s: %s", short_rev(pushed), up.url, describe(res))
+			return .Failed, EXIT_FAILED
+		}
+		if res.exit_code != 0 {
+			r.message = fmt.tprintf("The private flake's lock names revision %s of the %s input, which is not on the branch of %s, so %s took nothing and stays on Claude Code %s. That is what a revision only a fork has looks like; look at the server's last commit.", short_rev(pushed), cfg.input, up.url, cfg.host, cfg.running)
+			return finish_with(u, cfg, r, .Refused)
 		}
 		if !copy_flake(u, cfg.flake, work) {
 			return .Failed, EXIT_FAILED
 		}
 		argv := make([dynamic]string)
 		append(&argv, ..nix[:])
-		append(&argv, "flake", "update", "--refresh", cfg.input, "--flake", fmt.tprintf("path:%s", work))
+		append(&argv, "flake", "lock", "--override-input", cfg.input, up.pin, fmt.tprintf("path:%s", work))
 		res = urun(u, {argv = argv[:], dir = work, timeout = FLAKE_UPDATE_TIMEOUT})
 		if !succeeded_update(res) {
-			ulog(u, "the private flake's lock names revision %s of the %s input, but the input's own repository could not be asked for its head, so nothing was done; the update tries again within the hour: %s", short_rev(pushed), cfg.input, tail(describe(res)))
+			ulog(u, "the %s input could not be locked at revision %s, so nothing was done; the update tries again within the hour: %s", cfg.input, short_rev(pushed), tail(describe(res)))
 			return .Unreachable, EXIT_LOCKED
 		}
 		own_bytes, oerr := os.read_entire_file(lock_file, context.allocator)
@@ -377,6 +405,9 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 			ulog(u, "the lock nix wrote: %s", perr2)
 			return .Failed, EXIT_FAILED
 		}
+		// A Nix that writes the override as the input's `original` would
+		// have the build read past the lock; the deployed one goes back.
+		keep_original(own, deployed, cfg.input)
 		source = own
 	}
 
@@ -384,11 +415,13 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 	if merr == "" && cfg.mode == .Follow {
 		if what, same := others_equal(deployed, source, names); !same {
 			merr = fmt.tprintf("it also changed %s", what)
+		} else if took := input_rev(source, cfg.input); took != pushed {
+			merr = fmt.tprintf("Nix locked revision %s instead", short_rev(took))
 		}
 	}
 	if merr != "" {
 		if cfg.mode == .Follow {
-			r.message = fmt.tprintf("The update on %s refused what its own `nix flake update %s` did to the lock: %s. %s stays on Claude Code %s.", cfg.host, cfg.input, merr, cfg.host, cfg.running)
+			r.message = fmt.tprintf("The update on %s refused the lock it made for revision %s of the %s input: %s. %s stays on Claude Code %s.", cfg.host, short_rev(pushed), cfg.input, merr, cfg.host, cfg.running)
 		} else {
 			r.message = fmt.tprintf("The update on %s refused the private flake's lock: %s. Only a new revision of the %s input is taken; %s stays on Claude Code %s.", cfg.host, merr, cfg.input, cfg.host, cfg.running)
 		}
@@ -398,7 +431,7 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 		if cfg.mode == .Bump {
 			ulog(u, "the %s input has no newer revision yet; the next run tries again", cfg.input)
 		} else {
-			ulog(u, "the private flake's lock names revision %s of the %s input, but the head of the input's branch is still the revision %s runs, so nothing was taken", short_rev(pushed), cfg.input, cfg.host)
+			ulog(u, "revision %s of the %s input is the one %s runs; nothing to follow", short_rev(pushed), cfg.input, cfg.host)
 		}
 		return .Not_Moved, EXIT_OK
 	}
@@ -440,19 +473,8 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 			ulog(u, "the %s input's newest revision has Claude Code %s, not newer than %s; the next run tries again", cfg.input, version, cfg.running)
 			return .Not_Newer, EXIT_OK
 		}
-		ulog(u, "the head of the %s input's branch has Claude Code %s, not newer than the %s this host runs; nothing to follow", cfg.input, version, cfg.running)
+		ulog(u, "revision %s of the %s input, which the server pushed, has Claude Code %s, not newer than the %s this host runs; nothing to follow", short_rev(pushed), cfg.input, version, cfg.running)
 		return .Not_Moved, EXIT_OK
-	}
-	if bound != "" {
-		switch c := compare_versions(version, bound); {
-		case c > 0:
-			ulog(u, "the head of the %s input's branch has Claude Code %s, ahead of the %s the server pushed; %s waits for the server's next push", cfg.input, version, bound, cfg.host)
-			return .Not_Moved, EXIT_OK
-		case c < 0:
-			r.status = "not-moved"
-			r.message = fmt.tprintf("The private flake's lock names Claude Code %s (revision %s of the %s input), but the head of the input's branch has only %s, so %s stays on %s. A push with a version upstream's branch lacks may name a fork's revision; look at the server's last commit.", bound, short_rev(pushed), cfg.input, version, cfg.host, cfg.running)
-			return finish_with(u, cfg, r, .Not_Moved)
-		}
 	}
 
 	clear(&argv)
@@ -507,12 +529,7 @@ run_update :: proc(u: ^Updater, cfg: Update_Config) -> (Update_Outcome, int) {
 	r.status = "switched"
 	ulog(u, "switched to Claude Code %s (%s)", version, toplevel)
 	if cfg.mode == .Follow {
-		took := input_rev(source, cfg.input)
-		if took == pushed {
-			r.message = fmt.tprintf("%s runs Claude Code %s now (was %s), from the head of the %s input's branch, which the private flake's lock names too; Anthropic's manifest vouches for the binary.", cfg.host, version, cfg.running, cfg.input)
-		} else {
-			r.message = fmt.tprintf("%s runs Claude Code %s now (was %s), from the head of the %s input's branch (%s). The private flake's lock names %s instead, which %s did not take; Anthropic's manifest vouches for the binary.", cfg.host, version, cfg.running, cfg.input, short_rev(took), short_rev(pushed), cfg.host)
-		}
+		r.message = fmt.tprintf("%s runs Claude Code %s now (was %s), at revision %s of the %s input, which the server pushed and %s found on the input's own branch; Anthropic's manifest vouches for the binary.", cfg.host, version, cfg.running, short_rev(pushed), cfg.input, cfg.host)
 	}
 	return finish_with(u, cfg, r, .Switched)
 }
@@ -536,6 +553,16 @@ finish_with :: proc(u: ^Updater, cfg: Update_Config, r: Result, outcome: Update_
 	r := r
 	if r.message != "" {
 		ulog(u, "%s", r.message)
+	}
+	// A failed build or switch on the laptop is retried every hour while
+	// the push stands; the user hears of it once per push.
+	told_path, _ := filepath.join({cfg.state_dir, TOLD_NAME})
+	once := cfg.mode == .Follow && u.pushed != "" && (outcome == .Build_Failed || outcome == .Switch_Failed)
+	if once {
+		if last, err := os.read_entire_file(told_path, context.allocator); err == nil && strings.trim_space(string(last)) == u.pushed {
+			ulog(u, "the user was told of this push's failure already; the hourly retry tries again")
+			return outcome, EXIT_FAILED
+		}
 	}
 	r.id = fmt.tprintf("%d", time.to_unix_nanoseconds(unow(u)))
 	b := strings.builder_make()
@@ -568,7 +595,10 @@ finish_with :: proc(u: ^Updater, cfg: Update_Config, r: Result, outcome: Update_
 	res := urun(u, {argv = {"systemctl", fmt.tprintf("--machine=%s@.host", cfg.user), "--user", "start", "--no-block", "--", cfg.finish_unit}, timeout = UNIT_TIMEOUT})
 	if !succeeded_update(res) {
 		ulog(u, "cannot start %s of %s: %s", cfg.finish_unit, cfg.user, describe(res))
-		status = EXIT_FAILED
+		return outcome, EXIT_FAILED
+	}
+	if once && !write_atomic(told_path, transmute([]byte)fmt.tprintf("%s\n", u.pushed)) {
+		ulog(u, "cannot write %s, so the next retry tells again", told_path)
 	}
 	return outcome, status
 }
@@ -692,21 +722,6 @@ run_prepare :: proc(u: ^Updater, cfg: Prepare_Config) -> int {
 		return EXIT_FAILED
 	}
 	candidate := old_bytes
-
-	if cfg.mode == .Follow {
-		// The version the server's commit of the lock names, for root's
-		// bound; none when the lock was last committed by hand.
-		hint := ""
-		res = urun(u, {argv = {"git", git_dir, "log", "-1", "--format=%s", base, "--", "flake.lock"}, env = GIT_ENV[:], timeout = GIT_TIMEOUT})
-		if subject := strings.trim_space(string(res.stdout)); succeeded_update(res) && strings.has_prefix(subject, COMMIT_SUBJECT) && valid_version(subject[len(COMMIT_SUBJECT):]) {
-			hint = fmt.tprintf("%s\n", subject[len(COMMIT_SUBJECT):])
-		}
-		version_path, _ := filepath.join({cfg.state_dir, VERSION_NAME})
-		if !write_atomic(version_path, transmute([]byte)hint) {
-			ulog(u, "cannot write %s", version_path)
-			return EXIT_FAILED
-		}
-	}
 
 	if cfg.mode == .Bump {
 		tree, _ := filepath.join({cfg.state_dir, "tree"})

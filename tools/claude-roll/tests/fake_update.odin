@@ -34,10 +34,12 @@ Fake_Update :: struct {
 	prepare_fails:     bool,
 	prepare_status:    string,
 	finish_fails:      bool,
-	// setpriv cat: the candidate; "" fails the read. And the version the
-	// server's commit names, as prepare left it; "" fails that read.
+	// setpriv cat: the candidate; "" fails the read.
 	candidate:         string,
-	pushed_version:    string,
+	// root's own fetch of upstream, and whether the pushed revision is on
+	// its head.
+	upstream_fetch_fails: bool,
+	not_ancestor:      bool,
 	// nix
 	version:           string,
 	eval_fails:        bool,
@@ -51,9 +53,6 @@ Fake_Update :: struct {
 	fetch_fails:       bool,
 	fetch_error:       string,
 	remote_lock:       string,
-	// The subject of the last commit that changed flake.lock; "" fails
-	// the log.
-	lock_subject:      string,
 	// what `nix flake update` writes; "" fails it.
 	updated_lock:      string,
 	commit_fails:      bool,
@@ -130,11 +129,6 @@ fake_update_run :: proc(data: rawptr, cmd: roll.Cmd) -> roll.Run_Result {
 		return ok_res(fu, fu.latest)
 	case argv[0] == "systemctl":
 		return fake_systemctl(fu, argv)
-	case argv[0] == "setpriv" && strings.has_suffix(argv[len(argv) - 1], roll.VERSION_NAME):
-		if fu.pushed_version == "" {
-			return fail_res(fu, 1, "cat: /home/alice/candidate.version: No such file or directory")
-		}
-		return ok_res(fu, fu.pushed_version)
 	case argv[0] == "setpriv":
 		if fu.candidate == "" {
 			return fail_res(fu, 1, "cat: /home/alice/candidate.lock: No such file or directory")
@@ -277,17 +271,23 @@ fake_git :: proc(fu: ^Fake_Update, cmd: roll.Cmd) -> roll.Run_Result {
 		_ = os.write_entire_file(head, transmute([]byte)string("ref: refs/heads/main\n"))
 		return ok_res(fu, "")
 	case "fetch":
+		if strings.has_suffix(argv[1], "upstream.git") {
+			if fu.upstream_fetch_fails {
+				return fail_res(fu, 128, "fatal: unable to access 'https://github.com/sadjow/claude-code-nix.git/': Could not resolve host: github.com")
+			}
+			return ok_res(fu, "")
+		}
 		if fu.fetch_fails {
 			return fail_res(fu, 128, fu.fetch_error)
 		}
 		return ok_res(fu, "")
 	case "rev-parse":
 		return ok_res(fu, BASE + "\n")
-	case "log":
-		if fu.lock_subject == "" {
-			return fail_res(fu, 128, "fatal: bad revision")
+	case "merge-base":
+		if fu.not_ancestor {
+			return fail_res(fu, 1, "")
 		}
-		return ok_res(fu, strings.concatenate({fu.lock_subject, "\n"}, fu.a))
+		return ok_res(fu, "")
 	case "show":
 		if fu.remote_lock == "" {
 			return fail_res(fu, 128, "fatal: path 'flake.lock' does not exist in '1111111'")
@@ -334,6 +334,8 @@ lock_text :: proc(f: ^Fixture, s: Lock_Spec) -> string {
 	cc_owner := s.cc_owner if s.cc_owner != "" else "sadjow"
 	original := s.cc_original if s.cc_original != "" else "sadjow"
 	extra := `,"extra":"systems"` if s.cc_extra else ""
+	// A revision as a lock holds it: 40 characters.
+	cc_rev := strings.repeat(s.cc_rev, 10, f.a) if len(s.cc_rev) == 4 else s.cc_rev
 	return fmt.aprintf(
 		`{{"nodes":{{` +
 		`"claude-code":{{"inputs":{{"nixpkgs":["nixpkgs"],"systems":"systems"%s}},"locked":{{"lastModified":1793988107,"narHash":"sha256-%s","owner":"%s","repo":"claude-code-nix","rev":"%s","type":"github"}},"original":{{"owner":"%s","repo":"claude-code-nix","type":"github"}}}},` +
@@ -343,9 +345,9 @@ lock_text :: proc(f: ^Fixture, s: Lock_Spec) -> string {
 		`"systems":{{"locked":{{"lastModified":2,"narHash":"sha256-%s","owner":"nix-systems","repo":"default","rev":"%s","type":"github"}},"original":{{"owner":"nix-systems","repo":"default","type":"github"}}}}` +
 		`}},"root":"root","version":7}}` + "\n",
 		extra,
-		s.cc_rev,
+		cc_rev,
 		cc_owner,
-		s.cc_rev,
+		cc_rev,
 		original,
 		s.nixpkgs_rev,
 		s.nixpkgs_rev,
