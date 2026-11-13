@@ -21,6 +21,12 @@
 #   - A key in the home is refused, and that counts only when the key was
 #     made and is in ~/.ssh/authorized_keys: the refusal of a key that is not
 #     there proves nothing.
+#   - Every probe that waits on a network ends within its bound: the probe of
+#     a published port, the one of a container's name on a podman network,
+#     and the banner of the published sshd port. Here the first and the last
+#     meet a listener that takes the connection and never answers, and the
+#     second a container that never ends; the script must report each as a
+#     failure, quickly, and not hang.
 #   - It refuses a container that is not the throwaway project's.
 { pkgs, ... }:
 let
@@ -86,13 +92,19 @@ let
     *"cat ~/.ssh/authorized_keys"*) [ -z "''${FAKE_HOME:-}" ] || echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHomeKeyOfTheTest ravnix-docker-checks" ;;
     *"test -s ~/.ssh/id_home"*) [ -n "''${FAKE_HOME:-}" ] ;;
     *"-i ~/.ssh/id_home "*) echo "alice@127.0.0.1: Permission denied (publickey)." ;;
+    # the probes of the Podman phase: run here for real, as the -c string
+    # of su, with a podman that never ends
+    *"/dev/tcp/127.0.0.1/18080"* | *"ravnix-checks-srv:8080"*)
+      [ -z "''${FAKE_PROBES:-}" ] || exec bash -c "''${!#}" ;;
     esac
   '';
   # The loops of the script wait five seconds between tries; here a try is
-  # a call of the fake, and the waits are not.
+  # a call of the fake, and the waits are not. A podman that is asked to run
+  # something hangs (the real sleep, by its path).
   fakeSleep = pkgs.writeShellScript "sleep" "exit 0";
+  fakePodman = pkgs.writeShellScript "podman" "exec ${pkgs.coreutils}/bin/sleep 1000";
 in
-pkgs.runCommand "workbench-oci-checks-script" { } ''
+pkgs.runCommand "workbench-oci-checks-script" { nativeBuildInputs = [ pkgs.socat ]; } ''
   status=0
   fail() {
     echo "FAIL: $*" >&2
@@ -101,12 +113,13 @@ pkgs.runCommand "workbench-oci-checks-script" { } ''
   mkdir bin
   cp ${fakeDocker} bin/docker
   cp ${fakeSleep} bin/sleep
+  cp ${fakePodman} bin/podman
   export PATH=$PWD/bin:$PATH
   run() { # NAME [VAR=VALUE ...]: the script against a fresh fake, its output in NAME.out
     local name=$1
     shift
     mkdir "$name"
-    if env FAKE_DIR="$PWD/$name" "$@" bash ${script} ravnix-muninn-test-muninn-1 /nix/store/odin 1 >"$name.out" 2>&1; then
+    if env FAKE_DIR="$PWD/$name" "$@" timeout 300 bash ${script} ravnix-muninn-test-muninn-1 /nix/store/odin "''${PORT:-1}" ''${MODE:-} >"$name.out" 2>&1; then
       echo 0 >"$name.status"
     else
       echo $? >"$name.status"
@@ -165,6 +178,36 @@ pkgs.runCommand "workbench-oci-checks-script" { } ''
     fail "the refusal of a key that was never put into the home passed"
   grep -q '^FAIL: the key for ~/.ssh/authorized_keys was not made or not added' booting.out ||
     fail "a key that was never put into the home was not reported: $(grep 'authorized_keys' booting.out)"
+
+  # Probes that meet a peer that never answers: each ends within its bound
+  # (one second here, through the script's RAVNIX_PROBE_TIMEOUT), and is a
+  # failure. The listeners take connections and keep them open, silent.
+  socat TCP-LISTEN:18080,bind=127.0.0.1,reuseaddr,fork SYSTEM:'${pkgs.coreutils}/bin/sleep 1000' &
+  web=$!
+  socat TCP-LISTEN:18022,bind=127.0.0.1,reuseaddr,fork SYSTEM:'${pkgs.coreutils}/bin/sleep 1000' &
+  ssh=$!
+  for _ in $(seq 1 50); do (exec 3<>/dev/tcp/127.0.0.1/18080 && exec 4<>/dev/tcp/127.0.0.1/18022) 2>/dev/null && break; ${pkgs.coreutils}/bin/sleep 0.1; done
+  began=$SECONDS
+  PORT=18022 MODE=podman run silent BOOTED_AFTER=0 FAKE_PROBES=1 RAVNIX_PROBE_TIMEOUT=1
+  took=$((SECONDS - began))
+  kill "$web" "$ssh" 2>/dev/null || true
+  [ "$(cat silent.status)" != 124 ] || fail "a probe hung: the script was stopped after 300 s"
+  [ "$took" -lt 200 ] || fail "the probes took $took s with a bound of one second each"
+  grep -q '^FAIL: podman run -p' silent.out || fail "a published port that never answers was not reported: $(grep -- '-p\|18080' silent.out)"
+  grep -q '^FAIL: podman network' silent.out || fail "a name probe that never ends was not reported: $(grep 'network' silent.out)"
+  grep -q '^FAIL: the published port gives' silent.out || fail "an ssh port that never answers was not reported: $(grep 'published port' silent.out)"
+
+  # The same probes against peers that answer: they pass, so the bound and
+  # the quoting around them leave the probe itself working.
+  socat TCP-LISTEN:18080,bind=127.0.0.1,reuseaddr,fork SYSTEM:'echo HTTP/1.0 200 OK; echo; echo ravnix-checks-ok' &
+  web=$!
+  socat TCP-LISTEN:18022,bind=127.0.0.1,reuseaddr,fork SYSTEM:'echo SSH-2.0-OpenSSH_fake; ${pkgs.coreutils}/bin/sleep 1000' &
+  ssh=$!
+  for _ in $(seq 1 50); do (exec 3<>/dev/tcp/127.0.0.1/18080 && exec 4<>/dev/tcp/127.0.0.1/18022) 2>/dev/null && break; ${pkgs.coreutils}/bin/sleep 0.1; done
+  PORT=18022 MODE=podman run answering BOOTED_AFTER=0 FAKE_PROBES=1 RAVNIX_PROBE_TIMEOUT=1
+  kill "$web" "$ssh" 2>/dev/null || true
+  grep -q '^PASS: a published port of a rootless container' answering.out || fail "a published port that answers was not seen: $(grep -- 'podman run -p' answering.out)"
+  grep -q '^PASS: the published port answers from the host: SSH-2.0-OpenSSH_fake' answering.out || fail "an ssh port that answers was not seen: $(grep 'published port' answering.out)"
 
   # Another container: nothing is run in it.
   run other FAKE_PROJECT=someone-else

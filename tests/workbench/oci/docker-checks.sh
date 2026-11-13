@@ -37,6 +37,10 @@ project=ravnix-muninn-test
 passed=0
 failed=0
 sysbin=/run/current-system/sw/bin
+# The bound of each probe that waits on a peer over the network (seconds): a
+# peer that takes the connection and never answers fails the check and does
+# not stop the run. The name probe gets three times this, for its container.
+probe=${RAVNIX_PROBE_TIMEOUT:-10}
 
 # Refuse to run anywhere but in the throwaway project's container.
 label=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container" 2>/dev/null)
@@ -201,7 +205,9 @@ else
 fi
 nokey=$(u "ssh -o BatchMode=yes -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new $user@127.0.0.1 true" 2>&1)
 if echo "$nokey" | grep -q 'Permission denied'; then ok "ssh without a key is refused: $(echo "$nokey" | tail -1)"; else bad "ssh without a key: $nokey"; fi
-banner=$(bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -c 40 <&3" 2>&1 | head -1)
+# One line, the banner: head ends after it and writes it on the way out (a
+# head that the bound ends would lose what it had buffered).
+banner=$(timeout "$probe" bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -n 1 <&3" 2>&1 | head -1)
 if echo "$banner" | grep -q '^SSH-2.0-OpenSSH'; then ok "the published port answers from the host: $banner"; else bad "the published port gives: $banner"; fi
 
 echo "== the sync units, with the vault locked"
@@ -233,7 +239,7 @@ if [ "$mode" = podman ]; then
 	started=$(u "podman run -d --name ravnix-checks-web -p 127.0.0.1:18080:8080 localhost/hello:latest $serve" 2>&1 | tail -2)
 	published=""
 	for _ in $(seq 1 12); do
-		published=$(u 'exec 3<>/dev/tcp/127.0.0.1/18080 && printf "GET / HTTP/1.0\r\n\r\n" >&3 && cat <&3' 2>&1)
+		published=$(u "timeout $probe bash -c 'exec 3<>/dev/tcp/127.0.0.1/18080 && printf \"GET / HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" 2>&1)
 		case "$published" in *ravnix-checks-ok*) break ;; esac
 		sleep 5
 	done
@@ -242,7 +248,7 @@ if [ "$mode" = podman ]; then
 	started=$(u "podman run -d --name ravnix-checks-srv --network ravnix-checks-net localhost/hello:latest $serve" 2>&1 | tail -2)
 	byname=""
 	for _ in $(seq 1 12); do
-		byname=$(u 'podman run --rm --network ravnix-checks-net localhost/hello:latest /bin/busybox wget -q -O - http://ravnix-checks-srv:8080/' 2>&1)
+		byname=$(u "timeout $((probe * 3)) podman run --rm --network ravnix-checks-net localhost/hello:latest /bin/busybox wget -T $probe -q -O - http://ravnix-checks-srv:8080/" 2>&1)
 		case "$byname" in *ravnix-checks-ok*) break ;; esac
 		sleep 5
 	done
