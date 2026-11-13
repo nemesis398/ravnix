@@ -82,6 +82,19 @@ in
     };
   };
 
+  # The login unlocks the keyring. Helium keeps its cookie key in the Secret
+  # Service (--password-store=gnome-libsecret) and gnome-keyring serves it
+  # (apps.nix), but the keyring is encrypted with the login password and opens
+  # only when the greeter's PAM stack hands it that password. Without that the
+  # keyring stays locked and Helium asks for its password at every start.
+  #
+  # The unlock goes on the `login` service and not on `greetd`: NixOS's greetd
+  # service has no rules of its own, it only includes `login`, so
+  # security.pam.services.greetd.enableGnomeKeyring would change nothing.
+  # services.gnome.gnome-keyring sets the same option; it is set here as well
+  # so that the unlock does not hang on that module staying on.
+  security.pam.services.login.enableGnomeKeyring = true;
+
   # tuigreet remembers the last user and session here.
   systemd.tmpfiles.rules = [ "d /var/cache/tuigreet 0755 greeter greeter -" ];
 
