@@ -10,8 +10,8 @@ UserPromptSubmit hook that exits 2 blocks the prompt, and one that prints
 anything but a JSON line breaks the turn, so `run` catches BaseException: a
 handler's `sys.exit(2)` is caught too.
 
-The scripts in the stow tree are live code, synced through Nextcloud and
-edited while the hooks are registered, so any of them can be missing or
+The scripts are live code, replaced by a switch or edited in a checkout
+while the hooks are registered, so any of them can be missing or
 half written when a hook fires. An import fails open only inside `run`.
 So adapters import their script modules (`state`, `notes`, `retrieve`)
 inside the handler, never at module level, and this module imports none

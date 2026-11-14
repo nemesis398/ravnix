@@ -224,12 +224,12 @@ def pointer_file(session: str) -> Path:
     It used to live under `paths(cwd)["runtime"]`, which put the directory in
     the filename. `repo_key` only collapses subdirectories inside a git repo,
     and this tree is deliberately not one, so every subdirectory got its own
-    key and its own empty pointer. Worse, AGENT declares two directories, and a
+    key and its own empty pointer. Worse, TOOLS declares two directories, and a
     claim in one was invisible from the other.
 
     The session id is already unique and the project is recorded in the
     pointer's contents, so the directory contributed nothing to identity except
-    a way to miss. AGENT-25.
+    a way to miss. TOOLS-25.
     """
     return state_root() / STREAMS_DIR / f"{session or 'unknown'}.pointer.json"
 

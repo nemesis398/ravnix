@@ -199,11 +199,11 @@ class MemoryRules(LintCase):
 class Secrets(LintCase):
     def test_a_private_address_or_token_is_a_warning(self):
         sha = "3f9a6c2e8b1d4f7a0c5e9b2d6f8a1c3e5b7d9f0a"
-        write_note(self.memory, "ip.md", front(), "Fact.\n\nThe box is at 10.0.20.51.\n")
+        write_note(self.memory, "ip.md", front(), "Fact.\n\nThe box is at 10.20.30.40.\n")
         write_note(self.memory, "ips.md", front(), "172.16.0.9 and 192.168.1.1\n")
         write_note(self.memory, "sha.md", front(), f"Fact.\n\nCommit {sha} did it.\n")
         findings = self.lint()
-        self.assertFinding(findings, "WARN", "AI/memory/ip.md", "10.0.20.51")
+        self.assertFinding(findings, "WARN", "AI/memory/ip.md", "10.20.30.40")
         self.assertFinding(findings, "WARN", "AI/memory/ip.md", "line 12")
         self.assertFinding(findings, "WARN", "AI/memory/ips.md", "172.16.0.9")
         self.assertFinding(findings, "WARN", "AI/memory/ips.md", "192.168.1.1")
@@ -220,10 +220,10 @@ class Secrets(LintCase):
     def test_a_private_address_inside_a_url_is_a_warning(self):
         # Only token runs are exempt inside a URL; an address there still syncs.
         write_note(self.memory, "x.md", front(),
-                   "Open http://192.168.1.20:3000/ or ssh://root@10.0.20.51 to check.\n")
+                   "Open http://192.168.1.20:3000/ or ssh://root@10.20.30.40 to check.\n")
         findings = self.lint()
         self.assertFinding(findings, "WARN", "AI/memory/x.md", "192.168.1.20")
-        self.assertFinding(findings, "WARN", "AI/memory/x.md", "10.0.20.51")
+        self.assertFinding(findings, "WARN", "AI/memory/x.md", "10.20.30.40")
         self.assertEqual(len(findings), 2, findings)
 
     def test_a_uuid_and_a_long_kebab_slug_draw_nothing(self):

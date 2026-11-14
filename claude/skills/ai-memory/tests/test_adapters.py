@@ -128,7 +128,7 @@ def build_vault(memory: Path) -> None:
         domain="[homelab]", updated="2026-09-20",
         description='"Traefik routes a container only when its labels name the shared network."'))
     write_note(memory, "ugrep-is-grep-in-the-bash-tool.md", front(
-        domain="[fedora]", updated="2026-10-01",
+        domain="[desktop]", updated="2026-10-01",
         description='"In the Bash tool, grep is ugrep, so call command grep for GNU behavior."'))
     write_note(memory, "ssh-signing-needs-a-key-tap.md", front(
         domain="[git]", updated="2026-10-02", tags="[gotcha]",
@@ -148,7 +148,7 @@ def build_vault(memory: Path) -> None:
         description=_sized("small-durian", SMALL_DURIAN, "Durian. ")))
 
 
-DOMAINS = {"homelab": ["docker", "caddy"], "fedora": ["sway"],
+DOMAINS = {"homelab": ["docker", "caddy"], "desktop": ["sway"],
            "alpha": ["apple"], "bravo": ["banana"], "charlie": ["cherry"]}
 
 ROOT = Path()

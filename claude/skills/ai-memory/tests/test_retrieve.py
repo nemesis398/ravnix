@@ -98,11 +98,11 @@ class Active(unittest.TestCase):
         for status, wanted in (("active", ["AI/memory/ugrep-dies.md"]), ("superseded", [])):
             with self.subTest(status=status):
                 old = note("ugrep-dies", "`pattern too long` from ugrep", status=status,
-                           tags="[gotcha, pinned]", domain="[fedora]")
+                           tags="[gotcha, pinned]", domain="[desktop]")
                 corpus = filler(300) + [old]
                 self.assertEqual(rels(pinned(corpus)), wanted)
                 self.assertEqual(rels(match_prompt("ugrep again", corpus, {}, set())), wanted)
-                self.assertEqual(rels(digest("fedora", corpus, set())), wanted)
+                self.assertEqual(rels(digest("desktop", corpus, set())), wanted)
                 self.assertEqual(rels(match_failure("ugrep: pattern too long", corpus, set())),
                                  wanted)
 
@@ -217,7 +217,7 @@ class MatchPrompt(unittest.TestCase):
             ("ci-job-cost-grows-per-step",
              "A CI job with five or six more steps plus a cache takes a bit longer per run."),
             ("an-empty-firewall-means-two-things",
-             "An empty Hostinger firewall means deny-all, an empty netcup one its opposite, "
+             "An empty firewall at one host means deny-all, at another its opposite, "
              "so ask which kind you have now."),
             ("a-preview-lies-about-sharpness",
              "A slide that looks perfect in a preview can still be pretty blurry on a "
@@ -270,11 +270,11 @@ class MatchPrompt(unittest.TestCase):
         # The other three hold one each at ln(304) = 5.72, so the touched
         # domain decides, then the newer date.
         high = note("high", "kanshi and fuzzel fact.", domain="[homelab]", updated="2026-01-01")
-        touched = note("touched-old", "swaylock fact.", domain="[fedora]", updated="2026-02-01")
+        touched = note("touched-old", "swaylock fact.", domain="[desktop]", updated="2026-02-01")
         newer = note("untouched-new", "waybar fact.", domain="[homelab]", updated="2026-10-01")
         older = note("untouched-old", "dunst fact.", domain="[homelab]", updated="2026-03-01")
         corpus = filler(300) + [older, newer, touched, high]
-        domains = {"fedora": ["sway"], "homelab": ["docker"]}
+        domains = {"desktop": ["sway"], "homelab": ["docker"]}
         found = match_prompt("sway: kanshi fuzzel swaylock waybar dunst", corpus, domains, set())
         self.assertEqual(rels(found), [high.rel, touched.rel, newer.rel, older.rel])
 
@@ -307,13 +307,13 @@ class Domains(unittest.TestCase):
 
     def test_digest_is_the_domain_newest_first_within_budget(self):
         # Lines of 999 take 1000 each with the newline, so four fill DIGEST_BUDGET.
-        both = sized("both", 999, domain="[fedora, homelab]", updated="2026-10-07")
+        both = sized("both", 999, domain="[desktop, homelab]", updated="2026-10-07")
         h2 = sized("h2", 999, domain="[homelab]", updated="2026-10-05")
         h4 = sized("h4", 999, domain="[homelab]", updated="2026-10-03")
         h1 = sized("h1", 999, domain="[homelab]", updated="2026-10-01")
         h3 = sized("h3", 999, domain="[homelab]", updated="2026-09-01")
         seen = sized("seen", 999, domain="[homelab]", updated="2026-10-10")
-        other = sized("other", 999, domain="[fedora]", updated="2026-10-09")
+        other = sized("other", 999, domain="[desktop]", updated="2026-10-09")
         corpus = [h1, h2, h3, h4, seen, other, both]
         self.assertEqual(4 * 1000, DIGEST_BUDGET)
         self.assertEqual(rels(digest("homelab", corpus, {seen.rel})),

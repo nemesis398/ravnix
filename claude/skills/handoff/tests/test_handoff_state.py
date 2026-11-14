@@ -389,8 +389,8 @@ class TestCli(TempState):
         # went with OpenCode: a missing --session silently fell back to a
         # shared "unknown" file in the real state root. For claim that means
         # two sessions overwriting each other's stream.
-        code, _ = self.run_cli("claim", "--project", "u-agent",
-                               "--identifier", "AGENT-1")
+        code, _ = self.run_cli("claim", "--project", "u-tools",
+                               "--identifier", "TOOLS-1")
         self.assertEqual(code, 2)
 
     def test_release_without_session_is_rejected(self):
@@ -659,8 +659,8 @@ class TestResolveProject(unittest.TestCase):
             "default": True,
             "projects": {
                 "VAULT": {"id": "u-vault", "name": "Vault", "dirs": ["/w/vault"]},
-                "AGENT": {"id": "u-agent", "name": "Agents",
-                          "dirs": ["/w/fedora", "/w/agent-config"]},
+                "TOOLS": {"id": "u-tools", "name": "Tools",
+                          "dirs": ["/w/dotfiles", "/w/tools"]},
                 "LIFE": {"id": "u-life", "name": "Life", "dirs": []}}}}}))
         os.environ["HANDOFF_PROJECTS"] = str(cfg)
         self.addCleanup(os.environ.pop, "HANDOFF_PROJECTS", None)
@@ -675,15 +675,15 @@ class TestResolveProject(unittest.TestCase):
         self.assertEqual(hs.resolve_project("/w/vault/SAP")["identifier"], "VAULT")
 
     def test_a_second_directory_on_the_same_project_resolves(self):
-        self.assertEqual(hs.resolve_project("/w/agent-config")["identifier"], "AGENT")
+        self.assertEqual(hs.resolve_project("/w/tools")["identifier"], "TOOLS")
 
     def test_the_longest_matching_directory_wins(self):
         """Otherwise a nested tree resolves to whichever parent came first in
         the file, which is a silent wrong answer rather than a visible one."""
         cfg = _json.loads(Path(os.environ["HANDOFF_PROJECTS"]).read_text())
-        cfg["workspaces"]["personal"]["projects"]["AGENT"]["dirs"].append("/w/vault/.agents")
+        cfg["workspaces"]["personal"]["projects"]["TOOLS"]["dirs"].append("/w/vault/.agents")
         Path(os.environ["HANDOFF_PROJECTS"]).write_text(_json.dumps(cfg))
-        self.assertEqual(hs.resolve_project("/w/vault/.agents/x")["identifier"], "AGENT")
+        self.assertEqual(hs.resolve_project("/w/vault/.agents/x")["identifier"], "TOOLS")
 
     def test_an_unmapped_directory_resolves_to_nothing(self):
         self.assertIsNone(hs.resolve_project("/somewhere/else"))
@@ -714,28 +714,28 @@ class TestPerSessionPointer(unittest.TestCase):
 
     def test_a_written_pointer_reads_back(self):
         hs.write_pointer("s1", {"workspace": "personal",
-                                           "project_id": "u-agent",
+                                           "project_id": "u-tools",
                                            "parent_id": "i-1",
-                                           "identifier": "AGENT-12"})
-        self.assertEqual(hs.read_pointer("s1")["identifier"], "AGENT-12")
+                                           "identifier": "TOOLS-12"})
+        self.assertEqual(hs.read_pointer("s1")["identifier"], "TOOLS-12")
 
     def test_two_sessions_in_one_directory_hold_different_streams(self):
-        hs.write_pointer("s1", {"identifier": "AGENT-12"})
+        hs.write_pointer("s1", {"identifier": "TOOLS-12"})
         hs.write_pointer("s2", {"identifier": "VAULT-3"})
-        self.assertEqual(hs.read_pointer("s1")["identifier"], "AGENT-12")
+        self.assertEqual(hs.read_pointer("s1")["identifier"], "TOOLS-12")
         self.assertEqual(hs.read_pointer("s2")["identifier"], "VAULT-3")
 
     def test_clearing_one_session_leaves_the_other(self):
-        hs.write_pointer("s1", {"identifier": "AGENT-12"})
+        hs.write_pointer("s1", {"identifier": "TOOLS-12"})
         hs.write_pointer("s2", {"identifier": "VAULT-3"})
         hs.clear_pointer("s1")
         self.assertEqual(hs.read_pointer("s1"), {})
         self.assertEqual(hs.read_pointer("s2")["identifier"], "VAULT-3")
 
     def test_a_claim_is_visible_from_the_projects_other_directory(self):
-        """The test AGENT-25 names as the one that does not exist.
+        """The test TOOLS-25 names as the one that does not exist.
 
-        AGENT declares both ~/Nextcloud/Fedora and ~/Git/agent-config. One
+        TOOLS declares both ~/Sync/dotfiles and ~/src/tools. One
         session claiming in one of them must be readable from the other, or a
         session started in the second silently has no stream while the board
         prints "No stream claimed". The session is the identity; the directory
@@ -743,19 +743,19 @@ class TestPerSessionPointer(unittest.TestCase):
         """
         other = str(Path(self._tmp.name) / "second-declared-dir")
         os.makedirs(other)
-        hs.write_pointer("s1", {"identifier": "AGENT-11"})
+        hs.write_pointer("s1", {"identifier": "TOOLS-11"})
         self.assertEqual(
-            hs.read_pointer("s1").get("identifier"), "AGENT-11")
+            hs.read_pointer("s1").get("identifier"), "TOOLS-11")
 
     def test_a_claim_is_visible_from_a_subdirectory_of_the_same_tree(self):
         """repo_key falls back to the literal path outside a git repo, and
-        ~/Nextcloud/Fedora is deliberately not one, so every subdirectory got
+        ~/Sync/dotfiles is deliberately not one, so every subdirectory got
         its own key and its own empty pointer."""
         sub = str(Path(self.repo) / "scripts")
         os.makedirs(sub)
-        hs.write_pointer("s1", {"identifier": "AGENT-11"})
+        hs.write_pointer("s1", {"identifier": "TOOLS-11"})
         self.assertEqual(
-            hs.read_pointer("s1").get("identifier"), "AGENT-11")
+            hs.read_pointer("s1").get("identifier"), "TOOLS-11")
 
 
 class TestSiblingProjects(TempState):
@@ -769,7 +769,7 @@ class TestSiblingProjects(TempState):
         cfg.write_text(_json.dumps({"workspaces": {
             "personal": {"default": True, "projects": {
                 "VAULT": {"id": "u-vault", "name": "Vault", "dirs": ["/w/vault"]},
-                "AGENT": {"id": "u-agent", "name": "Agents", "dirs": []},
+                "TOOLS": {"id": "u-tools", "name": "Tools", "dirs": []},
                 "LAB": {"id": "u-lab", "name": "Homelab", "dirs": []}}},
             "work": {"projects": {
                 "CLIENT": {"id": "u-client", "name": "Client", "dirs": []}}}}}))
@@ -778,7 +778,7 @@ class TestSiblingProjects(TempState):
 
     def test_the_others_in_the_same_workspace_come_back(self):
         got = hs.sibling_projects("personal", "u-vault")
-        self.assertEqual([p["identifier"] for p in got], ["AGENT", "LAB"])
+        self.assertEqual([p["identifier"] for p in got], ["TOOLS", "LAB"])
 
     def test_the_project_itself_is_excluded(self):
         self.assertNotIn("u-vault",

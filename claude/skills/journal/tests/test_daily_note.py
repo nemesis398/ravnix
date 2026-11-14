@@ -23,7 +23,7 @@ TEMPLATE = """## ✅ Today
 
 ## \U0001f5d2️ Logbook
 
-*(one line: what you did at work / Berufsschule today, feeds [[{{date:GGGG-[W]WW}}]]; create the weekly via Calendar's week number, not this link)*
+*(one line: what you did today, feeds [[{{date:GGGG-[W]WW}}]]; create the weekly via Calendar's week number, not this link)*
 
 - 
 """
@@ -825,7 +825,7 @@ NOTE_WITHOUT_TRAILING_NEWLINE = (
     "\n"
     "## \U0001f4dd Capture\n"
     "\n"
-    "### Fedora laptop\n"
+    "### Laptop\n"
     "\n"
     "#### \U0001f50e Found while working\n"
     "\n"
@@ -844,7 +844,7 @@ class TestSpliceIntoANoteWithoutATrailingNewline(unittest.TestCase):
     """
 
     def _append(self, note: str, body: str) -> tuple[str, str]:
-        return dn.splice(note, "Fedora laptop", "\U0001f9ed Neuer Eintrag", body)
+        return dn.splice(note, "Laptop", "\U0001f9ed Neuer Eintrag", body)
 
     def test_the_heading_starts_its_own_line_and_the_previous_line_survives(self):
         out, what = self._append(NOTE_WITHOUT_TRAILING_NEWLINE, "Erster Absatz.")
@@ -980,7 +980,7 @@ class TestWriteEntry(VaultCase):
 
     def test_reports_appended_for_a_new_area_in_an_existing_note(self):
         dn.write_entry(date(2026, 8, 9), "Claude Code", "\U0001f4ac Q", "Body.")
-        what = dn.write_entry(date(2026, 8, 9), "Fedora laptop", "\U0001f527 Fix", "Body.")
+        what = dn.write_entry(date(2026, 8, 9), "Laptop", "\U0001f527 Fix", "Body.")
         self.assertEqual(what, "appended")
 
     def test_the_notes_mode_is_unchanged_by_a_write(self):
@@ -1004,11 +1004,11 @@ class TestLockPath(VaultCase):
 
 class TestRecentAreas(VaultCase):
     def test_collects_headings_from_the_last_two_weeks(self):
-        for day, area in ((3, "Client work"), (8, "Fedora laptop")):
+        for day, area in ((3, "Client work"), (8, "Laptop")):
             dn.write_entry(date(2026, 8, day), area, "\U0001f4ac T", "Body.")
         found = dn.recent_areas(date(2026, 8, 9), days=14)
         self.assertIn("Client work", found)
-        self.assertIn("Fedora laptop", found)
+        self.assertIn("Laptop", found)
 
     def test_ignores_notes_older_than_the_window(self):
         dn.write_entry(date(2026, 7, 1), "Ancient", "\U0001f4ac T", "Body.")
@@ -1020,10 +1020,10 @@ class TestRecentAreas(VaultCase):
         # iPhone in German.
         de_name = "Montag, 10. Aug. 2026 (W33).md"
         (self.vault / "daily-notes" / de_name).write_text(
-            "## \U0001f4dd Capture\n\n### Fedora laptop\n\n#### \U0001f527 Fix\n\nBody.\n",
+            "## \U0001f4dd Capture\n\n### Laptop\n\n#### \U0001f527 Fix\n\nBody.\n",
             encoding="utf-8")
         found = dn.recent_areas(date(2026, 8, 10), days=14)
-        self.assertIn("Fedora laptop", found)
+        self.assertIn("Laptop", found)
 
     def test_a_fenced_area_does_not_invent_a_heading_and_does_not_cut_collection_short(self):
         # Errs both ways when unguarded: a fenced "### " invents an area

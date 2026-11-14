@@ -125,7 +125,7 @@ class TestCommitSignals(unittest.TestCase):
         self.assertEqual(found(*bash("t1", command, ""))["commit"], "chore: tidy")
 
     def test_a_commit_in_another_directory_counts(self):
-        got = found(*bash("t1", 'git -C ~/Nextcloud/Fedora commit -q -m "a"', ""))
+        got = found(*bash("t1", 'git -C ~/Sync/dotfiles commit -q -m "a"', ""))
         self.assertEqual(got["kind"], "step")
 
     def test_a_failed_commit_is_no_boundary(self):
@@ -285,9 +285,9 @@ class TestOtherSignals(unittest.TestCase):
         self.assertEqual(got["kind"], "closed")
 
     def test_claiming_a_stream_is_a_change_of_topic(self):
-        got = found(*bash("t1", "python3 -B handoff_state.py claim --session s --identifier AGENT-13",
+        got = found(*bash("t1", "python3 -B handoff_state.py claim --session s --identifier TOOLS-13",
                           "{}"))
-        self.assertEqual((got["kind"], got["hint"]), ("finished", "switched to AGENT-13"))
+        self.assertEqual((got["kind"], got["hint"]), ("finished", "switched to TOOLS-13"))
 
     def test_reading_the_skills_scripts_is_no_boundary(self):
         # What a session working on these skills does all day.
@@ -369,10 +369,10 @@ class TestRecommend(unittest.TestCase):
 class TestRender(unittest.TestCase):
     def test_compact_is_ready_to_paste_with_the_stream_and_the_commit(self):
         step = {"kind": "step", "hint": "commit 1a2b3c4 feat: x", "commit": "feat: x"}
-        text = advisor.render("soft", 231_400, ", on AGENT-12", "AGENT-12", step, "compact", 487_000)
-        self.assertIn("231,400 tokens, on AGENT-12", text)
+        text = advisor.render("soft", 231_400, ", on TOOLS-12", "TOOLS-12", step, "compact", 487_000)
+        self.assertIn("231,400 tokens, on TOOLS-12", text)
         self.assertIn("Natural break: commit 1a2b3c4 feat: x.", text)
-        self.assertIn('Suggest: /compact Focus on AGENT-12; last commit "feat: x".', text)
+        self.assertIn('Suggest: /compact Focus on TOOLS-12; last commit "feat: x".', text)
         self.assertNotIn("487,000", text)
 
     def test_compact_without_a_stream_still_names_the_commit(self):
@@ -392,9 +392,9 @@ class TestRender(unittest.TestCase):
         self.assertIn("487,000", text)
 
     def test_a_written_handoff_says_how_to_pick_it_up(self):
-        text = advisor.render("soft", 1, "", "AGENT-12", {"kind": "handoff", "hint": "handoff posted"},
+        text = advisor.render("soft", 1, "", "TOOLS-12", {"kind": "handoff", "hint": "handoff posted"},
                               "clear+resume", 487_000)
-        self.assertIn('/clear, then say "resume AGENT-12".', text)
+        self.assertIn('/clear, then say "resume TOOLS-12".', text)
 
 
 class TestTheTailReaderStaysInTheTail(unittest.TestCase):
@@ -518,13 +518,13 @@ class TestStopDrivesTheAdvisor(unittest.TestCase):
         self.assertIn('say "handoff", then /compact.', got["systemMessage"])
 
     def test_a_handoff_just_posted_gets_a_fresh_session_that_resumes_it(self):
-        _common.hs.write_pointer("s1", {"identifier": "AGENT-12", "parent_id": PARENT})
+        _common.hs.write_pointer("s1", {"identifier": "TOOLS-12", "parent_id": PARENT})
         got = self.stop(250_000,
                         use("t1", "mcp__plane-personal__workitem_comment", action="create",
                             workitem_id=PARENT,
                             comment_html=plane.HANDOFF_MARKER + "<h3>State</h3>"),
                         result("t1", '{"result": {"id": "c1"}}'))
-        self.assertIn('/clear, then say "resume AGENT-12".', got["systemMessage"])
+        self.assertIn('/clear, then say "resume TOOLS-12".', got["systemMessage"])
 
     def test_it_never_costs_a_model_turn(self):
         for tokens, turn in ((250_000, self.commit()), (450_000, ())):

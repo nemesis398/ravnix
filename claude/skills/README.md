@@ -158,8 +158,8 @@ wired, a skill replaced and one left out.
 - The values: the board layout (`projects.json`), the domain list
   (`domains.json`), the vault's path, the Plane gateway's address, the
   LanguageTool item and the user's name were in the files; they are keys now.
-- `muratori-conscience` is `conscience`, and `fedora`, the manual of a
-  Fedora laptop, is `laptop`, rewritten for huginn: NixOS, built from two
+- `muratori-conscience` is `conscience`, and `fedora`, the manual of the
+  earlier laptop, is `laptop`, rewritten for huginn: NixOS, built from two
   flakes, nothing configured by hand.
 - `prose` reads its LanguageTool key from rbw alone (and the environment),
   never from a file, and its account from `prose.languagetool.username`: the

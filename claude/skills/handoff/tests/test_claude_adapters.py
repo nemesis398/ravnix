@@ -339,8 +339,8 @@ class TestKillSwitch(unittest.TestCase):
         # that still makes it speak: it emits the explicit unreachable notice.
         cfg = Path(self._tmp.name) / "projects.json"
         cfg.write_text(json.dumps({"workspaces": {"personal": {
-            "default": True, "projects": {"AGENT": {
-                "id": "u-agent", "name": "Agents", "dirs": [self.repo]}}}}}))
+            "default": True, "projects": {"TOOLS": {
+                "id": "u-tools", "name": "Tools", "dirs": [self.repo]}}}}}))
         extra = {"HANDOFF_PROJECTS": str(cfg), "PLANE_API_TOKEN": "test-token",
                  "PLANE_MCP_URL": "http://127.0.0.1:1/unreachable"}
         payload = {"session_id": "s1", "cwd": self.repo, "source": "startup"}
@@ -627,8 +627,8 @@ class TestAdapterOutputConformsToTheHookSchema(unittest.TestCase):
         # branch that must never look like an empty board.
         cfg = Path(self._tmp.name) / "projects.json"
         cfg.write_text(json.dumps({"workspaces": {"personal": {
-            "default": True, "projects": {"AGENT": {
-                "id": "u-agent", "name": "Agents", "dirs": [self.repo]}}}}}))
+            "default": True, "projects": {"TOOLS": {
+                "id": "u-tools", "name": "Tools", "dirs": [self.repo]}}}}}))
         env = subprocess_env(HANDOFF_PROJECTS=str(cfg), PLANE_API_TOKEN="test-token",
                              PLANE_MCP_URL="http://127.0.0.1:1/unreachable")
         done = self.drive("sessionstart.py", {
@@ -868,8 +868,8 @@ class TestBehaviorIsUnchangedWithoutTheOwnershipMarker(unittest.TestCase):
         # branch that must never look like an empty board.
         cfg = Path(self._tmp.name) / "projects.json"
         cfg.write_text(json.dumps({"workspaces": {"personal": {
-            "default": True, "projects": {"AGENT": {
-                "id": "u-agent", "name": "Agents", "dirs": [self.repo]}}}}}))
+            "default": True, "projects": {"TOOLS": {
+                "id": "u-tools", "name": "Tools", "dirs": [self.repo]}}}}}))
         env = subprocess_env(HANDOFF_PROJECTS=str(cfg), PLANE_API_TOKEN="test-token",
                              PLANE_MCP_URL="http://127.0.0.1:1/unreachable")
 
@@ -879,7 +879,7 @@ class TestBehaviorIsUnchangedWithoutTheOwnershipMarker(unittest.TestCase):
 
         self.assertEqual(done.returncode, 0)
         text = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("AGENT", text)
+        self.assertIn("TOOLS", text)
         self.assertEqual(_common.hs.read_standdown(self.repo), {})
 
     def test_stop_still_fires_the_hard_nudge_past_the_hard_threshold(self):
@@ -979,8 +979,8 @@ class TestStopRemindsTheUserAndDoesNotReInvokeTheModel(unittest.TestCase):
         # already uses for reaching the brain in-process.
         os.environ["HANDOFF_STATE_ROOT"] = self.env["HANDOFF_STATE_ROOT"]
         self.addCleanup(os.environ.pop, "HANDOFF_STATE_ROOT", None)
-        _common.hs.write_pointer("s1", {"identifier": "AGENT-12"})
-        self.assertIn("AGENT-12", json.loads(self.drive(450_000).stdout)["systemMessage"])
+        _common.hs.write_pointer("s1", {"identifier": "TOOLS-12"})
+        self.assertIn("TOOLS-12", json.loads(self.drive(450_000).stdout)["systemMessage"])
 
 
 class _HangingGateway:
@@ -1031,8 +1031,8 @@ class TestSessionStartRendersTheBoard(unittest.TestCase):
         os.makedirs(self.repo)
         cfg = Path(self._tmp.name) / "projects.json"
         cfg.write_text(json.dumps({"workspaces": {"personal": {
-            "default": True, "projects": {"AGENT": {
-                "id": "u-agent", "name": "Agents", "dirs": [self.repo]}}}}}))
+            "default": True, "projects": {"TOOLS": {
+                "id": "u-tools", "name": "Tools", "dirs": [self.repo]}}}}}))
         self.env = subprocess_env(
             HANDOFF_STATE_ROOT=str(Path(self._tmp.name) / "state"),
             HANDOFF_PROJECTS=str(cfg),
@@ -1105,12 +1105,12 @@ class TestPrecompactNamesTheStream(unittest.TestCase):
     def test_the_raw_text_names_the_active_stream(self):
         os.environ["HANDOFF_STATE_ROOT"] = self.env["HANDOFF_STATE_ROOT"]
         self.addCleanup(os.environ.pop, "HANDOFF_STATE_ROOT", None)
-        _common.hs.write_pointer("s1", {"identifier": "AGENT-12"})
+        _common.hs.write_pointer("s1", {"identifier": "TOOLS-12"})
         done = subprocess.run(
             [sys.executable, str(ADAPTERS / "precompact.py")],
             input=json.dumps({"session_id": "s1", "cwd": self.repo}),
             capture_output=True, text=True, env=self.env)
-        self.assertIn("AGENT-12", done.stdout)
+        self.assertIn("TOOLS-12", done.stdout)
 
     def test_with_no_stream_it_says_there_is_nothing_to_come_back_to(self):
         done = subprocess.run(
@@ -1194,7 +1194,7 @@ class TestSessionStartLooksFurtherOnlyWhenItMust(unittest.TestCase):
         cfg.write_text(json.dumps({"workspaces": {"personal": {
             "default": True, "projects": {
                 "VAULT": {"id": "u-vault", "name": "Vault", "dirs": [self.repo]},
-                "AGENT": {"id": "u-agent", "name": "Agents", "dirs": []}}}}}))
+                "TOOLS": {"id": "u-tools", "name": "Tools", "dirs": []}}}}}))
         for key, value in (("HANDOFF_PROJECTS", str(cfg)),
                            ("HANDOFF_STATE_ROOT", str(Path(self._tmp.name) / "state")),
                            ("PLANE_API_TOKEN", "test-token")):
@@ -1207,7 +1207,7 @@ class TestSessionStartLooksFurtherOnlyWhenItMust(unittest.TestCase):
         self.addCleanup(setattr, plane, "open_elsewhere", plane.open_elsewhere)
         self.swept = []
         plane.open_elsewhere = lambda slug, projects, timeout=2.0: (
-            self.swept.append(projects) or [{"identifier": "AGENT", "count": 14}])
+            self.swept.append(projects) or [{"identifier": "TOOLS", "count": 14}])
 
     def _run(self):
         got = self.sessionstart.handle({"session_id": "s1", "cwd": self.repo,
@@ -1221,9 +1221,9 @@ class TestSessionStartLooksFurtherOnlyWhenItMust(unittest.TestCase):
 
     def test_an_empty_board_with_a_stream_already_claimed_never_sweeps(self):
         from _common import hs
-        hs.write_pointer("s1", {"identifier": "AGENT-11",
+        hs.write_pointer("s1", {"identifier": "TOOLS-11",
                                            "workspace": "personal",
-                                           "project_id": "u-agent",
+                                           "project_id": "u-tools",
                                            "parent_id": "p1"})
         self.plane.open_items = lambda *a, **k: []
         self._run()
@@ -1233,12 +1233,12 @@ class TestSessionStartLooksFurtherOnlyWhenItMust(unittest.TestCase):
         self.plane.open_items = lambda *a, **k: []
         text = self._run()
         self.assertEqual(len(self.swept), 1)
-        self.assertIn("AGENT", text)
+        self.assertIn("TOOLS", text)
         self.assertIn("14", text)
 
 
 class TestTheReminderIsVisibleWithoutTouchingTheModel(unittest.TestCase):
-    """AGENT-18 failed on 2026-08-25, and not on the half anyone worried about.
+    """TOOLS-18 failed on 2026-08-25, and not on the half anyone worried about.
 
     The reminder fired at 200k and again at 300k, the model correctly ignored
     both, and the user could not find either line afterwards. A one-line
@@ -1260,9 +1260,9 @@ class TestTheReminderIsVisibleWithoutTouchingTheModel(unittest.TestCase):
 
     def test_the_notification_names_the_token_count_and_the_stream(self):
         import stop
-        joined = " ".join(stop.notify_argv("hard", 312000, ", on AGENT-11", "/compact"))
+        joined = " ".join(stop.notify_argv("hard", 312000, ", on TOOLS-11", "/compact"))
         self.assertIn("312,000", joined)
-        self.assertIn("AGENT-11", joined)
+        self.assertIn("TOOLS-11", joined)
         self.assertIn("/compact", joined)
 
     def test_a_hard_reminder_is_critical_and_a_soft_one_is_not(self):
@@ -1319,7 +1319,7 @@ class TestTheSuiteCannotPopNotifications(unittest.TestCase):
 
 
 class TestAClearedSessionIsAFreshStartThatDoesNotLie(unittest.TestCase):
-    """AGENT-25's second half, and it is a different defect from its first.
+    """TOOLS-25's second half, and it is a different defect from its first.
 
     `/clear` mints a NEW session id, so the pointer written by the session
     before it is never found. Verified 2026-08-25: the cleared session was
@@ -1342,8 +1342,8 @@ class TestAClearedSessionIsAFreshStartThatDoesNotLie(unittest.TestCase):
         os.makedirs(self.repo)
         cfg = Path(self._tmp.name) / "projects.json"
         cfg.write_text(json.dumps({"workspaces": {"personal": {
-            "default": True, "projects": {"AGENT": {
-                "id": "u-agent", "name": "Agents", "dirs": [self.repo]}}}}}))
+            "default": True, "projects": {"TOOLS": {
+                "id": "u-tools", "name": "Tools", "dirs": [self.repo]}}}}}))
         for key, value in (("HANDOFF_PROJECTS", str(cfg)),
                            ("HANDOFF_STATE_ROOT", str(Path(self._tmp.name) / "state")),
                            ("PLANE_API_TOKEN", "test-token")):
@@ -1366,8 +1366,8 @@ class TestAClearedSessionIsAFreshStartThatDoesNotLie(unittest.TestCase):
 
     def _claim(self, session):
         from _common import hs
-        hs.write_pointer(session, {"identifier": "AGENT-11", "workspace": "personal",
-                                   "project_id": "u-agent", "parent_id": "p1"})
+        hs.write_pointer(session, {"identifier": "TOOLS-11", "workspace": "personal",
+                                   "project_id": "u-tools", "parent_id": "p1"})
 
     def test_a_compacted_session_still_gets_its_handoff(self):
         # The half that works and must keep working: same session id across a
@@ -1390,7 +1390,7 @@ class TestAClearedSessionIsAFreshStartThatDoesNotLie(unittest.TestCase):
     def test_a_cleared_session_names_the_stream_instead_of_denying_it(self):
         self._claim("old-session")
         text = self._run("new-session", "clear")
-        self.assertIn("AGENT-11", text)
+        self.assertIn("TOOLS-11", text)
         self.assertNotIn("No stream claimed", text)
 
     def test_a_genuinely_unclaimed_board_still_says_so(self):

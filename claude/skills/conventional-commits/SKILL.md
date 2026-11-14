@@ -165,7 +165,7 @@ Deutsch:
 > style violation, and lowercasing it would be wrong. The "lowercase first word"
 > rule is about not shouting, not about German grammar. Where you can, start the
 > German subject with a verb or an article so the two halves stay visually
-> parallel (`den Coolify-Aufruf wiederholen`, `die Unit-Suite ausführen`) — but
+> parallel (`den Deploy-Aufruf wiederholen`, `die Unit-Suite ausführen`) — but
 > never mangle the language to satisfy the rule.
 
 You are not the language authority here. Flag any non-trivial German phrasing

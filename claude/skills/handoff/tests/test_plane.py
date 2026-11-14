@@ -347,19 +347,19 @@ class TestOpenElsewhereSurvivesOneBadProject(unittest.TestCase):
     def test_only_projects_with_open_items_come_back_and_they_carry_counts(self):
         def fake(slug, project_id, timeout=2.0):
             self.asked.append(project_id)
-            return {"u-agent": [{"id": "a"}, {"id": "b"}], "u-lab": []}[project_id]
+            return {"u-tools": [{"id": "a"}, {"id": "b"}], "u-lab": []}[project_id]
         plane.open_items = fake
-        got = plane.open_elsewhere("personal", [{"identifier": "AGENT", "id": "u-agent"},
+        got = plane.open_elsewhere("personal", [{"identifier": "TOOLS", "id": "u-tools"},
                                                 {"identifier": "LAB", "id": "u-lab"}])
-        self.assertEqual(got, [{"identifier": "AGENT", "count": 2}])
+        self.assertEqual(got, [{"identifier": "TOOLS", "count": 2}])
 
     def test_a_project_that_raises_is_skipped_rather_than_ending_the_sweep(self):
         def fake(slug, project_id, timeout=2.0):
-            if project_id == "u-agent":
+            if project_id == "u-tools":
                 raise plane.PlaneError("gateway unreachable")
             return [{"id": "a"}]
         plane.open_items = fake
-        got = plane.open_elsewhere("personal", [{"identifier": "AGENT", "id": "u-agent"},
+        got = plane.open_elsewhere("personal", [{"identifier": "TOOLS", "id": "u-tools"},
                                                 {"identifier": "LAB", "id": "u-lab"}])
         self.assertEqual(got, [{"identifier": "LAB", "count": 1}])
 
@@ -419,7 +419,7 @@ class TestNewestCommentIsOrderedInRealTime(unittest.TestCase):
 class TestNewestCommentIsTheNewestHandoff(unittest.TestCase):
     """A later comment that is not a handoff must not stand in for one.
 
-    On 2026-10-17 a correction was posted to AGENT-77 two minutes after its
+    On 2026-10-17 a correction was posted to TOOLS-77 two minutes after its
     handoff, and a compaction would have resumed from the correction alone.
     """
 

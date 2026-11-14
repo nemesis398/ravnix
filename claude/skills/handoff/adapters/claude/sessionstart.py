@@ -27,7 +27,7 @@ import plane  # noqa: E402
 # projects, one id each), which is why that half works and stays.
 #
 # Listing "clear" here was therefore a promise the code could not keep, and
-# `/clear` means a clean slate in any case. AGENT-25.
+# `/clear` means a clean slate in any case. TOOLS-25.
 CONTINUATION_SOURCES = {"compact"}
 # The state CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is expected to be in, which is now
 # absent. The supported setting is `autoCompactWindow` in settings.json, at

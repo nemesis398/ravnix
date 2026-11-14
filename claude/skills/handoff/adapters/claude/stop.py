@@ -26,7 +26,7 @@ from _common import hs
 # hs.CONTINUE_CLAUSE and hs.resume_ready are deliberately left in the brain
 # untouched. a project's own Plane Stop hook imports both by absolute path.
 #
-# One line was not enough. AGENT-18's acceptance run failed on 2026-08-25 and
+# One line was not enough. TOOLS-18's acceptance run failed on 2026-08-25 and
 # not on the half that was worried about: the reminder fired at 200k and again
 # at 300k, the model correctly ignored both, and the user could not find either
 # line afterwards. Rendering and being seen are different questions, and only
@@ -137,7 +137,7 @@ def handle(payload: dict) -> dict | None:
     hs.write_stamp(cwd, session, stamp)
 
     # Naming the stream is what makes the advice actionable: "write a
-    # handoff" is a chore, "write a handoff for AGENT-12" is a decision the user
+    # handoff" is a chore, "write a handoff for TOOLS-12" is a decision the user
     # can already answer. With no stream claimed, saying so is the point, since
     # the handoff has nowhere to go until one is.
     identifier = pointer.get("identifier") or ""
