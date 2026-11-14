@@ -1,0 +1,1 @@
+This directory is the bench's working directory. It holds no credential on purpose: the bench measures the run that finds none.
