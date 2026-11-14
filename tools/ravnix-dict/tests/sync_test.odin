@@ -11,6 +11,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import dict ".."
+import tools "../adapters"
 
 sync_ok :: proc(f: ^Fixture, args: ..string, loc := #caller_location) -> Result {
 	all := make([dynamic]string, f.a)
@@ -579,4 +580,15 @@ an_unavailable_adapter_is_skipped_and_is_no_failure :: proc(t: ^testing.T) {
 	testing.expect_value(t, r.code, 0)
 	testing.expect_value(t, joined(f, BETA), "c,a,b")
 	testing.expect_value(t, read_file(f, f.file), "a\nb\nc\n")
+}
+
+@(test)
+sync_tells_the_adapters_where_the_state_is :: proc(t: ^testing.T) {
+	// Handy's adapter keeps the marker of a stopped Handy there.
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, f.file, "a\n")
+	tools.state_dir = ""
+	sync_ok(f)
+	testing.expect_value(t, tools.state_dir, f.state)
 }

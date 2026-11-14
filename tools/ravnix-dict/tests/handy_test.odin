@@ -70,6 +70,9 @@ handy_mode: string
 handy_children: [dynamic]os.Process
 @(thread_local)
 handy_starts: int
+// Whether the stopped-for-a-write marker was there at the last start.
+@(thread_local)
+marked_at_start: bool
 
 handy_counter: int
 
@@ -86,13 +89,29 @@ handy_setup :: proc(f: ^Fixture) -> string {
 	settings := join(f, "settings_store.json")
 	names := make([]string, 1, f.a)
 	names[0] = name
+	sysdir := join(f, "systemd")
+	_ = os.make_directory(sysdir)
+	write_file(f, join(f, "systemd", "systemctl-fake"), "")
+	_ = os.make_directory(f.state)
+	tools.state_dir = f.state
 	tools.handy = {
 		settings     = settings,
 		names        = names,
 		stop_timeout = 2 * time.Second,
 		start        = start_fake_handy,
+		systemctl    = link(f, sysdir, "systemctl"),
+		// Outside the unit, unless a test says otherwise.
+		unit_of      = proc(pid: int) -> string {return ""},
 	}
 	return settings
+}
+
+systemctl_log :: proc(f: ^Fixture) -> string {
+	return read_file(f, join(f, "systemd", "systemctl-log"))
+}
+
+stopped_marker :: proc(f: ^Fixture) -> string {
+	return join(f, "state", "handy-stopped")
 }
 
 // start_fake_handy starts the stand-in and waits until it has read the
@@ -100,6 +119,7 @@ handy_setup :: proc(f: ^Fixture) -> string {
 start_fake_handy :: proc() -> tools.Error {
 	f := handy_fixture
 	handy_starts += 1
+	marked_at_start = os.exists(stopped_marker(f))
 	ready := join(f, fmt.aprintf("ready-%d", handy_starts, allocator = f.a))
 	command := make([dynamic]string, f.a)
 	append(&command, handy_link, tools.handy.settings, ready)
@@ -201,6 +221,12 @@ handy_is_stopped_written_and_started_and_a_word_survives_its_quit :: proc(t: ^te
 	// and started again: a second stand-in, which read the new list.
 	testing.expect_value(t, handy_starts, 2)
 	testing.expect_value(t, len(tools.handy_processes()), 1)
+
+	// Outside its unit, it was signalled: systemctl was not asked, and the
+	// marker of the stop was there until the start, and is gone after it.
+	testing.expect_value(t, systemctl_log(f), "")
+	testing.expect(t, marked_at_start)
+	testing.expect(t, !os.exists(stopped_marker(f)))
 
 	// Handy quits and writes its memory back: the word is in it.
 	handy_quit(t)
@@ -392,4 +418,94 @@ handy_round_trips_ten_thousand_words :: proc(t: ^testing.T) {
 	back := custom_words_of(f, settings)
 	testing.expect_value(t, len(back), len(words))
 	testing.expect_value(t, back[9_999], words[9_999])
+}
+
+@(test)
+a_handy_in_its_unit_is_stopped_by_systemd :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	context.allocator = f.a
+	defer handy_reap()
+	settings := handy_setup(f)
+	tools.handy.unit_of = proc(pid: int) -> string {return tools.HANDY_UNIT}
+	write_file(f, settings, HANDY_STORE)
+	testing.expect_value(t, start_fake_handy(), nil)
+	pids := tools.handy_processes()
+	testing.expect_value(t, len(pids), 1)
+	write_file(f, join(f, "systemd", "systemctl-pids"), fmt.aprintf("%d\n", pids[0]))
+	_, _ = tools.handy_read()
+	testing.expect_value(t, tools.handy_write({"Ravnixtest"}), nil)
+	// systemd stopped it, so the unit is inactive when it is started again.
+	testing.expect_value(t, systemctl_log(f), "--user stop app-handy@autostart.service\n")
+	testing.expect_value(t, handy_starts, 2)
+	testing.expect(t, marked_at_start)
+	handy_quit(t)
+	testing.expect_value(t, strings.join(custom_words_of(f, settings), "|"), "Ravnixtest")
+}
+
+@(test)
+a_handy_left_stopped_is_started_at_the_next_sync :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	context.allocator = f.a
+	defer handy_reap()
+	settings := handy_setup(f)
+	write_file(f, settings, HANDY_STORE)
+	testing.expect_value(t, start_fake_handy(), nil)
+	_, _ = tools.handy_read()
+	// The start after the write fails: Handy is down, and the marker says so.
+	tools.handy.start = proc() -> tools.Error {return "no session"}
+	testing.expect(t, tools.handy_write({"Ravnixtest"}) != nil)
+	testing.expect_value(t, len(tools.handy_processes()), 0)
+	testing.expect(t, os.exists(stopped_marker(f)))
+	// A read whose start fails as well says so, and keeps the marker.
+	_, err := tools.handy_read()
+	message, failed := err.?
+	testing.expectf(t, failed && strings.contains(message, "no session"), "%v", err)
+	testing.expect(t, os.exists(stopped_marker(f)))
+	// The next sync's read starts it, and the marker goes.
+	tools.handy.start = start_fake_handy
+	words, rerr := tools.handy_read()
+	testing.expect_value(t, rerr, nil)
+	testing.expect(t, has(words, "Ravnixtest"))
+	testing.expect_value(t, len(tools.handy_processes()), 1)
+	testing.expect(t, !os.exists(stopped_marker(f)))
+}
+
+@(test)
+a_marker_left_by_a_killed_sync_starts_handy_once :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	context.allocator = f.a
+	defer handy_reap()
+	settings := handy_setup(f)
+	write_file(f, settings, HANDY_STORE)
+	// A sync killed between the stop and the start (a timeout, a stop of
+	// the service) leaves the marker and no Handy.
+	write_file(f, stopped_marker(f), "stopped\n")
+	_, err := tools.handy_read()
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, handy_starts, 1)
+	testing.expect(t, !os.exists(stopped_marker(f)))
+	// No marker: a Handy the user quit is left alone.
+	handy_quit(t)
+	_, err = tools.handy_read()
+	testing.expect_value(t, handy_starts, 1)
+	// A marker while Handy runs (started by hand meanwhile): only cleared.
+	testing.expect_value(t, start_fake_handy(), nil)
+	write_file(f, stopped_marker(f), "stopped\n")
+	_, err = tools.handy_read()
+	testing.expect_value(t, handy_starts, 2)
+	testing.expect(t, !os.exists(stopped_marker(f)))
+}
+
+@(test)
+the_unit_of_a_process_comes_from_its_cgroup :: proc(t: ^testing.T) {
+	testing.expect_value(t, tools.unit_of_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-handy@autostart.service\n"), "app-handy@autostart.service")
+	// Started from the launcher: a scope, no service of its own.
+	testing.expect_value(t, tools.unit_of_cgroup("0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-sway-fuzzel-123.scope\n"), "")
+	// cgroup v1 lists one line per hierarchy; the unified one counts.
+	testing.expect_value(t, tools.unit_of_cgroup("12:pids:/user.slice\n1:name=systemd:/user.slice/user@1000.service/app.slice/app-handy@autostart.service\n0::/user.slice/user@1000.service/app.slice/app-handy@autostart.service\n"), "app-handy@autostart.service")
+	testing.expect_value(t, tools.unit_of_cgroup(""), "")
+	testing.expect_value(t, tools.unit_of_cgroup("0::/\n"), "")
 }

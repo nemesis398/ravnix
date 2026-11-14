@@ -189,6 +189,9 @@ MAX_ATTEMPTS :: 5
 // returns the exit status: 1 when an adapter, the dictionary or the state
 // failed, with the adapters that did not fail synced all the same.
 sync :: proc(cfg: Config, list: []Adapter, allow_empty: bool) -> int {
+	// An adapter may keep what must outlive a sync there (Handy's marker
+	// of a stop it has not undone yet).
+	tools.state_dir = cfg.state
 	fd, why := lock(cfg.state, cfg.lock_wait_ms)
 	if why != "" {
 		warn(cfg, "%s", why)

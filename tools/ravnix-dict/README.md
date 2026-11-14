@@ -260,19 +260,29 @@ file while Handy runs is undone at its next save. A write therefore:
 
 1. finds Handy's processes of this user in `/proc`, by name
    (`.handy-wrapped`, nixpkgs' wrapped binary, or `handy`; not
-   `Handy-worker`, which ends with its parent), and asks them to quit
-   (SIGTERM through a pidfd), killing what is left after ten seconds;
-2. reads the store again, since what Handy saved as it quit is the newest;
+   `Handy-worker`, which ends with its parent), and notes in the state
+   directory, `STATE/handy-stopped`, that it is stopping Handy;
+2. stops them: a Handy in its session unit, `app-handy@autostart.service`
+   (its `/proc/PID/cgroup` says so), with `systemctl --user stop`, so the
+   unit is inactive and not merely missing its process when it is started
+   again; any other with SIGTERM through a pidfd, killing what is left
+   after ten seconds;
+3. reads the store again, since what Handy saved as it quit is the newest;
    a word it has there that the last read did not, typed into its window in
    the meantime, is kept after the words given, and the next sync takes it
    into the dictionary;
-3. replaces the value of `custom_words`, and nothing else: every other
+4. replaces the value of `custom_words`, and nothing else: every other
    byte of the store stays as it was, in Handy's own layout (serde_json's,
    two spaces per level), and the store is replaced through a rename, with
    its mode, a link followed;
-4. starts Handy again, if it ran, by starting the session's unit of
-   handy-launch's autostart entry, `app-handy@autostart.service`, so it gets
-   the session's environment; Handy reads the new list as it starts.
+5. starts Handy again, if it ran, by starting that unit, so it gets the
+   session's environment, and removes the note. Handy reads the new list
+   as it starts.
+
+A sync that ends between the stop and the start (its timeout, a stop of
+the service, a crash), or a start that fails, leaves the note, and the next
+sync's read starts Handy before anything else; a note while Handy runs is
+only removed. Without the note, a Handy the user quit stays quit.
 
 A store without `custom_words`, or without `settings`, gets them; a missing
 store is no words, and a write makes one that holds only them, which Handy
@@ -432,9 +442,10 @@ file no longer has.
   runs is undone at its next save. A Handy stopped for a write ends a
   dictation in progress; a sync stops it only when its list changes.
 - Handy is started again through `app-handy@autostart.service`, the unit
-  the session's XDG autostart makes of handy-launch's entry. In a session
+  the session's XDG autostart makes of handy-launch's entry, hidden in the
+  tray, also when it was started by hand with its window open. In a session
   without that unit, the words are written and the start fails, with a
-  message that says so; Handy then needs a start by hand.
+  message that says so, and every sync tries again.
 - LanguageTool's list cannot hold a word with white space (`Open WebUI`).
   The adapter leaves such words out, so the list never has them, and every
   sync counts them as written to it again, without a request.

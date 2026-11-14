@@ -30,6 +30,10 @@ Handy :: struct {
 	// The systemd user unit that start_unit starts: the one the session's
 	// XDG autostart makes of handy-launch's entry.
 	unit:         string,
+	// The systemctl that stops and starts the unit; "" is systemctl on PATH.
+	systemctl:    string,
+	// The systemd unit a process runs in, or ""; nil is unit_of_pid.
+	unit_of:      proc(pid: int) -> string,
 }
 
 HANDY_NAMES :: []string{".handy-wrapped", "handy"}
@@ -40,6 +44,11 @@ HANDY_MAX_SIZE :: 16 * 1024 * 1024
 
 @(thread_local)
 handy: Handy
+
+// The core's state directory for this host, where an adapter may keep what
+// must outlive a sync; the core sets it before a sync.
+@(thread_local)
+state_dir: string
 // What the last read returned, so that write can tell a word Handy got in
 // the meantime from one the core took out.
 @(thread_local)
@@ -47,6 +56,9 @@ handy_seen: []string
 
 handy_read :: proc() -> ([]string, Error) {
 	handy_seen = nil
+	if why := handy_recover(); why != "" {
+		return nil, why
+	}
 	words, _, why := handy_load()
 	if why != "" {
 		return nil, why
@@ -231,18 +243,22 @@ insert_member :: proc(text: string, object: Span, key: string, words: []string, 
 handy_write :: proc(words: []string) -> Error {
 	pids := handy_processes()
 	if len(pids) > 0 {
+		if m := marker(); m != "" {
+			if why := replace(m, "Handy was stopped to write its words; the next sync starts it again\n", 0o600); why != "" {
+				return fmt.tprintf("cannot note that Handy is stopped, so it is not: %s", why)
+			}
+		}
 		if why := handy_stop(pids); why != "" {
 			return why
 		}
 	}
 	why := handy_store(words)
 	if len(pids) > 0 {
-		start := handy.start if handy.start != nil else start_unit
-		if err := start(); err != nil {
+		if err := handy_start(); err != nil {
 			if why != "" {
-				return fmt.tprintf("%s; and Handy, stopped to write it, could not be started again: %s", why, err.?)
+				return fmt.tprintf("%s; and Handy, stopped to write it, could not be started again (the next sync tries): %s", why, err.?)
 			}
-			return fmt.tprintf("the words are written, but Handy, stopped to write them, could not be started again: %s", err.?)
+			return fmt.tprintf("the words are written, but Handy, stopped to write them, could not be started again (the next sync tries): %s", err.?)
 		}
 	}
 	if why != "" {
@@ -360,6 +376,20 @@ process_ids :: proc() -> []int {
 // What Handy saves as it quits is read again by handy_store.
 @(private)
 handy_stop :: proc(pids: []int) -> string {
+	// A Handy in its unit is stopped by systemd, so the unit is inactive,
+	// and not merely missing its process, when it is started again.
+	unit := handy.unit if handy.unit != "" else HANDY_UNIT
+	unit_of := handy.unit_of if handy.unit_of != nil else unit_of_pid
+	for pid in pids {
+		if unit_of(pid) == unit {
+			if why := systemctl("stop", unit); why != "" {
+				return fmt.tprintf("cannot stop Handy: %s", why)
+			}
+			break
+		}
+	}
+	// What is left (all of it, for a Handy started outside the unit) is
+	// signalled; a process that has ended is skipped.
 	fds := make([dynamic]linux.Pid_FD, context.temp_allocator)
 	for pid in pids {
 		fd, e := linux.pidfd_open(linux.Pid(pid), {})
@@ -373,6 +403,9 @@ handy_stop :: proc(pids: []int) -> string {
 	}
 	defer for fd in fds {
 		linux.close(linux.Fd(fd))
+	}
+	if len(fds) == 0 {
+		return ""
 	}
 	signal :: proc(fd: linux.Pid_FD, sig: linux.Signal) {
 		intrinsics.syscall(linux.SYS_pidfd_send_signal, uintptr(fd), uintptr(sig), 0, 0)
@@ -420,16 +453,86 @@ wait_ended :: proc(fds: []linux.Pid_FD, timeout: time.Duration) -> bool {
 	}
 }
 
-// start_unit starts the session's Handy, the unit of handy-launch's
-// autostart entry, with the session's environment.
-start_unit :: proc() -> Error {
-	unit := handy.unit if handy.unit != "" else HANDY_UNIT
-	ran, why := run_program({"systemctl", "--user", "start", unit}, "", 30 * time.Second, context.allocator)
+// systemctl runs systemctl --user VERB UNIT.
+@(private)
+systemctl :: proc(verb, unit: string) -> string {
+	command := handy.systemctl if handy.systemctl != "" else "systemctl"
+	ran, why := run_program({command, "--user", verb, unit}, "", 60 * time.Second, context.allocator)
 	if why != "" {
 		return why
 	}
 	if ran.status != 0 {
-		return fmt.tprintf("systemctl --user start %s: %s", unit, strings.trim_space(ran.output))
+		return fmt.tprintf("systemctl --user %s %s: %s", verb, unit, strings.trim_space(ran.output))
+	}
+	return ""
+}
+
+// start_unit starts the session's Handy, the unit of handy-launch's
+// autostart entry, with the session's environment.
+start_unit :: proc() -> Error {
+	if why := systemctl("start", handy.unit if handy.unit != "" else HANDY_UNIT); why != "" {
+		return why
 	}
 	return nil
+}
+
+// unit_of_cgroup is the service a process runs in, from its
+// /proc/PID/cgroup: the last part of the unified hierarchy's path ("0::"),
+// when it is a .service; "" for a scope or nothing.
+unit_of_cgroup :: proc(text: string) -> string {
+	for line in strings.split_lines(text, context.temp_allocator) {
+		if !strings.has_prefix(line, "0::") {
+			continue
+		}
+		path := strings.trim_space(line[3:])
+		last := path[strings.last_index_byte(path, '/') + 1:]
+		if strings.has_suffix(last, ".service") {
+			return last
+		}
+	}
+	return ""
+}
+
+unit_of_pid :: proc(pid: int) -> string {
+	text, _, why := read_text(fmt.tprintf("/proc/%d/cgroup", pid), 64 * 1024, context.temp_allocator)
+	if why != "" {
+		return ""
+	}
+	return unit_of_cgroup(text)
+}
+
+// The marker of a Handy stopped for a write and not started yet, in the
+// state directory: written before the stop, removed after the start. A
+// sync killed in between (a timeout, a stop of the service, a crash), or a
+// start that failed, leaves it, and the next sync starts Handy.
+@(private)
+marker :: proc() -> string {
+	return fmt.tprintf("%s/handy-stopped", state_dir) if state_dir != "" else ""
+}
+
+@(private)
+handy_start :: proc() -> Error {
+	start := handy.start if handy.start != nil else start_unit
+	err := start()
+	if err == nil && marker() != "" {
+		linux.unlink(cstr(marker()))
+	}
+	return err
+}
+
+// handy_recover starts a Handy that a sync stopped and did not start again.
+@(private)
+handy_recover :: proc() -> string {
+	m := marker()
+	if m == "" || linux.access(cstr(m), linux.F_OK) != .NONE {
+		return ""
+	}
+	if len(handy_processes()) > 0 {
+		linux.unlink(cstr(m))
+		return ""
+	}
+	if err := handy_start(); err != nil {
+		return fmt.tprintf("Handy was stopped for a write and could not be started again: %s", err.?)
+	}
+	return ""
 }
