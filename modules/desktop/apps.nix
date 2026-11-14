@@ -125,7 +125,8 @@
 #                     own Network, Performance and Profiler canvases, so an
 #                     opaque value would hide the data beneath.
 # Themed by catppuccin/nix in the accent: yazi, mpv. Generated from the roles:
-# MangoHud, the Helium theme, Helium's DevTools. wiremix and bluetui use the terminal's palette.
+# MangoHud, the Helium theme, Helium's DevTools, wiremix (./wiremix.nix). bluetui uses the
+# terminal's palette.
 {
   config,
   lib,
