@@ -46,7 +46,16 @@ let
     };
   withVault = hostOf [ { ravnix.link.vault = lib.mkForce "/home/alice/My Notes"; } ];
   noVault = hostOf [ { ravnix.link.vault = lib.mkForce null; } ];
-  hostileVault = hostOf [ { ravnix.link.vault = lib.mkForce ''/home/alice/a"b$c''; } ];
+  # Each of these ends the quote, escapes, expands or substitutes in the exec
+  # line of the Sway config, which Sway runs through sh -c.
+  hostileNames = {
+    quote = ''a"b'';
+    backslash = ''a\b'';
+    dollar = ''a$b'';
+    backtick = "Notes `24`";
+    newline = "a\nb";
+  };
+  hostileVaults = lib.mapAttrs (_: n: hostOf [ { ravnix.link.vault = lib.mkForce "/home/alice/${n}"; } ]) hostileNames;
   layoutOf =
     host:
     let
@@ -85,8 +94,8 @@ let
       msg = "a token is left in the layout's exec line";
     }
     {
-      ok = refuses hostileVault && !refuses withVault && !refuses noVault;
-      msg = "a vault folder name with a quote or a dollar sign is not refused, and would end the quote in the Sway config or expand as a variable";
+      ok = lib.all refuses (lib.attrValues hostileVaults) && !refuses withVault && !refuses noVault;
+      msg = "a vault folder name with a quote, backslash, dollar sign, backtick or line break is not refused: ${toString (lib.attrNames (lib.filterAttrs (_: h: !refuses h) hostileVaults))}";
     }
   ];
   failedAsserts = map (a: a.msg) (lib.filter (a: !a.ok) asserts);

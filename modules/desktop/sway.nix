@@ -102,8 +102,10 @@ let
   vault = if os.ravnix.link.vault == null then "" else os.ravnix.link.vault;
   vaultName = baseNameOf vault;
   # The name goes into the Sway config between double quotes, where a quote
-  # ends the string, a backslash escapes and a dollar sign starts a variable.
-  vaultNameOk = builtins.match "[^\"\\\\$\n]+" vaultName != null;
+  # ends the string, a backslash escapes and a dollar sign starts a variable,
+  # and then, as the exec line, through sh -c, where inside double quotes a
+  # dollar sign and a backtick substitute a command.
+  vaultNameOk = builtins.match "[^\"\\\\$`\n]+" vaultName != null;
   layoutTab = lib.optionalString (vault != "" && vaultNameOk) ''--tab 3 "${vaultName}" '';
 
   askEnabled = cfg.ask != null;
@@ -428,7 +430,7 @@ in
     assertions = [
       {
         assertion = vault == "" || vaultNameOk;
-        message = "ravnix.link.vault is ${vault}, whose folder name has a double quote, a backslash, a dollar sign or a line break, or none: the login layout writes the name into the Sway config between double quotes. Rename the folder.";
+        message = "ravnix.link.vault is ${vault}, whose folder name has a double quote, a backslash, a dollar sign, a backtick or a line break, or none: the login layout writes the name into the Sway config between double quotes. Rename the folder.";
       }
       {
         assertion = !(lib.hasInfix "\n" cfg.terminal.main) && !(lib.hasInfix "\n" cfg.terminal.plain);
