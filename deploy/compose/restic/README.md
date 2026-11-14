@@ -70,6 +70,22 @@ does not exist yet: the deploy (Step 5) and the two jobs on the NAS (Step 6).
 
    `tests/common/backup.nix` shows all three against a rest-server with the
    compose file's flags, in the sandbox; the deploy shows them on the NAS.
+6. **Before the job's first run for a host**, look in the Internxt
+   repository for snapshots under its name: `restic -r INTERNXT snapshots
+   --host HOST`. None: the ledger starts empty. Some, as an older setup
+   that backed machines up to Internxt directly, which ravnix replaces,
+   may have left: the job refuses to start for the host until one of these
+   is done, by hand and decided by the owner:
+   - **adopt them**, when they are this machine's own older backups: put
+     their ids into the ledger (`restic -r INTERNXT snapshots --host HOST
+     --json | jq -r '.[].id'`). From then on the Internxt prune thins them
+     with the new ones as one group (`--group-by host`); run it with
+     `--dry-run` first and record what it would delete;
+   - **forget them**, by id, after a `--dry-run`, when they are not worth
+     keeping;
+   - **give the host another name**, when they belong to someone else:
+     `ravnix.backup.nas.host` with `ignoreHostName = true`, and that name
+     in the retention file, `htpasswd` and the job's list.
 
 ## Pruning and the copy to Internxt (Step 6)
 
@@ -106,8 +122,27 @@ names, and refuses to start, naming the problem, when:
   --group-by host`). The private flake lists those names beside the hosts,
   and the job checks the list against them before every run;
 - a name has snapshots in the Internxt repository that this job did not
-  copy (`restic snapshots --host HOST` there, compared with the original
-  ids of the NAS repository's snapshots): another machine is using it.
+  copy: another machine is using it. "Did not copy" is read from a ledger,
+  not from the NAS repository: one file per host,
+  `/volume1/docker/restic/state/copied/HOST`, beside the job's secrets and
+  outside what the rest-server serves, with the Internxt id of every
+  snapshot the job has copied there. Every Internxt snapshot of
+  `restic snapshots --host HOST` must be in it.
+
+  Why a ledger. Internxt keeps snapshots the NAS has already let go (12
+  monthlies and 2 yearlies against the NAS's 6 and 0), so after about half
+  a year a comparison with the NAS repository's ids would take the host's
+  own old monthlies for another machine's and stop its copy and prune for
+  good. A comparison only with snapshots newer than the host's oldest on
+  the NAS would not, but it would miss exactly the snapshots that matter:
+  another machine's, or an older setup's, from before that date, and it
+  hangs on snapshot times that each host's clock sets. The ledger is exact.
+  Its cost is state: the job writes it after each copy (the ids of the
+  Internxt snapshots whose `original` is a snapshot of `/data/HOST`), to a
+  new file renamed over the old one, and may drop the ids Internxt has
+  forgotten. A lost ledger makes every snapshot look foreign, so the job
+  refuses, loudly, until it is rebuilt the way the first run below makes
+  it.
 
 **One run**, daily after the hosts' backup window (they back up at
 `onCalendar` with up to 10 minutes of random delay), for each host the job
@@ -170,6 +205,9 @@ into it, or start fresh.
 
 ## Open points
 
+- **The ledger is state.** It must survive like the job's secrets; the
+  NAS's own backup should hold `/volume1/docker/restic/state`. Losing it
+  stops the job, never deletes anything.
 - **A host name in two places.** Each host's evaluation sees only its own
   `ravnix.backup.nas.host`, so the module cannot see that two hosts chose
   one name; the job's checks above can, and the template says to set the
