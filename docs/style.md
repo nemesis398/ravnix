@@ -27,7 +27,7 @@ One candidate was considered and left out: an *instrument panel* look, with live
 | Host color | Mauve (huginn) and Blue (muninn) are identity on paper, and the two colors of the NixOS logo on the wallpaper and in the terminal's fastfetch. The live system looks the same on both |
 | Marks on the running system | Drawn in one color, the accent. The two-color version is for paper only |
 | Wallpaper | Personal, per user. The shipped default is a fixed composition (see *Identity*) |
-| Transparency | None. Windows, bar, menus and notifications are fully opaque. The inside of the lock ring is the one exception |
+| Transparency | None. Windows, bar, menus and notifications are fully opaque. The inside of the lock ring and the ticks between its highlight segments are the only exceptions |
 | Motion | None |
 | Font | JetBrainsMono Nerd Font, everywhere |
 | Lock screen | Shows identity, never information |
@@ -78,7 +78,7 @@ The remaining hues (Rosewater, Flamingo, Pink, Sky, Sapphire, Lavender, Teal) ar
 ### Rules
 
 - One accent, never two. No gradients, no glow, no shadow.
-- No transparency and no blur. The one exception is the inside of the lock ring, which is clear so the mark shows through and turns Base at 80 percent while it prints a word. Hover is the Surface0 wash plus the 2 px marker, never an alpha.
+- No transparency and no blur. The only exceptions are two parts of the lock ring: its inside, which is clear so the mark shows through and turns Base at 80 percent while it prints a word, and the ticks between its highlight segments, which are clear. Hover is the Surface0 wash plus the 2 px marker, never an alpha.
 - Terminal colors map to the palette this way: black is Surface1, red Red, green Green, yellow Yellow, blue Blue, magenta Pink, cyan Teal, white Subtext1. The bright set is Surface2, Red, Green, Yellow, Blue, **the accent** in the bright magenta slot, Teal, Subtext0.
 - A terminal selection is accent fill with Crust text. A terminal cursor is an accent block with Crust text.
 
@@ -250,7 +250,7 @@ When a new application, screen or document needs styling, walk this list in orde
 The style becomes code in four places.
 
 - **One theme module** holds the roles. It exposes the typed `accent` option, the role-to-hex table, the two line widths, the font, and the sizes. Every other module reads from it and never writes a hex value itself. Where an application has a `catppuccin/nix` integration, that is used and fed the same flavor and accent.
-- **A style check in the local gate** (`scripts/check-style.sh`), next to the deny-list check, that fails on a hex color outside the theme module, the vendored files, this document and a Mermaid init block identical to the shared one, on any `border-radius` other than 0, on any opacity below 1 outside the inside of the lock ring (the keyword `transparent` is one), and on any `transition` or `animation` key.
+- **A style check in the local gate** (`scripts/check-style.sh`), next to the deny-list check, that fails on a hex color outside the theme module, the vendored files, this document and a Mermaid init block identical to the shared one, on any `border-radius` other than 0, on any opacity below 1 outside the inside and the separators of the lock ring (the keyword `transparent` is one), and on any `transition` or `animation` key.
 - **The repo's agent rules** (`AGENTS.md`) get a *Style* section that points here and carries the checklist above, so an agent styling a new thing meets the rules before it picks a color.
 - **Acceptance** is a side-by-side screenshot of the Fedora reference and `huginn` for each surface and each state: every lock-ring state, a critical notification, the focus-mode bar, and each bar module at its widest value. The reference is shot before Fedora is retired, at the same scale. The list in the next section holds the only allowed differences.
 

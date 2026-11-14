@@ -16,7 +16,8 @@
 #     was skipped and passes, so a clone without a private flake still works.
 #   - style: scripts/check-style.sh over the same two sets: a hex color
 #     outside modules/theme/, a radius other than 0, anything translucent
-#     but the inside of the lock ring, a transition or animation, a Mermaid
+#     but the inside and the separators of the lock ring, a transition or
+#     animation, a Mermaid
 #     init block that is not the shared one (docs/style.md). It needs rg and
 #     runs without a deny list.
 #   - shellcheck: every tracked shell script, found by its extension (.sh,

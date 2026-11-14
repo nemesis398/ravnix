@@ -4,7 +4,8 @@
 # there; lock-screen passes the wallpaper image and reads this file for the
 # rest. The ring is a gauge and the one place the style allows a line wider
 # than 2 px and a translucent fill (the inside of the ring, so that it circles
-# the picture): see docs/style.md.
+# the picture), and clear separators (the ticks between the highlight
+# segments, as on Fedora): see docs/style.md.
 #
 #   idle ring       Surface2 on the Base screen, always visible (so that the
 #                   screen never looks dead: indicator-idle-visible)
@@ -27,7 +28,7 @@ let
   inherit (config.ravnix.theme) palette roles font;
   c = hex: lib.removePrefix "#" hex;
   # The wash inside the ring while it prints text over the picture: Base at
-  # 80 %, the only translucent color of the style.
+  # 80 %, the only translucent fill of the style.
   wash = "${c roles.canvas}cc";
   clear = "${c roles.canvas}00";
 in
@@ -52,7 +53,7 @@ in
           line-color = c roles.canvas;
           ring-color = c roles.line;
           text-color = c roles.text;
-          separator-color = c roles.canvas;
+          separator-color = clear;
 
           inside-clear-color = clear;
           line-clear-color = c roles.canvas;

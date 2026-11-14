@@ -261,10 +261,13 @@ def main():
         expect(f"key-hl-color={accent_hex}" in swaylock, label("swaylock key-hl-color is not the accent"))
         expect("ignore-empty-password" not in swaylock, label("swaylock ignores an empty password, which the security key needs"))
         expect(re.search(r"^indicator-thickness=10$", swaylock, re.M), label("swaylock ring thickness changed"))
+        # The ticks between the highlight segments are clear, as on Fedora.
+        canvas_hex = roles[variant]["canvas"].lstrip("#")
+        expect(f"separator-color={canvas_hex}00" in swaylock, label("swaylock separator-color is not clear (Base at alpha 0), as on Fedora"))
         for m in re.finditer(r"^([a-z-]+)=([0-9a-f]{8})$", swaylock, re.M):
             key, value = m.groups()
             if value[6:] != "ff":
-                expect(re.fullmatch(r"inside(-[a-z-]+)?-color", key) is not None, label(f"row Transparency: swaylock {key} is translucent; only the inside of the ring may be"))
+                expect(re.fullmatch(r"inside(-[a-z-]+)?-color|separator-color", key) is not None, label(f"row Transparency: swaylock {key} is translucent; only the inside of the ring and its separator may be"))
 
         # ── fuzzel ───────────────────────────────────────────────────────
         expect(f"border={accent_hex}ff" in fuzzel and f"match={accent_hex}ff" in fuzzel, label("fuzzel does not use the accent for its frame and matches"))

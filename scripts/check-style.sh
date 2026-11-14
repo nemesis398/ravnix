@@ -27,9 +27,11 @@
 #                 so prose such as "Default: transparent" is none), a hex color
 #                 or a bare
 #                 RRGGBBAA value of a color key whose alpha is not full. The
-#                 one exemption is the inside of the lock ring: swaylock's
-#                 inside-color and inside-*-color keys, with or without a #. A
-#                 child that shows its parent uses the role color or inherit.
+#                 exemptions are two parts of the lock ring: swaylock's
+#                 inside-color and inside-*-color keys (the inside) and its
+#                 separator-color (the tick between the highlight segments,
+#                 which is clear), with or without a #. A child that shows its
+#                 parent uses the role color or inherit.
 #   motion        a transition or animation key, or @keyframes, unless the
 #                 key turns motion off (none, false, off, no, 0s); also
 #                 enable-animations and gtk-enable-animations set to anything
@@ -458,12 +460,13 @@ in_trailing_comment() {
 }
 
 # Whether the first #DIGITS of a line is the value of one of swaylock's
-# inside-color keys, the one place a color may be see-through.
+# inside-color keys or of its separator-color, the places a color may be
+# see-through.
 lock_ring_inside() {
 	local lower
 	line_text "$1" "$2"
 	lower="${REPLY,,}"
-	[[ "$lower" =~ (^|[^[:alnum:]_-])inside(-[a-z]+)*-color[\"\']?[[:space:]]*[=:][[:space:]]*[\"\']?\#${3,,} ]]
+	[[ "$lower" =~ (^|[^[:alnum:]_-])(inside(-[a-z]+)*|separator)-color[\"\']?[[:space:]]*[=:][[:space:]]*[\"\']?\#${3,,} ]]
 }
 
 hex_hit() {
@@ -685,9 +688,10 @@ bare_color_hit() {
 	fi
 	hex_allowed "$path" || hit "$path" "$line" hex-color
 	[[ "${#value}" -eq 8 && "${value:6:2}" != ff ]] || return 0
-	# The inside of the lock ring is the one place a color may be see-through.
+	# The inside of the lock ring and its separator are the places a color may
+	# be see-through.
 	case "$key" in
-	inside-color | inside-*-color) return 0 ;;
+	inside-color | inside-*-color | separator-color) return 0 ;;
 	esac
 	hit "$path" "$line" opacity
 }

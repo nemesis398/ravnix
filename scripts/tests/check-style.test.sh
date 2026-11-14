@@ -499,16 +499,16 @@ an_eight_digit_value_that_is_not_a_color_passes() {
 	expect_clean
 }
 
-the_inside_of_the_lock_ring_is_the_one_exemption() {
+the_inside_and_the_separator_of_the_lock_ring_are_the_exemption() {
 	new_tree
-	put modules/theme/swaylock.conf 'inside-color=00000000\ninside-clear-color=1e1e2e00\ninside-ver-color=1e1e2ecc\ninside-wrong-color=1e1e2ecc\ninside-caps-lock-color=1e1e2ecc\n'
-	put modules/theme/swaylock.nix '"inside-ver-color" = "1e1e2ecc";\ninside-color = "00000000";\n"inside-wrong-color" = "#1e1e2ecc";\ninside-clear-color = "#1e1e2e00";\n'
+	put modules/theme/swaylock.conf 'inside-color=00000000\ninside-clear-color=1e1e2e00\ninside-ver-color=1e1e2ecc\ninside-wrong-color=1e1e2ecc\ninside-caps-lock-color=1e1e2ecc\nseparator-color=1e1e2e00\n'
+	put modules/theme/swaylock.nix '"inside-ver-color" = "1e1e2ecc";\ninside-color = "00000000";\n"inside-wrong-color" = "#1e1e2ecc";\ninside-clear-color = "#1e1e2e00";\nseparator-color = "#1e1e2e00";\n'
 	expect_clean
 }
 
 no_other_swaylock_color_may_be_translucent() {
 	new_tree
-	put modules/theme/swaylock.conf 'ring-color=585b7080\nline-color=1e1e2e00\ntext-color=cdd6f4cc\nseparator-color=00000000\nkey-hl-color=cba6f7cc\n'
+	put modules/theme/swaylock.conf 'ring-color=585b7080\nline-color=1e1e2e00\ntext-color=cdd6f4cc\nkey-hl-color=cba6f7cc\nseparator-ring-color=00000000\n'
 	put modules/theme/swaylock.nix 'text-color = "#cdd6f4cc";\n'
 	expect_hits "modules/theme/swaylock.conf:1:opacity" "modules/theme/swaylock.conf:2:opacity" \
 		"modules/theme/swaylock.conf:3:opacity" "modules/theme/swaylock.conf:4:opacity" \
@@ -971,7 +971,7 @@ tests=(
 	a_translucent_bare_color_in_a_config_is_a_hit
 	a_bare_color_outside_the_theme_is_a_hex_color_hit
 	an_eight_digit_value_that_is_not_a_color_passes
-	the_inside_of_the_lock_ring_is_the_one_exemption
+	the_inside_and_the_separator_of_the_lock_ring_are_the_exemption
 	no_other_swaylock_color_may_be_translucent
 	a_sway_command_in_a_nix_string_is_a_hit
 	prose_that_holds_the_word_transparent_is_no_hit
