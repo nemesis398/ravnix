@@ -59,8 +59,26 @@ does not exist yet: the deploy (Step 5) and the two jobs on the NAS (Step 6).
    repository's password, both from the maintenance container's secrets.
 4. **The server.** `docker compose up -d`. The NAS's firewall allows the port
    from the LAN and the NetBird range only; the router forwards nothing.
-5. **Verify**, from each host, and record the output in the private flake:
-   - `systemctl --user start ravnix-backup`, then `restic snapshots` on the
+5. **The root-only file, on each host with `secrets = "file"`** (muninn).
+   The two secrets are in a file only root can read, written once from the
+   password manager, without a secret in a command line, the environment
+   or the shell's history:
+
+   ```sh
+   sudo install -d -m 700 /var/lib/ravnix
+   { printf 'repository='; rbw get -- "<passwordItem>"
+     printf 'login='; rbw get -- "<loginItem>"; } |
+     sudo install -m 600 /dev/stdin /var/lib/ravnix/backup-secrets
+   ```
+
+   This is a deliberate exception to secrets from rbw at runtime, the same
+   as the Nix builder's key (`ravnix.nixBuilder.sshKey`): the backup runs
+   unattended while rbw is locked, so the secrets have to be on disk. The
+   system unit `ravnix-backup` hands the file to the run alone, as a
+   systemd credential; `ravnix.backup.nas.secretsFile` has the rest.
+6. **Verify**, from each host, and record the output in the private flake:
+   - `systemctl --user start ravnix-backup` (with rbw) or `sudo systemctl
+     start ravnix-backup` (with the file), then `restic snapshots` on the
      NAS shows the host's snapshot with its `host` name;
    - a forget is refused: with the host's login,
      `restic -r REPOSITORY forget SNAPSHOT` fails (the server answers 403),
@@ -70,7 +88,7 @@ does not exist yet: the deploy (Step 5) and the two jobs on the NAS (Step 6).
 
    `tests/common/backup.nix` shows all three against a rest-server with the
    compose file's flags, in the sandbox; the deploy shows them on the NAS.
-6. **Before the job's first run for a host**, look in the Internxt
+7. **Before the job's first run for a host**, look in the Internxt
    repository for snapshots under its name: `restic -r INTERNXT snapshots
    --host HOST`. None: the ledger starts empty. Some, as an older setup
    that backed machines up to Internxt directly, which ravnix replaces,
@@ -216,11 +234,12 @@ into it, or start fresh.
   `--host` too. A forget without it, from the estate's existing restic job,
   would apply that job's policy to huginn's and muninn's snapshots. Check
   the existing jobs' commands before the first copy.
-- **A locked vault means no backup.** The host's run reads both secrets
-  through rbw, so it fails with status 75 while the vault is locked and
-  tries again every 30 minutes. On muninn the vault locks 12 hours after
-  each unlock (`ravnix.rbw.lockAfter`), so muninn backs up only on days
-  someone runs `ai-unlock` there. The alarm above shows it.
+- **A locked vault means no backup, where the secrets come from rbw.** A
+  host with `ravnix.backup.nas.secrets = "rbw"` (the laptop) fails with
+  status 75 while its vault is locked and tries again every 30 minutes.
+  The server cannot wait for that: its vault locks 12 hours after each
+  unlock (`ravnix.rbw.lockAfter`). So muninn uses `secrets = "file"`, the
+  root-only file below, and backs up every day.
 - **Plain HTTP on the LAN.** The data is encrypted by restic, and the logins
   open only append-only repositories, but a login can be read on the LAN.
   rest-server takes `--tls` with a certificate if that matters.
