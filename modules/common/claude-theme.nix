@@ -19,11 +19,14 @@
 #     Code cannot give the selected text Crust (Text on the accent measures
 #     about 1.4 to 1).
 #
-# An exception (docs/style.md, rule 9): the eight colors Claude Code gives
-# its subagents (red, blue, green, yellow, purple, orange, pink, cyan) tell
-# one subagent from another, so each is a hue of the palette, not a state and
-# not the accent; Mauve is left out of them (it is the default accent) and the
-# purple one is Lavender.
+# An exception (docs/style.md, rule 9, decided by the maintainer on
+# 2026-11-15): the eight colors Claude Code gives its subagents (red, blue,
+# green, yellow, purple, orange, pink, cyan) keep their own hues, so a "red"
+# agent is Red and an "orange" one Peach. That color is a name the user picks
+# for an agent, which labels who it is and says nothing about its state, so it
+# is neither a state nor the accent. The palette's hue stands in for each
+# name; Mauve is left out (it is the default accent) and "purple" is Lavender.
+# professionalBlue and chromeYellow follow the same reading.
 #
 # The slots are the tokens of the dark base theme in Claude Code 2.1.319, and
 # Claude Code drops a name its base theme lacks, so a token it renames falls
@@ -101,7 +104,7 @@ let
     memoryBackgroundColor = roles.wash;
     rate_limit_empty = roles.wash;
 
-    # The exception: one hue for each subagent.
+    # The exception above: the hue a subagent's name says, whatever its state.
     red_FOR_SUBAGENTS_ONLY = palette.red;
     blue_FOR_SUBAGENTS_ONLY = palette.blue;
     green_FOR_SUBAGENTS_ONLY = palette.green;

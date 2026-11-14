@@ -70,7 +70,7 @@ let
       let
         bare = lib.filter (w: lib.elem w ansi) (lib.splitString " " (toString d.${k}));
       in
-      lib.optional (bare != [ ]) "${k} still names an ANSI colour: ${toString d.${k}}"
+      lib.optional (bare != [ ]) "${k} still names an ANSI color: ${toString d.${k}}"
     ) (lib.filter (k: lib.hasSuffix "-style" k) (lib.attrNames d))
     # The hunk's position and the file name are not delta's default Blue.
     ++ lib.optional (

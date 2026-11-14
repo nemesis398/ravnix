@@ -1,7 +1,7 @@
-# Colour arithmetic for the modules that turn the roles into another tool's
-# file. A tool that takes a colour in a form the roles do not come in (a
+# Color arithmetic for the modules that turn the roles into another tool's
+# file. A tool that takes a color in a form the roles do not come in (a
 # 0-255 triple, an escape) or that needs a wash of a state hue over the
-# canvas (a diff line) calls these, so no module writes a hex colour and the
+# canvas (a diff line) calls these, so no module writes a hex color and the
 # user's accent still reaches every file.
 #
 #   lib = import ../theme/color.nix { inherit lib; };

@@ -2,7 +2,7 @@
 # (blue, green, yellow, cyan, magenta, white, grey, red) and no accent, so the
 # colors that mean something else are out: Red is failure and a command is not
 # an error, Green is success, Yellow pending and Blue busy. A command is Teal
-# (cyan), a placeholder is underlined, not coloured, and the rest is the
+# (cyan), a placeholder is underlined, not colored, and the rest is the
 # terminal's own Text.
 {
   self,
