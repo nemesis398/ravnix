@@ -3,7 +3,8 @@
 # dictionary or a word list in a file changes (Handy's settings store, the
 # prose skill's dictionary), and by a timer every 15 minutes for what no
 # file shows: LanguageTool's list in the cloud, and a change that came while
-# a sync ran (systemd merges a start into the one that runs).
+# a sync ran (systemd merges a start into the one that runs). It syncs only
+# after a first sync by hand has finished: the first merge is the user's.
 #
 # A sync that writes a list changes the file it watches, and the path unit
 # starts one more sync, which finds every list in step and writes nothing.
@@ -26,10 +27,19 @@ in
     systemd.user.services.${name} = {
       Unit = {
         Description = "Sync the dictionary with the tools' word lists (ravnix-dict)";
-        # No checkout of the private flake yet (a fresh install, a VM test):
-        # nothing to sync, and no failure. ravnix-dict itself refuses a
-        # missing dictionary, which by hand is the right answer.
-        ConditionPathExists = cfg.file;
+        # Both must be there, or the run is skipped, which is no failure:
+        #  - the dictionary: no checkout of the private flake yet (a fresh
+        #    install, a VM test) is nothing to sync. ravnix-dict itself
+        #    refuses a missing dictionary, which by hand is the right answer;
+        #  - the known list of a finished sync: the first merge, which takes
+        #    every tool's words into the dictionary and gives every tool the
+        #    rest, is a `ravnix-dict sync` by hand, after the junk is struck
+        #    (tools/ravnix-dict/README.md, "The first sync"). Until then the
+        #    watcher writes nothing to any tool.
+        ConditionPathExists = [
+          cfg.file
+          "${config.xdg.stateHome}/ravnix-dict/known"
+        ];
       };
       Service = {
         Type = "oneshot";

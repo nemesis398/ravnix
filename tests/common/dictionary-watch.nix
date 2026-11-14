@@ -2,7 +2,8 @@
 # (modules/common/dictionary.nix), as home-manager evaluates them: the
 # service runs the wrapper's sync with home-manager's state directory, the
 # path unit watches the dictionary and the list of every adapter that has a
-# file, the timer covers the cloud, and ravnix.dictionary.watch = false
+# file, the timer covers the cloud, nothing runs before a first sync by hand
+# (the first merge), and ravnix.dictionary.watch = false
 # leaves all three out. Which adapters a host gets: the prose skill's
 # everywhere, LanguageTool's on the laptop shape, Handy's where the desktop
 # installs Handy (checked on a whole laptop host, through the forwarding).
@@ -79,9 +80,17 @@ let
     ++ lib.optional (
       service plain != { } && lib.toList (service plain).Service.Type != [ "oneshot" ]
     ) "the service is no oneshot"
+    # The first merge is a sync by hand: until one has finished (the
+    # state's known list), the service syncs nothing, on a fresh machine as
+    # after a switch that brings the watcher.
     ++ lib.optional (
-      lib.toList ((service plain).Unit.ConditionPathExists or null) != [ file ]
-    ) "the service runs without a dictionary, and fails"
+      lib.toList ((service plain).Unit.ConditionPathExists or null) != [
+        file
+        "${plain.xdg.stateHome}/ravnix-dict/known"
+      ]
+    ) "the service runs without a dictionary or before a first sync by hand: ${
+      builtins.toJSON ((service plain).Unit.ConditionPathExists or null)
+    }"
     ++ lib.optional (
       (path plain).Path.PathChanged or null != [
         file
@@ -151,6 +160,8 @@ pkgs.runCommand "common-dictionary-watch" { nativeBuildInputs = [ pkgs.gnugrep ]
       RAVNIX_DICT_FILE="$PWD/dict.txt" RAVNIX_DICT_PROSE_FILE="$PWD/prose/dictionary.txt" \
         ${wrapper plain} sync >out 2>err || fail "sync failed: $(cat err)"
       grep -qx 'Open WebUI' prose/dictionary.txt || fail "the prose dictionary: $(cat prose/dictionary.txt)"
+      # That sync by hand is what the service's condition waits for.
+      [ -e "$HOME/.local/state/ravnix-dict/known" ] || fail "a sync leaves no known list, so the watcher would never start"
       touch "$out"
     ''
 )

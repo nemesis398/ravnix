@@ -39,6 +39,14 @@ in
         dictionary or a tool's word list changes, and every 15 minutes for
         the lists no file shows (LanguageTool's). Without it, the tools get
         the dictionary's words when you run `ravnix-dict sync` yourself.
+
+        The service waits for a first sync by hand on each host: the first
+        merge takes every tool's words into the dictionary and gives every
+        tool all of them, so look at the tools' lists first. For each word
+        you do not want anywhere, run `ravnix-dict add WORD` and then
+        `ravnix-dict remove WORD`, which records the removal, so the first
+        sync takes it out of every tool instead of taking it in. Then run
+        `ravnix-dict sync` once. ravnix-dict has no preview of its own.
       '';
     };
 

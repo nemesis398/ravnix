@@ -356,6 +356,27 @@ dictionary at the configured path the service does not run.
 A sync that writes a list changes a file the path unit watches, which starts
 one more sync; that one finds every list in step and writes nothing.
 
+### The first sync
+
+The service runs only once a sync has finished on the host (its condition
+is `STATE/known`, which every finished sync writes), so the watcher never
+makes the first merge. That merge takes every tool's words into the
+dictionary and gives every tool all of them, the junk of any one tool
+included, so it is done by hand, after a look at the lists:
+
+```sh
+# For each word that should be in no tool: record its removal first,
+# so the first sync takes it out of the tools instead of taking it in.
+ravnix-dict add WORD && ravnix-dict remove WORD
+# Then the first merge; from now on the watcher keeps the lists in step.
+ravnix-dict sync
+```
+
+ravnix-dict prints no preview of its own; `ravnix-dict list` is the
+dictionary, and each tool shows its own list. On a host that syncs
+LanguageTool, open the vault first (`rbw unlock`), or the first sync skips
+it and the timer makes the first merge with it later.
+
 ## Tests and bench
 
 `ravnix-dict-tests` runs `tests/`: the format (`dict_test.odin`: round

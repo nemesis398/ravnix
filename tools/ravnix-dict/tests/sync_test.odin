@@ -592,3 +592,25 @@ sync_tells_the_adapters_where_the_state_is :: proc(t: ^testing.T) {
 	sync_ok(f)
 	testing.expect_value(t, tools.state_dir, f.state)
 }
+
+@(test)
+a_word_struck_before_the_first_sync_never_comes_in :: proc(t: ^testing.T) {
+	// The first merge (README.md, "The first sync"): add and remove a word
+	// a tool has, and the first sync takes it out instead of taking it in.
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, f.file, "keep\n")
+	set(ALPHA, "keep", "junk", "new")
+	set(BETA, "Junk")
+	set(GAMMA)
+	testing.expect_value(t, run(f, nil, "add", "junk").code, 0)
+	testing.expect_value(t, run(f, nil, "remove", "junk").code, 0)
+	testing.expect(t, !os.exists(join(f, "state", "known")))
+	sync_ok(f)
+	testing.expect_value(t, read_file(f, f.file), "keep\nnew\n")
+	testing.expect_value(t, joined(f, ALPHA), "keep,new")
+	testing.expect_value(t, joined(f, BETA), "keep,new")
+	testing.expect_value(t, joined(f, GAMMA), "keep,new")
+	// And the sync by hand leaves what the watcher waits for.
+	testing.expect(t, os.exists(join(f, "state", "known")))
+}
