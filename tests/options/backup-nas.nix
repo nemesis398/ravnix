@@ -96,6 +96,21 @@ let
     "a host named like the NAS" = {
       host = "nas";
     };
+    "secrets from somewhere else" = {
+      secrets = "pass";
+    };
+    "a relative secrets file" = {
+      secrets = "file";
+      secretsFile = "backup-secrets";
+    };
+    "a secrets file in the store, which every user can read" = {
+      secrets = "file";
+      secretsFile = "/nix/store/0000000000000000000000000000000-backup-secrets";
+    };
+    "a secrets file with a space" = {
+      secrets = "file";
+      secretsFile = "/var/lib/ravnix/backup secrets";
+    };
     "a host with a leading dash" = {
       host = "-huginn";
     };
@@ -151,6 +166,13 @@ let
     "the defaults" = { };
     "the other ravnix host" = {
       host = "muninn";
+    };
+    "the root-only file at its default" = {
+      secrets = "file";
+    };
+    "the root-only file elsewhere" = {
+      secrets = "file";
+      secretsFile = "/etc/ravnix/backup-secrets";
     };
     "a host that is in no registry" = {
       host = "box-2";

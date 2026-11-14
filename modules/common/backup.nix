@@ -19,8 +19,9 @@
 # keep, the paths taken back from inside an exclude (./backup-excludes.nix
 # says why that is an option of its own and how the patterns are made).
 #
-# The secrets. Both are items of the vault, read by rbw at each run, and in
-# no file, unit or store path:
+# The secrets, with ravnix.backup.nas.secrets = "rbw" (the default). Both
+# are items of the vault, read by rbw at each run, and in no file, unit or
+# store path:
 #   - the repository password, which opens every snapshot: restic asks for it
 #     through --password-command, a script that runs `rbw get`, so it goes
 #     from rbw to restic through a pipe and is in no environment;
@@ -36,107 +37,74 @@
 # next ai-unlock; exit 3, restic's "snapshot saved, but some files could not
 # be read", is not retried, since a retry would read the same files again.
 #
-# restic runs by the name `restic`, from PATH, so its command line starts
-# with `restic ` and idle-suspend sees it (packages/energy, `pgrep -f
-# '^restic '`) and does not suspend the laptop under it.
+# With ravnix.backup.nas.secrets = "file", for a host that backs up
+# unattended, the NixOS side runs the backup instead, as a system unit
+# (./backup-system.nix), and this module adds no unit, no timer and no
+# program; it still checks the paths.
 {
   config,
   lib,
   pkgs,
   ...
-}:
+}@args:
 let
   cfg = config.ravnix.backup.nas;
-  home = config.home.homeDirectory;
   rbw = lib.getExe' config.programs.rbw.package "rbw";
-
-  # ~/.cache goes through the same builder, so a glob character in the
-  # home is escaped there too, but as what is left out always: keep cannot
-  # take a path back from it.
-  excludes = import ./backup-excludes.nix { inherit lib; } {
-    inherit home;
-    inherit (cfg) paths exclude keep;
-    always = [ "~/.cache" ];
+  script = import ./backup-script.nix { inherit lib pkgs; } {
+    inherit cfg rbw;
+    home = config.home.homeDirectory;
   };
-  expand =
-    p:
-    if p == "~" then
-      home
-    else if lib.hasPrefix "~/" p then
-      home + lib.removePrefix "~" p
-    else
-      p;
-
-  # restic splits the command on blanks; a store path has none.
-  password = pkgs.writeShellScript "ravnix-backup-password" ''
-    exec ${rbw} get -- ${lib.escapeShellArg cfg.passwordItem}
-  '';
-
-  backup = pkgs.writeShellApplication {
-    name = "ravnix-backup";
-    runtimeInputs = [
-      pkgs.restic
-      pkgs.coreutils
-    ];
-    text = ''
-      ${import ../workbench/unlocked.nix {
-        inherit rbw;
-        what = "the backup's login";
-      }}
-      item=${lib.escapeShellArg cfg.loginItem}
-      login=$(${rbw} get -- "$item") || {
-        echo "rbw could not read the password of the item $item" >&2
-        exit 1
-      }
-      if [ -z "$login" ]; then
-        echo "the item $item has no password: the host's login at the rest-server" >&2
-        exit 1
-      fi
-      export RESTIC_REPOSITORY=${lib.escapeShellArg cfg.repository}
-      export RESTIC_PASSWORD_COMMAND=${password}
-      RESTIC_REST_USERNAME=${lib.escapeShellArg cfg.host} RESTIC_REST_PASSWORD=$login \
-        restic backup --host ${lib.escapeShellArg cfg.host} --exclude-caches \
-          ${lib.escapeShellArgs (map (p: "--exclude=${p}") excludes.patterns)} \
-          -- ${lib.escapeShellArgs (map expand cfg.paths)}
-    '';
-  };
+  backup = script.package;
+  onNixos = (args.osConfig or null) != null;
 in
 {
-  config = lib.mkIf (cfg != null) {
-    assertions = map (message: {
-      assertion = false;
-      inherit message;
-    }) excludes.problems;
+  config = lib.mkIf (cfg != null) (
+    lib.mkMerge [
+      {
+        assertions =
+          map (message: {
+            assertion = false;
+            inherit message;
+          }) script.problems
+          ++ [
+            {
+              assertion = cfg.secrets != "file" || onNixos;
+              message = "ravnix.backup.nas.secrets is \"file\", which needs a system unit to hand the root-only file over: use nixosModules.common, not home-manager alone.";
+            }
+          ];
+      }
+      (lib.mkIf (cfg.secrets == "rbw") {
+        # For a run by hand: `ravnix-backup`, or `systemctl --user start
+        # ravnix-backup` to have it in the journal.
+        home.packages = [ backup ];
 
-    # For a run by hand: `ravnix-backup`, or `systemctl --user start
-    # ravnix-backup` to have it in the journal.
-    home.packages = [ backup ];
-
-    systemd.user.services.ravnix-backup = {
-      Unit = {
-        # No path in it: systemd would read a % in one as a specifier.
-        Description = "Backup of the home to the NAS (restic)";
-        # A switch must not start a backup by restarting the unit.
-        X-SwitchMethod = "keep-old";
-      };
-      Service = {
-        Type = "oneshot";
-        ExecStart = lib.getExe backup;
-        Restart = "on-failure";
-        RestartSec = "30min";
-        RestartPreventExitStatus = "3";
-        Nice = 10;
-        IOSchedulingClass = "idle";
-      };
-    };
-    systemd.user.timers.ravnix-backup = {
-      Unit.Description = "Backup of the home to the NAS, on its calendar";
-      Timer = {
-        OnCalendar = cfg.onCalendar;
-        Persistent = true;
-        RandomizedDelaySec = "10min";
-      };
-      Install.WantedBy = [ "timers.target" ];
-    };
-  };
+        systemd.user.services.ravnix-backup = {
+          Unit = {
+            # No path in it: systemd would read a % in one as a specifier.
+            Description = "Backup of the home to the NAS (restic)";
+            # A switch must not start a backup by restarting the unit.
+            X-SwitchMethod = "keep-old";
+          };
+          Service = {
+            Type = "oneshot";
+            ExecStart = lib.getExe backup;
+            Restart = "on-failure";
+            RestartSec = "30min";
+            RestartPreventExitStatus = "3";
+            Nice = 10;
+            IOSchedulingClass = "idle";
+          };
+        };
+        systemd.user.timers.ravnix-backup = {
+          Unit.Description = "Backup of the home to the NAS, on its calendar";
+          Timer = {
+            OnCalendar = cfg.onCalendar;
+            Persistent = true;
+            RandomizedDelaySec = "10min";
+          };
+          Install.WantedBy = [ "timers.target" ];
+        };
+      })
+    ]
+  );
 }

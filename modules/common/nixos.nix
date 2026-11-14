@@ -105,6 +105,9 @@ in
     self.inputs.home-manager.nixosModules.home-manager
     self.nixosModules.options
     self.nixosModules.theme
+    # The backup from the root-only file (ravnix.backup.nas.secrets =
+    # "file"), a system unit; the one from rbw is home-manager's.
+    ./backup-system.nix
   ];
 
   # Read-only pkgs declares nixpkgs.overlays as an option that no module may

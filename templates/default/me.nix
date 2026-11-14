@@ -535,6 +535,11 @@
     #     exclude = [ "~/Nextcloud" "~/Git" ];
     #     keep = [ "~/Nextcloud/notes" ];
     #     onCalendar = "daily";
+    #     # Where the two secrets come from: "rbw" (the vault, only while
+    #     # it is unlocked), or "file", a root-only file written once from
+    #     # the vault, for a server that backs up unattended; secretsFile
+    #     # says how to write it.
+    #     secrets = "rbw";
     #   };
     backup.nas = {
       _type = "override";

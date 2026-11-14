@@ -167,6 +167,56 @@ let
         '';
       };
 
+      secrets = mkOption {
+        type = types.enum [
+          "rbw"
+          "file"
+        ];
+        default = "rbw";
+        description = ''
+          Where the run reads its two secrets, the repository password and
+          the rest-server login. `rbw`: from passwordItem and loginItem at
+          each run, so the backup runs only while the vault is unlocked (a
+          user unit). `file`: from secretsFile, a file only root can read
+          (a system unit that runs as the user), so the backup runs every
+          day, unattended, as on a server whose vault is locked.
+        '';
+      };
+
+      secretsFile = mkOption {
+        # A string, not a path: a path would copy the secrets into the
+        # store. No whitespace, as with the Nix builder's key.
+        type = types.strMatching "/[^[:space:]]+";
+        default = "/var/lib/ravnix/backup-secrets";
+        description = ''
+          With secrets = "file": the file with the two secrets, mode 0600 and
+          owned by root, outside the Nix store, two lines,
+          `repository=<the repository password>` and `login=<the
+          rest-server login's password>`. ravnix does not write it: write it
+          once by hand from the password manager, as root, without a secret
+          in a command line, the environment or the shell's history:
+
+          ```sh
+          sudo install -d -m 700 /var/lib/ravnix
+          { printf 'repository='; rbw get -- "<passwordItem>"
+            printf 'login='; rbw get -- "<loginItem>"; } |
+            sudo install -m 600 /dev/stdin /var/lib/ravnix/backup-secrets
+          ```
+
+          and again when either secret changes. systemd hands it to the run
+          alone, as a credential; the user's own processes cannot read it.
+          A host without the file makes no backup, and its unit fails and
+          says so.
+
+          This is a deliberate exception to "secrets come from the password
+          manager at runtime through rbw", the same as the Nix builder's key
+          (ravnix.nixBuilder.sshKey): the backup runs unattended, for
+          example on muninn while rbw is locked, so the secrets have to be
+          on disk. Whoever is root on the host can read them, and with them
+          add to the host's repository and read it, not delete from it.
+        '';
+      };
+
       passwordItem = mkOption {
         type = types.strMatching "[^\n]+";
         example = "Restic - huginn repository";
@@ -281,6 +331,10 @@ in
       }) problems
     )
     ++ lib.optionals (backup != null) [
+      {
+        assertion = backup.secrets != "file" || !lib.hasPrefix "${builtins.storeDir}/" backup.secretsFile;
+        message = "ravnix.backup.nas.secretsFile is \"${backup.secretsFile}\", in the Nix store, which every user of the host can read. Point it at a file only root can read.";
+      }
       {
         assertion = server != null && server.enable;
         message = "${noServer}.";

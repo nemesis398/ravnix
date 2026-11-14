@@ -25,11 +25,22 @@
 #   host's login cannot forget it, and cannot read another host's
 #   repository; with the vault locked the run exits 75 and starts no
 #   restic; with a login item without a password it says so.
+#
+# With ravnix.backup.nas.secrets = "file" (the root-only file, for a host
+# that backs up unattended): on NixOS a system unit and timer that run the
+# backup as the user and hand it the file through LoadCredential, assert the
+# file's path, and no user unit, no rbw and no secret anywhere in the unit
+# or the script; home-manager alone refuses the choice. The same script,
+# run against the same rest-server with $CREDENTIALS_DIRECTORY as systemd
+# sets it, makes a snapshot and asks rbw nothing; without the credential,
+# with it unreadable, or without one of its two lines, it fails with one
+# line.
 {
   self,
   inputs,
   pkgs,
   lib,
+  system,
   ...
 }:
 let
@@ -111,6 +122,32 @@ let
   # home-manager refuses a configuration whose assertions fail, as a host
   # build does; the message is the one problemsOf gives, checked below.
   refused = value: !(builtins.tryEval (builtins.seq (configWith value).home.packages true)).success;
+
+  # The host as NixOS builds it, with the secrets in the root-only file.
+  hostModules = import ../flake/helpers/host-modules.nix { inherit lib; };
+  user = (import ../../templates/default/me.nix).ravnix.user.username;
+  nixosWith =
+    value:
+    (inputs.nixpkgs.lib.nixosSystem {
+      inherit system;
+      modules = hostModules ++ [
+        self.nixosModules.common
+        registered
+        {
+          networking.hostName = "huginn";
+          users.users.${user}.home = lib.mkForce home;
+          ravnix.backup.nas = lib.mkForce value;
+        }
+      ];
+    }).config;
+  secretsFile = "/var/lib/ravnix/backup-secrets";
+  fileOs = nixosWith (nas // { secrets = "file"; });
+  rbwOs = nixosWith nas;
+  fileUnit = fileOs.systemd.services.ravnix-backup or null;
+  fileTimer = fileOs.systemd.timers.ravnix-backup or null;
+  fileHome = fileOs.home-manager.users.${user};
+  fileScript = fileUnit.serviceConfig.ExecStart or "";
+  envOf = unit: toString (unit.serviceConfig.Environment or [ ]) + toString (lib.attrValues (unit.environment or { }));
 
   service = on.systemd.user.services.ravnix-backup;
   timer = on.systemd.user.timers.ravnix-backup;
@@ -401,7 +438,34 @@ let
     ++ lib.optional (lib.hasInfix "--field" script) "the script reads the login's user name from the item"
     ++ lib.optional (
       !lib.hasInfix "RESTIC_REST_USERNAME=huginn" script
-    ) "the login's user is not the host name";
+    ) "the login's user is not the host name"
+    # The root-only file.
+    ++ lib.optional (!refused (nas // { secrets = "file"; })) "home-manager alone takes secrets = \"file\", which needs a system unit"
+    ++ lib.optional (rbwOs.systemd.services ? ravnix-backup) "with rbw there is a system unit as well"
+    ++ lib.optional (fileUnit == null) "with the file there is no system unit"
+    ++ lib.optional (fileTimer == null) "with the file there is no system timer"
+    ++ lib.optional (
+      fileHome.systemd.user.services ? ravnix-backup || fileHome.systemd.user.timers ? ravnix-backup
+    ) "with the file the user unit or timer is still there"
+    ++ lib.optional (lib.any (p: (p.name or "") == "ravnix-backup") fileHome.home.packages) "with the file ravnix-backup is on the user's PATH, where it cannot read the file"
+    ++ lib.optionals (fileUnit != null) (
+      lib.optional (fileUnit.serviceConfig.User or null != user) "the system unit does not run as ${user}"
+      ++ lib.optional (
+        fileUnit.serviceConfig.LoadCredential or null != [ "ravnix-backup:${secretsFile}" ]
+      ) "the system unit does not load ${secretsFile} as the credential ravnix-backup: ${builtins.toJSON (fileUnit.serviceConfig.LoadCredential or null)}"
+      ++ lib.optional (
+        fileUnit.unitConfig.AssertPathExists or null != secretsFile
+      ) "the system unit does not assert that ${secretsFile} exists"
+      ++ lib.optional (fileUnit.serviceConfig.Type or null != "oneshot") "the system unit is not a oneshot"
+      ++ lib.optional (fileUnit.serviceConfig.Restart or null != "on-failure") "the system unit does not try again"
+      ++ lib.optional (fileUnit.serviceConfig.RestartPreventExitStatus or null != "3") "the system unit retries restic's exit 3"
+      ++ lib.optional (lib.hasInfix "PASSWORD" (envOf fileUnit)) "the system unit's environment names a password"
+    )
+    ++ lib.optionals (fileTimer != null) (
+      lib.optional (fileTimer.timerConfig.OnCalendar or null != "daily") "the system timer is not daily"
+      ++ lib.optional (!(fileTimer.timerConfig.Persistent or false)) "the system timer does not make up a missed run"
+      ++ lib.optional (fileTimer.wantedBy or [ ] != [ "timers.target" ]) "the system timer is not started"
+    );
 in
 pkgs.runCommand "common-backup"
   {
@@ -519,6 +583,38 @@ pkgs.runCommand "common-backup"
         # rbw was asked for the items by name, and the repository password
         # through --password-command.
         grep -qx 'rbw get -- Restic - huginn repository' "$FAKE_RBW_LOG" || fail "the repository password did not come from rbw"
+        # The root-only file, as systemd hands it over: $CREDENTIALS_DIRECTORY
+        # with the credential ravnix-backup in it.
+        fileScript=${fileScript}
+        [ -x "$fileScript" ] || fail "the system unit's ExecStart is not a program: $fileScript"
+        if grep -q rbw "$fileScript"; then fail "the file's script runs rbw"; fi
+        rbw_calls=$(wc -l <"$FAKE_RBW_LOG")
+        creds=${build}/credentials
+        mkdir -p "$creds"
+        printf 'repository=repository-secret\nlogin=login-secret\n' >"$creds/ravnix-backup"
+        CREDENTIALS_DIRECTORY=$creds "$fileScript" || fail "the backup from the file failed: $(cat ${build}/server.log)"
+        [ "$(local_repo snapshots --json | jq length)" = 3 ] || fail "the backup from the file made no snapshot"
+        [ "$(wc -l <"$FAKE_RBW_LOG")" = "$rbw_calls" ] || fail "the backup from the file asked rbw"
+        one_line_failure() { # WHAT, then the command
+          what=$1
+          shift
+          status=0
+          "$@" 2>${build}/file.log || status=$?
+          [ "$status" = 1 ] || fail "$what: exit $status, not 1"
+          [ "$(wc -l <${build}/file.log)" = 1 ] || fail "$what: not one line: $(cat ${build}/file.log)"
+          grep -q ${secretsFile} ${build}/file.log || fail "$what: the line does not name the file: $(cat ${build}/file.log)"
+        }
+        one_line_failure "no credential" env -u CREDENTIALS_DIRECTORY "$fileScript"
+        chmod 000 "$creds/ravnix-backup"
+        one_line_failure "an unreadable credential" env CREDENTIALS_DIRECTORY="$creds" "$fileScript"
+        chmod 600 "$creds/ravnix-backup"
+        printf 'repository=repository-secret\n' >"$creds/ravnix-backup"
+        one_line_failure "a credential without the login" env CREDENTIALS_DIRECTORY="$creds" "$fileScript"
+        printf 'login=login-secret\n' >"$creds/ravnix-backup"
+        one_line_failure "a credential without the repository password" env CREDENTIALS_DIRECTORY="$creds" "$fileScript"
+        [ "$(local_repo snapshots --json | jq length)" = 3 ] || fail "a failed run from the file made a snapshot"
+        [ "$(wc -l <"$FAKE_RBW_LOG")" = "$rbw_calls" ] || fail "a failed run from the file fell back to rbw"
+
         kill "$server"
         touch $out
       ''
