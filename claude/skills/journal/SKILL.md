@@ -107,7 +107,11 @@ House rules, and the `prose` skill is where they live: no em dashes in either
 language, the spaced en dash as the German Gedankenstrich and sparingly, emoji
 only as heading labels, German dates as `09.08.2026` and English as
 `2026-08-09`. A run that reports a backend failure is not a clean run; do it
-again.
+again. One exit 2 is no failure of the text: when the checker names a value
+to set ("set `prose.languagetool.item` in your ravnix skill values"),
+LanguageTool is not set up, so run it again with `--no-lt`. That run is the
+gate then, clean when it reports no error, and say in your reply that
+LanguageTool did not run and which value to set.
 
 ## Writing it
 

@@ -2,7 +2,7 @@
 # (claude/skills/README.md).
 #
 #   import ./claude-skills.nix { inherit lib; }
-#   => { names; requires; renderText; renderSkill; render; }
+#   => { names; requires; steps; renderText; renderSkill; render; }
 #
 # A skill's Markdown names a personal value as {{KEY}}, KEY a dotted path
 # into ravnix.claude.skillValues (`{{user.name}}`). Claude Code reads a
@@ -25,7 +25,9 @@
 # instruction to stop. So the skill still loads, and says what is missing
 # instead of acting on a hole. A skill needs the keys its Markdown names
 # and the ones `requires` lists for it, which its scripts read; those must
-# also be of the type given there.
+# also be of the type given there. A key that `steps` lists stops one step
+# only: the notice then names that step and how to go on without it, and
+# the rest of the skill holds.
 #
 # Only *.md files are rendered. Everything else is copied as it is, and the
 # scripts read their values from skill-values.json themselves.
@@ -45,10 +47,23 @@ let
     ai-memory = {
       "vault.root" = "string";
     };
-    # Premium or say so: check.py never drops to the free tier on its own.
+  };
+
+  # Keys whose absence stops one step of a skill, not the skill: the
+  # rendered SKILL.md names the step, the keys and how to go on without it,
+  # and everything else the skill describes still holds. Typed as in
+  # `requires`. A key the whole skill needs as well still stops it whole.
+  steps = {
+    # LanguageTool Premium or say so: check.py never drops to the free tier
+    # on its own, and --no-lt runs every other check.
     prose = {
-      "prose.languagetool.item" = "string";
-      "prose.languagetool.username" = "string";
+      keys = {
+        "prose.languagetool.item" = "string";
+        "prose.languagetool.username" = "string";
+      };
+      step = "LanguageTool";
+      what = "the second pass of `scripts/check.py`";
+      without = "run the checker with `--no-lt` and say that LanguageTool did not run";
     };
   };
 
@@ -143,6 +158,13 @@ let
     + "> switched again (`ravnix.claude.skillValues` in the private flake):\n"
     + lib.concatMapStrings (k: ">\n> - set `${k}` in your ravnix skill values\n") keys;
 
+  stepNotice =
+    s: keys:
+    "\n> **${s.step} is not set up.** It is ${s.what}. Until it is\n"
+    + "> (`ravnix.claude.skillValues` in the private flake, then switch the home\n"
+    + "> again), ${s.without}. Everything else this skill describes still applies.\n"
+    + lib.concatMapStrings (k: ">\n> - set `${k}` in your ravnix skill values\n") keys;
+
   # One skill: { dir; md = { RELPATH = TEXT; }; missing = [ KEY ]; }
   renderSkill =
     {
@@ -185,14 +207,23 @@ let
       required = lib.filter (k: !(isSet requires.${name}.${k} (lookup values k))) (
         lib.attrNames (requires.${name} or { })
       );
-      missing = lib.unique (lib.concatMap (r: r.missing) rendered ++ required);
+      step = steps.${name} or null;
+      stepMissing =
+        if step == null then
+          [ ]
+        else
+          lib.filter (k: !(isSet step.keys.${k} (lookup values k))) (lib.attrNames step.keys);
+      stops = lib.unique (lib.concatMap (r: r.missing) rendered ++ required);
+      missing = lib.unique (stops ++ stepMissing);
+      notice =
+        if stops != [ ] then
+          stopNotice missing
+        else if stepMissing != [ ] then
+          stepNotice step stepMissing
+        else
+          "";
       md = lib.listToAttrs (
-        map (
-          r:
-          lib.nameValuePair r.path (
-            if r.isSkill && missing != [ ] then r.front + stopNotice missing + r.body else r.front + r.body
-          )
-        ) rendered
+        map (r: lib.nameValuePair r.path (if r.isSkill then r.front + notice + r.body else r.front + r.body)) rendered
       );
     in
     {
@@ -260,6 +291,7 @@ in
   inherit
     names
     requires
+    steps
     renderText
     renderSkill
     render

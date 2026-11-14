@@ -19,8 +19,10 @@ Usage
     check.py --strict                warnings count as failures too
 
 Exit status is 1 when anything fatal was found, 2 when the check could not
-run (a file missing, or LanguageTool Premium not set up: it names the skill
-value to set rather than falling back to the free tier), else 0.
+run (a file missing; LanguageTool Premium not set up, when it names the
+skill value to set; or the configured LanguageTool backend refusing or not
+answering, when it names the backend and the HTTP status; no other backend
+stands in), else 0.
 """
 
 from __future__ import annotations
@@ -841,8 +843,10 @@ MAX_CHUNK = 18000        # under the free-tier ceiling, safe on either plan
 # `prose.languagetool.username` is the account. No file holds either: not
 # either repository and not the disk. The environment (LANGUAGETOOL_API_KEY
 # and LANGUAGETOOL_USERNAME, which ravnix.shell.secretEnv can fill from the
-# same vault) wins. Without them the check stops and names what to set; it
-# never drops to the free tier on its own.
+# same vault) wins. Without them the check stops and names what to set, and
+# a configured backend (Premium, or a self-hosted LANGUAGETOOL_SERVER) that
+# refuses or does not answer stops it too, naming the backend and the HTTP
+# status: no other backend stands in (resolve_backends).
 ITEM_KEY = "prose.languagetool.item"
 USERNAME_KEY = "prose.languagetool.username"
 
@@ -1033,16 +1037,34 @@ def probe(backend: Backend, timeout: int = 12) -> tuple[bool, str]:
                   f"LanguageTool {status.get('version', '?')}, {tier}")
 
 
+class BackendFailed(RuntimeError):
+    """A configured backend did not answer the probe; nothing stands in for it."""
+
+
 def resolve_backends(creds: dict) -> list[Backend]:
-    chain: list[Backend] = []
+    """The one backend a check uses, never a chain to fall down.
+
+    A self-hosted server when one is named (the text stays on it), else
+    Premium with its key and account, else the free cloud, which only a run
+    with neither configured reaches: premium_problems stops a check without
+    the Premium values before that.
+    """
     if creds.get("LANGUAGETOOL_SERVER"):
-        chain.append(Backend(creds["LANGUAGETOOL_SERVER"], "self-hosted"))
+        return [Backend(creds["LANGUAGETOOL_SERVER"], "self-hosted")]
     if creds.get("LANGUAGETOOL_API_KEY") and creds.get("LANGUAGETOOL_USERNAME"):
-        chain.append(Backend(CLOUD_PREMIUM, "premium cloud",
-                             creds["LANGUAGETOOL_USERNAME"],
-                             creds["LANGUAGETOOL_API_KEY"]))
-    chain.append(Backend(CLOUD_FREE, "free cloud"))
-    return chain
+        return [Backend(CLOUD_PREMIUM, "premium cloud",
+                        creds["LANGUAGETOOL_USERNAME"],
+                        creds["LANGUAGETOOL_API_KEY"])]
+    return [Backend(CLOUD_FREE, "free cloud")]
+
+
+def probe_failure(backend: Backend, detail: str) -> str:
+    """One line: the backend, where it is, and the HTTP status or why not."""
+    first = " ".join(detail.split())
+    if first.startswith("HTTP "):
+        status = first.split(".", 1)[0]
+        return f"{backend.label} ({backend.url}) answered {status}"
+    return f"{backend.label} ({backend.url}) is unreachable: {first[:120]}"
 
 
 LT_CODES = {"de": "de-DE", "en": "en-US"}
@@ -1103,6 +1125,9 @@ def run_languagetool(masked: Masked, blocks: list[Block], starts: list[int],
             chosen = backend
             note = f"{backend.label}: {detail}"
             break
+        if backend.url != CLOUD_FREE:
+            # A configured backend: say so and stop, never fall to another.
+            raise BackendFailed(probe_failure(backend, detail))
         note = f"{backend.label} unavailable ({detail})"
     if chosen is None:
         return [], "", note
@@ -1349,12 +1374,14 @@ def main() -> int:
             for line in problems:
                 print(f"  {line}")
             return 2
+        failed = False
         for backend in resolve_backends(creds):
             ok, detail = probe(backend)
+            failed = failed or not ok
             mark = paint("PASS", "note") if ok else paint("FAIL", "error")
             print(f"  {mark}  {backend.label:<14} {backend.url}")
             print(f"        {paint(detail, 'dim')}")
-        return 0
+        return 2 if failed else 0
 
     sources: list[tuple[str, str]] = []
     if args.stdin:
@@ -1383,8 +1410,13 @@ def main() -> int:
     payload = []
     total_err = total_warn = 0
     for name, text in sources:
-        findings, note = check_text(text, args.lang, not args.no_lt, args.picky,
-                                    args.unlock, creds)
+        try:
+            findings, note = check_text(text, args.lang, not args.no_lt, args.picky,
+                                        args.unlock, creds)
+        except BackendFailed as e:
+            print(f"prose: LanguageTool {e}; the check stops rather than use another backend",
+                  file=sys.stderr)
+            return 2
         if args.as_json:
             payload.append({"file": name, "note": note,
                             "findings": [f.as_dict() for f in findings]})

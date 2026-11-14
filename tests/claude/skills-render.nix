@@ -109,6 +109,15 @@ let
     )).success;
 
   skillLib = import ../../lib/claude-skills.nix { inherit lib; };
+  skillMd =
+    name: values:
+    (skillLib.renderSkill {
+      inherit name values;
+      dir = ../../claude/skills + "/${name}";
+      python = "python3";
+      skillsDir = "/s";
+    }).md."SKILL.md";
+  noLanguageTool = lib.recursiveUpdate full { prose.languagetool = { item = ""; username = ""; }; };
   names = skillLib.names ../../claude/skills;
   expected = [
     "ai-memory"
@@ -243,6 +252,37 @@ let
           warned = (eval [ ../../templates/default/me.nix { ravnix.claude.skillValues = full; } ]).config.warnings;
         in
         lib.any (w: lib.hasPrefix "ravnix.claude.skillValues.prose.languagetool.username is " w) warned;
+    }
+    {
+      name = "prose without the LanguageTool values stops LanguageTool only: --no-lt, and the rest holds";
+      ok =
+        let
+          md = skillMd "prose" noLanguageTool;
+        in
+        lib.hasInfix "LanguageTool is not set up" md
+        && lib.hasInfix "--no-lt" md
+        && lib.hasInfix "set `prose.languagetool.item` in your ravnix skill values" md
+        && lib.hasInfix "set `prose.languagetool.username` in your ravnix skill values" md
+        && !(lib.hasInfix "this skill is not set up" md);
+    }
+    {
+      name = "prose without a value its text needs still stops whole, and names the LanguageTool values too";
+      ok =
+        let
+          md = skillMd "prose" (lib.recursiveUpdate noLanguageTool { user.name = ""; });
+        in
+        lib.hasInfix "this skill is not set up" md
+        && lib.hasInfix "set `user.name` in your ravnix skill values" md
+        && lib.hasInfix "set `prose.languagetool.username` in your ravnix skill values" md;
+    }
+    {
+      name = "journal's prose gate passes on --no-lt when LanguageTool is not set up";
+      ok =
+        let
+          md = skillMd "journal" full;
+          gate = lib.elemAt (lib.splitString "## Writing it" (lib.elemAt (lib.splitString "## The prose gate" md) 1)) 0;
+        in
+        lib.hasInfix "--no-lt" gate && lib.hasInfix "in your ravnix skill values" gate;
     }
     {
       name = "a value goes in once: a placeholder inside it stays literal";
@@ -452,6 +492,16 @@ else
       check "on the configured laptop the switch step switches" $?
       awk '/^## Start here/,/^## Which/' ${fullTree}/laptop/SKILL.md | rg -q 'hostname' && rc=0 || rc=$?
       check "the laptop skill's first steps check the host" $rc
+
+      # journal's prose gate without the LanguageTool values: the check names
+      # them and stops, and --no-lt passes a clean note.
+      printf 'A plain sentence, nothing more.\n' > "$TMPDIR/note.md"
+      got=$(RAVNIX_SKILL_VALUES=$TMPDIR/none.json python3 -B ${fullTree}/prose/scripts/check.py "$TMPDIR/note.md" 2>&1) && rc=0 || rc=$?
+      [ "$rc" = 2 ] && printf '%s\n' "$got" | grep -qF 'set `prose.languagetool.username` in your ravnix skill values'
+      check "without the LanguageTool values the checker names them and exits 2" $?
+      RAVNIX_SKILL_VALUES=$TMPDIR/none.json python3 -B ${fullTree}/prose/scripts/check.py --no-lt "$TMPDIR/note.md" >/dev/null 2>&1 && rc=0 || rc=$?
+      [ "$rc" = 0 ]
+      check "and with --no-lt a clean note passes the gate" $?
 
       [ "$status" = 0 ] || exit 1
       touch "$out"

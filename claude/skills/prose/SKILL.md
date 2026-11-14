@@ -44,6 +44,12 @@ Useful flags: `--no-lt` skips the network and runs the deterministic pass only,
 be correct in front of other people, `--json` for parsing, `--stdin` for text
 that is not in a file yet, `--selftest` to see which backend answers.
 
+Exit 2 means the check did not run, never that the text is clean. When it
+names a value to set, LanguageTool is not set up: run again with `--no-lt`,
+which still checks everything else, and say that LanguageTool did not run.
+When it names a backend and an HTTP status, the configured LanguageTool
+refused or did not answer: say so; no other backend stands in for it.
+
 `--json` prints one object per file, with that file's findings nested under
 `findings`. Flatten it with
 `[x for f in json.load(sys.stdin) for x in f['findings']]` and index

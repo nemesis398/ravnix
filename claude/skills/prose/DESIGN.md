@@ -83,9 +83,8 @@ assuming them the other way produces confidently wrong output.
 
 **The premium key works.** The consumer Premium key authenticates against
 `api.languagetoolplus.com` with no support request, despite LanguageTool's own
-docs implying otherwise. It lives in Bitwarden as `LanguageTool - API token` and
-reaches the checker through `~/.config/ai-secrets.env`, the loader that already
-carries API tokens.
+docs implying otherwise. It lives in a password manager and reaches the checker
+through the environment or rbw.
 
 **Premium needed three filters before it was usable.** More findings turned out
 not to mean better findings:

@@ -33,7 +33,10 @@ says how), and reaches the skill two ways:
 **A key that is not set stops the skill.** The rendered `SKILL.md` then
 opens with an instruction to stop and one line per key, "set `KEY` in your
 ravnix skill values", and a script that needs the key exits 2 with the same
-sentence. A hook whose key is missing stays quiet.
+sentence. A hook whose key is missing stays quiet. A key that only one step
+of a skill needs stops that step alone (`steps` in `lib/claude-skills.nix`):
+the notice names the step and how to go on without it, and the rest of the
+skill holds. `prose`'s LanguageTool values are such keys.
 
 | Key | Type | Used by | What it is |
 | --- | --- | --- | --- |
@@ -78,14 +81,20 @@ before these skills, so the path is the one it writes. The
 `dictionary.txt` beside the skill holds no words and is read only when that
 file does not exist.
 
-`prose` runs LanguageTool Premium or says why not. Without
-`prose.languagetool.item` and `prose.languagetool.username` (or
-`LANGUAGETOOL_API_KEY` and `LANGUAGETOOL_USERNAME` in the environment, or a
-self-hosted `LANGUAGETOOL_SERVER`) its checker exits 2 naming the values,
-and with them set but the key out of reach (a locked vault) it exits 2
-saying so; it never drops to the free tier on its own. `--no-lt` runs the
-other checks alone. A placeholder left in either value, such as
-`alice@example.org`, warns at build like any other.
+`prose` runs one LanguageTool backend, the one configured, or says why not.
+A self-hosted `LANGUAGETOOL_SERVER` is used alone, so the text stays on it;
+else Premium, with `prose.languagetool.item` and
+`prose.languagetool.username` (or `LANGUAGETOOL_API_KEY` and
+`LANGUAGETOOL_USERNAME` in the environment). Without those values the
+checker exits 2 naming them; with them set but the key out of reach (a
+locked vault) it exits 2 saying so; and when the configured backend refuses
+or does not answer (HTTP 401, any HTTP error, unreachable) it exits 2 with
+one line naming the backend and the status. No other backend stands in for
+a configured one; the free cloud is used only when neither is configured,
+which a check reaches only without the Premium values, and those stop it
+first. `--no-lt` runs the other checks alone, and the rest of the house
+style holds without LanguageTool. A placeholder left in either value, such
+as `alice@example.org`, warns at build like any other.
 
 `vault.commitVia` and `vault.repositoryHere` are set by ravnix itself, by the
 host's shape (`modules/glue/vault.nix`). The vault skills commit with
@@ -171,8 +180,8 @@ wired, a skill replaced and one left out.
   never from a file, and its account from `prose.languagetool.username`: the
   keyring and the plaintext credentials file
   (`~/.config/languagetool/credentials`) are retired on purpose, and with
-  them `--store-key`. A missing value stops the check instead of falling
-  back to the free tier.
+  them `--store-key`. A missing value, or a configured backend that refuses
+  or does not answer, stops the check instead of falling to another backend.
 - `prose`'s list of accepted words is cut to tool names that any user meets;
   the rest is the user's, in `prose.ignoreWords` or the user's dictionary.
 - `journal` and the handoff advisor count `vault-commit` as a commit, and

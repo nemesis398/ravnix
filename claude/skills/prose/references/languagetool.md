@@ -5,23 +5,31 @@ independently: it catches comma placement and agreement inside long German
 sentences, which is exactly the class of error a language model is worst at
 spotting in its own output.
 
-## Backend chain
+## Backend
 
-The script tries these in order and uses the first that answers, so it keeps
-working whatever the account allows on a given day.
+The script uses one backend, the one configured, and never falls to
+another: a backend standing in silently would turn a refused login into a
+run that reads as clean.
 
-1. **Self-hosted**, if `LANGUAGETOOL_SERVER` is set and reachable. No text
-   leaves the machine and there are no rate limits. It runs the open source
-   rules only, so the premium rules are not available this way.
-2. **Premium cloud**, if `LANGUAGETOOL_USERNAME` and `LANGUAGETOOL_API_KEY` are
-   both set. `https://api.languagetoolplus.com`.
-3. **Free cloud**, `https://api.languagetool.org`, no account. Only behind
-   one of the two above: the checker never starts on it. Without a server
-   and without the Premium values it exits 2 and names the values to set.
-4. **hunspell**, if nothing above answers. English spelling only, and the
-   output says so rather than implying a grammar check happened.
+1. **Self-hosted**, if `LANGUAGETOOL_SERVER` is set. No text leaves the
+   machine and there are no rate limits. It runs the open source rules
+   only, so the premium rules are not available this way. When it is set it
+   is the only backend.
+2. **Premium cloud**, if `LANGUAGETOOL_USERNAME` and `LANGUAGETOOL_API_KEY`
+   are both set. `https://api.languagetoolplus.com`.
+3. **Free cloud**, `https://api.languagetool.org`, no account, only when
+   neither of the two above is configured. A check without the Premium
+   values stops before it (exit 2, naming the values to set), so in practice
+   only a direct call of `check_text` reaches it; if it does not answer
+   either, hunspell checks English spelling only, and the output says so.
 
-`--selftest` prints which one answers and what tier it actually gives.
+If the configured backend refuses the probe (HTTP 401, 403, any HTTP error)
+or cannot be reached, the check exits 2 with one line naming the backend,
+its address and the HTTP status or why it was unreachable. `--no-lt` runs
+the other checks without LanguageTool.
+
+`--selftest` prints which backend is configured, whether it answers and what
+tier it actually gives, and exits 2 when it does not answer.
 
 ## Credentials
 

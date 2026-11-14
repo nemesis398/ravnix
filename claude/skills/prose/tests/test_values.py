@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import stat
@@ -274,6 +276,87 @@ class PremiumOrSay(Case):
                              capture_output=True, text=True, timeout=60,
                              input="")
         self.assertIn("set `prose.languagetool.username` in your ravnix skill values", got.stdout)
+
+
+class NoSilentFallback(Case):
+    """A configured backend that fails stops the check; the free cloud never stands in."""
+
+    def stub_probe(self, answers: dict):
+        calls = []
+
+        def probe(backend, timeout=12):
+            calls.append(backend.label)
+            return answers[backend.label]
+
+        patcher = mock.patch.object(check, "probe", probe)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return calls
+
+    def run_main(self, *args: str) -> tuple[int, str, str]:
+        doc = self.tmp / "doc.md"
+        doc.write_text("A plain sentence.\n", encoding="utf-8")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["check.py", *args, str(doc)]), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = check.main()
+        return code, out.getvalue(), err.getvalue()
+
+    def premium(self):
+        os.environ["LANGUAGETOOL_API_KEY"] = "k3y"
+        os.environ["LANGUAGETOOL_USERNAME"] = "alice@example.org"
+
+    def test_the_chain_is_the_configured_backend_alone(self):
+        self.assertEqual([b.label for b in check.resolve_backends(
+            {"LANGUAGETOOL_API_KEY": "k", "LANGUAGETOOL_USERNAME": "u"})], ["premium cloud"])
+        self.assertEqual([b.label for b in check.resolve_backends(
+            {"LANGUAGETOOL_SERVER": "http://127.0.0.1:9", "LANGUAGETOOL_API_KEY": "k",
+             "LANGUAGETOOL_USERNAME": "u"})], ["self-hosted"])
+        self.assertEqual([b.label for b in check.resolve_backends({})], ["free cloud"])
+
+    def assert_stops(self, label: str, answer: tuple[bool, str], status: str):
+        calls = self.stub_probe({label: answer, "free cloud": (True, "ok, free rules only")})
+        code, out, err = self.run_main()
+        self.assertEqual(code, 2, out + err)
+        self.assertEqual(calls, [label])
+        lines = [l for l in err.splitlines() if l.startswith("prose:")]
+        self.assertEqual(len(lines), 1, err)
+        self.assertIn(label, lines[0])
+        self.assertIn(status, lines[0])
+        self.assertNotIn("free cloud", out + err)
+
+    def test_premium_refused_stops(self):
+        self.premium()
+        self.assert_stops("premium cloud", (False, "HTTP 401 Unauthorized. {\"message\":\n\"bad\"}"), "HTTP 401")
+
+    def test_premium_unreachable_stops(self):
+        self.premium()
+        self.assert_stops("premium cloud", (False, "URLError: <urlopen error [Errno -2] Name or service not known>"), "unreachable")
+
+    def test_self_hosted_refused_stops(self):
+        os.environ["LANGUAGETOOL_SERVER"] = "http://127.0.0.1:9"
+        self.assert_stops("self-hosted", (False, "HTTP 403 Forbidden. no"), "HTTP 403")
+
+    def test_self_hosted_unreachable_stops(self):
+        os.environ["LANGUAGETOOL_SERVER"] = "http://127.0.0.1:9"
+        self.assert_stops("self-hosted", (False, "URLError: <urlopen error [Errno 111] Connection refused>"), "unreachable")
+
+    def test_premium_that_answers_runs(self):
+        self.premium()
+        calls = self.stub_probe({"premium cloud": (True, "ok, premium rules active")})
+        with mock.patch.object(check, "lt_post", lambda backend, payload, **kw: {"matches": []}):
+            code, out, err = self.run_main()
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(calls, ["premium cloud"])
+
+    def test_selftest_fails_on_a_refused_backend(self):
+        self.premium()
+        self.stub_probe({"premium cloud": (False, "HTTP 401 Unauthorized. x")})
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["check.py", "--selftest"]), contextlib.redirect_stdout(out):
+            code = check.main()
+        self.assertEqual(code, 2, out.getvalue())
+        self.assertNotIn("free cloud", out.getvalue())
 
 
 if __name__ == "__main__":
