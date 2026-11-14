@@ -1,5 +1,6 @@
-"""The swatches of the terminal's palette on the wallpaper: the ones that are
-state hues are left out, whatever symbol the colors module prints them in."""
+"""The swatches of the terminal's palette on the wallpaper: all of them are
+drawn, the ones in a state hue too, whatever symbol the colors module prints
+them in. The Palette row is a picture of the terminal's colors, not a state."""
 
 import pytest
 
@@ -18,60 +19,50 @@ def render_facts(lab, text, **kw):
 
 
 # The terminal's Red, Green, Yellow and Blue, normal and bright, as SGR codes
-# and as 256-color indexes, and some of them mixed with other attributes.
-STATE_CODES = [
-    "31", "32", "33", "34", "91", "92", "93", "94",
-    "38;5;1", "38;5;2", "38;5;3", "38;5;4", "38;5;9", "38;5;10", "38;5;11", "38;5;12",
-    "1;91", "0;33;1", "1;38;5;12",
-]
+# and as 256-color indexes, and some of them mixed with other attributes, with
+# the hue each is drawn in.
+STATE_CODES = {
+    "31": "red", "32": "green", "33": "yellow", "34": "blue",
+    "91": "red", "92": "green", "93": "yellow", "94": "blue",
+    "38;5;1": "red", "38;5;2": "green", "38;5;3": "yellow", "38;5;4": "blue",
+    "38;5;9": "red", "38;5;10": "green", "38;5;11": "yellow", "38;5;12": "blue",
+    "1;91": "red", "0;33;1": "yellow", "1;38;5;12": "blue",
+}
 
 
-# The Palette row is a line of swatches in different colors: that is what the
-# colors module prints, and what a state-hue swatch is dropped from. A pink one
-# keeps each of these lines a Palette row, and what is left of it is the pink.
-def palette_row(first, last="35", run="███"):
+def palette_row(first, last="35", run="\u2588\u2588\u2588"):
     return "\x1b[%sm%s\x1b[%sm%s\x1b[m\n" % (first, run, last, run)
 
 
 @pytest.mark.parametrize("code", STATE_CODES)
-def test_a_state_hue_swatch_of_the_terminal_is_left_out(lab, code):
+def test_a_state_hue_swatch_of_the_terminal_is_drawn(lab, code):
     right, proc = render_facts(lab, palette_row(code))
     assert lab.journal(proc) == []
-    only_pink, _ = render_facts(lab, "\x1b[35m███\x1b[m\n")
-    assert (only_pink != rgb("base")).any(), "nothing was drawn"
-    assert (right == only_pink).all(), "the swatch is drawn"
+    only_pink, _ = render_facts(lab, "\x1b[35m\u2588\u2588\u2588\x1b[m\n")
+    assert (right != only_pink).any(), "the swatch is left out"
+    assert where(right, rgb(STATE_CODES[code])).sum() > 500, "three cells of it"
 
 
-@pytest.mark.parametrize("run", ["███ ", " ███", " ███ ", "██"])
-def test_padding_does_not_bring_a_swatch_back(lab, run):
+@pytest.mark.parametrize("run", ["\u2588\u2588\u2588 ", " \u2588\u2588\u2588", " \u2588\u2588\u2588 ", "\u2588\u2588"])
+def test_padding_does_not_hide_a_swatch(lab, run):
     right, _ = render_facts(lab, palette_row("31", run=run))
-    only_pink, _ = render_facts(lab, "\x1b[35m%s\x1b[m\n" % run)
-    assert (right == only_pink).all(), "the swatch is drawn"
+    assert where(right, rgb("red")).sum() > 100, "the swatch is left out"
 
 
-@pytest.mark.parametrize("symbol", ["●", "■", "▲", "◆"])
+@pytest.mark.parametrize("symbol", ["\u25cf", "\u25a0", "\u25b2", "\u25c6"])
 @pytest.mark.parametrize("code", ["31", "33", "34", "38;5;2", "38;5;12"])
-def test_the_symbols_of_the_other_colors_shapes_are_left_out_too(lab, code, symbol):
+def test_the_symbols_of_the_other_colors_shapes_are_drawn_too(lab, code, symbol):
     # fastfetch's colors module can print circles, squares, triangles or
     # diamonds, each followed by a space, instead of blocks.
     right, _ = render_facts(lab, palette_row(code, run=symbol + " "))
-    only_pink, _ = render_facts(lab, "\x1b[35m%s \x1b[m\n" % symbol)
-    assert (only_pink != rgb("base")).any(), "nothing was drawn"
-    assert (right == only_pink).all(), "the symbol is drawn"
+    assert where(right, rgb(STATE_CODES[code])).sum() > 20, "the symbol is left out"
 
 
-def test_a_symbol_in_a_color_that_is_no_state_hue_is_drawn(lab):
-    right, _ = render_facts(lab, palette_row("35", "36", run="● "))
-    assert (right != rgb("base")).any()
-
-
-def test_the_swatches_after_a_dropped_one_close_up(lab):
-    # Red is dropped and Pink and Teal take its place: the same image as when
-    # the row never had the red swatch.
-    with_red, _ = render_facts(lab, "\x1b[31m███\x1b[35m███\x1b[36m███\x1b[m\n")
-    without, _ = render_facts(lab, "\x1b[35m███\x1b[36m███\x1b[m\n")
-    assert (without != rgb("base")).any(), "nothing was drawn"
-    assert (with_red == without).all()
+def test_all_eight_colors_in_one_row_are_all_drawn(lab):
+    row = "".join("\x1b[%dm\u2588\u2588\u2588" % c for c in range(30, 38)) + "\x1b[m\n"
+    right, _ = render_facts(lab, row)
+    for name in ("surface1", "red", "green", "yellow", "blue", "pink", "teal", "subtext1"):
+        assert where(right, rgb(name)).sum() > 500, name
 
 
 def test_text_in_the_terminals_red_keeps_its_state_hue(lab):
@@ -110,16 +101,3 @@ def test_a_bar_of_blocks_keeps_its_hue(lab):
 def test_a_status_dot_keeps_its_hue(lab):
     right, _ = render_facts(lab, "Failed  \x1b[31m\u25cf\x1b[m 2 units\n")
     assert where(right, rgb("red")).sum() > 20
-
-
-def test_a_line_of_one_swatch_is_not_a_palette_row(lab):
-    right, _ = render_facts(lab, "\x1b[31m\u25a0\u25a0\u25a0\u25a0\u25a0\x1b[m\n")
-    assert where(right, rgb("red")).sum() > 100
-
-
-
-def test_a_line_of_state_dots_with_no_words_is_taken_for_a_palette_row(lab):
-    # The trade-off, pinned: a line of nothing but dots in two colors looks like
-    # the Palette row, so its state-hue dots are left out (README, findings).
-    right, _ = render_facts(lab, "\x1b[31m● \x1b[32m● \x1b[m\n")
-    assert not (right != rgb("base")).any()

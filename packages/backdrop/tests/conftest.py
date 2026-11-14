@@ -198,9 +198,10 @@ def tinted(img, color, base, least=0.45, slack=14):
 STATE_HUES = ("red", "peach", "maroon", "yellow", "green", "blue")
 
 # The swatches of the Palette row on the wallpaper, from the value column: the
-# terminal's black, magenta, cyan and white. Red, Green, Yellow and Blue are
-# state hues, so they are left out and the rest close up.
-SWATCHES = ("surface1", "pink", "teal", "subtext1")
+# terminal's eight colors in its order, black, red, green, yellow, blue,
+# magenta, cyan and white. The row is a picture of the terminal's colors, not
+# a state, so the state hues are in it too.
+SWATCHES = ("surface1", "red", "green", "yellow", "blue", "pink", "teal", "subtext1")
 
 
 def palette_box(right):

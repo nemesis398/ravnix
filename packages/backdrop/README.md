@@ -36,19 +36,11 @@ descent, not the panel's line height, and blocks above one another meet at a
 blended pixel. They are rectangles with every edge on a whole pixel, as
 terminals draw them, so they meet without a seam.
 
-The Palette row of the facts shows the terminal's eight colors on the
-terminal. On the wallpaper the swatches of the terminal's Red, Green, Yellow
-and Blue, bright or not, are left out and the rest close up (Black, Pink, Teal
-and White), because those hues carry a state (docs/style.md, rule 4 and the
-State table, which gives Blue "busy") and the row is decoration. The logo keeps
-its Blue and Sapphire: it is not a swatch. Only swatches on the Palette row go.
-A swatch is a run of block elements, or of fastfetch's other symbols for them (a
-circle, square, triangle or diamond), whether or not it has the space they come
-with, in one of the terminal's own 16 colors; the Palette row is a line that,
-from its first swatch on, is swatches of more than one color and nothing else.
-Everything else is state and stays: text in those colors, blocks in an RGB that
-fastfetch chose, a percent bar of squares in the color of its state followed by
-dashes, and a status dot with words after it.
+The Palette row of the facts shows the terminal's eight colors, all of them,
+Red, Green, Yellow and Blue among them, as on the terminal. It is a picture of
+the terminal's colors, not a state, so the wallpaper draws it as it is, each
+swatch in the theme's color for that slot (docs/style.md, Color, Rules). Text
+and bars in those colors keep their hue as well.
 
 The ravnix mark is `assets/ravnix-mark.svg`, a copy of the brand guide's
 one-color mark (`docs/brand/logo-mono.svg`, the eyes cut out as holes, so they
@@ -125,7 +117,7 @@ fastfetch with ravnix's config, the personal values replaced by invented ones
 and the colors by names that `conftest.py` fills in from the theme. The one
 test that runs the real fastfetch also checks that the Palette row starts in
 the value column. `test_blocks.py` holds the checks of the block
-elements, and `test_swatches.py` those of the swatches that are left out.
+elements, and `test_swatches.py` those of the swatches: all eight are drawn.
 `tests/pytest.ini` filters the one deprecation warning of the
 run: PyGObject itself raises it while it loads its GLib override.
 
@@ -159,14 +151,6 @@ nix build .#checks.x86_64-linux.desktop-backdrop -L
   only visible at the next `backdrop wallpaper`.
 - The three shades (U+2591 to U+2593) are still drawn by the font, so they keep
   its blended edges and would show seams. ravnix's fastfetch config prints none.
-- What counts as a swatch is the symbols the `colors` module of fastfetch 2.70
-  prints: blocks, and the circle, square, triangle and diamond. A new symbol
-  of a later release would be drawn in its state hue until it is added to
-  `SWATCH_SYMBOLS`; the real-fastfetch test looks for a state hue in the row.
-- What counts as the Palette row is a line, from its first swatch on, of
-  swatches in two or more colors and nothing else. A line of state dots with
-  no words, such as `● ● ●` in red and green, looks the same and loses its
-  state-hue dots; a bar or a dot with words, or in one color, keeps them.
 - ravnix's fastfetch config sets only the logo's color slots 1 and 2, so in a
   terminal the other four stay in the terminal's blue and cyan (Blue and Teal).
   `backdrop` sets all six for the wallpaper itself.

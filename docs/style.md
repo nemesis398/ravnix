@@ -173,7 +173,7 @@ The **shipped default** is a fixed composition on Base:
 - the author's phyllon mark in the top left, at the same size as the ravnix mark,
 - the NixOS logo and the system facts, drawn through fastfetch, in the top right.
 
-Everything is drawn in palette colors: the NixOS logo in Blue and Sapphire, never its brand blues. The facts appear on the desktop only. Both marks are drawn in one color, the accent, so the screen holds a single accent and the lock ring's Blue keeps meaning "verifying".
+Everything is drawn in palette colors: the NixOS logo in Blue and Sapphire, never its brand blues. The facts appear on the desktop only. Both marks are drawn in one color, the accent, so the screen holds a single accent and the lock ring's Blue keeps meaning "verifying". The facts end in fastfetch's Palette row, which shows all eight of the terminal's colors, Red, Green, Yellow and Blue included: it is a picture of the terminal, not a state.
 
 ### Lock screen
 

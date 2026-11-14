@@ -18,12 +18,11 @@
 # and is made of block glyphs by design: it is drawn as the terminal shows it,
 # not redrawn as a vector, and its blocks, like the swatches of the Palette
 # row, are rectangles on whole pixels (draw_block) so that they meet without a
-# seam. The terminal's Red, Green, Yellow and Blue swatches are left out of
-# that row, because those hues carry a state (docs/style.md, rule 4 and the
-# State table). The lock image is Base (or the same
-# image) and the ravnix mark alone, sized to sit inside swaylock's ring, so
-# nothing about the machine can be read on a locked screen. It never runs
-# fastfetch and never draws a logo.
+# seam. The Palette row shows all eight of the terminal's colors, the state
+# hues among them: it is a picture of the terminal's colors, not a state. The
+# lock image is Base (or the same image) and the ravnix mark alone, sized to
+# sit inside swaylock's ring, so nothing about the machine can be read on a
+# locked screen. It never runs fastfetch and never draws a logo.
 #
 # The ravnix mark is assets/ravnix-mark.svg, a copy of the brand guide's
 # one-color mark. When it is missing, cannot be read or draws nothing, the
@@ -127,15 +126,6 @@ FACTS_BYTES, FACTS_LINES, FACTS_COLUMNS, FACTS_SECONDS = 1 << 20, 80, 240, 10
 # How much of a command's stderr is read, of which one line is quoted.
 STDERR_BYTES = 1 << 16
 
-# The hues that carry a state, which the wallpaper does not draw as swatches of
-# the terminal's palette: docs/style.md gives Red, Maroon, Peach, Yellow, Green
-# and Blue (busy) a state, and warm hues are for warnings and errors only. The
-# logo is Blue by the same spec and keeps it: it is not a swatch.
-STATE_HUES = ("red", "peach", "maroon", "yellow", "green", "blue")
-# What fastfetch's colors module prints a swatch with: block elements for the
-# block symbol, and the circle, square, triangle and diamond for the others.
-SWATCH_SYMBOLS = "\u25cf\u25a0\u25b2\u25c6"
-
 # An image that would take more memory than this to decode is not used.
 MAX_IMAGE_PIXELS = 64_000_000
 # The largest output and scale that render() draws.
@@ -164,11 +154,6 @@ def log(message):
 
 def rgb(c, a=1.0):
     return (c[0] / 255, c[1] / 255, c[2] / 255, a)
-
-
-class Ansi(tuple):
-    """A color that came from the terminal's 16, which the Palette row prints
-    as swatches; it equals the plain color."""
 
 
 class Theme:
@@ -200,12 +185,9 @@ class Theme:
         # Green, yellow Yellow, blue Blue, magenta Pink, cyan Teal, white
         # Subtext1; the bright set is Surface2, Red, Green, Yellow, Blue, the
         # accent, Teal, Subtext0.
-        # The colors that mean a state and nothing else (docs/style.md, rule 4);
-        # a palette without peach or maroon has no such color to keep out.
-        self.state_hues = {self.parse(n, palette[n]) for n in STATE_HUES if n in palette}
-        self.ansi16 = [Ansi(c[n]) for n in ("surface1", "red", "green", "yellow", "blue", "pink",
+        self.ansi16 = [c[n] for n in ("surface1", "red", "green", "yellow", "blue", "pink",
                                       "teal", "subtext1", "surface2", "red", "green", "yellow",
-                                      "blue")] + [Ansi(self.accent), Ansi(c["teal"]), Ansi(c["subtext0"])]
+                                      "blue")] + [self.accent, c["teal"], c["subtext0"]]
 
     @staticmethod
     def parse(name, value):
@@ -522,40 +504,6 @@ def cells(text):
                for ch in text)
 
 
-def is_swatch(run):
-    # A run of nothing but the symbols a swatch is printed with, in one of the
-    # terminal's own 16 colors. The padding a symbol comes with does not make
-    # it text.
-    _, chunk, color, _ = run
-    swatch = chunk.strip()
-    return bool(swatch) and isinstance(color, Ansi) and all(
-        "\u2580" <= ch <= "\u259f" or ch in SWATCH_SYMBOLS for ch in swatch)
-
-
-def without_state_swatches(runs, theme):
-    # The Palette row is a line that, from its first swatch on, is swatches of
-    # more than one color and nothing else. The swatches of it in a state hue
-    # are left out and the ones after them close up. Anywhere else the same
-    # symbols are state and stay: a percent bar is a run of squares in the
-    # color of its state, followed by dashes, and a status can be a lone dot.
-    swatches = [i for i, run in enumerate(runs) if is_swatch(run)]
-    if len({runs[i][2] for i in swatches}) < 2:
-        return runs
-    if any(run[1].strip() and not is_swatch(run) for run in runs[swatches[0]:]):
-        return runs
-    kept, shift, end = [], 0, None
-    for run in runs:
-        col, chunk, color, bold = run
-        if end is not None and col != end:
-            shift = 0  # a jump to a column: what follows is where it says
-        end = col + cells(chunk)
-        if is_swatch(run) and color in theme.state_hues:
-            shift += cells(chunk)
-            continue
-        kept.append((col - shift, chunk, color, bold))
-    return kept
-
-
 def parse_ansi(text, theme):
     # fastfetch's colored output as lines of (column, text, color, bold) runs.
     # It uses SGR colors (38;2;r;g;b, and 38;5;N or 30-37/90-97 for the
@@ -583,7 +531,7 @@ def parse_ansi(text, theme):
                 col = min(max(int(args or 1) - 1 if args.isdigit() or not args else 0, col), FACTS_COLUMNS)
             elif cmd == "m":
                 color, bold = apply_sgr(args, color, bold, theme)
-        lines.append(without_state_swatches(runs, theme))
+        lines.append(runs)
     while lines and not any(r[1].strip() for r in lines[-1]):
         lines.pop()
     return lines

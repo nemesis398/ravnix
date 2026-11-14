@@ -111,7 +111,7 @@ def test_the_left_half_below_the_phyllon_mark_is_empty(wall):
 def test_no_state_hue_in_the_marks(wall):
     # The facts do carry state hues, as fastfetch prints them: the usage
     # percentages turn Yellow and Red, and the Palette row shows the terminal's
-    # eight colors. The marks are the part of the wall that owns no state.
+    # eight colors, those hues among them. The marks are the part of the wall that owns no state.
     for part in (wall[window(wall, **CENTER)], corner(wall)):
         for warm in STATE_HUES:
             assert not where(part, rgb(warm)).any()
@@ -122,14 +122,17 @@ def test_the_facts_show_the_usage_states_and_the_palette_row(wall):
     # Yellow and Red are the 62% and 91% of Swap and Disk: text on one line
     # each, Swap above Disk. Counted with their antialiased edges, because only
     # the cores of thin strokes are exactly the color.
-    yellow = tinted(right, rgb("yellow"), rgb("base"))
-    red = tinted(right, rgb("red"), rgb("base"))
-    assert yellow.sum() > 50 and red.sum() > 50
+    # The Palette row has a Red and a Yellow swatch of its own, so the lines
+    # of text are looked for above it.
     first, last, top, bottom, _ = palette_box(right)
+    above = right[:top]
+    yellow = tinted(above, rgb("yellow"), rgb("base"))
+    red = tinted(above, rgb("red"), rgb("base"))
+    assert yellow.sum() > 50 and red.sum() > 50
     (_, ya, _, yb), (_, ra, _, rb) = bbox(yellow), bbox(red)
     assert yb - ya <= bottom - top and rb - ra <= bottom - top, "a row of swatches, not a line of text"
     assert yb <= ra, "Swap is not above Disk"
-    # The swatches that stay: one line, in the order of the terminal's colors.
+    # The eight swatches: one line, in the order of the terminal's colors.
     for name in SWATCHES:
         assert where(right[top:bottom, first:last], rgb(name)).sum() > 100, name
 
@@ -156,20 +159,20 @@ def test_the_glyph_blocks_meet_without_a_seam(wall):
         assert (edge[first - 1 : last + 1] == rgb("base")).all(), "a ragged edge"
 
 
-def test_the_swatch_row_has_no_state_hue(wall):
-    # Style rule 4: warm hues are for warnings and errors, and docs/style.md
-    # gives Blue a state too ("busy"). The Palette row is decoration, so its
-    # Red, Green, Yellow and Blue swatches are left out; the percentages of the
-    # rows above keep their state colors, and the logo keeps its Blue.
+def test_the_swatch_row_has_all_eight_colors(wall):
+    # The Palette row is a picture of the terminal's colors, as on Fedora, not
+    # a state: Red, Green, Yellow and Blue are in it, each a whole cell wide
+    # and three glyphs of the row, and nothing is left out.
     right = facts_area(wall)
-    first, last, top, bottom, _ = palette_box(right)
-    for hue in STATE_HUES:
-        assert not where(right[top:bottom, first - 1 : last + 1], rgb(hue)).any(), hue
+    first, last, top, bottom, advance = palette_box(right)
+    assert len(SWATCHES) == 8
+    for i, name in enumerate(SWATCHES):
+        cell = right[top:bottom, int(first + 3 * i * advance) + 1 : int(first + 3 * (i + 1) * advance) - 1]
+        assert where(cell, rgb(name)).all(), name
 
 
-def test_the_swatches_that_stay_keep_their_order_and_close_up(wall):
-    # Black, Pink, Teal and White of the terminal's eight, side by side from
-    # the value column, then Base.
+def test_the_swatches_keep_their_order_side_by_side(wall):
+    # The terminal's eight, side by side from the value column, then Base.
     right = facts_area(wall)
     first, _, top, bottom, advance = palette_box(right)
     middle = (top + bottom) // 2

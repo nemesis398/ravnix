@@ -13,7 +13,6 @@ from conftest import (
     H,
     KERNEL,
     S,
-    STATE_HUES,
     SWATCHES,
     W,
     facts_text,
@@ -588,13 +587,11 @@ def test_the_real_fastfetch_draws_the_logo_and_the_facts_with_no_network(lab):
     # line with no jump to that column, and backdrop does not reflow it.
     facts = img[: int(0.40 * H), W // 2 :]
     assert abs(palette_row_offset(facts)) < 1.5
-    # And it holds the swatches that are no state hue, and none that is: this
-    # is where a change of the colors module's symbol or padding would show.
+    # And it holds all eight swatches: this is where a change of the colors
+    # module's symbol or padding would show.
     first, last, top, bottom, _ = palette_box(facts)
     for name in SWATCHES:
         assert where(facts[top:bottom, first:last], rgb(name)).any(), name
-    for hue in STATE_HUES:
-        assert not where(facts[top:bottom, first - 1 : last + 1], rgb(hue)).any(), hue
 
 
 def test_a_line_that_is_too_wide_shrinks_the_facts_to_fit(lab):
