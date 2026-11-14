@@ -21,6 +21,7 @@
     ./bash.nix
     ./git.nix
     ./cli.nix
+    ./btop.nix
     ./rbw.nix
     ./tokens.nix
     ./atuin.nix

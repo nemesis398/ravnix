@@ -40,7 +40,6 @@ in
 {
   catppuccin = {
     bat.enable = true;
-    btop.enable = true;
     eza.enable = true;
     lazygit.enable = true;
   };
@@ -87,6 +86,7 @@ in
       };
     };
 
+    # The theme is generated from the roles (./btop.nix).
     btop = {
       enable = true;
       # Single light line, not rounded corners (docs/style.md).
