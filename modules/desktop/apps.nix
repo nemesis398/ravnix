@@ -438,11 +438,14 @@ in
       catppuccin.mpv.enable = true;
       catppuccin.yazi.enable = true;
 
-      # Fedora's MangoHud.conf, from the roles. The only change from there is
-      # the background: fully opaque (the style design, 2026-11-07). The per-metric colors
-      # carry a meaning of their own (GPU green, CPU blue, RAM pink, the FPS
-      # gradient red to green), and the frame-time graph is the accent. It is
-      # switched on per title in Steam: `gamemoderun mangohud %command%`.
+      # Fedora's MangoHud.conf, from the roles. Two changes from there: the
+      # background is fully opaque (the style design, 2026-11-07), and the
+      # engine and Wine labels are Subtext1 where Fedora had Red, because warm
+      # hues are for warnings and errors and nothing else (docs/style.md,
+      # rule 4). The per-metric colors carry a meaning of their own (GPU
+      # green, CPU blue, RAM pink, the FPS gradient red to green), and the
+      # frame-time graph is the accent. It is switched on per title in Steam:
+      # `gamemoderun mangohud %command%`.
       programs.mangohud = {
         enable = true;
         settings = {
