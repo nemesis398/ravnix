@@ -1,0 +1,10 @@
+# This is private data. Do not parse.
+UID=1000
+USER=alice
+ACTIVE=1
+STATE=active
+REMOTE=0
+TYPE=tty
+CLASS=user
+SEAT=seat0
+SERVICE=greetd

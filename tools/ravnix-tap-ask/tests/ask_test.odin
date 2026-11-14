@@ -78,6 +78,71 @@ make_socket :: proc(t: ^testing.T, path: string) {
 	_ = linux.close(fd)
 }
 
+// make_fd gives process pid an open file descriptor, as its fd/N link shows it.
+make_fd :: proc(t: ^testing.T, f: ^Fixture, pid, fd: int, target: string) {
+	dir := join(f, "root/proc", fmt.aprint(pid), "fd")
+	make_dirs(t, dir)
+	testing.expect_value(t, os.symlink(target, strings.join({dir, fmt.aprint(fd)}, "/")), nil)
+}
+
+// Listener is a bound Unix socket as /proc/net/unix lists it.
+Listener :: struct {
+	inode: int,
+	path:  string,
+}
+
+write_net_unix :: proc(t: ^testing.T, f: ^Fixture, listeners: ..Listener) {
+	b := strings.builder_make()
+	strings.write_string(&b, "Num       RefCount Protocol Flags    Type St Inode Path\n")
+	// A socket without a path, as most are.
+	strings.write_string(&b, "0000000000000000: 00000003 00000000 00000000 0001 03 4711\n")
+	for l in listeners {
+		fmt.sbprintf(&b, "0000000000000000: 00000002 00000000 00010000 0001 01 %d %s\n", l.inode, l.path)
+	}
+	write(t, join(f, "root/proc/net/unix"), strings.to_string(b))
+}
+
+// set_session puts process pid into logind session id, by its audit session
+// and its cgroup, and writes the session's state file as logind does.
+set_session :: proc(t: ^testing.T, f: ^Fixture, pid: int, id: string, service: string, remote: bool) {
+	base := join(f, "root/proc", fmt.aprint(pid))
+	write(t, strings.join({base, "sessionid"}, "/"), id)
+	write(t, strings.join({base, "cgroup"}, "/"), fmt.aprintf("0::/user.slice/user-1000.slice/session-%s.scope\n", id))
+	write(
+		t,
+		join(f, "root/run/systemd/sessions", id),
+		fmt.aprintf("# This is private data. Do not parse.\nUID=1000\nUSER=alice\nACTIVE=1\nSTATE=active\nREMOTE=%d\nTYPE=tty\nCLASS=user\nSERVICE=%s\n", 1 if remote else 0, service),
+	)
+}
+
+// listen_log binds the fixture's /dev/log, as journald does, for a test that
+// reads what the tool logs.
+listen_log :: proc(t: ^testing.T, f: ^Fixture) -> linux.Fd {
+	path := join(f, "root/dev/log")
+	make_dirs(t, path[:strings.last_index_byte(path, '/')])
+	fd, errno := linux.socket(.UNIX, .DGRAM, {}, .HOPOPT)
+	testing.expect_value(t, errno, linux.Errno.NONE)
+	addr := linux.Sock_Addr_Un{sun_family = .UNIX}
+	copy(addr.sun_path[:len(addr.sun_path) - 1], path)
+	testing.expect_value(t, linux.bind(fd, &addr), linux.Errno.NONE)
+	return fd
+}
+
+// logged is every message waiting on the log socket.
+logged :: proc(fd: linux.Fd) -> []string {
+	out := make([dynamic]string)
+	for {
+		buf := make([]u8, 2048)
+		from: linux.Sock_Addr_Un
+		n, errno := linux.recvfrom(fd, buf, {.DONTWAIT}, &from)
+		if errno != .NONE || n <= 0 {
+			break
+		}
+		append(&out, string(buf[:n]))
+	}
+	return out[:]
+}
+
 // set_case writes what the fake fuzzel does once it has recorded its input.
 set_case :: proc(t: ^testing.T, f: ^Fixture, script: string) {
 	write(t, join(f, "bin/fuzzel-case.sh"), script)
@@ -99,12 +164,23 @@ fixture :: proc(t: ^testing.T, f: ^Fixture) {
 	write(t, join(f, "root/sys/class/hidraw/hidraw0/device/report_descriptor"), KEYBOARD_DESCRIPTOR)
 	write(t, join(f, "root/sys/class/hidraw/hidraw1/device/report_descriptor"), FIDO_DESCRIPTOR)
 	make_proc(t, f, 1, 0, "systemd", 0, "/nix/store/x-systemd/lib/systemd/systemd")
-	make_proc(t, f, 900, 1, "sway", UID, "/nix/store/x-sway/bin/sway")
+	make_proc(t, f, 600, 1, "greetd", 0, "/nix/store/x-greetd/bin/greetd")
+	make_proc(t, f, 610, 600, "greetd", 0, "/nix/store/x-greetd/bin/greetd")
+	make_proc(t, f, 900, 610, "sway", UID, "/nix/store/x-sway/bin/sway")
 	make_proc(t, f, 950, 900, "ghostty", UID, "/nix/store/x-ghostty/bin/ghostty")
 	make_proc(t, f, SHELL, 950, "bash", UID, "/nix/store/x-bash/bin/bash")
 	make_proc(t, f, SUDO, SHELL, "sudo", UID, "/run/wrappers/wrappers.x/sudo", "sudo\x00systemctl\x00restart\x00nix-daemon\x00", "HOME=/home/alice\x00")
 	make_socket(t, join(f, "root/run/user/1000/wayland-1"))
 	write(t, join(f, "root/run/user/1000/wayland-1.lock"), "")
+	// Sway listens on its socket: fd 3 is the socket's inode, and
+	// /proc/net/unix names the path of that inode.
+	make_fd(t, f, 900, 0, "/dev/null")
+	make_fd(t, f, 900, 3, "socket:[5551]")
+	write_net_unix(t, f, {5551, join(f, "root/run/user/1000/wayland-1")})
+	// The greetd session, local, holds sway and the shell.
+	for pid in ([]int{900, 950, SHELL, SUDO}) {
+		set_session(t, f, pid, "3", "greetd", false)
+	}
 
 	make_dirs(t, join(f, "bin"))
 	testing.expect_value(t, os.symlink(FAKE_SETPRIV, join(f, "bin/setpriv")), nil)
@@ -247,9 +323,21 @@ skips_without_a_graphical_session :: proc(t: ^testing.T) {
 	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.No_Session)
 	testing.expect_value(t, os.remove(strings.join({run_dir, "wayland-1"}, "/")), nil)
 	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.No_Session)
-	// A socket of another name.
+	// Sway listens on a socket of another name, or of another directory.
 	make_socket(t, strings.join({run_dir, "wayland-x"}, "/"))
-	make_socket(t, strings.join({run_dir, "wayland-01"}, "/"))
+	write_net_unix(t, &f, {5551, strings.join({run_dir, "wayland-x"}, "/")})
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.No_Session)
+	make_socket(t, join(&f, "root/tmp/wayland-1"))
+	write_net_unix(t, &f, {5551, join(&f, "root/tmp/wayland-1")})
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.No_Session)
+	// A socket in the right place that sway does not hold.
+	make_socket(t, strings.join({run_dir, "wayland-1"}, "/"))
+	write_net_unix(t, &f, {5551, strings.join({run_dir, "wayland-x"}, "/")}, {6000, strings.join({run_dir, "wayland-1"}, "/")})
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.No_Session)
+	// No sway at all.
+	write_net_unix(t, &f, {5551, strings.join({run_dir, "wayland-1"}, "/")})
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.None)
+	testing.expect_value(t, os.remove_all(join(&f, "root/proc/900")), nil)
 	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.No_Session)
 	// No runtime directory.
 	testing.expect_value(t, os.remove_all(run_dir), nil)
@@ -257,14 +345,37 @@ skips_without_a_graphical_session :: proc(t: ^testing.T) {
 }
 
 @(test)
-takes_the_lowest_wayland_socket :: proc(t: ^testing.T) {
+asks_on_the_socket_of_the_sessions_own_sway :: proc(t: ^testing.T) {
 	f: Fixture
 	fixture(t, &f)
 	defer destroy(&f)
 	context.allocator = virtual.arena_allocator(&f.arena)
-	make_socket(t, join(&f, "root/run/user/1000/wayland-12"))
-	make_socket(t, join(&f, "root/run/user/1000/wayland-0"))
-	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).wayland, "wayland-0")
+	run_dir := join(&f, "root/run/user/1000")
+	// Lower sockets, which the tool once took: a headless sway that the
+	// user's systemd started, and one that the session's sway started, each
+	// listening on its own; and a socket nobody holds.
+	make_proc(t, &f, 800, 1, "systemd", UID, "/nix/store/x-systemd/lib/systemd/systemd")
+	make_proc(t, &f, 980, 800, "sway", UID, "/nix/store/x-sway/bin/sway")
+	make_fd(t, &f, 980, 3, "socket:[6000]")
+	make_proc(t, &f, 985, 900, ".sway-wrapped", UID, "/nix/store/x-sway/bin/.sway-wrapped")
+	make_fd(t, &f, 985, 3, "socket:[6001]")
+	make_socket(t, strings.join({run_dir, "wayland-0"}, "/"))
+	make_socket(t, strings.join({run_dir, "wayland-2"}, "/"))
+	make_socket(t, strings.join({run_dir, "wayland-00"}, "/"))
+	write_net_unix(
+		t,
+		&f,
+		{6000, strings.join({run_dir, "wayland-0"}, "/")},
+		{6001, strings.join({run_dir, "wayland-00"}, "/")},
+		{5551, strings.join({run_dir, "wayland-1"}, "/")},
+		{6002, strings.join({run_dir, "wayland-2"}, "/")},
+	)
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).wayland, "wayland-1")
+	// Another user's sway under greetd does not count.
+	testing.expect_value(t, os.remove_all(join(&f, "root/proc/900")), nil)
+	make_proc(t, &f, 900, 610, "sway", 1001, "/nix/store/x-sway/bin/sway")
+	make_fd(t, &f, 900, 3, "socket:[5551]")
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.No_Session)
 }
 
 @(test)
@@ -279,50 +390,111 @@ names_a_terminal :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(tap.origin_text(o, context.allocator), "a terminal on this laptop, /dev/pts/3"))
 }
 
+// remote is what the tool decides about the fixture's sudo.
+remote :: proc(f: ^Fixture) -> tap.Remote {
+	return tap.remote_of(f.cfg, context.allocator)
+}
+
 @(test)
-names_an_ssh_ancestor_even_with_a_terminal :: proc(t: ^testing.T) {
+the_local_session_is_not_remote :: proc(t: ^testing.T) {
+	f: Fixture
+	fixture(t, &f)
+	defer destroy(&f)
+	context.allocator = virtual.arena_allocator(&f.arena)
+	testing.expect(t, !remote(&f).remote)
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.None)
+}
+
+@(test)
+refuses_an_sshd_ancestor_even_with_a_terminal :: proc(t: ^testing.T) {
 	f: Fixture
 	fixture(t, &f)
 	defer destroy(&f)
 	context.allocator = virtual.arena_allocator(&f.arena)
 	// sshd, its per-connection sshd-session, a shell, `script` for a
-	// terminal, a shell, sudo.
+	// terminal, a shell, sudo; the session files say local, as a remote
+	// caller cannot make them, so this is the ancestry alone.
 	make_proc(t, &f, 700, 1, "sshd", 0, "/nix/store/x-openssh/bin/sshd")
 	make_proc(t, &f, 710, 700, "sshd-session", 0, "/nix/store/x-openssh/libexec/sshd-session")
 	make_proc(t, &f, 720, 710, "bash", UID, "/nix/store/x-bash/bin/bash")
 	make_proc(t, &f, 730, 720, "script", UID, "/nix/store/x-util-linux/bin/script")
 	make_proc(t, &f, SHELL, 730, "bash", UID, "/nix/store/x-bash/bin/bash")
-	o := tap.origin_of(f.cfg, context.allocator)
-	testing.expect_value(t, o.kind, tap.Origin_Kind.Ssh)
-	testing.expect_value(t, tap.origin_text(o, context.allocator), "ssh (the server's laptop-access link)")
-}
-
-@(test)
-names_ssh_by_the_program_not_the_name_it_gives_itself :: proc(t: ^testing.T) {
-	f: Fixture
-	fixture(t, &f)
-	defer destroy(&f)
-	context.allocator = virtual.arena_allocator(&f.arena)
-	// sshd-session titles itself "sshd: alice@notty", its comm is its own.
+	testing.expect(t, remote(&f).remote)
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.Remote)
+	// By the program, while it calls itself "sshd: alice@notty".
 	make_proc(t, &f, 710, 1, "sshd: alice@no", 0, "/nix/store/x-openssh/libexec/sshd-session")
-	make_proc(t, &f, SHELL, 710, "bash", UID, "/nix/store/x-bash/bin/bash")
-	f.cfg.tty = ""
-	testing.expect_value(t, tap.origin_of(f.cfg, context.allocator).kind, tap.Origin_Kind.Ssh)
+	testing.expect(t, remote(&f).remote)
 }
 
 @(test)
-names_ssh_by_its_environment :: proc(t: ^testing.T) {
+refuses_ssh_by_its_environment :: proc(t: ^testing.T) {
 	f: Fixture
 	fixture(t, &f)
 	defer destroy(&f)
 	context.allocator = virtual.arena_allocator(&f.arena)
-	testing.expect_value(t, os.remove_all(join(&f, "root/proc", fmt.aprint(SUDO))), nil)
 	make_proc(t, &f, SUDO, SHELL, "sudo", UID, "/run/wrappers/wrappers.x/sudo", "sudo\x00true\x00", "HOME=/home/alice\x00SSH_CONNECTION=100.64.0.2 52044 100.64.0.1 22\x00")
+	set_session(t, &f, SUDO, "3", "greetd", false)
+	r := remote(&f)
+	testing.expect(t, r.remote)
+	testing.expect_value(t, r.client, "100.64.0.2")
+}
+
+@(test)
+refuses_an_ssh_session_whatever_the_caller_says :: proc(t: ^testing.T) {
+	f: Fixture
+	fixture(t, &f)
+	defer destroy(&f)
+	context.allocator = virtual.arena_allocator(&f.arena)
+	// The link's caller has done what it can from inside its session: sudo
+	// is reparented to pid 1 (a double fork), runs on a terminal it made, and
+	// its environment says a local Wayland session with no SSH_CONNECTION.
+	// Its audit session and cgroup are the ssh login's, which it cannot
+	// change, and logind says that session is remote.
+	make_proc(t, &f, SUDO, 1, "sudo", UID, "/run/wrappers/wrappers.x/sudo", "sudo\x00true\x00", "HOME=/home/alice\x00XDG_SESSION_TYPE=wayland\x00XDG_SESSION_ID=3\x00WAYLAND_DISPLAY=wayland-1\x00XDG_SEAT=seat0\x00")
+	set_session(t, &f, SUDO, "7", "sshd", true)
+	testing.expect(t, remote(&f).remote)
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.Remote)
+
+	// By the audit session alone, the cgroup moved to the user's own
+	// manager (a scope it may make).
+	write(t, join(&f, "root/proc", fmt.aprint(SUDO), "cgroup"), "0::/user.slice/user-1000.slice/user@1000.service/app.slice/run-u5.scope\n")
+	testing.expect(t, remote(&f).remote)
+	// By the cgroup alone, with no audit session.
+	set_session(t, &f, SUDO, "7", "sshd", true)
+	write(t, join(&f, "root/proc", fmt.aprint(SUDO), "sessionid"), "4294967295")
+	testing.expect(t, remote(&f).remote)
+	// A session that logind does not call remote but sshd started is too.
+	set_session(t, &f, SUDO, "7", "sshd", false)
+	testing.expect(t, remote(&f).remote)
+}
+
+@(test)
+refuses_over_ssh_without_a_popup_and_logs_it_once :: proc(t: ^testing.T) {
+	f: Fixture
+	fixture(t, &f)
+	defer destroy(&f)
+	context.allocator = virtual.arena_allocator(&f.arena)
+	log := listen_log(t, &f)
+	defer { _ = linux.close(log) }
+	make_proc(t, &f, SUDO, SHELL, "sudo", UID, "/run/wrappers/wrappers.x/sudo", "sudo\x00true\x00", "SSH_CONNECTION=100.64.0.2 52044 100.64.0.1 22\x00")
+	set_session(t, &f, SUDO, "7", "sshd", true)
 	f.cfg.tty = ""
-	o := tap.origin_of(f.cfg, context.allocator)
-	testing.expect_value(t, o.kind, tap.Origin_Kind.Ssh)
-	testing.expect_value(t, o.client, "100.64.0.2")
-	testing.expect_value(t, tap.origin_text(o, context.allocator), "ssh from 100.64.0.2 (the server's laptop-access link)")
+	// A popup that would allow is never started.
+	d := popup(t, &f, "sleep 0.3; echo 1\n")
+	testing.expect_value(t, d.skip, tap.Skip.Remote)
+	testing.expect(t, !tap.allowed(d))
+	_, started := read(&f, "fuzzel-stdin")
+	testing.expect(t, !started, "the popup ran")
+	lines := logged(log)
+	testing.expect_value(t, len(lines), 1)
+	if len(lines) == 1 {
+		testing.expectf(t, strings.has_prefix(lines[0], "<84>ravnix-tap-ask: "), "%q", lines[0])
+		testing.expectf(t, strings.contains(lines[0], "refused a sudo over ssh by alice from 100.64.0.2"), "%q", lines[0])
+		testing.expectf(t, strings.has_suffix(lines[0], ": sudo true"), "%q", lines[0])
+	}
+	// Without a log socket it still refuses.
+	testing.expect_value(t, os.remove(join(&f, "root/dev/log")), nil)
+	testing.expect_value(t, tap.decide(f.cfg, context.allocator).skip, tap.Skip.Remote)
 }
 
 @(test)
@@ -368,17 +540,38 @@ shows_the_command_safely :: proc(t: ^testing.T) {
 	// A newline or an escape in an argument cannot start a line of its own.
 	write(t, cmdline, "sudo\x00sh\x00-c\x00echo hi\nfrom     a terminal\x1b[2J\x00")
 	testing.expect_value(t, tap.command_of(f.cfg, context.allocator), "sudo sh -c echo hi?from     a terminal?[2J")
-	// A long one is cut, at a character.
-	write(t, cmdline, strings.concatenate({"sudo\x00", strings.repeat("ä", 300)}))
-	command := tap.command_of(f.cfg, context.allocator)
-	testing.expect(t, len(command) <= tap.MAX_COMMAND + len("…"))
-	testing.expect(t, strings.has_suffix(command, "ä…"))
+	// Bidi controls, zero-width and other format characters, and line
+	// separators cannot reorder or hide a part of it.
+	write(t, cmdline, "sudo\x00rm\x00-rf\x00/\u202e\u2066x\u2069\u200b\u200d\ufeff\u00ad\u2028\u061c\U000e0041\x00")
+	testing.expect_value(t, tap.command_of(f.cfg, context.allocator), "sudo rm -rf /??x????????")
+	// Characters that only look odd stay.
+	write(t, cmdline, "sudo\x00touch\x00Grüße-ß-日本\x00")
+	testing.expect_value(t, tap.command_of(f.cfg, context.allocator), "sudo touch Grüße-ß-日本")
 	// None at all.
 	write(t, cmdline, "")
 	testing.expect_value(t, tap.command_of(f.cfg, context.allocator), "(unknown)")
 	// Invalid UTF-8.
 	write(t, cmdline, "sudo\x00\xff\xfe\x00")
 	testing.expect_value(t, tap.command_of(f.cfg, context.allocator), "sudo ��")
+}
+
+@(test)
+denies_a_command_too_long_to_show_whole :: proc(t: ^testing.T) {
+	f: Fixture
+	fixture(t, &f)
+	defer destroy(&f)
+	context.allocator = virtual.arena_allocator(&f.arena)
+	cmdline := join(&f, "root/proc", fmt.aprint(SUDO), "cmdline")
+	// Padding, then what it would run, where a cut would hide it.
+	write(t, cmdline, strings.concatenate({"sudo\x00env\x00X=", strings.repeat("a", tap.MAX_COMMAND), "\x00sh\x00-c\x00evil\x00"}))
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.Too_Long)
+	d := popup(t, &f, "sleep 0.3; echo 1\n")
+	testing.expect(t, !tap.allowed(d))
+	_, started := read(&f, "fuzzel-stdin")
+	testing.expect(t, !started, "the popup ran")
+	// One that fits exactly is shown.
+	write(t, cmdline, strings.concatenate({"sudo\x00", strings.repeat("a", tap.MAX_COMMAND - len("sudo "))}))
+	testing.expect_value(t, tap.prepare(f.cfg, context.allocator).skip, tap.Skip.None)
 }
 
 @(test)
@@ -527,21 +720,23 @@ no_popup_where_there_is_nothing_to_ask :: proc(t: ^testing.T) {
 }
 
 @(test)
-ssh_without_a_terminal_reaches_the_key_only_through_allow :: proc(t: ^testing.T) {
+ssh_never_reaches_the_key :: proc(t: ^testing.T) {
 	f: Fixture
 	fixture(t, &f)
 	defer destroy(&f)
 	context.allocator = virtual.arena_allocator(&f.arena)
-	// The server's link: sshd-session, a shell without a terminal, sudo.
+	// The server's link: sshd-session, a shell without a terminal, sudo, in
+	// the ssh login's session. Whatever the popup would answer, there is none.
 	make_proc(t, &f, 710, 1, "sshd-session", 0, "/nix/store/x-openssh/libexec/sshd-session")
 	make_proc(t, &f, SHELL, 710, "bash", UID, "/nix/store/x-bash/bin/bash")
+	set_session(t, &f, SHELL, "7", "sshd", true)
+	set_session(t, &f, SUDO, "7", "sshd", true)
 	f.cfg.tty = ""
-	f.cfg.timeout = 500 * time.Millisecond
-	testing.expect(t, !tap.allowed(popup(t, &f, "exec sleep 30\n")))
-	testing.expect(t, !tap.allowed(popup(t, &f, "sleep 0.3; echo 0\n")))
-	testing.expect(t, !tap.allowed(popup(t, &f, "echo 1\n")))
-	f.cfg.timeout = 3 * time.Second
-	testing.expect(t, tap.allowed(popup(t, &f, "sleep 0.3; echo 1\n")))
-	args, _ := read(&f, "fuzzel-args")
-	testing.expect(t, strings.contains(args, "from     ssh (the server's laptop-access link)\n"), args)
+	for script in ([]string{"sleep 0.3; echo 1\n", "exec sleep 30\n", "sleep 0.3; echo 0\n"}) {
+		d := popup(t, &f, script)
+		testing.expect_value(t, d.skip, tap.Skip.Remote)
+		testing.expect(t, !tap.allowed(d))
+	}
+	_, started := read(&f, "fuzzel-stdin")
+	testing.expect(t, !started, "the popup ran")
 }

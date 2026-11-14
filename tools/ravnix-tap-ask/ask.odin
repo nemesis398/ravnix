@@ -1,7 +1,7 @@
 // ravnix-tap-ask asks on the laptop's own screen before sudo waits for a tap
 // on the security key (README.md). pam_exec runs it as root, right before
 // pam_u2f in sudo's auth stack; exit 0 lets pam_u2f run, anything else skips
-// it, and the password asks as before. This file holds the decision; main.odin
+// it, and the password asks as before. A sudo over ssh gets no popup at all. This file holds the decision; main.odin
 // is the command, and popup.odin runs the popup.
 package ravnix_tap_ask
 
@@ -10,6 +10,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sys/linux"
 import "core:time"
 import "core:unicode/utf8"
 
@@ -19,9 +20,10 @@ import "core:unicode/utf8"
 TIMEOUT :: 30 * time.Second
 MIN_READ :: 1 * time.Second
 
-// The longest command line the popup shows, in bytes, and how far up the
-// process tree the origin is looked for.
-MAX_COMMAND :: 200
+// The longest command line the popup shows, in bytes: a longer one gets no
+// popup, since a cut would hide its tail, which is where a padded command
+// puts what it runs. And how far up the process tree sshd is looked for.
+MAX_COMMAND :: 400
 MAX_ANCESTORS :: 64
 
 // What one run reads. The process's own values, or a test's: root is "" for
@@ -55,15 +57,27 @@ Skip :: enum {
 	No_Key,
 	// swaylock runs: the screen is locked and would hide the popup.
 	Locked,
-	// The user has no Wayland socket: there is no screen to ask on.
+	// No Sway of the user's greetd session listens on a Wayland socket:
+	// there is no screen to ask on.
 	No_Session,
+	// The sudo came over ssh, the server's laptop-access link: refused, with
+	// no popup, and logged.
+	Remote,
+	// The command line is longer than MAX_COMMAND.
+	Too_Long,
+}
+
+// Whether a sudo came over ssh, how that was told, and the client's address
+// where it is known.
+Remote :: struct {
+	remote: bool,
+	how:    string,
+	client: string,
 }
 
 Origin_Kind :: enum {
 	// A terminal on the laptop (PAM_TTY).
 	Terminal,
-	// An ssh login: the server's laptop-access link.
-	Ssh,
 	// A program without a terminal.
 	No_Terminal,
 }
@@ -71,8 +85,6 @@ Origin_Kind :: enum {
 Origin :: struct {
 	kind:    Origin_Kind,
 	tty:     string,
-	// The ssh client's address, from SSH_CONNECTION; "" when unknown.
-	client:  string,
 	// The program that ran sudo, for No_Terminal.
 	process: string,
 }
@@ -86,6 +98,8 @@ Request :: struct {
 	home:        string,
 	command:     string,
 	origin:      Origin,
+	// Whether it came over ssh, and how that was told.
+	remote:      Remote,
 	// The Wayland socket's name in runtime_dir, such as wayland-1.
 	wayland:     string,
 	runtime_dir: string,
@@ -104,7 +118,9 @@ default_config :: proc() -> Config {
 // system_path is a path of the system, under cfg.root.
 system_path :: proc(cfg: Config, allocator: runtime.Allocator, parts: ..string) -> string {
 	all := make([dynamic]string, 0, len(parts) + 1, allocator)
-	append(&all, cfg.root if cfg.root != "" else "/")
+	// "" for the real system, so that a path is "/proc/..." and compares
+	// equal to what the kernel prints.
+	append(&all, cfg.root)
 	append(&all, ..parts)
 	joined, _ := strings.join(all[:], "/", allocator)
 	return joined
@@ -125,6 +141,12 @@ prepare :: proc(cfg: Config, allocator: runtime.Allocator) -> (req: Request) {
 		req.skip = .No_User
 		return
 	}
+	req.command = command_of(cfg, allocator)
+	req.remote = remote_of(cfg, allocator)
+	if req.remote.remote {
+		req.skip = .Remote
+		return
+	}
 	if !has_mapping(cfg, req.home) {
 		req.skip = .No_Mapping
 		return
@@ -133,14 +155,17 @@ prepare :: proc(cfg: Config, allocator: runtime.Allocator) -> (req: Request) {
 		req.skip = .No_Key
 		return
 	}
+	if len(req.command) > MAX_COMMAND {
+		req.skip = .Too_Long
+		return
+	}
 	req.origin = origin_of(cfg, allocator)
-	req.command = command_of(cfg, allocator)
 	if is_locked(cfg, req.uid) {
 		req.skip = .Locked
 		return
 	}
 	req.runtime_dir = system_path(cfg, allocator, "run", "user", fmt.aprint(req.uid))
-	req.wayland, ok = wayland_socket(req.runtime_dir)
+	req.wayland, ok = wayland_of(cfg, req.uid, req.runtime_dir)
 	if !ok {
 		req.skip = .No_Session
 		return
@@ -231,48 +256,128 @@ is_locked :: proc(cfg: Config, uid: int) -> bool {
 	return false
 }
 
-// wayland_socket finds the user's Wayland socket, wayland-N, the lowest N
-// when there are several. It must be a socket: a file of that name left
-// behind is no session.
-wayland_socket :: proc(runtime_dir: string) -> (name: string, ok: bool) {
-	entries, err := os.read_all_directory_by_path(runtime_dir, context.allocator)
+// The names Sway runs under: its own, and that of a wrapped Sway.
+SWAYS :: [?]string{"sway", ".sway-wrapped"}
+
+// wayland_of finds the Wayland socket of the user's session: the socket that
+// the user's Sway listens on, where that Sway is the one greetd started for
+// the session, not a Sway that something else started (a headless one under
+// the user's systemd, or one inside the session's Sway). Any process of the
+// user may bind a wayland-N of its own, the lowest number included, so the
+// socket's name alone says nothing. The inode of each socket Sway holds open
+// is matched against the paths in /proc/net/unix. The socket must be a
+// wayland-N in runtime_dir and still a socket there.
+wayland_of :: proc(cfg: Config, uid: int, runtime_dir: string) -> (name: string, ok: bool) {
+	sway, found := session_sway(cfg, uid)
+	if !found {
+		return
+	}
+	inodes := socket_inodes(cfg, sway)
+	data, err := os.read_entire_file(system_path(cfg, context.allocator, "proc", "net", "unix"), context.allocator)
 	if err != nil {
 		return
 	}
 	best := -1
-	for e in entries {
-		digits := strings.trim_prefix(e.name, "wayland-")
-		if digits == e.name || digits == "" || e.type != .Socket {
+	rest := string(data)
+	for line in strings.split_lines_iterator(&rest) {
+		fields := strings.fields(line)
+		if len(fields) < 8 {
 			continue
 		}
+		inode, is_inode := strconv.parse_int(fields[6], 10)
+		if !is_inode || !(inode in inodes) {
+			continue
+		}
+		path := strings.join(fields[7:], " ")
+		slash := strings.last_index_byte(path, '/')
+		if slash < 0 || path[:slash] != runtime_dir {
+			continue
+		}
+		base := path[slash + 1:]
+		digits := strings.trim_prefix(base, "wayland-")
 		n, is_number := strconv.parse_int(digits, 10)
-		if !is_number || n < 0 || fmt.aprint(n) != digits {
+		if digits == base || !is_number || n < 0 || fmt.aprint(n) != digits {
+			continue
+		}
+		info, serr := os.lstat(path, context.allocator)
+		if serr != nil || info.type != .Socket {
 			continue
 		}
 		if best < 0 || n < best {
-			best, name = n, e.name
+			best, name = n, base
 		}
 	}
 	return name, best >= 0
 }
 
-// origin_of tells where the sudo came from. An ssh login is the server's
-// laptop-access link, the only key huginn's sshd takes: sshd (or sshd-session,
-// its per-connection program since OpenSSH 9.8) among sudo's ancestors, or
-// SSH_CONNECTION in sudo's environment. That comes first, since a terminal
-// can be made inside such a login. Then PAM_TTY. The signal is best effort:
-// a program that runs as the user can start sudo from elsewhere (README.md).
-origin_of :: proc(cfg: Config, allocator: runtime.Allocator) -> (o: Origin) {
-	context.allocator = allocator
-	o.tty = sanitize(cfg.tty, MAX_COMMAND)
-	client, from_env := ssh_client(cfg, cfg.parent)
-	if from_env || has_sshd_ancestor(cfg, cfg.parent) {
-		o.kind = .Ssh
-		o.client = client
+// session_sway finds the user's Sway that greetd started: a process named
+// Sway with the user's real uid, whose nearest ancestor that is greetd or a
+// Sway is greetd.
+session_sway :: proc(cfg: Config, uid: int) -> (pid: int, ok: bool) {
+	entries, err := os.read_all_directory_by_path(system_path(cfg, context.allocator, "proc"), context.allocator)
+	if err != nil {
 		return
 	}
+	for e in entries {
+		candidate, is_pid := strconv.parse_int(e.name, 10)
+		if !is_pid || candidate <= 0 || !is_sway(read_comm(cfg, candidate)) || real_uid(cfg, candidate) != uid {
+			continue
+		}
+		current := candidate
+		for _ in 0 ..< MAX_ANCESTORS {
+			next, has_parent := parent_of(cfg, current)
+			if !has_parent || next <= 1 || next == current {
+				break
+			}
+			current = next
+			if program_of(cfg, current) == "greetd" {
+				return candidate, true
+			}
+			if is_sway(read_comm(cfg, current)) {
+				break
+			}
+		}
+	}
+	return
+}
+
+is_sway :: proc(comm: string) -> bool {
+	sways := SWAYS
+	for n in sways {
+		if comm == n {
+			return true
+		}
+	}
+	return false
+}
+
+// socket_inodes are the inodes of the sockets that process pid holds open.
+socket_inodes :: proc(cfg: Config, pid: int) -> map[int]struct{} {
+	inodes := make(map[int]struct{})
+	dir := system_path(cfg, context.allocator, "proc", fmt.aprint(pid), "fd")
+	entries, err := os.read_all_directory_by_path(dir, context.allocator)
+	if err != nil {
+		return inodes
+	}
+	for e in entries {
+		target, lerr := os.read_link(strings.join({dir, e.name}, "/"), context.allocator)
+		if lerr != nil || !strings.has_prefix(target, "socket:[") || !strings.has_suffix(target, "]") {
+			continue
+		}
+		if inode, ok := strconv.parse_int(target[len("socket:["):len(target) - 1], 10); ok {
+			inodes[inode] = {}
+		}
+	}
+	return inodes
+}
+
+// origin_of tells where a local sudo came from, for the popup: a terminal on
+// the laptop (PAM_TTY), or the program that ran it.
+origin_of :: proc(cfg: Config, allocator: runtime.Allocator) -> (o: Origin) {
+	context.allocator = allocator
 	if cfg.tty != "" {
 		o.kind = .Terminal
+		o.tty = sanitize(cfg.tty, 64)
 		return
 	}
 	o.kind = .No_Terminal
@@ -281,6 +386,130 @@ origin_of :: proc(cfg: Config, allocator: runtime.Allocator) -> (o: Origin) {
 	}
 	return
 }
+
+// remote_of tells whether the sudo came over ssh, which on huginn is the
+// server's laptop-access link, the one key its sshd takes. The caller over
+// the link controls sudo's environment, its terminal and, by a double fork,
+// its parent; it does not control the login session the kernel and logind
+// put it in. So the session decides first:
+//
+//   - sudo's audit session (/proc/PID/sessionid, which only a process with
+//     CAP_AUDIT_CONTROL can change, and logind's session id when audit is on)
+//     and the session-N.scope of its cgroup, each looked up in logind's state
+//     file /run/systemd/sessions/N, as sd_session_is_remote does: REMOTE=1,
+//     or SERVICE=sshd;
+//   - then an sshd or sshd-session among sudo's ancestors;
+//   - then SSH_CONNECTION in sudo's environment, which can only add.
+//
+// Leaving the ssh session is possible: a process of the user can have its
+// own systemd or Sway start sudo (systemd-run --user, swaymsg exec), and
+// that sudo is a local one. Only a forced command on the link's key closes
+// that (README.md).
+remote_of :: proc(cfg: Config, allocator: runtime.Allocator) -> (r: Remote) {
+	context.allocator = allocator
+	client, from_env := ssh_client(cfg, cfg.parent)
+	r.client = client
+	if id, ok := audit_session(cfg, cfg.parent); ok && session_is_remote(cfg, id) {
+		r.remote, r.how = true, fmt.aprintf("its login session %s is remote", id)
+	} else if id, ok = cgroup_session(cfg, cfg.parent); ok && session_is_remote(cfg, id) {
+		r.remote, r.how = true, fmt.aprintf("its session scope %s is remote", id)
+	} else if has_sshd_ancestor(cfg, cfg.parent) {
+		r.remote, r.how = true, "sshd is among its ancestors"
+	} else if from_env {
+		r.remote, r.how = true, "its environment has SSH_CONNECTION"
+	}
+	return
+}
+
+// The audit session of a process that has none.
+NO_AUDIT_SESSION :: "4294967295"
+
+audit_session :: proc(cfg: Config, pid: int) -> (id: string, ok: bool) {
+	data, err := os.read_entire_file(system_path(cfg, context.allocator, "proc", fmt.aprint(pid), "sessionid"), context.allocator)
+	if err != nil {
+		return
+	}
+	id = strings.trim_space(string(data))
+	return id, id != NO_AUDIT_SESSION && is_session_id(id)
+}
+
+// cgroup_session reads the session of a session-N.scope in the process's
+// unified cgroup path.
+cgroup_session :: proc(cfg: Config, pid: int) -> (id: string, ok: bool) {
+	data, err := os.read_entire_file(system_path(cfg, context.allocator, "proc", fmt.aprint(pid), "cgroup"), context.allocator)
+	if err != nil {
+		return
+	}
+	rest := string(data)
+	for line in strings.split_lines_iterator(&rest) {
+		if !strings.has_prefix(line, "0::") {
+			continue
+		}
+		for part in strings.split(line[len("0::"):], "/") {
+			if strings.has_prefix(part, "session-") && strings.has_suffix(part, ".scope") {
+				id = part[len("session-"):len(part) - len(".scope")]
+				if is_session_id(id) {
+					return id, true
+				}
+			}
+		}
+	}
+	return
+}
+
+// is_session_id refuses anything that would leave /run/systemd/sessions.
+is_session_id :: proc(id: string) -> bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for c in transmute([]u8)id {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+			return false
+		}
+	}
+	return true
+}
+
+// session_is_remote reads logind's state file of session id.
+session_is_remote :: proc(cfg: Config, id: string) -> bool {
+	data, err := os.read_entire_file(system_path(cfg, context.allocator, "run", "systemd", "sessions", id), context.allocator)
+	if err != nil {
+		return false
+	}
+	rest := string(data)
+	for line in strings.split_lines_iterator(&rest) {
+		if line == "REMOTE=1" || line == "SERVICE=sshd" {
+			return true
+		}
+	}
+	return false
+}
+
+// SYSLOG is where log_line writes, under cfg.root: journald's socket for
+// syslog messages.
+SYSLOG :: "dev/log"
+
+// log_line sends one message to the journal, as authpriv.warning, the way
+// syslog(3) would. It never fails the run: without the socket there is no
+// log line, and the decision stands.
+log_line :: proc(cfg: Config, text: string) {
+	path := system_path(cfg, context.allocator, SYSLOG)
+	fd, errno := linux.socket(.UNIX, .DGRAM, {.CLOEXEC}, .HOPOPT)
+	if errno != .NONE {
+		return
+	}
+	defer { _ = linux.close(fd) }
+	addr := linux.Sock_Addr_Un{sun_family = .UNIX}
+	if len(path) >= len(addr.sun_path) {
+		return
+	}
+	copy(addr.sun_path[:], path)
+	message := fmt.aprintf("<%d>ravnix-tap-ask: %s", SYSLOG_AUTHPRIV_WARNING, text)
+	_, _ = linux.sendto(fd, transmute([]u8)message, {}, &addr)
+}
+
+// authpriv (10) times 8, plus warning (4).
+SYSLOG_AUTHPRIV_WARNING :: 10 * 8 + 4
 
 // ssh_client reads SSH_CONNECTION from the environment of process pid: the
 // client's address is its first field.
@@ -315,10 +544,7 @@ has_sshd_ancestor :: proc(cfg: Config, pid: int) -> bool {
 			return false
 		}
 		current = next
-		program := read_comm(cfg, current)
-		if target, err := os.read_link(system_path(cfg, context.allocator, "proc", fmt.aprint(current), "exe"), context.allocator); err == nil {
-			program = target[strings.last_index_byte(target, '/') + 1:]
-		}
+		program := program_of(cfg, current)
 		for n in names {
 			if program == n {
 				return true
@@ -326,6 +552,16 @@ has_sshd_ancestor :: proc(cfg: Config, pid: int) -> bool {
 		}
 	}
 	return false
+}
+
+// program_of is the name of the program a process runs: the base name of its
+// exe link, which the process cannot change, or its comm where the link
+// cannot be read.
+program_of :: proc(cfg: Config, pid: int) -> string {
+	if target, err := os.read_link(system_path(cfg, context.allocator, "proc", fmt.aprint(pid), "exe"), context.allocator); err == nil {
+		return target[strings.last_index_byte(target, '/') + 1:]
+	}
+	return read_comm(cfg, pid)
 }
 
 // parent_of reads the parent of pid from /proc/PID/stat. The comm in
@@ -385,21 +621,24 @@ command_of :: proc(cfg: Config, allocator: runtime.Allocator) -> string {
 		return "(unknown)"
 	}
 	args := strings.split(strings.trim_right(string(data), "\x00"), "\x00")
-	return sanitize(strings.join(args, " "), MAX_COMMAND)
+	// Whole: prepare refuses one longer than MAX_COMMAND.
+	return sanitize(strings.join(args, " "), -1)
 }
 
-// sanitize makes text safe to show: a control character, which could start a
-// new line in the popup and fake one of its own, is a "?", invalid UTF-8 is
-// U+FFFD, and text longer than max bytes is cut at a character and ends in
-// "…".
+// sanitize makes text safe to show. A control character, which could start a
+// new line in the popup and fake one of its own, is a "?", and so is a
+// format character (Unicode's Cf: bidi controls, zero-width characters, the
+// soft hyphen, tags) and a line or paragraph separator, which could reorder
+// or hide a part of the text. Invalid UTF-8 is U+FFFD. With max >= 0, text
+// longer than max bytes is cut at a character and ends in "…".
 sanitize :: proc(text: string, max: int, allocator := context.allocator) -> string {
 	b := strings.builder_make(0, len(text), allocator)
 	for r in text {
-		if strings.builder_len(b) + utf8.rune_size(r) > max {
+		if max >= 0 && strings.builder_len(b) + utf8.rune_size(r) > max {
 			strings.write_string(&b, "…")
 			break
 		}
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || is_format(r) {
 			strings.write_byte(&b, '?')
 		} else {
 			strings.write_rune(&b, r)
@@ -408,13 +647,44 @@ sanitize :: proc(text: string, max: int, allocator := context.allocator) -> stri
 	return strings.to_string(b)
 }
 
+// The format characters of Unicode 16 (general category Cf), and the line
+// and paragraph separators U+2028 and U+2029.
+FORMAT_RANGES :: [?][2]rune {
+	{0x00AD, 0x00AD},
+	{0x0600, 0x0605},
+	{0x061C, 0x061C},
+	{0x06DD, 0x06DD},
+	{0x070F, 0x070F},
+	{0x0890, 0x0891},
+	{0x08E2, 0x08E2},
+	{0x180E, 0x180E},
+	{0x200B, 0x200F},
+	{0x2028, 0x202E},
+	{0x2060, 0x2064},
+	{0x2066, 0x206F},
+	{0xFEFF, 0xFEFF},
+	{0xFFF9, 0xFFFB},
+	{0x110BD, 0x110BD},
+	{0x110CD, 0x110CD},
+	{0x13430, 0x1343F},
+	{0x1BCA0, 0x1BCA3},
+	{0x1D173, 0x1D17A},
+	{0xE0001, 0xE0001},
+	{0xE0020, 0xE007F},
+}
+
+is_format :: proc(r: rune) -> bool {
+	ranges := FORMAT_RANGES
+	for range in ranges {
+		if r >= range[0] && r <= range[1] {
+			return true
+		}
+	}
+	return false
+}
+
 origin_text :: proc(o: Origin, allocator: runtime.Allocator) -> string {
 	switch o.kind {
-	case .Ssh:
-		if o.client != "" {
-			return fmt.aprintf("ssh from %s (the server's laptop-access link)", o.client, allocator = allocator)
-		}
-		return "ssh (the server's laptop-access link)"
 	case .Terminal:
 		return fmt.aprintf("a terminal on this laptop, %s", o.tty, allocator = allocator)
 	case .No_Terminal:
@@ -540,6 +810,20 @@ allowed :: proc(d: Decision) -> bool {
 decide :: proc(cfg: Config, allocator: runtime.Allocator) -> (d: Decision) {
 	req := prepare(cfg, allocator)
 	d.skip = req.skip
+	if d.skip == .Remote {
+		log_line(
+			cfg,
+			fmt.aprintf(
+				"refused a sudo over ssh by %s%s%s (%s; no popup, no tap): %s",
+				sanitize(cfg.user, 64, allocator),
+				" from " if req.remote.client != "" else "",
+				req.remote.client,
+				req.remote.how,
+				sanitize(req.command, MAX_COMMAND, allocator),
+				allocator = allocator,
+			),
+		)
+	}
 	if d.skip != .None {
 		d.answer = .Deny
 		return

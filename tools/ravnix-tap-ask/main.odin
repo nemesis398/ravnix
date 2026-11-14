@@ -18,18 +18,21 @@ Asks on the user's own screen, in a fuzzel popup, whether a sudo may wait for
 a tap on the security key. pam_exec runs it right before pam_u2f in sudo's auth
 stack; it reads PAM_USER, PAM_TTY and PAM_TYPE, and sudo is its parent.
 
-It asks only when the user has ~/.config/Yubico/u2f_keys, a FIDO key is
-plugged in, the screen is not locked and the user has a Wayland session.
+A sudo over ssh is refused with no popup and one line in the journal. A local
+one is asked about only when the user has ~/.config/Yubico/u2f_keys, a FIDO
+key is plugged in, the command fits in 400 bytes, the screen is not locked
+and the user's greetd session has a Sway.
 
-  --dry-run      decide without the popup: print the decision and what the
-                 popup would show, and exit 0
-  --root DIR     read /proc, /sys, /run and /etc/passwd under DIR
+  --dry-run      decide without the popup and without a log line: print the
+                 decision and what the popup would show, and exit 0
+  --root DIR     read /proc, /sys, /run, /dev/log and /etc/passwd under DIR
   --parent PID   the sudo process (default: the parent)
   --user NAME    the user (default: PAM_USER)
   --tty TTY      the terminal (default: PAM_TTY)
 
-Exit status: 0 Allow was chosen, so pam_u2f runs; 1 no popup, Deny, no
-answer in 30 s, or the popup failed, so pam_u2f is skipped; 2 bad usage.`
+Exit status: 0 Allow was chosen, so pam_u2f runs; 1 refused over ssh, no
+popup, Deny, no answer in 30 s, or the popup failed, so pam_u2f is skipped;
+2 bad usage.`
 
 // run is the whole command, for the arguments after the program's name and
 // the PAM values of the environment, and returns the exit status.
