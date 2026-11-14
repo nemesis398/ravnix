@@ -29,8 +29,8 @@
 #                 RRGGBBAA value of a color key whose alpha is not full. The
 #                 exemptions are two parts of the lock ring: swaylock's
 #                 inside-color and inside-*-color keys (the inside) and its
-#                 separator-color (the tick between the highlight segments,
-#                 which is clear), with or without a #. A child that shows its
+#                 separator-color (the tick between the highlight segments),
+#                 the latter only fully clear (alpha 00), with or without a #. A child that shows its
 #                 parent uses the role color or inherit.
 #   motion        a transition or animation key, or @keyframes, unless the
 #                 key turns motion off (none, false, off, no, 0s); also
@@ -460,13 +460,18 @@ in_trailing_comment() {
 }
 
 # Whether the first #DIGITS of a line is the value of one of swaylock's
-# inside-color keys or of its separator-color, the places a color may be
-# see-through.
+# inside-color keys or of its separator-color with alpha 00, the places a color
+# may be see-through.
 lock_ring_inside() {
 	local lower
 	line_text "$1" "$2"
 	lower="${REPLY,,}"
-	[[ "$lower" =~ (^|[^[:alnum:]_-])(inside(-[a-z]+)*|separator)-color[\"\']?[[:space:]]*[=:][[:space:]]*[\"\']?\#${3,,} ]]
+	if [[ "$lower" =~ (^|[^[:alnum:]_-])inside(-[a-z]+)*-color[\"\']?[[:space:]]*[=:][[:space:]]*[\"\']?\#${3,,} ]]; then
+		return 0
+	fi
+	# The separator is fully clear (alpha 00) or it is a hit.
+	[[ "${3,,}" =~ ^([0-9a-f]{6}00|[0-9a-f]{3}0)$ ]] &&
+		[[ "$lower" =~ (^|[^[:alnum:]_-])separator-color[\"\']?[[:space:]]*[=:][[:space:]]*[\"\']?\#${3,,} ]]
 }
 
 hex_hit() {
@@ -691,7 +696,8 @@ bare_color_hit() {
 	# The inside of the lock ring and its separator are the places a color may
 	# be see-through.
 	case "$key" in
-	inside-color | inside-*-color | separator-color) return 0 ;;
+	inside-color | inside-*-color) return 0 ;;
+	separator-color) [[ "${value:6:2}" == 00 ]] && return 0 ;;
 	esac
 	hit "$path" "$line" opacity
 }

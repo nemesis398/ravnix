@@ -506,6 +506,17 @@ the_inside_and_the_separator_of_the_lock_ring_are_the_exemption() {
 	expect_clean
 }
 
+a_separator_is_clear_or_a_hit() {
+	new_tree
+	put modules/theme/ok.conf 'separator-color=00000000\nseparator-color=1e1e2e00\n'
+	put modules/theme/ok.nix 'separator-color = "#1e1e2e00";\n"separator-color" = "1e1e2e00";\n'
+	expect_clean
+	put modules/theme/bad.conf 'separator-color=1e1e2ecc\nseparator-color=1e1e2e01\n'
+	put modules/theme/bad.nix 'separator-color = "#1e1e2ecc";\n"separator-color" = "1e1e2e80";\n'
+	expect_hits "modules/theme/bad.conf:1:opacity" "modules/theme/bad.conf:2:opacity" \
+		"modules/theme/bad.nix:1:opacity" "modules/theme/bad.nix:2:opacity"
+}
+
 no_other_swaylock_color_may_be_translucent() {
 	new_tree
 	put modules/theme/swaylock.conf 'ring-color=585b7080\nline-color=1e1e2e00\ntext-color=cdd6f4cc\nkey-hl-color=cba6f7cc\nseparator-ring-color=00000000\n'
@@ -972,6 +983,7 @@ tests=(
 	a_bare_color_outside_the_theme_is_a_hex_color_hit
 	an_eight_digit_value_that_is_not_a_color_passes
 	the_inside_and_the_separator_of_the_lock_ring_are_the_exemption
+	a_separator_is_clear_or_a_hit
 	no_other_swaylock_color_may_be_translucent
 	a_sway_command_in_a_nix_string_is_a_hit
 	prose_that_holds_the_word_transparent_is_no_hit
