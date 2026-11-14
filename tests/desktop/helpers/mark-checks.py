@@ -223,6 +223,28 @@ def check_greeter(name, v, art):
     expect(pairs.get("greet") == "13", f"{name}: the greeting is color {pairs.get('greet')}, not the accent (13)")
 
 
+def thin_gaps(art):
+    """The (x, y) of the pixels of the art that are off with an on pixel on both
+    sides, above and below or left and right. Each cell is two pixels, the
+    upper half on for ▀ and █ and the lower half on for ▄ and █."""
+    width = max(map(len, art), default=0)
+    pixels = []
+    for line in art:
+        line = line.ljust(width)
+        pixels.append([c in "▀█" for c in line])
+        pixels.append([c in "▄█" for c in line])
+    found = []
+    for y, row in enumerate(pixels):
+        for x, on in enumerate(row):
+            if on:
+                continue
+            across = 0 < x < width - 1 and row[x - 1] and row[x + 1]
+            down = 0 < y < len(pixels) - 1 and pixels[y - 1][x] and pixels[y + 1][x]
+            if across or down:
+                found.append((x, y))
+    return found
+
+
 def main():
     args = json.loads(read(sys.argv[1]))
 
@@ -241,6 +263,16 @@ def main():
         # tuigreet's wrapper turns a line of spaces alone into two lines.
         expect(line.strip(" "), f"line {n} of the art is blank")
         expect(not line.endswith(" "), f"line {n} of the art ends in a space")
+
+    # No seam: the art is two square pixels per cell, upper and lower half, and
+    # a seam would be a pixel of the body that is off between two that are on,
+    # above and below or left and right, a line through the mark one pixel
+    # thick. The console draws the half blocks as exact halves of the cell and
+    # the lines of text touch, so what the art shows is what the pixels say.
+    # The only such pixels are the notch of each eye, one per eye, which is
+    # the shape of the mark and no seam.
+    notches = thin_gaps(art)
+    expect(len(notches) <= 2, f"the art has {len(notches)} one-pixel gaps (x, y): {notches}; the two eyes account for two")
 
     # The interval check itself, on a fixture with two unsafe image modules.
     caught = sorted(k for k, _ in image_interval_problems(jsonc(args["imageFixture"], "the image fixture")))
