@@ -30,6 +30,9 @@
 #     (seteuid), so only the tool's exit 0 (Allow in the popup on the laptop's
 #     screen) reaches pam_u2f, and any other result skips that one line; no
 #     other service has the line;
+#   - the option changes nothing but these lines: every PAM file with the
+#     option on, without its pam_u2f and ravnix-tap-ask lines, is the file
+#     with the option off, line for line, and no service is added or lost;
 #   - with the option off, no PAM file names pam_u2f and pamu2fcfg is not
 #     installed; the server shape stays the same with the option on;
 #   - an origin that would break the PAM line (white space, a bracket, a `#`,
@@ -209,6 +212,18 @@ let
         s: check (!lib.any isGate (linesOf c s)) "${name}: ${s} has a ravnix-tap-ask line"
       ) (lib.filter (s: s != "sudo") (lib.attrNames c.security.pam.services));
 
+  # The option on, without its own lines, is the option off.
+  onlyTheseLines =
+    lib.concatMap (
+      s:
+      check (
+        lib.filter (l: !isU2f l && !isGate l) (linesOf laptopOn s) == linesOf laptopOff s
+      ) "laptop: the option changes ${s} beyond its pam_u2f and ravnix-tap-ask lines"
+    ) (lib.attrNames laptopOff.security.pam.services)
+    ++ check (
+      lib.attrNames laptopOn.security.pam.services == lib.attrNames laptopOff.security.pam.services
+    ) "laptop: the option adds or removes a PAM service";
+
   pamU2fIn = c: lib.filter (p: lib.getName p == "pam_u2f") c.environment.systemPackages;
 
   anyU2f =
@@ -253,6 +268,7 @@ let
     ++ check (!lib.any isU2f (linesOf laptopOn "cups")) "laptop: cups's stack has pam_u2f"
     ++ gate "laptop" laptopOn
     ++ gate "another origin" otherOrigin
+    ++ onlyTheseLines
     ++ lib.concatMap (carries "another origin" otherOrigin "pam://example") services
     ++ anyU2f "laptop with the option off" laptopOff
     ++ greetdFirst "laptop with the option off" laptopOff
