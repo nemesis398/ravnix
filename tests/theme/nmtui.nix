@@ -62,6 +62,15 @@ let
     ++ lib.concatMap (
       p: lib.optional (p.fg != "black") "${p.name}: text on the accent fill is ${p.fg}, not black"
     ) fills
+    # newt draws the filled part of a progress bar as spaces in the
+    # fullscale background (checked with whiptail --gauge), so the filled part
+    # is an accent fill with the darkest text, and the empty part a wash.
+    ++ lib.optional (
+      by "fullscale" == null || (by "fullscale").bg != "brightmagenta"
+    ) "the filled part of a progress bar is not an accent fill"
+    ++ lib.optional (
+      by "emptyscale" == null || (by "emptyscale").bg != "black"
+    ) "the empty part of a progress bar is not the Surface1 wash"
     # The frame and title are the accent.
     ++ lib.optional ((by "border").fg or null != "brightmagenta") "the border is not the accent"
     ++ lib.optional ((by "title").fg or null != "brightmagenta") "the title is not the accent";

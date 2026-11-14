@@ -305,9 +305,11 @@ in
     # stays only as the text on an accent fill, the darkest of the 16 slots
     # and the nearest to Crust. `black` is also the one wash the screen keeps,
     # Surface1: the entry field, the selected row of an unfocused list, the
-    # empty part of a progress bar and the compact button. lightgray is slot 7, Subtext1, the nearest
-    # slot to Text (white is slot 15, Subtext0, and dimmer); gray is slot 8,
-    # Surface2; brightmagenta is slot 13, the accent. The shadow is drawn in the
+    # empty part of a progress bar and the compact button. lightgray is slot 7,
+    # Subtext1, the nearest slot to Text (white is slot 15, Subtext0, and
+    # dimmer); gray is slot 8, Surface2; brightmagenta is slot 13, the accent.
+    # The filled part of a scale is the fullscale background, so it is an
+    # accent fill. The shadow is drawn in the
     # background's color, so there is none. Not seen on screen.
     NEWT_COLORS = lib.concatStringsSep " " [
       "root=lightgray,default"
@@ -331,7 +333,7 @@ in
       "helpline=lightgray,default"
       "roottext=lightgray,default"
       "emptyscale=lightgray,black"
-      "fullscale=brightmagenta,default"
+      "fullscale=black,brightmagenta"
       "shadow=default,default"
     ];
   };
