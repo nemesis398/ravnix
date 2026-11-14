@@ -504,6 +504,22 @@ languagetool_finds_its_credentials_in_the_vault_and_the_file :: proc(t: ^testing
 	_, err = tools.languagetool_read()
 	testing.expect_value(t, err, nil)
 	os.remove(tools.languagetool.credentials)
+
+	// Locked, with the item named: the credentials file is the fallback,
+	// in the order env, vault, file. The vault is asked only whether it is
+	// unlocked.
+	dir = lt_vault_again(f, false, LT_KEY, LT_USER)
+	write_file(f, tools.languagetool.credentials, fmt.aprintf("LANGUAGETOOL_API_KEY=%s\nLANGUAGETOOL_USERNAME=%s\n", LT_KEY, LT_USER))
+	testing.expect_value(t, tools.languagetool_unavailable(), "")
+	words, err = tools.languagetool_read()
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, len(words), 1)
+	testing.expect_value(t, read_file(f, strings.concatenate({dir, "/rbw-log"}, f.a)), "unlocked\n")
+	// A file with no key leaves the vault locked: skipped, as before.
+	dir = lt_vault_again(f, false, LT_KEY, LT_USER)
+	write_file(f, tools.languagetool.credentials, "LANGUAGETOOL_USERNAME=alice@lt.test\n")
+	testing.expect(t, strings.contains(tools.languagetool_unavailable(), "locked"))
+	os.remove(tools.languagetool.credentials)
 }
 
 // lt_fails says that the credentials make the adapter fail, not skip, with

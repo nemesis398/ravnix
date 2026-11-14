@@ -320,7 +320,8 @@ The credentials are found in the order of the editor's LanguageTool code
 the vault through rbw, only while `rbw unlocked` says it is (the item that
 `LANGUAGETOOL_RBW_ITEM` names: the key is its password, the account its
 `username` field), then `~/.config/languagetool/credentials`, `KEY=VALUE`
-lines. The wrapper sets `LANGUAGETOOL_RBW_ITEM` and `LANGUAGETOOL_USERNAME`
+lines. The file is read with the vault locked as well: a key there is used,
+and the adapter is skipped as locked only when the file has none. The wrapper sets `LANGUAGETOOL_RBW_ITEM` and `LANGUAGETOOL_USERNAME`
 from `ravnix.dictionary.languagetool.rbwItem` and `.username`, which have no
 default.
 
@@ -428,7 +429,8 @@ out, odd characters encoded), a 429 waited out with and without
 `Retry-After`, a limit that stays, a 5xx, a refusal and an answer that
 repeats the key (neither message holds it), answers that are no word list,
 a server that does not answer and one that is not there, and the
-credentials from the vault, the file, a locked vault and no rbw; while curl
+credentials from the vault, the file, a locked vault with and without the
+file and no rbw; while curl
 waits for each answer, the stand-in looks through `/proc` for the key in a
 command line or an environment. `prose_test.odin` reads as the checker
 does, keeps the layout, makes a missing file, refuses one that is not

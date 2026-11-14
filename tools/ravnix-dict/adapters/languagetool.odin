@@ -150,6 +150,10 @@ lt_find_credentials :: proc() -> Credentials {
 			}
 		}
 	}
+	// A key from the file opens what a locked vault kept shut.
+	if c.key != "" {
+		c.locked = false
+	}
 	switch {
 	case c.key == "" && c.locked:
 		// Skipped; whether an account is missing shows once it is open.
