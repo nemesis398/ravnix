@@ -625,6 +625,9 @@
     # ravnix's skills are linked into ~/.claude/skills; claude.skills adds
     # your own by name (a directory with a SKILL.md), or leaves one out:
     #   skills.laptop = null;
+    # skillOverrides hides a skill from the model ("off", or
+    # "user-invocable-only" to keep /NAME) without uninstalling it:
+    #   skillOverrides.json-canvas = "off";
     claude.skillValues = { };
 
     # The MCP servers Claude Code starts with in every project, by name, each

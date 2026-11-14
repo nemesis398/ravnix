@@ -100,6 +100,13 @@ merges ravnix's skills under it, so a definition at any priority, the
 `lib.mkDefault` the NixOS module forwards included, adds to them instead of
 replacing all of them.
 
+`ravnix.claude.skillOverrides` says how Claude Code lists a skill to the
+model, by the name Claude Code shows (`PLUGIN:NAME` for a plugin's): `"off"`,
+`"user-invocable-only"` (only `/NAME`), `"name-only"` (no description) or
+`"on"`. It goes into the settings' `skillOverrides`, merged: a name set there
+wins at every switch, any other keeps what `/skills` wrote, and a name taken
+out keeps its last state in the file.
+
 The hooks of three skills join ravnix's other hooks
 (`ravnix.claude.hookEntries`), each a wrapper at `~/.claude/ravnix/hooks/NAME`
 that runs the adapter of the installed skill and ends 0 whatever happens:

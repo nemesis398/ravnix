@@ -269,6 +269,7 @@ in
 
     programs.claude-code.settings = {
       env.RAVNIX_SKILL_VALUES = valuesFile;
+      skillOverrides = lib.mkIf (config.ravnix.claude.skillOverrides != { }) config.ravnix.claude.skillOverrides;
       # Only for immutable settings, where the activation step does not run
       # (claude-code.nix).
       hooks = lib.mkIf (!cfg.mutableSettings) config.ravnix.claude.hookEntries;

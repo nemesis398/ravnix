@@ -100,6 +100,33 @@ in
     '';
   };
 
+  options.ravnix.claude.skillOverrides = mkOption {
+    # The states Claude Code 2.1 knows for its skillOverrides setting.
+    type = types.attrsOf (
+      types.enum [
+        "on"
+        "name-only"
+        "user-invocable-only"
+        "off"
+      ]
+    );
+    default = { };
+    example = {
+      json-canvas = "off";
+      tutor = "user-invocable-only";
+    };
+    description = ''
+      How Claude Code lists a skill to the model, by the skill's name as
+      Claude Code shows it (a plugin's skill as PLUGIN:NAME): "name-only"
+      lists it without its description, "user-invocable-only" hides it
+      from the model but keeps /NAME, "off" hides it from both, and "on"
+      is what an absent name means. Written to the settings'
+      skillOverrides, where a name set here replaces the file's state and
+      every other name keeps the one Claude Code wrote (/skills, /config).
+      A name taken out here keeps its last state in the file.
+    '';
+  };
+
   options.ravnix.claude.mcpServers = mkOption {
     type = types.attrsOf json;
     default = { };

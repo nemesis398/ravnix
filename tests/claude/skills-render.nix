@@ -87,6 +87,23 @@ let
       }
     ]).config;
 
+  overrides = {
+    json-canvas = "off";
+    tutor = "user-invocable-only";
+    handoff = "name-only";
+    prose = "on";
+  };
+  withOverrides = (hm [ { ravnix.claude.skillOverrides = overrides; } ]).config;
+  # As NixOS forwards it, at lib.mkDefault.
+  forwardedOverrides = (hm [ { ravnix.claude.skillOverrides = lib.mkDefault overrides; } ]).config;
+  rejects =
+    value:
+    !(builtins.tryEval (
+      builtins.deepSeq (hm [ { ravnix.claude.skillOverrides.x = value; } ])
+        .config.programs.claude-code.settings.skillOverrides
+        null
+    )).success;
+
   skillLib = import ../../lib/claude-skills.nix { inherit lib; };
   names = skillLib.names ../../claude/skills;
   expected = [
@@ -273,6 +290,20 @@ let
       ok =
         sourceOf forwarded "own-skill" == toString ./fixtures/own-skill
         && lib.all (n: lib.elem "${skillsAt}/${n}" (linked forwarded)) expected;
+    }
+    {
+      name = "skillOverrides go into the settings as Claude Code's skillOverrides, by name";
+      ok =
+        withOverrides.programs.claude-code.settings.skillOverrides == overrides
+        && forwardedOverrides.programs.claude-code.settings.skillOverrides == overrides;
+    }
+    {
+      name = "without skillOverrides the settings have no skillOverrides key";
+      ok = !(fullHome.programs.claude-code.settings ? skillOverrides);
+    }
+    {
+      name = "a skillOverrides value Claude Code does not know is refused";
+      ok = rejects "disabled" && rejects "Off" && rejects true && rejects "";
     }
     {
       name = "the others stay ravnix's";
