@@ -211,6 +211,19 @@
       ];
     };
 
+    # A tap on your security key (a YubiKey) instead of the password on the
+    # laptop: at the login screen, the lock screen, sudo, su and polkit. The
+    # password keeps working. Turn it on, switch, and enroll the key once, as
+    # yourself (until then the password is asked for as before):
+    #   mkdir -p ~/.config/Yubico
+    #   pamu2fcfg -o pam://ravnix -i pam://ravnix > ~/.config/Yubico/u2f_keys
+    security.u2f = {
+      enable = false;
+      # What the key's credential is bound to, the -o and -i above. The
+      # same value on every machine keeps one enrollment working on all.
+      origin = "pam://ravnix";
+    };
+
     # The laptop.
     laptop = {
       # The git hosts and, for each, the security key's handle files

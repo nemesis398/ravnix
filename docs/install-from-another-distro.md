@@ -176,6 +176,21 @@ home-manager.users.alice.programs.ssh.matchBlocks."github.com" = {
 
 Record what ssh makes of each host before the switch, with `ssh -G HOST > HOST.before`, and compare it afterward with `ssh -G HOST | diff HOST.before -`. Then remove the old file, or move it out of `~/.ssh`, and switch.
 
+## After the laptop's first switch: a tap instead of the password
+
+With `ravnix.security.u2f.enable = true` in your `me.nix`, the laptop asks your security key first at the login screen, the lock screen, sudo, su, polkit and a console login (`modules/desktop/u2f.nix`). A tap logs you in, and the password keeps working. Without the key, the password prompt comes at once. With the key plugged in and not touched, it comes when the key gives up waiting.
+
+The key does nothing until it is enrolled. Turn the option on and switch, which installs `pamu2fcfg`. Then enroll once, as yourself and not as root, with the key plugged in. Touch it when it blinks. A key with a FIDO2 PIN asks for it here, once:
+
+```sh
+mkdir -p ~/.config/Yubico
+pamu2fcfg -o pam://ravnix -i pam://ravnix > ~/.config/Yubico/u2f_keys
+```
+
+Until that file exists, every prompt asks for the password as before. If you set `ravnix.security.u2f.origin` to another value, use that value after `-o` and `-i`. A mapping from another machine was made for that machine's host name and does not work here, so enroll again. Test the tap with `sudo -k; sudo true` in a terminal before you lock the screen, and keep a second terminal with a root shell open until it works.
+
+The login keyring opens by itself after a tap only if it has no password. A tap hands the keyring no password, so a keyring with one asks for it the first time an application wants a secret.
+
 ## After the laptop's first login: the keyring for a YubiKey tap
 
 When you log in at the greeter with your password, PAM hands it to gnome-keyring, and the login keyring opens. Helium keeps its cookie key there ("Chromium Safe Storage"), so it starts without asking. A YubiKey tap gives PAM no password, and the keyring stays locked. With `ravnix.desktop.keyring.autoUnlock.enable = true` in your private flake, the user service `ravnix-keyring-unlock` opens it after every login, before Helium starts, with the keyring's password kept as a systemd credential of your user. The keyring itself stays encrypted on the disk, but it now opens for whoever can log in as you, with a tap as well. The credential is encrypted for this machine: its TPM2 when it has one, the host key in `/var/lib/systemd/`, the machine ID, your UID and your user name. A copy of the file is of no use on another machine or to another user.
