@@ -138,6 +138,7 @@ let
     "a hosts entry that is a number, not a table" = retention "hosts-not-table";
     "a target that is a number, not a table" = retention "target-not-table";
     "targets that is a string, not a table" = retention "targets-not-table";
+    "a retention key outside targets" = retention "key-outside-targets";
     "a disabled service on an undeclared host" = {
       ravnix.services.paperless = {
         enable = false;

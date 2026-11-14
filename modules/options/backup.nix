@@ -80,7 +80,10 @@ let
           lib.intersectLists targets (lib.attrNames given)
         );
     in
-    table "targets" (toml.targets or { }) checkTargets;
+    # ravnix-retention refuses a key beside targets, so the build does too:
+    # a file it refuses would only fail later, in the prune job.
+    map (key: "${key} is not a key of the file") (lib.remove "targets" (lib.attrNames toml))
+    ++ table "targets" (toml.targets or { }) checkTargets;
 in
 {
   options.ravnix.backup.retentionFile = mkOption {
