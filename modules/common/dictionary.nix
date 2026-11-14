@@ -40,7 +40,7 @@ let
     value
   ];
   wrapperArgs =
-    setDefault "RAVNIX_DICT_FILE" cfg.file
+    lib.optionals (cfg.file != null) (setDefault "RAVNIX_DICT_FILE" cfg.file)
     ++ setDefault "RAVNIX_DICT_ADAPTERS" (lib.concatStringsSep "," names)
     ++ setDefault "RAVNIX_DICT_HANDY_SETTINGS" cfg.paths.handy
     ++ setDefault "RAVNIX_DICT_PROSE_FILE" cfg.paths.prose

@@ -25,7 +25,10 @@ usage: ravnix-dict [--file PATH] [--state DIR] COMMAND [ARG...]
 
 The dictionary is `--file`, or `$RAVNIX_DICT_FILE`; the module
 (`modules/common/dictionary.nix`) puts a `ravnix-dict` on the PATH whose
-default for it is `ravnix.dictionary.file`. The state is `--state`, or
+default for it is `ravnix.dictionary.file`. A host where that option is
+null has no dictionary: its `ravnix-dict` has no default, and it gets no
+sync service, path unit or timer (`modules/common/dictionary-watch.nix`).
+The state is `--state`, or
 `$XDG_STATE_HOME/ravnix-dict`, or `~/.local/state/ravnix-dict`. `list`
 needs no state.
 

@@ -3,7 +3,8 @@
 # service runs the wrapper's sync with home-manager's state directory, the
 # path unit watches the dictionary and the list of every adapter that has a
 # file, the timer covers the cloud, nothing runs before a first sync by hand
-# (the first merge), and ravnix.dictionary.watch = false
+# (the first merge), a host without a dictionary gets no unit, and
+# ravnix.dictionary.watch = false
 # leaves all three out. Which adapters a host gets: the prose skill's
 # everywhere, LanguageTool's on the laptop shape, Handy's where the desktop
 # installs Handy (checked on a whole laptop host, through the forwarding).
@@ -28,6 +29,7 @@ let
   laptop = (hm [ { ravnix.shape = "laptop"; } ]).config;
   handy = (hm [ { ravnix.dictionary.adapters.handy = true; } ]).config;
   off = (hm [ { ravnix.dictionary.watch = lib.mkForce false; } ]).config;
+  noDictionary = (hm [ { ravnix.dictionary.file = lib.mkForce null; } ]).config;
   noAccount =
     (hm [
       {
@@ -119,6 +121,14 @@ let
     ++ lib.optional (
       !lib.elem off.ravnix.dictionary.package off.home.packages
     ) "watch = false drops ravnix-dict itself"
+    # Only where it has work: a host without a dictionary gets no unit, and
+    # ravnix-dict all the same, without a dictionary of its own.
+    ++ lib.optional (
+      service noDictionary != { } || path noDictionary != { } || timer noDictionary != { }
+    ) "a host without a dictionary has a unit of its sync"
+    ++ lib.optional (
+      !lib.elem noDictionary.ravnix.dictionary.package noDictionary.home.packages
+    ) "a host without a dictionary has no ravnix-dict"
     ++ lib.optional (plain.ravnix.dictionary.adapters.languagetool) "LanguageTool is synced off the laptop"
     ++ lib.optional (
       !laptop.ravnix.dictionary.adapters.languagetool
@@ -152,6 +162,8 @@ pkgs.runCommand "common-dictionary-watch" { nativeBuildInputs = [ pkgs.gnugrep ]
       # placeholders), and nothing when they are null.
       grep -qF "LANGUAGETOOL_RBW_ITEM-'LanguageTool - API token'" ${wrapper plain} || fail "the wrapper does not name the vault item: $(grep LANGUAGETOOL ${wrapper plain})"
       grep -qF "LANGUAGETOOL_USERNAME-'alice@example.org'" ${wrapper plain} || fail "the wrapper does not name the account"
+      grep -q RAVNIX_DICT_FILE ${wrapper plain} || fail "the wrapper does not name the dictionary"
+      if grep -q RAVNIX_DICT_FILE ${wrapper noDictionary}; then fail "a host without a dictionary names one"; fi
       if grep -q LANGUAGETOOL ${wrapper noAccount}; then fail "null options still set: $(grep LANGUAGETOOL ${wrapper noAccount})"; fi
       # It runs: a sync of the prose adapter alone, against files here.
       export HOME="$PWD/home"

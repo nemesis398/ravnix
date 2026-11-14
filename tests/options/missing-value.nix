@@ -45,7 +45,6 @@ let
     "ravnix.secrets.rbwEmail"
     "ravnix.matrix.homeserver"
     "ravnix.backup.retentionFile"
-    "ravnix.dictionary.file"
   ];
   empty = eval [ ];
   unnamed = lib.filter (

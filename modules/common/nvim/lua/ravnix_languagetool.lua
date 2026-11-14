@@ -216,7 +216,7 @@ local function parse(line)
 end
 
 local function lines()
-  if vim.fn.filereadable(M.dictionary) ~= 1 then
+  if M.dictionary == nil or vim.fn.filereadable(M.dictionary) ~= 1 then
     return {}
   end
   local ok, read = pcall(vim.fn.readfile, M.dictionary)
@@ -226,7 +226,7 @@ end
 ---Whether the dictionary has a last line that is not closed by a line break:
 ---what is appended would join it.
 local function open_last_line()
-  local file = io.open(M.dictionary, "rb")
+  local file = M.dictionary and io.open(M.dictionary, "rb")
   if not file then
     return false
   end
@@ -278,6 +278,9 @@ function M.add(by_language)
   end
   if #new == 0 then
     return added
+  end
+  if M.dictionary == nil then
+    return {}, "no dictionary on this host (ravnix.dictionary.file is null)"
   end
   if open_last_line() then
     table.insert(new, 1, "")

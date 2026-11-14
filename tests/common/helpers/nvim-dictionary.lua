@@ -58,6 +58,14 @@ table.sort(expected)
 check(vim.deep_equal(added, expected), "added " .. vim.inspect(added))
 check(#vim.fn.readfile(file) == 4, "wrote " .. vim.inspect(vim.fn.readfile(file)))
 
+-- A host without a dictionary (ravnix.dictionary.file = null): no words,
+-- and an add that says why it wrote nothing.
+lt.dictionary = nil
+check(#lt.words("de-DE") == 0, "words without a dictionary: " .. vim.inspect(lt.words("de-DE")))
+local none, failure = lt.add({ ["de-DE"] = { "Wort" } })
+check(#none == 0 and failure ~= nil and failure:find("ravnix.dictionary.file", 1, true), "add without a dictionary: " .. vim.inspect({ none, failure }))
+lt.dictionary = file
+
 if #failures > 0 then
   io.stderr:write(table.concat(failures, "\n") .. "\n")
   os.exit(1)

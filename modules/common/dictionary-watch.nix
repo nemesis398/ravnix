@@ -23,7 +23,8 @@ let
   ++ lib.optional cfg.adapters.prose cfg.paths.prose;
 in
 {
-  config = lib.mkIf cfg.watch {
+  # Only where it has work: a host without a dictionary gets no unit.
+  config = lib.mkIf (cfg.watch && cfg.file != null) {
     systemd.user.services.${name} = {
       Unit = {
         Description = "Sync the dictionary with the tools' word lists (ravnix-dict)";
