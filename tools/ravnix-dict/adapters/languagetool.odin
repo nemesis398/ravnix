@@ -1,6 +1,6 @@
 // LanguageTool: the word list of a Premium account, in LanguageTool's cloud
 // (../README.md, "LanguageTool"). Its API lists the words a page at a time
-// (GET /v2/words) and adds and deletes one word per request
+// (GET /v2/words, until a page is empty) and adds and deletes one word per request
 // (POST /v2/words/add, /v2/words/delete); a write sends only the
 // difference to what the last read listed.
 //
@@ -289,7 +289,11 @@ languagetool_read :: proc() -> ([]string, Error) {
 	lt_seen = nil
 	page := languagetool.page if languagetool.page > 0 else LT_PAGE
 	words := make([dynamic]string)
-	for offset := 0;; offset += page {
+	// Until a page comes back empty: a server that gives fewer words than
+	// asked for (a cap below the limit) must not end the list early, or
+	// every word past the first page would be added again at each sync.
+	offset := 0
+	for {
 		body, why := lt_request(true, "words", {{"offset", fmt.tprint(offset)}, {"limit", fmt.tprint(page)}})
 		if why != "" {
 			return nil, why
@@ -306,10 +310,11 @@ languagetool_read :: proc() -> ([]string, Error) {
 		if gwhy != "" {
 			return nil, fmt.tprintf("LanguageTool's word list %s", gwhy)
 		}
-		append(&words, ..got)
-		if len(got) < page {
+		if len(got) == 0 {
 			break
 		}
+		append(&words, ..got)
+		offset += len(got)
 	}
 	lt_seen = words[:]
 	out := make([]string, len(words))

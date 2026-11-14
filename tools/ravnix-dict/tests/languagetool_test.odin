@@ -42,6 +42,8 @@ Fake_LT :: struct {
 	body:        string,
 	// The request is never answered.
 	hang:        bool,
+	// The most words a page holds, whatever limit asks; 0 is no cap.
+	cap:         int,
 	// The key was found in a process's command line or environment.
 	leaked:      string,
 	requests:    int,
@@ -234,6 +236,9 @@ handle :: proc(s: ^Fake_LT, client: net.TCP_Socket) {
 		offset, _ := strconv.parse_int(params["offset"])
 		limit, _ := strconv.parse_int(params["limit"])
 		append(&s.log, fmt.aprintf("GET offset=%d limit=%d", offset, limit))
+		if s.cap > 0 {
+			limit = min(limit, s.cap)
+		}
 		b := strings.builder_make()
 		strings.write_string(&b, `{"words": [`)
 		for i in offset ..< min(offset + limit, len(s.words)) {
@@ -309,12 +314,18 @@ languagetool_lists_every_page :: proc(t: ^testing.T) {
 	words, err := tools.languagetool_read()
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, strings.join(words, "|"), "a|b|c|d|e|f|g")
-	testing.expect_value(t, fake_lt_log(f, s), "GET offset=0 limit=3\nGET offset=3 limit=3\nGET offset=6 limit=3")
-	// A list that fills its last page asks once more, and gets none.
-	fake_lt_set(s, "a", "b", "c")
+	// It asks until a page comes back empty.
+	testing.expect_value(t, fake_lt_log(f, s), "GET offset=0 limit=3\nGET offset=3 limit=3\nGET offset=6 limit=3\nGET offset=7 limit=3")
+	// A server that gives fewer words than asked for, a page at a time:
+	// every word is read all the same, the next page where the last ended.
+	sync.mutex_lock(&s.mutex)
+	s.cap = 2
+	clear(&s.log)
+	sync.mutex_unlock(&s.mutex)
 	words, err = tools.languagetool_read()
-	testing.expect_value(t, len(words), 3)
-	testing.expect(t, strings.has_suffix(fake_lt_log(f, s), "GET offset=0 limit=3\nGET offset=3 limit=3"))
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, strings.join(words, "|"), "a|b|c|d|e|f|g")
+	testing.expect_value(t, fake_lt_log(f, s), "GET offset=0 limit=3\nGET offset=2 limit=3\nGET offset=4 limit=3\nGET offset=6 limit=3\nGET offset=7 limit=3")
 	_, leaked := fake_lt_seen(s)
 	testing.expect_value(t, leaked, "")
 }
