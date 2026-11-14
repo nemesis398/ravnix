@@ -101,6 +101,10 @@ let
   serviceOf = host: (units host).services.ravnix-keyring-unlock or null;
   targetOf = host: (units host).targets.ravnix-keyring or null;
   unitText = host: name: (units host).units.${name}.text or "";
+  # What the login layout's wrapper starts (sway.nix): ravnix-keyring.target
+  # as its dependency, never as the anchor of the start.
+  layoutTarget = "ravnix-session-layout-after.target";
+  layoutOf = host: (units host).targets.ravnix-session-layout-after or null;
   # The packages of the system that give a program ravnix-keyring-unlock.
   setupPackages =
     host:
@@ -163,6 +167,13 @@ let
       ++ lib.optional (
         host.config.ravnix.desktop.sessionLayout.after != [ "ravnix-keyring.target" ]
       ) "${name}: the login layout does not wait for the target"
+      ++ lib.optional (
+        layoutOf host == null
+        || !(has (layoutOf host).wants "ravnix-keyring.target" && has (layoutOf host).after "ravnix-keyring.target")
+      ) "${name}: ${layoutTarget} does not want and come after ravnix-keyring.target"
+      ++ lib.optional (
+        layoutOf host != null && !has (layoutOf host).partOf "graphical-session.target"
+      ) "${name}: ${layoutTarget} outlives the graphical session"
       ++ lib.optional (!host.config.services.gnome.gnome-keyring.enable) "${name}: gnome-keyring is off"
       # No secret in the store: the unit loads the credential by name, from
       # the user's credstore, and sets none itself.
@@ -192,6 +203,7 @@ let
     ++ lib.optional (
       huginnOff.config.ravnix.desktop.sessionLayout.after != [ ]
     ) "off: the login layout waits for something"
+    ++ lib.optional (layoutOf huginnOff != null) "off: ${layoutTarget} exists"
     ++ hostChecks "laptop" huginn
     ++ hostChecks "desktop" desktop
     ++ lib.optional (setupPackages huginnOff != [ ]) "off: the setup command is on the PATH"
@@ -328,7 +340,10 @@ let
     rc=0
     ./wrapper bin/layout --focus 2 'a b' "c'd" "" >out 2>err || rc=$?
     [[ $rc == 7 ]] || fail "the layout's exit status is not passed on ($rc)"
-    [[ $(cat systemctl.args) == $'--user\nstart\n--\nravnix-keyring.target' ]] || fail "systemctl got: $(cat systemctl.args)"
+    # The target that wants the units, not the units: started itself,
+    # ravnix-keyring.target would be its transaction's anchor and run the
+    # unlock again in a session where it has run.
+    [[ $(cat systemctl.args) == $'--user\nstart\n--\n${layoutTarget}' ]] || fail "systemctl got: $(cat systemctl.args)"
     [[ $(cat layout.args) == $'[--focus]\n[2]\n[a b]\n[c\'d]\n[]' ]] || fail "the layout got: $(cat layout.args)"
     [[ ! -s err ]] || fail "a start that worked printed: $(cat err)"
 
@@ -352,7 +367,7 @@ let
     } ]] || fail "the setup command got: $got"
     got=$(${itemVariable}=other ./setup setup)
     [[ $got == $'other\nsetup' ]] || fail "the environment does not win over rbwItem: $got"
-    echo "gate: the layout waits for ravnix-keyring.target, gets its arguments as given, and runs when the start fails; the setup command knows rbwItem" > $out
+    echo "gate: the layout starts ${layoutTarget} and waits for it, gets its arguments as given, and runs when the start fails; the setup command knows rbwItem" > $out
   '';
 
   daemons =
@@ -443,6 +458,7 @@ let
       ITEM = "${vmItem}"
       NEW_PASSWORD = "Neues Pferd ü 7 Batterie"
       LOGIN_PASSWORD = "${vmLoginPassword}"
+      LAYOUT_TARGET = "${layoutTarget}"
     ''
     + builtins.readFile ./helpers/keyring-vm-test.py;
   };

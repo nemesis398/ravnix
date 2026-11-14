@@ -35,10 +35,14 @@
 # sway-session.target starts) and xdg-desktop-autostart.target (the tray
 # applets, the Nextcloud client among them). The login layout, which starts
 # Helium from the Sway config, waits for it through
-# ravnix.desktop.sessionLayout.after. The target stays active for the
-# session, so these three starts run the service once; the service itself
-# does not stay active, so the decrypted password does not stay in its
-# credentials directory. The target is part of graphical-session.target and
+# ravnix.desktop.sessionLayout.after, whose wrapper starts
+# ravnix-session-layout-after.target (sway.nix). The target stays active for
+# the session, and each of the three reaches it as a dependency, so they run
+# the service once: a `systemctl start` of ravnix-keyring.target itself
+# would make it the anchor of its transaction, which systemd keeps while
+# the target is active, and run the oneshot again. The service does not
+# stay active (no RemainAfterExit), so the decrypted password does not stay
+# in its credentials directory. The target is part of graphical-session.target and
 # stops with it, so the next login runs the service again.
 #
 # The service needs nothing of the graphical session, only the session bus.

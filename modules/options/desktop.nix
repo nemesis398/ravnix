@@ -263,9 +263,11 @@ in
       description = ''
         User units that the login layout (`sway-session-layout`, which
         starts Helium, the terminal, Obsidian and the music player) waits
-        for: Sway's config starts them with `systemctl --user start` and
-        runs the layout once that has returned, whether they started or
-        failed. Empty runs the layout at once.
+        for: the user target `ravnix-session-layout-after.target` wants
+        them and comes after them, Sway's config starts it with
+        `systemctl --user start` and runs the layout once that has
+        returned, whether they started or failed. Empty runs the layout at
+        once, without the target.
       '';
     };
 

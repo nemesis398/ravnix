@@ -1,6 +1,7 @@
 # The VM half of desktop-keyring-autounlock. tests/desktop/keyring-autounlock.nix
-# puts USER, KEYRING_PASSWORD, SECRET, ITEM, NEW_PASSWORD and LOGIN_PASSWORD
-# in front of this file.
+# puts USER, KEYRING_PASSWORD, SECRET, ITEM, NEW_PASSWORD, LOGIN_PASSWORD and
+# LAYOUT_TARGET (the unit the login layout's wrapper starts) in front of this
+# file.
 #
 # greetd's initial_session logs the user in without any authentication, so
 # PAM's auth stack never sees a password: pam_gnome_keyring starts the
@@ -53,10 +54,29 @@ def cursor():
 SYSTEMD_NO_CREDENTIAL = "ravnix-keyring-unlock.service: Couldn't read inherited credential 'ravnix-keyring-login', skipping: No such file or directory"
 
 
+# The user manager's "Starting ..." of a unit (systemd's catalog,
+# SD_MESSAGE_UNIT_STARTING), which it logs once per run of a oneshot.
+UNIT_STARTING = "7d4958e842da4a758f6c1cdc7b36dcc5"
+
+
+def unlock_runs(since):
+    """How often the user manager started the unlock since the cursor."""
+    out = machine.succeed(
+        f"journalctl --after-cursor={shlex.quote(since)} --no-pager -o cat "
+        f"MESSAGE_ID={UNIT_STARTING} USER_UNIT=ravnix-keyring-unlock.service _UID={UID} || true"
+    )
+    return len([l for l in out.splitlines() if l.strip()])
+
+
 def tool_lines(since, missing=False):
     """What the tool printed since the cursor: the lines from the unit's
     cgroup, without systemd's note about a missing credential, which must be
-    there exactly when missing is set."""
+    there exactly when missing is set. It waits a few seconds first and
+    checks that the user manager ran the unlock once, so that a second run,
+    early or late, fails the test (the layout's wrapper once re-ran it)."""
+    machine.sleep(5)
+    runs = unlock_runs(since)
+    assert runs == 1, f"the unlock ran {runs} times in one login"
     out = machine.succeed(
         f"journalctl --after-cursor={shlex.quote(since)} --no-pager -o cat "
         f"_SYSTEMD_USER_UNIT=ravnix-keyring-unlock.service _UID={UID} || true"
@@ -181,6 +201,14 @@ assert start_us + 1_000_000 // ticks >= active_us, f"Helium started at {start_us
 # with its credentials directory; nothing under the runtime dir holds it.
 assert as_user("systemctl --user is-active ravnix-keyring-unlock.service", check=False)[1].strip() == "inactive"
 machine.fail(f"grep -rsqF -- {shlex.quote(KEYRING_PASSWORD)} {RUN}")
+# Starting what the login layout's wrapper starts, once more in a session
+# where the unlock has run, does not run it again: the wrapper's start
+# reaches ravnix-keyring.target as a dependency, never as the anchor of its
+# transaction, which systemd would keep and re-run the oneshot for.
+as_user(f"systemctl --user start -- {LAYOUT_TARGET}")
+machine.sleep(3)
+runs = unlock_runs(since)
+assert runs == 1, f"starting {LAYOUT_TARGET} again ran the unlock again ({runs} runs)"
 # The session's units start in an order systemd can keep.
 cycles = machine.execute("journalctl -b --no-pager | grep -i 'ordering cycle'")[1]
 assert cycles == "", f"an ordering cycle: {cycles}"
@@ -310,7 +338,7 @@ machine.succeed(f"test $(stat -c %a $(dirname {cred})) = 700")
 machine.fail(f"grep -qF {shlex.quote(NEW_PASSWORD)} {cred}")
 # The check of the item against the login password is one failed password
 # check in the journal, which locks nothing: the login password still works.
-print(machine.execute("journalctl -b --no-pager | grep -i 'password check failed'")[1])
+machine.succeed(f"journalctl -b --no-pager -t unix_chkpwd | grep -qF 'password check failed for user ({USER})'")
 machine.succeed(
     f"printf '%s\\0' {shlex.quote(LOGIN_PASSWORD)} | su - {USER} -c '/run/wrappers/bin/unix_chkpwd {USER} nonull'"
 )
