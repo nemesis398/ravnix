@@ -53,7 +53,9 @@ let
       ahead = "⇡\${count} ";
       diverged = "⇕⇡\${ahead_count}⇣\${behind_count} ";
       behind = "⇣\${count} ";
-      conflicted = " ";
+      # Nerd Font U+EBAB and a space, as on Fedora. Written as an escape, so that
+      # no editor can lose the glyph again (the port once turned it into a space).
+      conflicted = builtins.fromJSON ''"\uebab "'';
       up_to_date = " ";
       untracked = "? ";
       modified = " ";

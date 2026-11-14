@@ -52,7 +52,8 @@ in
         ahead = "⇡\${count} ";
         diverged = "⇕⇡\${ahead_count}⇣\${behind_count} ";
         behind = "⇣\${count} ";
-        conflicted = " ";
+        # Nerd Font U+EBAB, then a space (tests/common/starship.nix pins it).
+        conflicted = " ";
         up_to_date = " ";
         untracked = "? ";
         modified = " ";
