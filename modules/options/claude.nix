@@ -121,9 +121,11 @@ in
       lists it without its description, "user-invocable-only" hides it
       from the model but keeps /NAME, "off" hides it from both, and "on"
       is what an absent name means. Written to the settings'
-      skillOverrides, where a name set here replaces the file's state and
-      every other name keeps the one Claude Code wrote (/skills, /config).
-      A name taken out here keeps its last state in the file.
+      skillOverrides. With mutable settings, ravnix's default, a name set
+      here replaces the file's state and every other name keeps the one
+      Claude Code wrote (/skills, /config), and a name taken out here keeps
+      its last state in the file; with immutable ones the file holds these
+      alone.
     '';
   };
 

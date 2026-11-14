@@ -138,6 +138,11 @@ that runs the adapter of the installed skill and ends 0 whatever happens:
 | UserPromptSubmit | `ai-memory-userpromptsubmit` | 5 s | `ai-memory`: the notes a prompt points at |
 | PostToolUseFailure | `ai-memory-posttoolfailure` | 5 s | `ai-memory`: the notes whose symptom is in the error |
 
+The earlier setup gave the handoff hooks no timeout of their own, so Claude
+Code's default applied; here they get 30 s. `plane.py` waits up to 5 s per
+call and pages, so a slow gateway can leave the board out of a session's
+start.
+
 A skill left out leaves its hooks out. Each kill switch of the earlier setup
 still works: `HANDOFF_DISABLED=1`, `JOURNAL_DISABLED=1`, `AI_MEMORY_DISABLED=1`.
 
@@ -178,9 +183,13 @@ wired, a skill replaced and one left out.
 
 ## Known gaps
 
-- `journal` imports `ai-memory`'s `notes.py` from beside itself. A
-  `ravnix.claude.skills.ai-memory` of the user's own, or `null`, takes that
-  away, and `session_note.py` then fails to import.
+- `journal` imports `ai-memory`'s `notes.py` from beside itself, in the
+  rendered tree, which always holds ravnix's `ai-memory`. A
+  `ravnix.claude.skills.ai-memory` of the user's own is therefore not the
+  one `journal` uses, and `null` does not take it from `journal`.
+- `journal`'s SKILL.md runs `prose`'s checker by its installed path,
+  `~/.claude/skills/prose/scripts/check.py`. `ravnix.claude.skills.prose =
+  null` breaks that line.
 - A project's own Plane hooks may import `handoff_state.py` by its absolute
   path, `~/.claude/skills/handoff/scripts/handoff_state.py`. That path holds
   on a ravnix host; a different `configDir` moves it.

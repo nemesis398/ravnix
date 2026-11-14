@@ -294,3 +294,8 @@ set up: then stop and tell {{user.name}}.
 folder and kind and the pinned characters against their budget. `vault-check`
 runs the same lint whenever the vault has an `AI/` folder, and its exit 0
 gates every vault commit.
+
+A memory note is committed with `vault-commit MESSAGE PATH...`, never with
+`git commit`, naming each file (`vault-commit "docs(ai): add a memory"
+"AI/memory/FILE.md"`); on the laptop exit 0 may mean the server queued it,
+and exit 1 means ask again later.
