@@ -23,20 +23,7 @@
   theme ? null,
 }:
 let
-  # The theme module evaluated alone: its options and their defaults. It sets
-  # `assertions`, which only NixOS and home-manager declare.
-  defaultTheme =
-    (lib.evalModules {
-      modules = [
-        ../../modules/theme/options.nix
-        {
-          options.assertions = lib.mkOption {
-            type = lib.types.listOf lib.types.unspecified;
-            default = [ ];
-          };
-        }
-      ];
-    }).config.ravnix.theme;
+  defaultTheme = import ../../lib/default-theme.nix { inherit lib; };
 
   stylesheet = writeText "catppuccin-mocha.css" (
     import ./stylesheet.nix {
