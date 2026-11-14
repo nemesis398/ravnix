@@ -1,0 +1,81 @@
+# The restic REST server of ravnix, for the NAS (a host that runs Docker,
+# not NixOS). Every ravnix host backs up its home to it
+# (modules/common/backup.nix); the NAS prunes the repositories and copies
+# them to Internxt (README.md, "Pruning and the copy to Internxt").
+#
+# It runs rest-server with:
+#   --append-only    a client can add data, read it and remove lock
+#                    files, and nothing else: no snapshot, index or pack is
+#                    ever deleted or overwritten through it. A host that is
+#                    taken over, or one of its agents, can add rubbish but
+#                    cannot take its history down. `restic forget` and
+#                    `prune` from a host fail.
+#   --private-repos  a login reaches only the repositories under its own
+#                    name: huginn's login reads and writes /huginn/ and no
+#                    other host's.
+#   --htpasswd-file  the logins, one bcrypt line per host, in ./htpasswd.
+# Pruning goes around the server: the NAS's own job opens the repositories
+# in RESTIC_DATA_DIR directly, so no endpoint on the network can delete.
+#
+# Reachable from the LAN and NetBird only: the port is published on the
+# NAS's LAN address alone, RESTIC_BIND_ADDRESS, which NetBird's route to the
+# LAN reaches from a roaming laptop. The NAS's firewall must allow the port
+# from the LAN and the NetBird range and nothing else; the router forwards
+# nothing to it. The traffic is plain HTTP: the repository is encrypted by
+# restic before it leaves the host, and the logins only open append-only
+# repositories, but whoever is on the LAN can read a login as it passes.
+#
+# Deploy: put this file under /volume1/docker/restic/, with a .env next to
+# it holding the variables below and the htpasswd file, both readable by
+# RESTIC_UID only. The repositories live in the UGOS shared folder
+# `restic`, which is RESTIC_DATA_DIR and belongs to RESTIC_UID. Make each
+# host's repository on the NAS, before its first backup (README.md), then
+# `docker compose up -d`.
+#
+#   RESTIC_BIND_ADDRESS  the NAS's LAN address, the one address the port
+#                        listens on
+#   RESTIC_PORT          optional: the port on that address (default 8000)
+#   RESTIC_DATA_DIR      the shared folder that holds one repository per
+#                        host, such as /volume1/restic
+#   RESTIC_UID           the owner of RESTIC_DATA_DIR, whom the server runs as
+#   RESTIC_GID           that owner's group
+#
+# The image is the rest-server the checks run (tests/deploy/
+# restic-compose.nix holds the tag to nixpkgs' restic-rest-server); pin its
+# digest at deploy time, as `docker compose images` prints it, after the
+# tag.
+name: restic
+
+services:
+  rest-server:
+    image: docker.io/restic/rest-server:0.14.0
+    restart: unless-stopped
+    user: "${RESTIC_UID:?set RESTIC_UID in .env}:${RESTIC_GID:?set RESTIC_GID in .env}"
+    # The binary itself, not the image's entrypoint script, so the flags
+    # are these and no environment variable adds one (its OPTIONS and
+    # DISABLE_AUTHENTICATION would).
+    entrypoint:
+      - rest-server
+    command:
+      - --path=/data
+      - --listen=:8000
+      - --append-only
+      - --private-repos
+      - --htpasswd-file=/etc/rest-server/htpasswd
+    ports:
+      - "${RESTIC_BIND_ADDRESS:?set RESTIC_BIND_ADDRESS in .env}:${RESTIC_PORT:-8000}:8000"
+    volumes:
+      - "${RESTIC_DATA_DIR:?set RESTIC_DATA_DIR in .env}:/data"
+      - ./htpasswd:/etc/rest-server/htpasswd:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
