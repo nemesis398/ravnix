@@ -196,7 +196,7 @@ The file must be yours and writable by you alone. pam_u2f refuses a mapping that
 
 Until that file exists, every prompt asks for the password as before. If you set `ravnix.security.u2f.origin` to another value, use that value after `-o` and `-i`. Test the tap with `sudo -k; sudo true` in a terminal before you lock the screen, and keep a second terminal with a root shell open until it works.
 
-The login keyring opens by itself after a tap only if it has no password. A tap hands the keyring no password, so a keyring with one asks for it the first time an application wants a secret.
+A tap hands PAM no password, so the login keyring stays locked after a tap login, and the first application that wants a secret asks for its password. The next section opens it after every login.
 
 ## After the laptop's first login: the keyring for a YubiKey tap
 
