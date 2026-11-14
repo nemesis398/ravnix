@@ -241,14 +241,17 @@ in
     MANROFFOPT = "-c";
     MANPAGER = "sh -c 'col -bx | bat -l man -p'";
 
-    # tldr's page colors. The Python client has a fixed 8-color ANSI palette,
-    # not Catppuccin, which the terminal re-interprets through its own: bold
-    # heading, no description color, green example flags, red commands.
+    # tldr's page colors. The Python client takes the eight ANSI names only
+    # and no accent, which the terminal re-interprets through its own palette,
+    # so a name is a hue of Mocha: bold heading, no description color, the
+    # example in the terminal's Text, the command in cyan (Teal) and a
+    # placeholder underlined. Red is failure, Green success, Yellow pending and
+    # Blue busy (docs/style.md), and a command is none of them.
     TLDR_COLOR_NAME = "bold";
     TLDR_COLOR_DESCRIPTION = "";
-    TLDR_COLOR_EXAMPLE = "green";
-    TLDR_COLOR_COMMAND = "red";
-    TLDR_COLOR_PARAMETER = "";
+    TLDR_COLOR_EXAMPLE = "";
+    TLDR_COLOR_COMMAND = "cyan";
+    TLDR_COLOR_PARAMETER = "underline";
   };
 
   # The keyboard layer: completion cycles with Tab and Shift-Tab, the arrow

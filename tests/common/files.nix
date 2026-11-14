@@ -258,8 +258,8 @@ let
       base.home.sessionVariables.EDITOR != "nvim" || base.home.sessionVariables.VISUAL != "nvim"
     ) "EDITOR and VISUAL are not nvim")
     (lib.optional (
-      base.home.sessionVariables.TLDR_COLOR_COMMAND != "red"
-    ) "the tldr colors are not Fedora's")
+      base.home.sessionVariables.TLDR_COLOR_COMMAND != "cyan"
+    ) "the tldr command is not cyan (Teal): Fedora's Red is the failure color (tests/theme/tldr.nix)")
     # The tools: the spec's list is in, what it drops is out.
     (map (n: "${n} is not installed") (lib.filter (n: !lib.elem n (packageNames base)) wanted))
     (map (n: "${n} is installed, which the spec drops") (
