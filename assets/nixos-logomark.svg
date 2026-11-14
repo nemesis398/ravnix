@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   The NixOS logomark (nix-snowflake), from NixOS/nixos-artwork at revision
-  9d2cdedd73d64a068214482902adea3d02783ba8 (the color snowflake that
-  nixos-icons installs as nix-snowflake.svg). Title: NixOS logomark. Author:
-  Simon Frankau (original design), revised by Tim Cuthbertson. Source:
-  https://github.com/NixOS/nixos-artwork/tree/9d2cdedd73d64a068214482902adea3d02783ba8/logo
+  9d2cdedd73d64a068214482902adea3d02783ba8, logo/nix-snowflake-colours.svg
+  (the file that nixos-icons installs as nix-snowflake.svg).
+  Title: NixOS logomark.
+  Author: Simon Frankau (original design), revised by Tim Cuthbertson.
+  Source:
+  https://github.com/NixOS/nixos-artwork/blob/9d2cdedd73d64a068214482902adea3d02783ba8/logo/nix-snowflake-colours.svg
   License: Creative Commons Attribution 4.0 International,
   https://creativecommons.org/licenses/by/4.0/ (see AUTHORS).
   Changes: colors changed. The gradient fills are gone and each arm has a

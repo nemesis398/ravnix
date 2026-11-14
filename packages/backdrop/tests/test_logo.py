@@ -102,6 +102,7 @@ def test_the_package_ships_the_logomark_as_a_vector_with_its_credit():
     head, _, body = text.partition("-->")
     assert "nixos-artwork" in head and "Creative Commons Attribution 4.0" in head
     assert "Simon Frankau" in head and "Tim Cuthbertson" in head and "colors changed" in head
+    assert "logo/nix-snowflake-colours.svg" in head and "9d2cdedd73d64a068214482902adea3d02783ba8" in head
     assert "<path" in body and "<use" in body
     # No color in the file: backdrop sets the fills of its two classes.
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", body), "a color in the vector"
