@@ -18,17 +18,23 @@ own that imports this one, starting from the template in `templates/default/`.
 
 ## 📈 Status
 
-![ravnix is 66 % built](docs/brand/progress.svg)
+![ravnix is 73 % built](docs/brand/progress.svg)
 
 Not ready to install yet. The figure is the share of steps done in the
 authors' own build plan, and it moves by hand when that plan is recounted.
 
 - **Done:** the foundation (the repository, the gate, the typed options, the
-  private-flake template), and the modules both hosts share (shell, git, the CLI tools, the theme, Neovim, Claude Code and
-  its MCP servers).
-- **Under way:** the laptop (disk guard, desktop, applications, power; the
-  first install is next), the server (the workbench and its images), the glue
-  between them, keeping Claude Code current, and the shared dictionary.
+  private-flake template), the modules both hosts share (shell, git, the CLI
+  tools, the theme, Neovim, Claude Code and its MCP servers), and the laptop's
+  first install: `huginn` boots from its own disk, unlocked with a FIDO2 key,
+  into Sway, with Wi-Fi and suspend. At idle it draws 10.4 W, where the
+  authors' previous Fedora setup drew 15.3 W. Since then it has gained the
+  Fn-row keys with their notifications, the login keyring's auto-unlock with
+  a one-command setup, `bwm` in place of the Bitwarden desktop app, and an XDG
+  autostart that works.
+- **Under way:** the rest of the laptop (the desktop and its applications,
+  power), the server (the workbench and its images), the glue between them,
+  keeping Claude Code current, and the shared dictionary.
 - **Not started:** public versions of the agent skills, self-hosted services
   as modules, quick settings in Odin, performance baselines, the full docs,
   Odin ports of the carried-over scripts, and the switch from the authors'
