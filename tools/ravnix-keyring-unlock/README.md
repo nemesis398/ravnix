@@ -108,10 +108,12 @@ unlock. Nothing is copied or pasted:
    pam_unix runs it for a caller who checks their own password (Linux-PAM
    1.7, `modules/pam_unix/unix_chkpwd.c`): the arguments are your user name
    (from `/etc/passwd`) and `nonull`, the standard input a pipe with the
-   password and a NUL, and it exits 0 for the login password and 7 for any
-   other. The setup also stops when it cannot check: no helper that is
-   setuid and root's (a copy without the bit cannot read the shadow file
-   and answers 7 to everything), no user name, or another status.
+   password (at most 512 bytes of it, as pam_unix sends it) and a NUL, and
+   it exits 0 for the login password and 7 for any other. The setup also
+   stops when it cannot check: no helper that is setuid and root's, no user
+   name, or another status, such as the 9 (user unknown) of a copy without
+   the setuid bit, which cannot read the shadow file, or of a name the
+   helper does not take as yours.
 3. It connects to the session bus and asks the daemon whether the keyring
    already has that password, with gnome-keyring's
    `ChangeWithMasterPassword` from the password to itself. That call checks
@@ -266,9 +268,11 @@ bus. A run that unlocks needs a bus and a daemon, which the bench has not.
   support. The helper neither waits after it nor counts it; pam_faillock
   counts only failures of a PAM stack, and the VM test shows the login
   password still checks right after one.
-- unix_chkpwd reads at most 512 bytes and a NUL (`PAM_MAX_RESP_SIZE`), so
-  an item longer than 512 bytes counts as not the login password. No login
-  password can be longer, since PAM takes no longer answer.
+- unix_chkpwd reads at most 512 bytes and a NUL (`PAM_MAX_RESP_SIZE`), and
+  pam_unix truncates a longer password to those 512 bytes, at a login and
+  when it sets one. The setup sends the item's first 512 bytes the same
+  way, so an item that shares its first 512 bytes with the login password
+  is refused, even when the rest differs.
 - `RAVNIX_KEYRING_UNIX_CHKPWD` names another unix_chkpwd, which the setup
   then takes without the setuid check. It is there for the check that runs
   the setup in the build sandbox, which has no setuid wrapper. Whoever can

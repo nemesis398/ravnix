@@ -46,6 +46,9 @@ GUILT_RIDDEN :: "org.gnome.keyring.InternalUnsupportedGuiltRiddenInterface"
 // NixOS's setuid wrapper of pam_unix's helper, which checks the caller's own
 // password against the shadow file.
 UNIX_CHKPWD :: "/run/wrappers/bin/unix_chkpwd"
+// The most of a password pam_unix hands unix_chkpwd, and the most the helper
+// reads before the NUL (Linux-PAM's PAM_MAX_RESP_SIZE).
+PAM_MAX_RESP_SIZE :: 512
 
 Setup :: struct {
 	// The Bitwarden item that holds the new password.
@@ -325,9 +328,9 @@ user_name :: proc(uid: u32, passwd: string) -> (name: string, ok: bool) {
 }
 
 // setuid_root reports whether path is an executable file of root's with the
-// setuid bit, as NixOS's wrapper of unix_chkpwd is. A copy without it could
-// not read the shadow file and would answer every password with 7, "not
-// the login password".
+// setuid bit, as NixOS's wrapper of unix_chkpwd is. A copy without it cannot
+// read the shadow file and answers 9, user unknown, which the setup refuses
+// as well; looking first gives the clearer reason.
 setuid_root :: proc(path: string) -> bool {
 	st: linux.Stat
 	if linux.stat(strings.clone_to_cstring(path, context.temp_allocator), &st) != .NONE {
@@ -337,9 +340,12 @@ setuid_root :: proc(path: string) -> bool {
 }
 
 // check_not_login refuses a new password that is the user's login password,
-// with pam_unix's helper: the user's name and "nonull" as its arguments, the
-// password and a NUL on its standard input (a pipe: it refuses a terminal),
-// 0 when it is the login password, 7 when not. A run with another password
+// with pam_unix's helper as pam_unix runs it (support.c): the user's name and
+// "nonull" as its arguments, at most PAM_MAX_RESP_SIZE bytes of the password
+// and a NUL on its standard input (a pipe: it refuses a terminal), 0 when it
+// is the login password, 7 when not. pam_unix truncates a longer login
+// password to those bytes as well, so a long item is checked as a login of
+// it would be. A run with another password
 // is a failed password check in the journal ("password check failed for
 // user"); the helper neither waits after it nor counts it.
 check_not_login :: proc(s: Setup, password: []u8) -> string {
@@ -350,9 +356,10 @@ check_not_login :: proc(s: Setup, password: []u8) -> string {
 	if s.chkpwd == "" {
 		return fmt.tprintf("%s: %s, the setuid helper of pam_unix, is not there or not setuid root; nothing changed", cannot, UNIX_CHKPWD)
 	}
-	input := make([]u8, len(password) + 1)
+	n := min(len(password), PAM_MAX_RESP_SIZE)
+	input := make([]u8, n + 1)
 	defer free_password(input)
-	copy(input, password)
+	copy(input, password[:n])
 	r, missing, why := run_program({s.chkpwd, s.user, "nonull"}, input, nil, s.messages, s.timeout, 4096)
 	free_output(&r)
 	switch {

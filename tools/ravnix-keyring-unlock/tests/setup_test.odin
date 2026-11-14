@@ -715,9 +715,9 @@ finds_the_user_name_in_the_passwd_file :: proc(t: ^testing.T) {
 @(test)
 takes_only_a_setuid_root_helper :: proc(t: ^testing.T) {
 	// The real helper reads the shadow file only as root; a copy without
-	// the setuid bit answers 7 for every password, which would pass any
-	// item. So the command takes the one under /run/wrappers only when it
-	// is setuid and root's.
+	// the setuid bit answers 9, user unknown, which the setup refuses too.
+	// The command takes the one under /run/wrappers only when it is setuid
+	// and root's, which says so more clearly.
 	d := scratch(t)
 	defer os.remove_all(d)
 	path := write_file(t, d, "unix_chkpwd", "#!/bin/sh\n")
@@ -725,4 +725,18 @@ takes_only_a_setuid_root_helper :: proc(t: ^testing.T) {
 	testing.expect(t, !kr.setuid_root(path))
 	testing.expect(t, !kr.setuid_root(strings.concatenate({d, "/absent"}, context.temp_allocator)))
 	testing.expect(t, !kr.setuid_root(d))
+}
+
+@(test)
+checks_a_long_item_as_pam_unix_checks_a_long_login_password :: proc(t: ^testing.T) {
+	// pam_unix hands unix_chkpwd the first 512 bytes of a longer password,
+	// at a login and when it sets one; the setup does the same, so a long
+	// item that is the login password is refused.
+	login := strings.repeat("L", 600, context.temp_allocator)
+	r := rig_start(t, Behavior{locked = true, password = login}, item = strings.concatenate({login, "\n"}, context.temp_allocator), login = login[:512])
+	defer rig_free(&r)
+	res := rig_run(t, &r)
+	testing.expectf(t, res.outcome == .Failed && strings.contains(res.detail, "your login password"), "%v: %s", res.outcome, res.detail)
+	testing.expect_value(t, len(read(join(r.dir, "chkpwd.in"))), 513)
+	testing.expect_value(t, r.fake.connections, 0)
 }
