@@ -241,10 +241,11 @@ environment (`Setup`):
 | `RAVNIX_DICT_HANDY_SETTINGS` | Handy's settings store | `$XDG_DATA_HOME/com.pais.handy/settings_store.json`, `~/.local/share/...` |
 | `RAVNIX_DICT_PROSE_FILE` | the prose skill's dictionary | `$XDG_CONFIG_HOME/prose/dictionary.txt`, `~/.config/...` |
 | `RAVNIX_DICT_LANGUAGETOOL_SERVER` | the words API, without `/v2` | `https://api.languagetoolplus.com` |
-| `LANGUAGETOOL_USERNAME`, `LANGUAGETOOL_API_KEY`, `LANGUAGETOOL_RBW_ITEM` | LanguageTool's credentials, as the editor reads them | see below |
+| `LANGUAGETOOL_USERNAME`, `LANGUAGETOOL_API_KEY`, `LANGUAGETOOL_RBW_ITEM` | LanguageTool's credentials, as the editor reads them | none; see below |
 
 The module (`modules/common/dictionary.nix`) sets the first three in the
-wrapper on the PATH, from `ravnix.dictionary.adapters`: the prose skill's
+wrapper on the PATH, and the vault item and the account of LanguageTool from
+their options, from `ravnix.dictionary.adapters`: the prose skill's
 everywhere, LanguageTool's on the laptop shape (`ravnix.shape`), Handy's
 where the desktop installs Handy (`modules/desktop/apps.nix`). The
 environment still wins over the wrapper.
@@ -284,7 +285,8 @@ quotes the store.
 ### LanguageTool
 
 The word list of a LanguageTool Premium account, in the cloud. The API lists
-the words 500 at a time (`GET /v2/words`) and adds and deletes one word per
+the words 500 at a time (`GET /v2/words`, until a page comes back empty, so
+a server that caps the page lower still gives every word) and adds and deletes one word per
 request (`POST /v2/words/add`, `/v2/words/delete`); a write sends only the
 difference to the list the read got, deletes first, so a word whose spelling
 changed is deleted in its old spelling before the new one is added. A word
@@ -300,15 +302,23 @@ of another process and in no file, and no message holds it. main takes
 `LANGUAGETOOL_API_KEY` out of its own environment before it starts
 anything.
 
-The credentials are found as the editor's LanguageTool code finds them
+The credentials are found in the order of the editor's LanguageTool code
 (`modules/common/nvim/lua/ravnix_languagetool.lua`): the environment, then
 the vault through rbw, only while `rbw unlocked` says it is (the item that
-`LANGUAGETOOL_RBW_ITEM` names, `LanguageTool` by default: the key is its
-password, the account its `username` field), then
-`~/.config/languagetool/credentials`, `KEY=VALUE` lines. Without a key and
-an account the adapter is unavailable, and sync skips it: a locked vault is
-the usual state, not a failure, and the watcher's timer syncs it once the
-vault is open.
+`LANGUAGETOOL_RBW_ITEM` names: the key is its password, the account its
+`username` field), then `~/.config/languagetool/credentials`, `KEY=VALUE`
+lines. The wrapper sets `LANGUAGETOOL_RBW_ITEM` and `LANGUAGETOOL_USERNAME`
+from `ravnix.dictionary.languagetool.rbwItem` and `.username`, which have no
+default.
+
+Only a locked vault skips the adapter: it is the usual state, not a
+failure, and the watcher's timer syncs LanguageTool once the vault is open.
+Everything else fails the sync with one line that says what to set: no item
+named and no key elsewhere, an item the vault does not have, no account
+name, rbw not installed, or a key the server refuses. A misconfigured host
+shows as a failed `ravnix-dict-sync.service`, not as a list that silently
+never syncs. Each timer run that reads the vault also renews rbw's idle
+lock, which `modules/common/rbw.nix` caps at 12 hours.
 
 ### prose
 

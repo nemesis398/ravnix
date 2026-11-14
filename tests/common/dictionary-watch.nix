@@ -27,6 +27,15 @@ let
   laptop = (hm [ { ravnix.shape = "laptop"; } ]).config;
   handy = (hm [ { ravnix.dictionary.adapters.handy = true; } ]).config;
   off = (hm [ { ravnix.dictionary.watch = lib.mkForce false; } ]).config;
+  noAccount =
+    (hm [
+      {
+        ravnix.dictionary.languagetool = {
+          rbwItem = lib.mkForce null;
+          username = lib.mkForce null;
+        };
+      }
+    ]).config;
   name = "ravnix-dict-sync";
   service = c: c.systemd.user.services.${name} or { };
   path = c: c.systemd.user.paths.${name} or { };
@@ -130,6 +139,11 @@ pkgs.runCommand "common-dictionary-watch" { nativeBuildInputs = [ pkgs.gnugrep ]
       grep -q "RAVNIX_DICT_ADAPTERS.*'handy,prose'" ${wrapper handy} || fail "Handy's adapters: $(grep ADAPTERS ${wrapper handy})"
       grep -qF ${lib.escapeShellArg handySettings} ${wrapper plain} || fail "the wrapper does not name Handy's store"
       grep -qF ${lib.escapeShellArg prose} ${wrapper plain} || fail "the wrapper does not name the prose dictionary"
+      # LanguageTool's account, from the options (the template's
+      # placeholders), and nothing when they are null.
+      grep -qF "LANGUAGETOOL_RBW_ITEM-'LanguageTool - API token'" ${wrapper plain} || fail "the wrapper does not name the vault item: $(grep LANGUAGETOOL ${wrapper plain})"
+      grep -qF "LANGUAGETOOL_USERNAME-'alice@example.org'" ${wrapper plain} || fail "the wrapper does not name the account"
+      if grep -q LANGUAGETOOL ${wrapper noAccount}; then fail "null options still set: $(grep LANGUAGETOOL ${wrapper noAccount})"; fi
       # It runs: a sync of the prose adapter alone, against files here.
       export HOME="$PWD/home"
       mkdir -p "$HOME"

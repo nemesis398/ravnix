@@ -9,13 +9,14 @@
 // no command line, in no environment of another process and in no file.
 // A message never holds the key.
 //
-// The credentials are found as the editor's LanguageTool code finds them
+// The credentials are found in the editor's order
 // (modules/common/nvim/lua/ravnix_languagetool.lua): LANGUAGETOOL_API_KEY
 // and LANGUAGETOOL_USERNAME, then the vault through rbw while it is
-// unlocked (the item LANGUAGETOOL_RBW_ITEM names, "LanguageTool" by
-// default: the key is its password, the account its username field), then
-// ~/.config/languagetool/credentials. Without them the adapter is skipped:
-// a locked vault is a normal state, not a failure.
+// unlocked (the item LANGUAGETOOL_RBW_ITEM names, which the wrapper sets
+// from ravnix.dictionary.languagetool.rbwItem: the key is its password,
+// the account its username field), then ~/.config/languagetool/credentials.
+// A locked vault skips the adapter, since it is a normal state; anything
+// else missing or refused is a failure, so a misconfiguration is loud.
 package adapters
 
 import "core:fmt"
@@ -51,7 +52,6 @@ Language_Tool :: struct {
 }
 
 LT_SERVER :: "https://api.languagetoolplus.com"
-LT_RBW_ITEM :: "LanguageTool"
 LT_TIMEOUT :: 30 * time.Second
 LT_BACKOFF :: 2 * time.Second
 LT_TRIES :: 6
@@ -66,6 +66,9 @@ languagetool: Language_Tool
 Credentials :: struct {
 	user, key: string,
 	looked:    bool,
+	// The vault, the only place left to look, is locked: skipped.
+	locked:    bool,
+	// What is missing or wrong, for a read to fail with; "" when nothing.
 	why:       string,
 }
 
@@ -81,10 +84,14 @@ languagetool_reset :: proc() {
 	lt_seen = nil
 }
 
-// languagetool_unavailable says why there are no credentials, or "".
+// languagetool_unavailable is "the vault is locked" when the key can only
+// come from the vault and it is locked, and "" otherwise. That is the one
+// state that skips quietly: a missing item, a missing account, rbw not
+// installed or a refused key make the read fail, so that a misconfiguration
+// is a failed sync and not a silent one.
 languagetool_unavailable :: proc() -> string {
 	c := lt_find_credentials()
-	return c.why
+	return "the vault is locked; LanguageTool is synced once it is open" if c.locked else ""
 }
 
 @(private)
@@ -97,10 +104,10 @@ lt_find_credentials :: proc() -> Credentials {
 		key    = languagetool.key,
 		looked = true,
 	}
+	item := languagetool.rbw_item
 	vault := ""
-	if c.key == "" || c.user == "" {
+	if c.key == "" && item != "" {
 		rbw := languagetool.rbw if languagetool.rbw != "" else "rbw"
-		item := languagetool.rbw_item if languagetool.rbw_item != "" else LT_RBW_ITEM
 		// Only while the vault is unlocked: a locked one would ask for its
 		// password, and nobody may be there to give it.
 		ran, why := run_program({rbw, "unlocked"}, "", 5 * time.Second, context.allocator)
@@ -108,20 +115,18 @@ lt_find_credentials :: proc() -> Credentials {
 		case why != "":
 			vault = why
 		case ran.status != 0:
-			vault = "the vault is locked"
+			c.locked = true
 		case:
-			if c.key == "" {
-				got, gwhy := run_program({rbw, "get", item}, "", 10 * time.Second, context.allocator)
-				if gwhy == "" && got.status == 0 {
-					c.key = strings.trim_space(got.output)
-				} else {
-					vault = fmt.tprintf("rbw has no item %s", item)
-				}
+			got, gwhy := run_program({rbw, "get", item}, "", 10 * time.Second, context.allocator)
+			if gwhy == "" && got.status == 0 {
+				c.key = strings.trim_space(got.output)
+			} else {
+				vault = fmt.tprintf("the vault has no item %q (ravnix.dictionary.languagetool.rbwItem)", item)
 			}
-			if c.user == "" && vault == "" {
-				got, gwhy := run_program({rbw, "get", "--field", "username", item}, "", 10 * time.Second, context.allocator)
-				if gwhy == "" && got.status == 0 {
-					c.user = strings.trim_space(got.output)
+			if c.user == "" && c.key != "" {
+				named, nwhy := run_program({rbw, "get", "--field", "username", item}, "", 10 * time.Second, context.allocator)
+				if nwhy == "" && named.status == 0 {
+					c.user = strings.trim_space(named.output)
 				}
 			}
 		}
@@ -145,15 +150,17 @@ lt_find_credentials :: proc() -> Credentials {
 			}
 		}
 	}
-	if c.key == "" || c.user == "" {
-		missing := "API key" if c.key == "" else "account name"
-		if c.key == "" && c.user == "" {
-			missing = "API key and no account name"
-		}
-		c.why = fmt.tprintf("no LanguageTool %s (LANGUAGETOOL_API_KEY and LANGUAGETOOL_USERNAME, the vault, %s)", missing, languagetool.credentials if languagetool.credentials != "" else "no credentials file")
-		if vault != "" {
-			c.why = fmt.tprintf("%s; %s", c.why, vault)
-		}
+	switch {
+	case c.key == "" && c.locked:
+		// Skipped; whether an account is missing shows once it is open.
+	case c.key == "" && vault != "":
+		c.why = fmt.tprintf("no LanguageTool API key: %s", vault)
+	case c.key == "":
+		c.why = "no LanguageTool API key: name the vault item whose password it is in ravnix.dictionary.languagetool.rbwItem"
+	case c.user == "":
+		c.why = "no LanguageTool account name: the vault item has no username; set ravnix.dictionary.languagetool.username"
+	}
+	if c.why != "" || c.locked {
 		c.key, c.user = "", ""
 	}
 	lt_credentials = c
@@ -207,6 +214,9 @@ lt_request :: proc(get: bool, path: string, params: []Param) -> (body: string, w
 	c := lt_find_credentials()
 	if c.why != "" {
 		return "", c.why
+	}
+	if c.locked {
+		return "", "the vault is locked"
 	}
 	server := strings.trim_right(languagetool.server if languagetool.server != "" else LT_SERVER, "/")
 	timeout := languagetool.timeout if languagetool.timeout > 0 else LT_TIMEOUT

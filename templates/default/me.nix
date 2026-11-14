@@ -516,6 +516,14 @@
     # leaves it to `ravnix-dict sync`, run by hand.
     dictionary.watch = true;
 
+    # Your LanguageTool Premium account, whose word list the laptop keeps in
+    # step with the dictionary: the Bitwarden item whose password is the API
+    # key, and the account you log in with.
+    dictionary.languagetool = {
+      rbwItem = "LanguageTool - API token";
+      username = "alice@example.org";
+    };
+
     # The languages the editor installs language servers, formatters and
     # linters for. All of them; drop the ones you do not edit to keep the
     # editor small (the Odin toolchain behind "odin" is 2.3 GiB). Edit this

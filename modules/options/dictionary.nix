@@ -42,6 +42,33 @@ in
       '';
     };
 
+    languagetool = {
+      rbwItem = mkOption {
+        type = types.nullOr (types.strMatching "[^\n]+");
+        default = null;
+        example = "LanguageTool - API token";
+        description = ''
+          The name or id of the Bitwarden item whose password is the API key
+          of your LanguageTool Premium account, which ravnix-dict reads
+          through rbw while the vault is unlocked. null names none: then the
+          key must come from LANGUAGETOOL_API_KEY or
+          ~/.config/languagetool/credentials, and a host that syncs
+          LanguageTool fails its sync, saying so, until one gives it.
+        '';
+      };
+      username = mkOption {
+        type = types.nullOr (types.strMatching "[^[:space:]]+");
+        default = null;
+        example = "alice@example.org";
+        description = ''
+          The account of your LanguageTool Premium account, as you log in at
+          languagetool.org. null takes it from the vault item's username
+          field, or from ~/.config/languagetool/credentials; with neither, a
+          host that syncs LanguageTool fails its sync, saying so.
+        '';
+      };
+    };
+
     adapters = {
       handy = adapter false ''
         Whether ravnix-dict syncs Handy's custom words. The desktop sets

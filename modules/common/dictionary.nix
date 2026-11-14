@@ -26,6 +26,7 @@ let
   ravnix = pkgs.ravnix or (pkgs.extend ravnixPackages.overlay).ravnix;
   tool = ravnix.ravnix-dict;
   cfg = config.ravnix.dictionary;
+  lt = cfg.languagetool;
   # In the order sync reads them (ADAPTER_NAMES in tools/ravnix-dict).
   names = lib.filter (n: cfg.adapters.${n}) [
     "handy"
@@ -33,9 +34,31 @@ let
     "prose"
   ];
 
-  # systemctl starts Handy again after a write, and rbw gives LanguageTool's
-  # key; they come after the user's own PATH, for the watcher's service,
-  # whose PATH is the user manager's.
+  setDefault = name: value: [
+    "--set-default"
+    name
+    value
+  ];
+  wrapperArgs =
+    setDefault "RAVNIX_DICT_FILE" cfg.file
+    ++ setDefault "RAVNIX_DICT_ADAPTERS" (lib.concatStringsSep "," names)
+    ++ setDefault "RAVNIX_DICT_HANDY_SETTINGS" cfg.paths.handy
+    ++ setDefault "RAVNIX_DICT_PROSE_FILE" cfg.paths.prose
+    ++ lib.optionals (lt.rbwItem != null) (setDefault "LANGUAGETOOL_RBW_ITEM" lt.rbwItem)
+    ++ lib.optionals (lt.username != null) (setDefault "LANGUAGETOOL_USERNAME" lt.username)
+    # systemctl stops and starts Handy around a write, and rbw gives
+    # LanguageTool's key; they come after the user's own PATH, for the
+    # watcher's service, whose PATH is the user manager's.
+    ++ [
+      "--suffix"
+      "PATH"
+      ":"
+      (lib.makeBinPath [
+        pkgs.systemd
+        config.programs.rbw.package
+      ])
+    ];
+
   wrapped =
     pkgs.runCommand "ravnix-dict"
       {
@@ -45,17 +68,7 @@ let
         };
       }
       ''
-        makeWrapper ${lib.getExe tool} "$out/bin/ravnix-dict" \
-          --set-default RAVNIX_DICT_FILE ${lib.escapeShellArg cfg.file} \
-          --set-default RAVNIX_DICT_ADAPTERS ${lib.escapeShellArg (lib.concatStringsSep "," names)} \
-          --set-default RAVNIX_DICT_HANDY_SETTINGS ${lib.escapeShellArg cfg.paths.handy} \
-          --set-default RAVNIX_DICT_PROSE_FILE ${lib.escapeShellArg cfg.paths.prose} \
-          --suffix PATH : ${
-            lib.makeBinPath [
-              pkgs.systemd
-              config.programs.rbw.package
-            ]
-          }
+        makeWrapper ${lib.getExe tool} "$out/bin/ravnix-dict" ${lib.escapeShellArgs wrapperArgs}
       '';
 in
 {

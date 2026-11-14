@@ -483,7 +483,7 @@ languagetool_finds_its_credentials_in_the_vault_and_the_file :: proc(t: ^testing
 	defer fake_lt_stop(s)
 	fake_lt_set(s, "a")
 
-	// Unlocked: the key and the account from the vault.
+	// Unlocked: the key and the account from the vault's item.
 	dir := lt_vault(f, true, LT_KEY, LT_USER)
 	testing.expect_value(t, tools.languagetool_unavailable(), "")
 	words, err := tools.languagetool_read()
@@ -494,29 +494,65 @@ languagetool_finds_its_credentials_in_the_vault_and_the_file :: proc(t: ^testing
 	log := read_file(f, strings.concatenate({dir, "/rbw-log"}, f.a))
 	testing.expect_value(t, log, "unlocked\nget LanguageTool - test\nget --field username LanguageTool - test\n")
 
-	// The account from the file, as the vault item has none.
+	// The item has no username: the account from the option, or the file.
 	dir = lt_vault_again(f, true, LT_KEY, "")
-	write_file(f, tools.languagetool.credentials, "# not a secret\nLANGUAGETOOL_USERNAME = \"alice@lt.test\"\n")
-	testing.expect_value(t, tools.languagetool_unavailable(), "")
+	tools.languagetool.user = LT_USER
 	_, err = tools.languagetool_read()
 	testing.expect_value(t, err, nil)
+	dir = lt_vault_again(f, true, LT_KEY, "")
+	write_file(f, tools.languagetool.credentials, "# not a secret\nLANGUAGETOOL_USERNAME = \"alice@lt.test\"\n")
+	_, err = tools.languagetool_read()
+	testing.expect_value(t, err, nil)
+	os.remove(tools.languagetool.credentials)
+}
+
+// lt_fails says that the credentials make the adapter fail, not skip, with
+// one line that holds each of says and not the key.
+lt_fails :: proc(t: ^testing.T, says: ..string, loc := #caller_location) {
+	testing.expect_value(t, tools.languagetool_unavailable(), "", loc = loc)
+	_, err := tools.languagetool_read()
+	message, failed := err.?
+	testing.expectf(t, failed, "the read fails", loc = loc)
+	for s in says {
+		testing.expectf(t, strings.contains(message, s), "%q says %q", message, s, loc = loc)
+	}
+	testing.expectf(t, !strings.contains(message, "\n") && !strings.contains(message, LT_KEY), "%q is one line without the key", message, loc = loc)
+}
+
+@(test)
+only_a_locked_vault_skips_languagetool_quietly :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	context.allocator = f.a
+	s := fake_lt_start(f)
+	defer fake_lt_stop(s)
 
 	// Locked: skipped, and the vault is asked nothing but whether it is.
-	dir = lt_vault_again(f, false, LT_KEY, LT_USER)
+	dir := lt_vault(f, false, LT_KEY, LT_USER)
 	why := tools.languagetool_unavailable()
 	testing.expectf(t, strings.contains(why, "locked"), "%q", why)
 	testing.expect_value(t, read_file(f, strings.concatenate({dir, "/rbw-log"}, f.a)), "unlocked\n")
-	// The reason holds no key, and read fails with it, too.
-	testing.expect(t, !strings.contains(why, LT_KEY))
-	_, err = tools.languagetool_read()
-	testing.expect(t, err != nil)
 
-	// No rbw at all, and nothing in the file.
-	tools.languagetool_reset()
+	// Everything else is a misconfiguration, and fails loudly.
+	// The item the option names is not in the vault.
+	dir = lt_vault_again(f, true, LT_KEY, LT_USER)
+	tools.languagetool.rbw_item = "LanguageTool - elsewhere"
+	lt_fails(t, "LanguageTool - elsewhere", "ravnix.dictionary.languagetool.rbwItem")
+	// The item holds no account, and neither the option nor the file does.
+	dir = lt_vault_again(f, true, LT_KEY, "")
+	lt_fails(t, "account", "ravnix.dictionary.languagetool.username")
+	// No item named at all, and no key anywhere: rbw is not even asked.
+	dir = lt_vault_again(f, true, LT_KEY, LT_USER)
+	tools.languagetool.rbw_item = ""
+	lt_fails(t, "API key", "ravnix.dictionary.languagetool.rbwItem")
+	testing.expect_value(t, read_file(f, strings.concatenate({dir, "/rbw-log"}, f.a)), "")
+	// No rbw installed.
+	dir = lt_vault_again(f, true, LT_KEY, LT_USER)
 	tools.languagetool.rbw = join(f, "no-such-rbw")
-	os.remove(tools.languagetool.credentials)
-	why = tools.languagetool_unavailable()
-	testing.expectf(t, strings.contains(why, "no LanguageTool API key") && strings.contains(why, "not installed"), "%q", why)
+	lt_fails(t, "not installed")
+	// A key the server refuses.
+	dir = lt_vault_again(f, true, "a-refused-key-of-some-length", LT_USER)
+	lt_fails(t, "403")
 }
 
 lt_vault_again :: proc(f: ^Fixture, unlocked: bool, key, user: string) -> string {
