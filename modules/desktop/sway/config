@@ -263,6 +263,8 @@ gaps inner 0
 gaps outer 0
 default_border none
 default_floating_border pixel 1
+# The font of window titles (tabbed groups, a floating window's bar): 10 pt as
+# on Fedora, a size of its own in the theme module (fontSize.title).
 font pango:@font@ @fontSize@
 
 # Cursor theme and size: home-manager's (home.pointerCursor, from the theme

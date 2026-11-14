@@ -288,7 +288,7 @@ let
     cursorTheme = cursor.name;
     cursorSize = toString cursor.size;
     inherit font;
-    fontSize = toString fontSize.terminal;
+    fontSize = toString fontSize.title;
     terminalMain = cfg.terminal.main;
     terminalPlain = cfg.terminal.plain;
     workspaceOutputs = workspaceBlock;

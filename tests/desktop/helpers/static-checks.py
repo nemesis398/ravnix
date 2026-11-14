@@ -138,6 +138,7 @@ def main():
         )
         expect(cursor["name"] == f"catppuccin-mocha-{variant}-cursors", label(f"home.pointerCursor.name is {cursor['name']}, not the Catppuccin cursor of the accent"))
         expect(re.search(r"^default_floating_border pixel 1$", sway, re.M), label("row Borders: sway/config lacks `default_floating_border pixel 1`"))
+        expect(re.search(r"^font pango:JetBrainsMono Nerd Font 10$", sway, re.M), label("row Type: the Sway window titles are not set in 10 pt, as on Fedora"))
         expect(re.search(r"^default_border none$", sway, re.M), label("row Borders: tiled windows have a border"))
         expect(re.search(r"^client\.focused\s+\$accent\s+\$accent\s", sway, re.M), label("row Accent: the focused floating window is not framed in $accent"))
         expect(not re.search(r"^\s*opacity|\bopacity\s", re.sub(r"^\s*#.*$", "", sway, flags=re.M)), label("row Transparency: sway/config sets an opacity"))

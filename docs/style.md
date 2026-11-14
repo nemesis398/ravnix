@@ -136,6 +136,7 @@ Text you read is small and text you glance at is large.
 | Surface | Size |
 | --- | --- |
 | Terminal, editor, notifications | 9 pt |
+| Sway window titles | 10 pt |
 | Launcher and menus | 11 pt |
 | Bar | 14 px |
 

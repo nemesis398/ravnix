@@ -156,8 +156,9 @@ let
         launcher = 11;
         bar = 14;
         ui = 11;
+        title = 10;
       }
-    ) "the font sizes are not terminal 9, launcher 11, bar 14, ui 11"
+    ) "the font sizes are not terminal 9, launcher 11, bar 14, ui 11, title 10"
     ++ lib.concatLists (
       lib.mapAttrsToList
         (

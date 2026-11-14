@@ -14,7 +14,8 @@
 #              lock ring, which is a gauge
 #   font       the one family
 #   fontSize   terminal (and editor, notifications) 9 pt, launcher and menus
-#              11 pt, bar 14 px, ui (GTK and Qt applications) 11 pt
+#              11 pt, bar 14 px, ui (GTK and Qt applications) 11 pt, title
+#              (Sway's window titles) 10 pt
 #
 # Everything but the accent is read-only. The state hues are not roles: read
 # them from the palette (red, peach, yellow, green, blue, maroon), where the
@@ -97,7 +98,7 @@ in
     fontSize = mkOption {
       type = types.attrsOf types.int;
       readOnly = true;
-      description = "Font sizes: terminal 9 pt, launcher 11 pt, bar 14 px, ui 11 pt.";
+      description = "Font sizes: terminal 9 pt, launcher 11 pt, bar 14 px, ui 11 pt, title 10 pt.";
     };
   };
 
@@ -132,6 +133,7 @@ in
       launcher = 11;
       bar = 14;
       ui = 11;
+      title = 10;
     };
   };
 }
