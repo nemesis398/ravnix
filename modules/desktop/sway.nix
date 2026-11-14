@@ -253,8 +253,10 @@ let
   # What the login layout waits for (ravnix.desktop.sessionLayout.after; the
   # keyring's unlock, keyring.nix): a wrapper that starts
   # ravnix-session-layout-after.target, which wants those user units and
-  # comes after them, waits for the start to return, and then runs the
-  # layout with its arguments as Sway gave them. A failed start is said on
+  # comes after them (and, being part of graphical-session.target, after
+  # that target too by systemd's default dependencies, so the wrapper also
+  # waits for a pending start of the session), waits for the start to
+  # return, and then runs the layout with its arguments as Sway gave them. A failed start is said on
   # stderr, which is Sway's log, and the layout runs anyway: an app that
   # finds the keyring locked asks for its password, but the desktop still
   # comes up.
@@ -492,14 +494,6 @@ in
     # so it is installed with it: gtk-qt.nix sets both, for the accent of
     # ravnix.theme.
 
-    # The XDG autostart (Handy, the Nextcloud client, any /etc/xdg/autostart
-    # entry). systemd's generator makes a user unit of each entry and hangs it
-    # on xdg-desktop-autostart.target, which refuses a manual start
-    # (RefuseManualStart=yes: "may be requested by dependency only"), so the
-    # Sway config's `systemctl --user start xdg-desktop-autostart.target` was
-    # refused at every login and nothing ever started. This target wants it,
-    # and the config starts this one, once the tray is up (sway-wait-sni): the
-    # applets that carry a tray icon lose it when they start first.
     # What the login layout's wrapper starts (layoutAfter, above).
     systemd.user.targets.ravnix-session-layout-after = lib.mkIf (cfg.sessionLayout.after != [ ]) {
       description = "What the login layout waits for";
@@ -508,6 +502,14 @@ in
       partOf = [ "graphical-session.target" ];
     };
 
+    # The XDG autostart (Handy, the Nextcloud client, any /etc/xdg/autostart
+    # entry). systemd's generator makes a user unit of each entry and hangs it
+    # on xdg-desktop-autostart.target, which refuses a manual start
+    # (RefuseManualStart=yes: "may be requested by dependency only"), so the
+    # Sway config's `systemctl --user start xdg-desktop-autostart.target` was
+    # refused at every login and nothing ever started. This target wants it,
+    # and the config starts this one, once the tray is up (sway-wait-sni): the
+    # applets that carry a tray icon lose it when they start first.
     systemd.user.targets.ravnix-autostart = {
       description = "The XDG autostart entries, once the tray is up";
       wants = [ "xdg-desktop-autostart.target" ];

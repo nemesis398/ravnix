@@ -264,7 +264,9 @@ in
         User units that the login layout (`sway-session-layout`, which
         starts Helium, the terminal, Obsidian and the music player) waits
         for: the user target `ravnix-session-layout-after.target` wants
-        them and comes after them, Sway's config starts it with
+        them and comes after them (and after `graphical-session.target`,
+        which it is part of, so it also waits for a pending start of the
+        session), Sway's config starts it with
         `systemctl --user start` and runs the layout once that has
         returned, whether they started or failed. Empty runs the layout at
         once, without the target.
