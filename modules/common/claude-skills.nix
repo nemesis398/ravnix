@@ -19,6 +19,13 @@
 # rather than the store: a session that outlives a switch or a garbage
 # collection still finds every hook.
 #
+# The skills of claude/skills/ are rendered with the skill values
+# (lib/claude-skills.nix) into one tree and linked, a directory each, at
+# <configDir>/skills/NAME, beside whatever ravnix.claude.skills adds. The
+# hook adapters of handoff, journal and ai-memory join the hooks below, each
+# behind a wrapper at <configDir>/ravnix/hooks/NAME, and only while its skill
+# is installed.
+#
 # Without programs.claude-code enabled this module does nothing.
 {
   config,
@@ -39,6 +46,92 @@ let
   # home-manager configuration without it (the tests') gets the same tools
   # from the same overlay here, as modules/common/scripts.nix does.
   ravnix = pkgs.ravnix or (pkgs.extend ravnixPackages.overlay).ravnix;
+
+  skillLib = import ../../lib/claude-skills.nix { inherit lib; };
+  skillsDir = "${cfg.configDir}/skills";
+  python = lib.getExe pkgs.python3;
+  # ravnix's skills, rendered with the values. The tree is one directory, so
+  # journal finds ai-memory's scripts beside its own.
+  rendered = skillLib.render {
+    inherit pkgs python skillsDir;
+    src = ../../claude/skills;
+    values = config.ravnix.claude.skillValues;
+  };
+  # ravnix's own, and over them the user's: a name of the user's replaces
+  # ravnix's skill, null leaves it out. Merged here rather than as defaults of
+  # the option, so a definition of the user's at any priority, forwarded from
+  # NixOS or plain in home-manager, adds to ravnix's skills instead of
+  # replacing all of them.
+  own = lib.genAttrs rendered.names (name: "${rendered}/${name}");
+  installed = lib.filterAttrs (_: path: path != null) (own // config.ravnix.claude.skills);
+
+  # A hook adapter of a skill: python3 on the script of the installed skill,
+  # which ends 0 whatever happens, as Fedora's `|| true` did. A skill left
+  # out leaves its hooks out, and a skill replaced by one without the
+  # adapter makes the hook a no-op.
+  adapter =
+    name: skill: script: tools:
+    pkgs.writeShellScript "ravnix-claude-${name}" ''
+      export PATH=${lib.makeBinPath tools}''${PATH:+:$PATH}
+      script=${lib.escapeShellArg "${skillsDir}/${skill}/adapters/claude/${script}"}
+      [ -f "$script" ] || exit 0
+      ${python} -B "$script" || true
+    '';
+  skillHooks = {
+    handoff = {
+      handoff-sessionstart = {
+        event = "SessionStart";
+        timeout = 30;
+        script = "sessionstart.py";
+        tools = [ git ];
+      };
+      handoff-stop = {
+        event = "Stop";
+        timeout = 30;
+        script = "stop.py";
+        tools = [
+          git
+          pkgs.libnotify
+        ];
+      };
+      handoff-precompact = {
+        event = "PreCompact";
+        timeout = 30;
+        script = "precompact.py";
+        tools = [ git ];
+      };
+    };
+    journal.journal-stop = {
+      event = "Stop";
+      timeout = 30;
+      script = "stop.py";
+      tools = [ git ];
+    };
+    ai-memory = {
+      ai-memory-sessionstart = {
+        event = "SessionStart";
+        timeout = 5;
+        script = "sessionstart.py";
+        tools = [ ];
+      };
+      ai-memory-userpromptsubmit = {
+        event = "UserPromptSubmit";
+        timeout = 5;
+        script = "userpromptsubmit.py";
+        tools = [ ];
+      };
+      ai-memory-posttoolfailure = {
+        event = "PostToolUseFailure";
+        timeout = 5;
+        script = "posttoolfailure.py";
+        tools = [ ];
+      };
+    };
+  };
+  activeHooks = lib.concatMapAttrs (
+    skill: hooks:
+    lib.optionalAttrs (installed ? ${skill}) (lib.mapAttrs (_: h: h // { inherit skill; }) hooks)
+  ) skillHooks;
 
   wrap =
     name: script: tools:
@@ -129,11 +222,17 @@ in
 
     home.file =
       lib.mapAttrs' (name: wrapper: lib.nameValuePair "${dir}/hooks/${name}" { source = wrapper; }) hooks
+      // lib.mapAttrs' (
+        name: h:
+        lib.nameValuePair "${dir}/hooks/${name}" { source = adapter name h.skill h.script h.tools; }
+      ) activeHooks
+      // lib.mapAttrs' (name: path: lib.nameValuePair "${skillsDir}/${name}" { source = path; }) installed
       // {
         "${dir}/statusline".source = statusline;
       };
 
-    ravnix.claude.hookEntries = {
+    ravnix.claude.hookEntries = lib.mkMerge [
+      {
       SessionStart = [
         {
           hooks = [
@@ -157,7 +256,16 @@ in
       WorktreeCreate = [ { hooks = [ (run "worktree-create" 600) ]; } ];
       WorktreeRemove = [ { hooks = [ (run "worktree-remove" 60) ]; } ];
       SubagentStop = [ { hooks = [ (run "worktree-subagent-stop" 30) ]; } ];
-    };
+      }
+      # The adapters of the installed skills, a group each, after ravnix's own.
+      (lib.zipAttrsWith (_: groups: groups) (
+        lib.mapAttrsToList (name: h: {
+          ${h.event} = {
+            hooks = [ (run name h.timeout) ];
+          };
+        }) activeHooks
+      ))
+    ];
 
     programs.claude-code.settings = {
       env.RAVNIX_SKILL_VALUES = valuesFile;

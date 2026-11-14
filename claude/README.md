@@ -72,6 +72,9 @@ then turns its part off and fails in no other way:
 | `netbird.whenDown` | string, one sentence | `session-preflight.sh` | the NetBird warnings do not say what fails while the mesh is down |
 | `statusline.quietHosts` | list of host names, without a domain | `statusline.sh` | every host shows its tag |
 
+The skills of `claude/skills/` read more keys, and put them into their
+text when the home is built; `claude/skills/README.md` has their table.
+
 For example:
 
 ```nix

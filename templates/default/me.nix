@@ -613,8 +613,18 @@
     shell.secretEnv = { };
 
     # Values the public Claude Code skills read (destinations, ids, house
-    # rules), rendered to JSON. A skill that needs a missing value says
-    # which key to set.
+    # rules), rendered to JSON and into the skills' text. A skill that needs
+    # a missing value says which key to set. claude/skills/README.md lists
+    # every key of the skills, claude/README.md those of the hooks. For
+    # example:
+    #   skillValues = {
+    #     user.name = "Alice";
+    #     vault.root = "/home/alice/Notes";
+    #     plane.mcpUrl = "https://plane.example.org/mcp";
+    #   };
+    # ravnix's skills are linked into ~/.claude/skills; claude.skills adds
+    # your own by name (a directory with a SKILL.md), or leaves one out:
+    #   skills.laptop = null;
     claude.skillValues = { };
 
     # The MCP servers Claude Code starts with in every project, by name, each

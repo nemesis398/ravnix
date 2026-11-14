@@ -226,6 +226,8 @@ let
         && !(settings.env ? CLAUDE_CODE_DISABLE_ARTIFACT);
     }
     {
+      # The skills' adapters come after ravnix's own, a group each
+      # (claude/skills/README.md; tests/claude/skills-render.nix).
       name = "the hooks are wired at their fixed paths, with their timeouts";
       ok =
         ours == {
@@ -238,9 +240,20 @@ let
                 (hook "claude-pane" 5)
               ];
             }
+            { hooks = [ (hook "ai-memory-sessionstart" 5) ]; }
+            { hooks = [ (hook "handoff-sessionstart" 30) ]; }
           ];
-          UserPromptSubmit = [ { hooks = [ (hook "busy-state" 5) ]; } ];
-          Stop = [ { hooks = [ (hook "busy-state" 5) ]; } ];
+          UserPromptSubmit = [
+            { hooks = [ (hook "busy-state" 5) ]; }
+            { hooks = [ (hook "ai-memory-userpromptsubmit" 5) ]; }
+          ];
+          PostToolUseFailure = [ { hooks = [ (hook "ai-memory-posttoolfailure" 5) ]; } ];
+          PreCompact = [ { hooks = [ (hook "handoff-precompact" 30) ]; } ];
+          Stop = [
+            { hooks = [ (hook "busy-state" 5) ]; }
+            { hooks = [ (hook "handoff-stop" 30) ]; }
+            { hooks = [ (hook "journal-stop" 30) ]; }
+          ];
           StopFailure = [ { hooks = [ (hook "busy-state" 5) ]; } ];
           SessionEnd = [ { hooks = [ (hook "busy-state" 5) ]; } ];
           PreToolUse = [
@@ -535,9 +548,9 @@ pkgs.runCommand "claude-home"
     switch ${activation} claudeCodeSettings ravnixClaudeHooks
     rc=$?
     [ "$rc" = 0 ] &&
-      [ "$(commands SessionStart)" = "$(jq -cn --arg h "$herdr" '[$h, "/home/alice/.claude/ravnix/hooks/prune-claude-tmp", "/home/alice/.claude/ravnix/hooks/session-preflight", "/home/alice/.claude/ravnix/hooks/busy-state", "/home/alice/.claude/ravnix/hooks/claude-pane"]')" ] &&
+      [ "$(commands SessionStart)" = "$(jq -cn --arg h "$herdr" '[$h, "/home/alice/.claude/ravnix/hooks/prune-claude-tmp", "/home/alice/.claude/ravnix/hooks/session-preflight", "/home/alice/.claude/ravnix/hooks/busy-state", "/home/alice/.claude/ravnix/hooks/claude-pane", "/home/alice/.claude/ravnix/hooks/ai-memory-sessionstart", "/home/alice/.claude/ravnix/hooks/handoff-sessionstart"]')" ] &&
       [ "$(commands PreToolUse)" = '["my-check","/home/alice/.claude/ravnix/hooks/web-route"]' ] &&
-      [ "$(commands Stop)" = '["/home/alice/.claude/ravnix/hooks/busy-state"]' ] &&
+      [ "$(commands Stop)" = '["/home/alice/.claude/ravnix/hooks/busy-state","/home/alice/.claude/ravnix/hooks/handoff-stop","/home/alice/.claude/ravnix/hooks/journal-stop"]' ] &&
       [ "$(jq -r '.model + " " + .env.DISABLE_AUTOUPDATER + " " + .statusLine.command' settings.json)" = "opus 1 /home/alice/.claude/ravnix/statusline" ]
     check "a switch keeps herdr's and a hand-wired entry, adds ravnix's, and drops a stale one of ravnix's" $?
     cp settings.json first.json
@@ -547,7 +560,7 @@ pkgs.runCommand "claude-home"
     cp first.json settings.json
     switch ${ownActivation} claudeCodeSettings ravnixClaudeHooks
     [ $? = 0 ] &&
-      [ "$(commands SessionStart)" = '["my-hook","/home/alice/.claude/ravnix/hooks/prune-claude-tmp","/home/alice/.claude/ravnix/hooks/session-preflight","/home/alice/.claude/ravnix/hooks/busy-state","/home/alice/.claude/ravnix/hooks/claude-pane"]' ]
+      [ "$(commands SessionStart)" = '["my-hook","/home/alice/.claude/ravnix/hooks/prune-claude-tmp","/home/alice/.claude/ravnix/hooks/session-preflight","/home/alice/.claude/ravnix/hooks/busy-state","/home/alice/.claude/ravnix/hooks/claude-pane","/home/alice/.claude/ravnix/hooks/ai-memory-sessionstart","/home/alice/.claude/ravnix/hooks/handoff-sessionstart"]' ]
     check "a SessionStart hook declared in Nix replaces the file's list, herdr's too, and ravnix's join it" $?
     cp first.json settings.json
     switch ${offActivation} ravnixClaudeHooks

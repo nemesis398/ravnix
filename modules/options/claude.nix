@@ -80,6 +80,26 @@ in
     '';
   };
 
+  options.ravnix.claude.skills = mkOption {
+    type = types.attrsOf (types.nullOr types.path);
+    default = { };
+    example = lib.literalExpression ''
+      {
+        # A skill of your own, or one pinned from upstream in your flake.
+        my-skill = ./claude/skills/my-skill;
+        # One of ravnix's own, left out.
+        laptop = null;
+      }
+    '';
+    description = ''
+      Claude Code skills to link into the user's skills directory
+      (~/.claude/skills/NAME) beside ravnix's own (claude/skills/README.md,
+      rendered with `skillValues`), by name: each a directory with a
+      SKILL.md. A name of ravnix's set here replaces ravnix's skill, and
+      null leaves it out.
+    '';
+  };
+
   options.ravnix.claude.mcpServers = mkOption {
     type = types.attrsOf json;
     default = { };
