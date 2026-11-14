@@ -420,11 +420,10 @@ let
       ravnix.theme.accent = lib.mkForce "teal";
     }
   ];
-  themeOf =
-    h:
-    (builtins.fromJSON
-      h.config.home-manager.users.${user}.xdg.dataFile."helium/themes/ravnix/manifest.json".text
-    ).theme.colors;
+  # The browser's theme is loaded by Helium's wrapper (tests/desktop/helium-theme.nix
+  # runs it); here it is the manifest of the theme directory the host's Helium
+  # is built with.
+  themeOf = h: (builtins.fromJSON (builtins.readFile "${(heliumOf h).themeExtension}/manifest.json")).theme.colors;
   bookmarkUrls =
     h:
     map (b: b.url or "") (

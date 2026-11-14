@@ -23,6 +23,15 @@ window of every web app (`modules/desktop/webapps.nix`).
   `packages/helium-devtools-frontend`, DevTools in the theme, for the Helium on
   the PATH; the Chrome DevTools MCP server runs this package without it. Left
   unset, the wrapper is the same derivation as before the option existed.
+- `themeExtension`: with a directory passed in (an unpacked Chromium theme),
+  the wrapper starts Helium with `--load-extension=DIR`, so the browser's
+  frame is in the theme without the click at `helium://extensions`. The
+  desktop module passes `packages/helium-theme` for the Helium on the PATH.
+  Google Chrome 137 and later ignore `--load-extension`; Helium honors it, and
+  `tests/desktop/helium-theme.nix` runs the browser headless to show that the
+  theme becomes the profile's theme (`extensions.theme` in `Preferences`).
+  Chromium keeps only the last `--load-extension`, so one you add on the
+  command line replaces ours. Left unset, the wrapper is the same derivation.
 - Writes `helium.desktop` (English only), with the MIME types for web pages,
   PDFs and images, and the icon.
 - `widevineCdm`: with the unfree `widevine-cdm` of nixpkgs passed in, Helium

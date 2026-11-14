@@ -67,10 +67,8 @@
 #   3. In Stylus, Manage, each style's settings hold the flavor and the
 #      accent: Mocha and the accent of ravnix.theme.accent.
 #
-# The same goes for the browser's frame: ~/.local/share/helium/themes/ravnix is
-# an unpacked Chromium theme in the colors of the roles (accent included). Load
-# it once, at helium://extensions with developer mode on, "Load unpacked"; the
-# path stays the same, so the choice survives a rebuild.
+# The browser's frame needs no step: Helium loads its theme at every start
+# (packages/helium-theme, `themeExtension`).
 #
 # --- GTK and Qt: the switch is here ------------------------------------------
 # The theme module (modules/theme/gtk-qt.nix) styles GTK and Qt where
@@ -203,46 +201,13 @@ let
     (umask 077 && ${pkgs.coreutils}/bin/mkdir -p "$1/NativeMessagingHosts")
   '';
 
-  # "#rrggbb" as the three bytes of a Chromium theme color.
-  rgb =
-    hex:
-    let
-      h = lib.removePrefix "#" hex;
-      byte = i: lib.fromHexString (builtins.substring i 2 h);
-    in
-    [
-      (byte 0)
-      (byte 2)
-      (byte 4)
-    ];
-  # The Catppuccin theme of the browser, in the roles: the strip that frames the
-  # work (the frame, the address bar and the buttons) is Mantle (style rule 1),
-  # the toolbar Base, and the accent is on the icons and the address.
-  heliumTheme = builtins.toJSON {
-    manifest_version = 3;
-    name = "Ravnix";
-    description = "Catppuccin Mocha in the accent of ravnix";
-    version = "1.0.0";
-    theme.colors = lib.mapAttrs (_: rgb) {
-      frame = roles.dock;
-      frame_inactive = roles.dock;
-      frame_incognito = roles.selected;
-      frame_incognito_inactive = roles.selected;
-      bookmark_text = roles.text;
-      tab_background_text = roles.label;
-      tab_background_text_inactive = roles.secondary;
-      tab_background_text_incognito = roles.label;
-      tab_background_text_incognito_inactive = roles.secondary;
-      tab_text = roles.text;
-      toolbar = roles.canvas;
-      toolbar_button_icon = roles.accent;
-      omnibox_text = roles.accent;
-      omnibox_background = roles.dock;
-      ntp_background = roles.canvas;
-      ntp_link = roles.accent;
-      ntp_text = roles.text;
-      button_background = roles.dock;
-    };
+  # Helium's frame in the theme (packages/helium-theme): an unpacked Chromium
+  # theme in the roles and the accent, which the wrapper of the Helium on the
+  # PATH loads at every start (--load-extension), so there is no click at
+  # helium://extensions. The headless Helium of the Chrome DevTools MCP server
+  # does not load it.
+  themeExtension = pkgs.ravnix.helium-theme.override {
+    theme = { inherit (theme) palette roles; };
   };
 
   # Helium's DevTools in the theme (packages/helium-devtools-frontend): the
@@ -284,7 +249,7 @@ in
   environment.systemPackages = [
     (pkgs.ravnix.helium.override {
       widevineCdm = if apps.widevine then pkgs.widevine-cdm else null;
-      inherit devtoolsFrontend;
+      inherit devtoolsFrontend themeExtension;
     })
     pkgs.ravnix.ghostty-float
     # Handy in the theme: its CSS is made from the host's roles and accent
@@ -550,8 +515,6 @@ in
             "video/mpeg"
           ] (_: [ "mpv.desktop" ]);
       };
-
-      xdg.dataFile."helium/themes/ravnix/manifest.json".text = heliumTheme;
     }
 
     # Helium's native-messaging hosts (see nativeHostsDir above).

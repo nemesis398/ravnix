@@ -27,6 +27,13 @@
 #                                   app run; the headless Helium of the Chrome
 #                                   DevTools MCP server is this package without
 #                                   it.
+#   --load-extension=THEME          when `themeExtension` is set: the browser's
+#                                   frame in the theme (packages/helium-theme),
+#                                   loaded at every start. Chromium keeps only
+#                                   the last --load-extension, so one the
+#                                   user adds replaces it. Helium honors the
+#                                   switch although Google Chrome 137 and later
+#                                   do not (tests/desktop/helium-theme.nix).
 #
 # With `widevineCdm` set, Helium plays DRM-protected media (Apple Music in a
 # web app streams full tracks only under DRM). Chromium looks for the library
@@ -111,6 +118,8 @@
   widevineCdm ? null,
   # A DevTools frontend (a directory), or null for the stock DevTools.
   devtoolsFrontend ? null,
+  # An unpacked Chromium theme (a directory with a manifest.json), or null.
+  themeExtension ? null,
   # Command line arguments that are always set.
   commandLineArgs ? "",
 }:
@@ -192,6 +201,12 @@ let
   devtoolsFlag = lib.optionalString (
     devtoolsFrontend != null
   ) ''--add-flags "--custom-devtools-frontend=file://${devtoolsFrontend}/" '';
+
+  # The theme of the browser's frame, or nothing at all. Ends in the space
+  # before the line's \, as devtoolsFlag.
+  themeFlag = lib.optionalString (
+    themeExtension != null
+  ) ''--add-flags "--load-extension=${themeExtension}" '';
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "helium";
@@ -294,7 +309,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       --set CHROME_VERSION_EXTRA nixos \
       ${widevineHint} \
       --add-flags "\''${NIXOS_OZONE_WL:+\''${WAYLAND_DISPLAY:+--ozone-platform=wayland}}" \
-      --add-flags "--enable-features=${features}" ${devtoolsFlag}\
+      --add-flags "--enable-features=${features}" ${devtoolsFlag}${themeFlag}\
       --add-flags ${lib.escapeShellArg commandLineArgs}
 
     runHook postInstall
@@ -309,7 +324,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     withWidevine = widevineCdm != null;
     # The DevTools frontend the wrapper passes, or null. tests/desktop/
     # helium-devtools.nix reads it.
-    inherit devtoolsFrontend;
+    inherit devtoolsFrontend themeExtension;
   };
 
   meta = {
