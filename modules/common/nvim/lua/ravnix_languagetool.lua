@@ -18,7 +18,12 @@
 -- The dictionary has one entry per line: `word`, or `word | lang=de,en |
 -- heard=...`. A word with `lang` is known to the checks of those languages
 -- only; a line starting with `#` and an empty line are skipped, and so is a
--- line that is nothing but fields.
+-- line that is nothing but fields. It is read as ravnix-dict reads it
+-- (tools/ravnix-dict/README.md, "The file"): `lang = de` is a lang field
+-- like `lang=de`, two lang fields on one line both count, one that names no
+-- language (`lang=`, `lang=,`) restricts nothing, and a line whose word the
+-- file cannot hold is skipped. The same rules keep such a word out of what
+-- M.add writes.
 local M = {}
 
 M.dictionary = require("ravnix").dictionary
@@ -152,6 +157,37 @@ function M.client_config(c)
   }
 end
 
+-- The longest word the dictionary holds, in bytes, as ravnix-dict's MAX_WORD.
+local MAX_WORD = 256
+
+---Whether a line of git's merge conflict starts so.
+local function conflict(text)
+  for _, marker in ipairs({ "<<<<<<<", "=======", ">>>>>>>", "|||||||" }) do
+    if text:sub(1, #marker) == marker then
+      local rest = text:sub(#marker + 1)
+      if rest == "" or rest:sub(1, 1) == " " or (marker == "=======" and vim.trim(rest) == "") then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+---Whether the dictionary can hold a word, by ravnix-dict's rules
+---(word_problem in tools/ravnix-dict/dict.odin): not empty, at most MAX_WORD
+---bytes, no space around it, no # first (a comment), no | (a field), no
+---control character, and nothing that looks like a merge conflict.
+---@param word string
+function M.holdable(word)
+  return word ~= ""
+    and #word <= MAX_WORD
+    and vim.trim(word) == word
+    and word:sub(1, 1) ~= "#"
+    and not word:find("|", 1, true)
+    and not word:find("%c")
+    and not conflict(word)
+end
+
 ---One line of the dictionary: the word and the languages it is limited to.
 ---@return string? word, string[]? languages
 local function parse(line)
@@ -160,16 +196,20 @@ local function parse(line)
   end
   local fields = vim.split(line, "|", { plain = true })
   local word = vim.trim(fields[1])
-  if word == "" then
+  if not M.holdable(word) then
     return nil
   end
   local languages
   for i = 2, #fields do
-    local list = vim.trim(fields[i]):match("^lang=(.+)$")
-    if list then
-      languages = vim.tbl_map(function(language)
-        return vim.trim(language):lower()
-      end, vim.split(list, ",", { plain = true }))
+    local key, list = vim.trim(fields[i]):match("^([^=]*)=(.*)$")
+    if key and vim.trim(key) == "lang" then
+      for _, language in ipairs(vim.split(list, ",", { plain = true })) do
+        language = vim.trim(language):lower()
+        if language ~= "" then
+          languages = languages or {}
+          table.insert(languages, language)
+        end
+      end
     end
   end
   return word, languages
@@ -216,8 +256,7 @@ function M.words(lang)
 end
 
 ---Appends words to the dictionary, each limited to its language and none
----twice. A word that would break the line format (a bar, a line break) is
----left out. The dictionary is shared with every tool that reads it, so what
+---twice. A word the dictionary cannot hold (M.holdable) is left out. The dictionary is shared with every tool that reads it, so what
 ---is there stays as it is: a last line without a line break is closed first,
 ---and when the file cannot be written nothing is.
 ---@param by_language table<string, string[]> de-DE = { "Wort" }
@@ -230,7 +269,7 @@ function M.add(by_language)
       known[word] = true
     end
     for _, word in ipairs(words) do
-      if not known[word] and not word:find("[|\r\n]") and vim.trim(word) ~= "" then
+      if not known[word] and M.holdable(word) then
         known[word] = true
         table.insert(added, word)
         table.insert(new, ("%s | lang=%s"):format(word, lang:sub(1, 2):lower()))

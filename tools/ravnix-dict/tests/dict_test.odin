@@ -302,3 +302,39 @@ a_key_is_the_lower_case_of_any_word :: proc(t: ^testing.T) {
 		testing.expect_value(t, dict.key(c[0], context.temp_allocator), c[1])
 	}
 }
+
+@(test)
+the_editor_and_the_core_read_lang_alike :: proc(t: ^testing.T) {
+	// The lines of tests/common/helpers/nvim-dictionary.lua, which checks the
+	// editor's LanguageTool code on them: both must give these languages.
+	defer free_all(context.temp_allocator)
+	long := strings.repeat("x", 257, context.temp_allocator)
+	text := strings.concatenate(
+		{
+			"Spaced | lang = de\nTwice | lang=de | lang=en\nEmpty | lang=\nCommas | lang= , ,\n",
+			"Upper | LANG=de\nMixed | lang=en | heard=x\nBoth | lang=de\nBoth | lang=fr\nFree\n",
+			"Both2 | lang=de\nBoth2\n# comment\n| lang=de\nTab\there\n",
+			long,
+			"\nC# | lang = EN , de\n",
+		},
+		context.temp_allocator,
+	)
+	d, why := dict.parse(text, context.temp_allocator)
+	testing.expect_value(t, why, "")
+	of :: proc(d: dict.Dictionary, word: string) -> string {
+		l := dict.langs_of(d, word, context.temp_allocator)
+		return "all" if l.all else strings.join(l.codes, ",", context.temp_allocator)
+	}
+	testing.expect_value(t, of(d, "Spaced"), "de")
+	testing.expect_value(t, of(d, "Twice"), "de,en")
+	testing.expect_value(t, of(d, "Empty"), "all")
+	testing.expect_value(t, of(d, "Commas"), "all")
+	testing.expect_value(t, of(d, "Upper"), "all")
+	testing.expect_value(t, of(d, "Mixed"), "en")
+	testing.expect_value(t, of(d, "Both"), "de,fr")
+	testing.expect_value(t, of(d, "Free"), "all")
+	testing.expect_value(t, of(d, "Both2"), "all")
+	testing.expect_value(t, of(d, "C#"), "en,de")
+	words := dict.words(d, context.temp_allocator)
+	testing.expect_value(t, strings.join(words, " ", context.temp_allocator), "Spaced Twice Empty Commas Upper Mixed Both Free Both2 C#")
+}
