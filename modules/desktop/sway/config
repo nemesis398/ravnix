@@ -763,9 +763,11 @@ exec wl-paste --type image --watch cliphist store
 # way: Obsidian answers a URI with a "Run action from external link?" modal and
 # waits, so every login would come up behind a dialog. The CLI is not an
 # external link and is not challenged.
-# sway-session-layout can also tab a second vault together with the first
-# (`--tab 3 "Vault name"`, see the script); that names a vault, which is a
-# personal value, so no vault is named here.
+# `--tab 3 "Vault name"` handles a second vault: if another one restores itself
+# onto workspace 3, the two become tabs instead of tiling, with the vault of
+# obsidian-open-daily left on top. The name is the folder name of
+# ravnix.link.vault (sway.nix, layoutTab) and is left out when the host has no
+# vault, so no vault is named here.
 # The music webapp is a Helium --app window of https://music.apple.com/, so its
 # app_id follows the rule above.
 set $layout-browser 1  helium                          "$browser"
@@ -777,7 +779,7 @@ set $layout-music   10 chrome-music.apple.com__-Default "$music"
 # wrapper (sway.nix, layoutAfter) that first waits for the user units of
 # ravnix.desktop.sessionLayout.after: the login keyring's unlock, so that
 # Helium finds its cookie key without a prompt (modules/desktop/keyring.nix).
-exec @layoutAfter@sway-session-layout --focus 2 $layout-browser $layout-term $layout-notes $layout-music
+exec @layoutAfter@sway-session-layout --focus 2 @layoutTab@$layout-browser $layout-term $layout-notes $layout-music
 
 ### ─── Per-machine and per-module fragments ────────────────────────────────────
 # ~/.config/sway/config.d/*.conf, in the order of their names. A module adds one

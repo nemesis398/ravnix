@@ -40,7 +40,11 @@ in
         files it names and sends the commit to the server, which waits
         until its copy has them. One private flake for both hosts gives one
         path, so the sync must put the vault at the same place on both.
-        Null: vault-commit is refused.
+        On the laptop the login layout also reads it: `obsidian-open-daily`
+        opens the vault's newest daily note on workspace 3, and the folder
+        name is the window the layout keeps on top when another vault is
+        restored there. Null: vault-commit is refused, and Obsidian starts
+        plainly without a note.
       '';
     };
   };

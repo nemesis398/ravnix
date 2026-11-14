@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""obsidian-open-daily - start Obsidian on the vault's newest daily note.
+
+WHY THIS EXISTS: the login layout (sway-session-layout) wants Obsidian to come
+up on ONE named vault, showing where the notes were left off.
+
+CARRIED OVER from Fedora's script, as it was (rule 4 of AGENTS.md: it stays
+Python until its port). What ravnix changed: the vault is ravnix.link.vault,
+filled in when the host is built, and an empty one means no vault:
+Obsidian is started plainly and nothing is opened. The Obsidian CLI and
+gtk-launch are found on the PATH, and the desktop id is the one the system
+installs. OBSIDIAN_CLI, GTK_LAUNCH, OBSIDIAN_OPEN_DAILY_WAIT and
+OBSIDIAN_OPEN_DAILY_POLL replace them in the tests.
+
+WHY IT DOES NOT USE obsidian://open, WHICH WOULD BE THE OBVIOUS WAY. Obsidian
+1.13 will not act on a URI unsupervised: it puts up a modal, "Run action from
+external link? The 'open' action is about to run. Only continue if you trust the
+link's source", and waits. Measured 2026-08-09, it does that on a COLD start
+too, with the URI in the launch arguments, so there is no version of the trick
+that slips past it. Every login would open with a dialog nobody asked for. The
+box in that dialog, "Don't ask again for 'open'", would silence it, but it is a
+standing trust setting and this feature does not need one.
+
+THE CLI IS NOT AN EXTERNAL LINK, so it just works. Measured the same day:
+`obsidian open path=...` opened the note with no prompt at all, while that very
+modal was still on screen. So Obsidian is started plainly - no URI, no dialog -
+and the note is opened afterwards through the CLI.
+
+    Two CLI traps, both measured, both worked around below:
+      - `vault=<name>` is NOT honoured by `open`. Naming a vault that does not
+        exist opens the file in whatever vault is active instead of failing, so
+        it cannot be used to target one. The active vault has to be CHECKED,
+        with `vault info=name`, before anything is opened.
+      - the exit code is ALWAYS 0. "File not found" comes back on stdout with a
+        zero status, so every result here is judged by its output.
+
+The URI is kept only as the fallback for the one case the CLI genuinely cannot
+handle: Obsidian restoring a different vault than the configured one, which the
+CLI cannot switch. That path costs the one modal, and it is the rare path.
+
+NEWEST EXISTING, AND NOTHING IS CREATED. The core Daily notes plugin can open
+today's note at startup - its `autorun` setting, deliberately off - but it also
+CREATES it from the template. A vault with few daily notes across a few
+months would be filled with empty stubs on every login. There is a
+`obsidian daily` CLI command with the same problem. This script only ever opens
+a note that is already there.
+
+THE FOLDER COMES FROM THE VAULT, the date shape does not. `folder` is read from
+.obsidian/daily-notes.json, so moving the daily notes in Obsidian's settings
+cannot leave a stale copy here. The filename format (`dddd, DD. MMM Y ([W]W)`,
+e.g. "Sunday, 09. Aug 2026 (W32)") is matched by the regex below rather than
+translated from moment.js: the week token has no strptime equivalent that works
+without a matching ISO year. The regex needs only day, English month
+abbreviation and year, so reordering the rest of the format changes nothing.
+Move to an all-numeric format and nothing matches - which is not silent, it logs
+and leaves Obsidian on whatever it opened.
+
+Usage: obsidian-open-daily [--print]   (--print reports the plan and exits)
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.parse import quote
+
+# Filled in by the host's build (a Python string literal): ravnix.link.vault,
+# or "" when the host has none.
+VAULT_PATH = @vault@
+VAULT = Path(VAULT_PATH) if VAULT_PATH else None
+DESKTOP_ID = "md.obsidian.Obsidian"
+CLI = os.environ.get("OBSIDIAN_CLI", "obsidian")
+GTK_LAUNCH = os.environ.get("GTK_LAUNCH", "gtk-launch")
+
+
+def seconds(name, default):
+    """A number of seconds from the environment; anything else is the default."""
+    try:
+        value = float(os.environ.get(name, default))
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+WAIT = seconds("OBSIDIAN_OPEN_DAILY_WAIT", 30.0)  # how long Obsidian gets to come up and answer the CLI
+POLL = seconds("OBSIDIAN_OPEN_DAILY_POLL", 0.5)
+
+MONTHS = {
+    month: number
+    for number, month in enumerate(
+        "jan feb mar apr may jun jul aug sep oct nov dec".split(), start=1
+    )
+}
+# day, English month abbreviation, year - anywhere in the filename
+DATE = re.compile(r"(\d{1,2})\.\s*([A-Za-z]{3})[a-z]*\.?\s*(\d{4})")
+
+
+def log(message):
+    print(f"obsidian-open-daily: {message}", file=sys.stderr)
+
+
+def cli(*args):
+    """Run the Obsidian CLI. Returns stripped stdout, or None if it could not
+    run at all. The output may still be an `Error:` line - see cli_ok."""
+    try:
+        result = subprocess.run(
+            [CLI, *args], capture_output=True, text=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    out = result.stdout.strip()
+    return out or None
+
+
+def cli_ok(*args):
+    """cli(), but None for a failure as well as for no answer.
+
+    An Obsidian that is still starting answers `vault info=name` with
+    `Error: Command "vault" not found. Did you mean: daily?` - the command
+    registry is not loaded yet. Measured 2026-08-09, and it cost a wrong turn:
+    with a zero exit status and a non-empty stdout, that error read as a
+    perfectly good vault name that simply was not the personal one, so the
+    script took the fallback and put up the very dialog it exists to avoid.
+    Errors are only ever signalled on stdout here, so this is where they get
+    caught."""
+    out = cli(*args)
+    return None if out is None or out.startswith("Error:") else out
+
+
+def newest_daily():
+    """Vault-relative path (with .md) of the most recent daily note, or None."""
+    settings = VAULT / ".obsidian" / "daily-notes.json"
+    try:
+        folder = json.loads(settings.read_text()).get("folder", "")
+    except (OSError, ValueError, AttributeError) as exc:
+        log(f"{settings}: {exc}")
+        return None
+
+    directory = VAULT / folder if folder else VAULT
+    if not directory.is_dir():
+        log(f"no such folder: {directory}")
+        return None
+
+    dated = []
+    for note in directory.glob("*.md"):
+        match = DATE.search(note.stem)
+        if not match:
+            continue
+        day, month, year = match.groups()
+        number = MONTHS.get(month.lower())
+        if number:
+            dated.append(((int(year), number, int(day)), note))
+
+    if not dated:
+        log(f"no filename in {directory} parsed as a date")
+        return None
+    return max(dated)[1].relative_to(VAULT).as_posix()
+
+
+def start(command):
+    """Run gtk-launch. One that cannot run is said, not a traceback: the
+    layout goes on without Obsidian either way."""
+    try:
+        subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as exc:
+        log(f"cannot run {command[0]}: {exc}")
+
+
+def launch_plain():
+    """Through the .desktop file, never a bare command: its ozone flags are what
+    keep Obsidian on native Wayland instead of blurry XWayland, which also wakes
+    the dGPU."""
+    start([GTK_LAUNCH, DESKTOP_ID])
+
+
+def launch_uri(note):
+    """Fallback only. Costs the "Run action from external link?" modal."""
+    target = f"obsidian://open?vault={quote(VAULT.name)}"
+    if note:
+        target += f"&file={quote(note[:-3] if note.endswith('.md') else note)}"
+    log(f"falling back to the URI (expect one confirmation dialog): {target}")
+    start([GTK_LAUNCH, DESKTOP_ID, target])
+
+
+def main():
+    if VAULT is None:
+        if "--print" in sys.argv[1:]:
+            print("vault        : (none: ravnix.link.vault is not set)")
+            return
+        log("no vault is configured, starting Obsidian plainly")
+        launch_plain()
+        return
+
+    note = newest_daily()
+
+    if "--print" in sys.argv[1:]:
+        print(f"vault        : {VAULT.name} ({VAULT})")
+        print(f"newest daily : {note or '(none found)'}")
+        print(f"active vault : {cli_ok('vault', 'info=name') or '(Obsidian not up)'}")
+        return
+
+    if not VAULT.is_dir():
+        log(f"vault is gone: {VAULT} - starting Obsidian plainly")
+        launch_plain()
+        return
+
+    if cli_ok("vault", "info=name") is None:
+        launch_plain()
+
+    deadline = time.monotonic() + WAIT
+    active = None
+    while time.monotonic() < deadline:
+        active = cli_ok("vault", "info=name")
+        if active:
+            break
+        time.sleep(POLL)
+
+    if not active:
+        log(f"Obsidian did not answer the CLI within {WAIT:.0f}s, leaving it alone")
+        return
+
+    if active != VAULT.name:
+        # The CLI cannot switch vaults, and `vault=` on `open` is ignored rather
+        # than honoured, so opening the note now would write it into the wrong
+        # vault's view. The URI is the only thing that can change vaults.
+        log(f'active vault is "{active}", not "{VAULT.name}"')
+        launch_uri(note)
+        return
+
+    if not note:
+        log(f'"{active}" is up; no daily note to open')
+        return
+
+    # Exit status is always 0 here, so the output is the only verdict.
+    result = cli("open", f"path={note}")
+    if result and result.startswith("Opened:"):
+        log(f"{result}")
+    else:
+        log(f'could not open "{note}": {result or "no response"}')
+
+
+if __name__ == "__main__":
+    main()

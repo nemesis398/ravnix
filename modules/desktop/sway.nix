@@ -72,8 +72,9 @@ let
   # session, not from here, when another module provides them: wtype and
   # ghostty-float (Task 3.3 and below), lock-screen and backdrop (Task 3.8),
   # energy, charge-mode and panel-crtc (Task 3.4), btop-auto and
-  # magic-trackpad-battery (Task 3.2b), nord (Task 3.6), handy-ptt and
-  # obsidian-open-daily (Task 3.3). A script checks for the optional ones.
+  # magic-trackpad-battery (Task 3.2b), nord (Task 3.6) and handy-ptt (Task
+  # 3.3). A script checks for the optional ones. obsidian-open-daily is this
+  # module's own (below).
   opaque = hex: "${lib.removePrefix "#" hex}ff";
   bin = ./sway/bin;
   bash = name: runtimeInputs: tokens: helpers.bash { inherit name runtimeInputs tokens; src = bin + "/${name}"; };
@@ -93,6 +94,17 @@ let
   # sway refuses the proprietary driver with a red bar at every login unless
   # told it is understood (sway 1.12 checks for nvidia-drm).
   nvidiaDriver = lib.elem "nvidia" config.services.xserver.videoDrivers;
+
+  # The Obsidian vault of the notes workspace (ravnix.link.vault; null on a
+  # host without one). Its folder name is what Obsidian puts in the title of
+  # the vault's window, which the login layout keeps on top when another vault
+  # restores itself onto the same workspace.
+  vault = if os.ravnix.link.vault == null then "" else os.ravnix.link.vault;
+  vaultName = baseNameOf vault;
+  # The name goes into the Sway config between double quotes, where a quote
+  # ends the string, a backslash escapes and a dollar sign starts a variable.
+  vaultNameOk = builtins.match "[^\"\\\\$\n]+" vaultName != null;
+  layoutTab = lib.optionalString (vault != "" && vaultNameOk) ''--tab 3 "${vaultName}" '';
 
   askEnabled = cfg.ask != null;
   askHost = lib.head (lib.splitString "/" (lib.removePrefix "https://" (lib.removePrefix "http://" cfg.ask.url)));
@@ -212,6 +224,14 @@ let
         src = bin + "/sway-calc";
         flakeIgnore = pyIgnore;
       };
+      # The vault of the notes workspace: ravnix.link.vault, the laptop's copy.
+      # Empty when the host has none; the script then starts Obsidian plainly.
+      obsidian-open-daily = helpers.python {
+        name = "obsidian-open-daily";
+        src = bin + "/obsidian-open-daily";
+        tokens.vault = helpers.pyString vault;
+        flakeIgnore = pyIgnore;
+      };
       sway-session-layout = helpers.python {
         name = "sway-session-layout";
         src = bin + "/sway-session-layout";
@@ -293,7 +313,7 @@ let
     terminalPlain = cfg.terminal.plain;
     workspaceOutputs = workspaceBlock;
     polkitAgent = "${pkgs.lxqt.lxqt-policykit}/bin/lxqt-policykit-agent";
-    inherit layoutAfter;
+    inherit layoutAfter layoutTab;
     askBinding =
       if askEnabled then
         "bindsym $mod+Shift+a      exec $ask"
@@ -392,6 +412,10 @@ in
 {
   config = {
     assertions = [
+      {
+        assertion = vault == "" || vaultNameOk;
+        message = "ravnix.link.vault is ${vault}, whose folder name has a double quote, a backslash, a dollar sign or a line break, or none: the login layout writes the name into the Sway config between double quotes. Rename the folder.";
+      }
       {
         assertion = !(lib.hasInfix "\n" cfg.terminal.main) && !(lib.hasInfix "\n" cfg.terminal.plain);
         message = "ravnix.desktop.terminal.main and .plain are one line each: they are written into the Sway config as `set $work ...`.";
