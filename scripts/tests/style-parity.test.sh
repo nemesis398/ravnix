@@ -15,6 +15,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script="$here/../style-parity.sh"
 # shellcheck source=scripts/tests/lib.sh
 . "$here/lib.sh"
+# In the build sandbox, nix exports $out, which lib.sh's capture reuses; a huge
+# output in an exported variable would make the next exec fail with "Argument
+# list too long".
+export -n out err
 
 tab=$'\t'
 stow="$scratch/stow"
