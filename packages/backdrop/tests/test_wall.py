@@ -87,17 +87,19 @@ def test_phyllon_mark_is_top_left_at_the_size_of_the_mark(wall):
 
 def test_nixos_logo_and_facts_are_top_right(wall):
     right = facts_area(wall)
-    blue, sapphire = where(right, rgb("blue")), where(right, rgb("sapphire"))
-    assert blue.sum() > 500 and sapphire.sum() > 500
+    # The logo is Mauve and Blue, left of the frame of the facts.
+    logo = right[:, : int(0.74 * W) - W // 2]
+    blue, mauve = where(logo, rgb("blue")), where(logo, rgb("mauve"))
+    assert blue.sum() > 20000 and mauve.sum() > 20000
     assert where(right, rgb("text")).sum() > 100, "no fact in Text"
-    assert where(right, rgb("mauve")).sum() > 100, "no key in the accent"
+    assert where(right, rgb("mauve")).sum() > mauve.sum(), "no key in the accent"
     x0, y0, x1, y1 = bbox(not_base(right))
     assert y0 > BAR * S
     assert (x0 + x1) / 2 + W // 2 > 0.6 * W
     assert (y0 + y1) / 2 < 0.4 * H
     assert x1 < right.shape[1] - 8, "the facts run into the screen's edge"
     # The logo comes first, then the facts.
-    assert bbox(blue)[0] < bbox(where(right, rgb("mauve")))[0]
+    assert bbox(blue | mauve)[2] < bbox(tinted(right, rgb("text"), rgb("base")))[0]
 
 
 def test_the_palette_row_starts_in_the_value_column(wall):
@@ -227,7 +229,7 @@ def test_the_frame_of_the_facts_is_one_unbroken_stroke(lab, size, scale):
     # sizes and scales of the panels in use.
     wall, _ = lab.render("wall", size=size, scale=scale)
     right = wall[: int(0.45 * size[1]), size[0] // 2 :]
-    stroke = tinted(right, rgb("mauve"), rgb("base"), least=0.5)
+    stroke = tinted(right, rgb("mauve"), rgb("base"), least=0.2)
     col = int(stroke.sum(axis=0).argmax())
     ys = np.nonzero(stroke[:, col])[0]
     assert len(ys) > 150, "no frame found"

@@ -331,7 +331,7 @@ let
       base.programs.rbw.settings.email != me.secrets.rbwEmail
       || base.programs.rbw.settings.base_url != me.secrets.rbwBaseUrl
     ) "rbw does not get ravnix.secrets")
-    # fastfetch: keys in the accent, the NixOS logo in Blue and Sapphire.
+    # fastfetch: keys in the accent, the NixOS logo in Mauve and Blue.
     (lib.optional (
       base.programs.fastfetch.settings.display.color.keys != ansi palette.mauve
     ) "fastfetch's keys are not the accent")
@@ -340,10 +340,10 @@ let
     ) "fastfetch's keys do not follow the accent")
     (lib.optional (
       base.programs.fastfetch.settings.logo.color != {
-        "1" = ansi palette.blue;
-        "2" = ansi palette.sapphire;
+        "1" = ansi palette.mauve;
+        "2" = ansi palette.blue;
       }
-    ) "fastfetch's logo is not in Blue and Sapphire")
+    ) "fastfetch's logo is not in Mauve and Blue")
     # The dev checkout: an activation step when asked for, none otherwise.
     (lib.optional (
       base.home.activation ? ravnixDevCheckout

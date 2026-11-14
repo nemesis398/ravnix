@@ -78,8 +78,9 @@ def test_the_marks_and_the_facts_sit_on_the_image(lab):
     corner = img[: H // 2, : int(0.45 * W)]
     assert where(corner, rgb("mauve")).sum() > 1500
     right = img[: int(0.40 * H), W // 2 :]
-    assert where(right, rgb("blue")).sum() > 500
-    assert where(right, rgb("sapphire")).sum() > 500
+    # The logo's arms: Blue, and Mauve far beyond the few pixels of the keys.
+    assert where(right, rgb("blue")).sum() > 20000
+    assert where(right, rgb("mauve")).sum() > 20000
     r = reach(where(img, rgb("mauve")) & window(img, **CENTER), W / 2, H / 2)
     assert r >= 0.93 * MARK_REACH * S
 

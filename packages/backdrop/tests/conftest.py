@@ -156,17 +156,20 @@ def distance_to_box(px, py, box):
 # What the real fastfetch prints with ravnix's own config (modules/common/cli.nix):
 # a capture of fastfetch 2.70 on a laptop, the personal values replaced by
 # invented ones and the colors by names, so that no test holds a color of its
-# own. \e is the escape character, and {blue}, {sapphire}, {accent}, {muted},
+# own. \e is the escape character, and {logo_dark}, {logo_light}, {accent}, {muted},
 # {yellow} and {red} are the "R;G;B" of palette entries. Memory is in the
 # accent, Swap in Yellow and Disk in Red, as fastfetch colors a percentage
 # that is low, high and over the limit; the Palette row is the eight colors of
 # the terminal, all of which the wallpaper draws, and the logo is the NixOS
 # one, in block glyphs, bold.
 FASTFETCH = HERE / "fastfetch.ansi"
+# The NixOS logo's two sets of arms, by palette name: the colors of the two
+# ravens of the mark (huginn's Mauve, muninn's Blue), fixed whatever the accent.
+LOGO_DARK, LOGO_LIGHT = "mauve", "blue"
 KERNEL = "6.18.2"  # a value that occurs once, for the tests that change a fact
 FASTFETCH_ROLES = {
-    "blue": "blue",
-    "sapphire": "sapphire",
+    "logo_dark": "mauve",
+    "logo_light": "blue",
     "accent": "mauve",
     "muted": "overlay0",
     "yellow": "yellow",

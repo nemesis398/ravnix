@@ -25,17 +25,20 @@ physical resolution (the lock ring's radius is logical too).
 
 | Image | Holds |
 | --- | --- |
-| wallpaper | Base, or the user's own picture scaled until it covers the output and cropped at the middle. On it: the ravnix mark in the middle and the phyllon mark in the top left corner, at the same size and both in the accent; the NixOS logo in Blue and Sapphire with the system facts, drawn through fastfetch, in the top right; and the user's tool logos, if any, in Surface1 and Surface2 alternately, spread evenly around the rest |
+| wallpaper | Base, or the user's own picture scaled until it covers the output and cropped at the middle. On it: the ravnix mark in the middle and the phyllon mark in the top left corner, at the same size and both in the accent; the NixOS logo in Mauve and Blue (the two ravens' colors, whatever the accent) with the system facts, drawn through fastfetch, in the top right; and the user's tool logos, if any, in Surface1 and Surface2 alternately, spread evenly around the rest |
 | lock image | Base, or the same picture, and the ravnix mark alone, sized to sit inside the 110 px lock ring (its inner edge is at 105 px). It never runs fastfetch and never draws a logo, so nothing about the machine can be read on a locked screen |
 
 The NixOS logo is a vector, `assets/nixos-logomark.svg`, the logomark of
 NixOS/nixos-artwork (CC BY 4.0, credited in `AUTHORS`). Its two sets of arms
 carry the classes `dark` and `light` and no color; the wallpaper sets them to
-Blue and Sapphire. fastfetch still prints its own logo, in block glyphs, and
+Mauve and Blue, the colors of the two ravens of the mark, whatever the accent. fastfetch still prints its own logo, in block glyphs, and
 `backdrop` takes those glyphs out of the facts (the block elements left of the
 first character of the facts that is none) and draws the vector in the box they
-covered: as large as it goes inside, in the middle of it, with the proportions
-of the file and no rotation, mirror, crop or stretch. When the file is missing,
+covered: starting at their left edge and vertically centered on the facts (never above
+or below the box they covered), as
+large as it goes inside while a quarter of its height stays free between it and
+the facts (the clear space the NixOS branding guide asks for at the least), with
+the proportions of the file and no rotation, mirror, crop or stretch. When the file is missing,
 cannot be read or draws nothing, the glyphs stay and there is one line in the
 journal. The wallpaper has no logo when fastfetch prints none.
 
@@ -45,7 +48,7 @@ font: a font's block is as tall as its ascent plus descent, not the panel's
 line height, and blocks above one another meet at a blended pixel. They are
 rectangles with every edge on a whole pixel, as terminals draw them, so they
 meet without a seam. The frame of the facts is line-drawing characters of the
-font and is one unbroken stroke at the sizes and scales in use (a test checks
+font and has an unbroken vertical stroke at the sizes and scales in use (a test checks
 it).
 
 The Palette row of the facts shows the terminal's eight colors, all of them,
@@ -93,8 +96,8 @@ with one line that says what. `lock-screen` then locks on plain Base.
 | `XDG_CACHE_HOME` | where `backdrop/` keeps the images |
 
 Without `BACKDROP_FACTS`, `backdrop` runs the user's `fastfetch` (its config is
-the one home-manager writes), with the logo's six color slots set to Blue and
-Sapphire (the colors of the vector as well). It needs no network.
+the one home-manager writes), with the logo's six color slots set to Mauve and
+Blue (the colors of the vector as well). It needs no network.
 
 ## What goes wrong, and what happens
 

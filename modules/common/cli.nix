@@ -126,9 +126,10 @@ in
 
     # The vault client behind ai-unlock, and its agent, are ./rbw.nix.
 
-    # Keys and the logo of the accent; the NixOS logo in Blue and Sapphire,
-    # as the style spec has it for the facts on the desktop. A host adds its
-    # own rows (a laptop's battery profile, its radios) to `modules`.
+    # Keys in the accent; the NixOS logo in Mauve and Blue, the two ravens'
+    # colors, which docs/style.md (Host color) fixes for the logo in the
+    # terminal and on the wallpaper alike. A host adds its own rows (a
+    # laptop's battery profile, its radios) to `modules`.
     fastfetch = {
       enable = true;
       settings = {
@@ -136,8 +137,8 @@ in
           type = "builtin";
           source = "nixos";
           color = {
-            "1" = ansi palette.blue;
-            "2" = ansi palette.sapphire;
+            "1" = ansi palette.mauve;
+            "2" = ansi palette.blue;
           };
           padding = {
             top = 1;

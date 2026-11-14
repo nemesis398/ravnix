@@ -24,7 +24,7 @@ One candidate was considered and left out: an *instrument panel* look, with live
 | Line widths | **1 px frames, 2 px markers.** No other widths, except the lock ring, which is a gauge and not a line |
 | Corners | **Square, radius 0, everywhere**: windows, bar, menus, TUIs, diagrams, logo containers |
 | Fills | Solid accent with Crust text marks where you are. Rows and hover use a grey wash |
-| Host color | Mauve (huginn) and Blue (muninn) exist on paper only. The live system looks the same on both |
+| Host color | Mauve (huginn) and Blue (muninn) are identity on paper, and the two colors of the NixOS logo on the wallpaper and in the terminal's fastfetch. The live system looks the same on both |
 | Marks on the running system | Drawn in one color, the accent. The two-color version is for paper only |
 | Wallpaper | Personal, per user. The shipped default is a fixed composition (see *Identity*) |
 | Transparency | None. Windows, bar, menus and notifications are fully opaque. The inside of the lock ring is the one exception |
@@ -173,7 +173,7 @@ The **shipped default** is a fixed composition on Base:
 - the author's phyllon mark in the top left, at the same size as the ravnix mark,
 - the NixOS logo and the system facts, drawn through fastfetch, in the top right.
 
-Everything is drawn in palette colors: the NixOS logo in Blue and Sapphire, never its brand blues. The facts appear on the desktop only. Both marks are drawn in one color, the accent, so the screen holds a single accent and the lock ring's Blue keeps meaning "verifying". The facts end in fastfetch's Palette row, which shows all eight of the terminal's colors, Red, Green, Yellow and Blue included: it is a picture of the terminal, not a state.
+Everything is drawn in palette colors: the NixOS logomark in Mauve and Blue, the two colors of the raven mark, fixed and not the accent, never its brand blues. It is the vendored vector from NixOS/nixos-artwork (CC BY 4.0), credited in `AUTHORS` as "colors changed", and it keeps a clear space of at least a quarter of its height between it and the facts, the minimum of the NixOS branding guide. The facts appear on the desktop only. Both marks are drawn in one color, the accent, so the screen holds a single accent. The logomark's Blue is a palette color and not a state; the lock screen holds no logo, so there the ring's Blue keeps meaning "verifying". The facts end in fastfetch's Palette row, which shows all eight of the terminal's colors, Red, Green, Yellow and Blue included: it is a picture of the terminal, not a state.
 
 ### Lock screen
 
@@ -195,7 +195,7 @@ The inside is transparent while typing, so the mark shows through. It turns Base
 
 ### Host color
 
-The mark has two ravens, Mauve for `huginn` and Blue for `muninn`. Those colors are identity on paper: the logo, the diagrams, and the README. In the running system the hosts look identical, down to the prompt, which shows no host. The two are meant to feel like one computer.
+The mark has two ravens, Mauve for `huginn` and Blue for `muninn`. Those colors are identity on paper: the logo, the diagrams, and the README. They are also the two colors of the NixOS logo, the logomark on the wallpaper and the logo that fastfetch prints in the terminal, a fixed pair that does not follow the accent. In the running system the hosts look identical, down to the prompt, which shows no host. The two are meant to feel like one computer.
 
 ### Logo
 

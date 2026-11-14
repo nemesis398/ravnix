@@ -13,14 +13,17 @@
 # The wallpaper is Base, or the user's own image scaled until it covers the
 # output. On it: the ravnix mark in the middle, the phyllon mark top left at the
 # same size, both in the accent; the fastfetch facts with the NixOS logo (in
-# Blue and Sapphire) top right; and, when the user lists any, their tool logos
-# in Surface grays, spread around the rest. The NixOS logo is the vendored
-# vector assets/nixos-logomark.svg, drawn in Blue and Sapphire as large as the
-# block glyphs of fastfetch's own logo were, in the same place (take_logo takes
-# those glyphs out of the facts and logo_box measures where they were). Where
-# the vector is missing or cannot be drawn, the glyphs stay. The swatches of
-# the Palette row, and the glyph logo when it stays, are rectangles on whole
-# pixels (draw_block) so that they meet without a seam. The Palette row shows all eight of the terminal's colors, the state
+# Mauve and Blue, the two ravens' colors, whatever the accent) top right; and,
+# when the user lists any, their tool logos in Surface grays, spread around the
+# rest. The NixOS logo is the vendored vector assets/nixos-logomark.svg. It
+# takes the place of the block glyphs of fastfetch's own logo (take_logo takes
+# those out of the facts and logo_box measures where they were): it starts at
+# their left edge, is vertically centered on the facts, and is as large as it
+# goes inside their box while a quarter of its height stays free between it and
+# the facts (logo_rect). Where the vector is missing or cannot be drawn, the
+# glyphs stay. The swatches of the Palette row, and the glyph logo when it
+# stays, are rectangles on whole pixels (draw_block) so that they meet without
+# a seam. The Palette row shows all eight of the terminal's colors, the state
 # hues among them: it is a picture of the terminal's colors, not a state. The
 # lock image is Base (or the same image) and the ravnix mark alone, sized to
 # sit inside swaylock's ring, so nothing about the machine can be read on a
@@ -88,7 +91,7 @@ from gi.repository import GdkPixbuf, GLib, Pango, PangoCairo, Rsvg  # noqa: E402
 CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "backdrop"
 
 # The palette entries this file reads; a config without one is refused, naming it.
-NEEDED = ("base", "text", "blue", "sapphire", "surface1", "surface2", "red", "green", "yellow",
+NEEDED = ("base", "text", "mauve", "blue", "surface1", "surface2", "red", "green", "yellow",
           "pink", "teal", "subtext0", "subtext1")
 
 # swaylock's indicator-radius is 110 and its thickness 10, so the ring's inner
@@ -181,10 +184,12 @@ class Theme:
         self.accent = self.colors[accent]
         c = self.colors
         self.base, self.text = c["base"], c["text"]
-        self.blue, self.sapphire = c["blue"], c["sapphire"]
+        self.blue = c["blue"]
         self.surface1, self.surface2 = c["surface1"], c["surface2"]
-        # The NixOS logo's two sets of arms: the dark ones and the light ones.
-        self.logo_dark, self.logo_light = self.blue, self.sapphire
+        # The NixOS logo's two sets of arms, the dark ones and the light ones:
+        # Mauve and Blue, the colors of the two ravens of the mark, huginn's
+        # and muninn's, and fixed: they do not follow the accent.
+        self.logo_dark, self.logo_light = c["mauve"], c["blue"]
         # The terminal's 16 colors, for the SGR colors fastfetch writes
         # (docs/style.md, Color, Rules): black is Surface1, red Red, green
         # Green, yellow Yellow, blue Blue, magenta Pink, cyan Teal, white
@@ -394,16 +399,42 @@ def nixos_logo(assets, theme):
     return handle, ink
 
 
-def draw_logo(cr, logo, box):
-    # The logo's drawn part, as large as it goes inside box = (x0, y0, x1, y1)
-    # with its proportions as the file has them, and in the middle of it.
-    handle, (ix, iy, iw, ih) = logo
+# The NixOS branding guide keeps a quarter of the logomark's height free
+# around it at the least, and the logo keeps that much to the frame of the
+# facts.
+LOGO_CLEARSPACE = 1 / 4
+
+
+def logo_rect(logo, box, facts):
+    # (x0, y0, x1, y1) of the logo's drawn part: as large as it goes inside
+    # box (what the glyphs covered), with its proportions as the file has them
+    # and with a clear space of LOGO_CLEARSPACE of its height between it and
+    # the facts (the left edge of their first column), starting at the left of
+    # the box; in the middle of the facts' rows, top to bottom, but never
+    # above or below the box (a few rows of facts must not push the logo off
+    # the screen or under the bar). The left edge, the top edge and the width
+    # are whole pixels, the width rounded down so that the clear space holds,
+    # so the logo's edges fall on the pixel grid as the glyphs' did.
+    # facts = (left, top, bottom) in px.
+    _, (_, _, iw, ih) = logo
     x0, y0, x1, y1 = box
-    k = min((x1 - x0) / iw, (y1 - y0) / ih)
-    side = INK_UNIT * k
-    x = (x0 + x1) / 2 - (ix + iw / 2) * k
-    y = (y0 + y1) / 2 - (iy + ih / 2) * k
-    draw_svg(cr, handle, x, y, side, side)
+    left, top, bottom = facts
+    k = min((x1 - x0) / iw, (y1 - y0) / ih, (left - x0) / (iw + ih * LOGO_CLEARSPACE))
+    width = math.floor(iw * k)
+    k = width / iw
+    height = ih * k
+    top_edge = round((top + bottom) / 2 - height / 2)
+    top_edge = max(y0, min(top_edge, y1 - height))
+    top_edge = round(top_edge)
+    return x0, top_edge, x0 + width, top_edge + height
+
+
+def draw_logo(cr, logo, rect):
+    # The logo's drawn part in rect = (x0, y0, x1, y1), which has its aspect.
+    handle, (ix, iy, iw, ih) = logo
+    x0, y0, x1, y1 = rect
+    k = (x1 - x0) / iw
+    draw_svg(cr, handle, x0 - ix * k, y0 - iy * k, INK_UNIT * k, INK_UNIT * k)
 
 
 # --- The user's image ----------------------------------------------------------
@@ -730,8 +761,9 @@ LOGO_MIN_CELLS = 32
 
 
 def take_logo(lines):
-    # (lines, cells): the facts without the logo fastfetch draws in block
-    # glyphs, and the cells (row, column, glyph) the logo had. The logo is the
+    # (lines, cells, facts): the facts without the logo fastfetch draws in block
+    # glyphs, the cells (row, column, glyph) the logo had, and the facts' own
+    # extent (first column, first row, last row). The logo is the
     # block elements left of the first character of the facts that is neither
     # a block element nor a space (the frame of the first line); the swatches
     # of the Palette row are right of it and stay. Without such a character,
@@ -747,8 +779,8 @@ def take_logo(lines):
     info = min((at for runs in lines for at, ch in cell_chars(runs)
                 if ch not in BLOCK_ELEMENTS and not ch.isspace()), default=None)
     if info is None:
-        return lines, []
-    found, kept = [], []
+        return lines, [], None
+    found, kept, rows = [], [], []
     for row, runs in enumerate(lines):
         out = []
         for col, chunk, color, bold in runs:
@@ -757,13 +789,15 @@ def take_logo(lines):
                 if ch in BLOCK_ELEMENTS and at < info:
                     found.append((row, at, ch))
                     ch = " "
+                elif at >= info and not ch.isspace():
+                    rows.append(row)
                 text += ch
                 at += cells(ch)
             out.append((col, text, color, bold))
         kept.append(out)
     if len(found) < LOGO_MIN_CELLS:
-        return lines, []
-    return kept, found
+        return lines, [], None
+    return kept, found, (info, min(rows), max(rows))
 
 
 def block_rects(ch, cx, cy, advance, line_h):
@@ -902,15 +936,20 @@ def render(kind, path, width, height, scale, theme, image, tools, assets):
         lines = facts(theme)
         # The logo of the facts is the vector, when there is one: the block
         # glyphs come out of the lines and the vector takes their place.
-        logo, found = None, []
-        split, cells_of_logo = take_logo(lines)
+        logo, found, extent = None, [], None
+        split, cells_of_logo, split_extent = take_logo(lines)
         if cells_of_logo:
             logo = nixos_logo(assets, theme)
             if logo is not None:
-                lines, found = split, cells_of_logo
+                lines, found, extent = split, cells_of_logo, split_extent
         px, py, fsize = PANEL_X * width, PANEL_Y * height, PANEL_FONT * height
         fsize, advance, line_h = fit_panel(cr, theme, lines, px, width, fsize)
         box = logo_box(found, round(px), round(py), advance, line_h) if found else None
+        rect = None
+        if box is not None:
+            col, first, last = extent
+            rect = logo_rect(logo, box, (round(px) + col * advance, round(py) + first * line_h,
+                                         round(py) + (last + 1) * line_h))
         usable = load_tools(tools)
         if usable:
             obstacles = [(*center, size / 2), (*corner, size / 2)]
@@ -927,8 +966,8 @@ def render(kind, path, width, height, scale, theme, image, tools, assets):
             draw_mark_svg(cr, phyllon, *corner, size, theme.accent)
         except (OSError, GLib.Error) as e:
             log(f"cannot draw the phyllon mark: {first_line(e)}")
-        if box is not None:
-            draw_logo(cr, logo, box)
+        if rect is not None:
+            draw_logo(cr, logo, rect)
         draw_panel(cr, theme, lines, px, py, fsize)
 
     draw_ravnix(cr, theme, *center, scale, mark)

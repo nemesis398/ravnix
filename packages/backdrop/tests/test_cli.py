@@ -279,10 +279,10 @@ def test_a_broken_config_is_an_error_that_says_what(lab, text, word):
 
 def test_a_palette_without_a_color_the_look_needs_says_which(lab):
     config = json.loads(lab.config_path.read_text())
-    del config["palette"]["sapphire"]
+    del config["palette"]["mauve"]
     lab.config_path.write_text(json.dumps(config))
     proc = lab.run("render", "wall", lab.work / "x.png", "400x300", 1, check=False)
-    assert proc.returncode == 1 and "sapphire" in proc.stderr
+    assert proc.returncode == 1 and "mauve" in proc.stderr
 
 
 def test_an_accent_the_palette_lacks_is_an_error(lab):
@@ -532,17 +532,17 @@ def test_a_bad_fastfetch_timeout_is_a_line_not_a_crash(lab):
 
 
 def test_fastfetch_gets_the_logo_colors_of_the_theme(lab):
-    # The stand-in records its arguments: six slots, Blue and Sapphire.
+    # The stand-in records its arguments: six slots, Mauve and Blue.
     args = lab.work / "args.txt"
     lab.install_stub("fastfetch", '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > ' + str(args) + "\n")
     render_with_fastfetch(lab)
     given = args.read_text().splitlines()
     assert given[:2] == ["--pipe", "false"]
     slots = {given[i]: given[i + 1] for i in range(2, len(given), 2)}
-    blue, sapphire = rgb("blue"), rgb("sapphire")
+    dark, light = rgb("mauve"), rgb("blue")
     want = {}
     for n in range(1, 7):
-        c = blue if n % 2 else sapphire
+        c = dark if n % 2 else light
         want["--logo-color-%d" % n] = "38;2;%d;%d;%d" % c
     assert slots == want
 
@@ -580,14 +580,13 @@ def test_the_real_fastfetch_draws_the_logo_and_the_facts_with_no_network(lab):
     img = load_png(out)
     right = img[: H // 2, W // 2 :]
     assert where(right, rgb("blue")).sum() > 500
-    assert where(right, rgb("sapphire")).sum() > 500
     assert where(right, rgb("text")).sum() > 100
     assert len(proc.stderr.splitlines()) <= 1, proc.stderr
     # The logo of the real fastfetch is replaced by the vector: large arms,
     # and edges that are antialiased, which the whole-pixel glyphs have not.
-    assert where(right, rgb("blue")).sum() > 20000 and where(right, rgb("sapphire")).sum() > 20000
     logo = right[:, : int(0.74 * W) - W // 2]
-    edge = tinted(logo, rgb("sapphire"), rgb("base"), least=0.05, slack=40) & ~where(logo, rgb("sapphire")) & ~where(logo, rgb("base"))
+    assert where(logo, rgb("blue")).sum() > 20000 and where(logo, rgb("mauve")).sum() > 20000
+    edge = tinted(logo, rgb("blue"), rgb("base"), least=0.05, slack=40) & ~where(logo, rgb("blue")) & ~where(logo, rgb("base"))
     assert edge.sum() > 400, "the logo has no antialiased edge: the glyphs stand in"
     # The Palette row is one line that starts in the value column, as on the
     # terminal: fastfetch's block symbol prints the bright eight on a second
@@ -613,5 +612,5 @@ def test_a_line_that_is_too_wide_shrinks_the_facts_to_fit(lab):
     assert x1 < W * 0.985
     # The facts are tiny now, so no pixel is fully Text: something is drawn
     # besides the logo's blocks.
-    logo = where(right, rgb("blue")) | where(right, rgb("sapphire"))
+    logo = where(right, rgb("blue")) | where(right, rgb("mauve"))
     assert (not_base(right) & ~logo).sum() > 500, "the facts vanished"
