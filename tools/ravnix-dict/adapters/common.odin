@@ -5,7 +5,7 @@
 // which the runner runs in parallel, each set up their own.
 //
 // This file holds what the three share: running a program with a time
-// limit, and replacing a file through a rename.
+// limit; reading and replacing a file is ../disk, which the core shares.
 package adapters
 
 import "base:runtime"
@@ -13,34 +13,13 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
-import "core:sys/posix"
 import "core:time"
+import "../disk"
 
 Error :: Maybe(string)
 
-cstr :: proc(s: string) -> cstring {
-	return strings.clone_to_cstring(s, context.temp_allocator)
-}
-
-errno_text :: proc(e: linux.Errno) -> string {
-	#partial switch e {
-	case .ENOENT:
-		return "it does not exist"
-	case .EACCES, .EPERM:
-		return "permission denied"
-	case .EISDIR:
-		return "it is a directory"
-	case .ENOSPC:
-		return "the disk is full"
-	case .EROFS:
-		return "the file system is read-only"
-	case .ENOTDIR:
-		return "a part of the path is not a directory"
-	case .ELOOP:
-		return "it is a loop of links"
-	}
-	return fmt.tprintf("error %d", int(e))
-}
+cstr :: disk.cstr
+errno_text :: disk.errno_text
 
 // Ran is what a program did: its exit status, and what it printed,
 // standard output and standard error in one stream.
@@ -144,109 +123,23 @@ run_program :: proc(command: []string, input: string, timeout: time.Duration, al
 // read_text reads a whole file of at most limit bytes. missing reports a
 // file that does not exist, which is no error to the caller that asks.
 read_text :: proc(path: string, limit: int, allocator: runtime.Allocator) -> (text: string, missing: bool, why: string) {
-	fd, e := linux.open(cstr(path), {.CLOEXEC})
-	for e == .EINTR {
-		fd, e = linux.open(cstr(path), {.CLOEXEC})
-	}
-	if e == .ENOENT {
+	data, too_big, e := disk.read_path(path, limit, allocator)
+	switch {
+	case e == .ENOENT:
 		return "", true, ""
-	}
-	if e != .NONE {
+	case e != .NONE:
 		return "", false, fmt.tprintf("cannot read %s: %s", path, errno_text(e))
+	case too_big:
+		return "", false, fmt.tprintf("%s is bigger than %d MiB, more than a list of words", path, limit / (1024 * 1024))
 	}
-	defer linux.close(fd)
-	st: linux.Stat
-	if se := linux.fstat(fd, &st); se != .NONE {
-		return "", false, fmt.tprintf("cannot read %s: %s", path, errno_text(se))
-	}
-	if linux.S_ISDIR(st.mode) {
-		return "", false, fmt.tprintf("cannot read %s: it is a directory", path)
-	}
-	buf := make([dynamic]u8, 0, int(st.size) + 1, allocator)
-	chunk: [64 * 1024]u8
-	for {
-		n, re := linux.read(fd, chunk[:])
-		if re == .EINTR {
-			continue
-		}
-		if re != .NONE {
-			return "", false, fmt.tprintf("cannot read %s: %s", path, errno_text(re))
-		}
-		if n == 0 {
-			break
-		}
-		append(&buf, ..chunk[:n])
-		if len(buf) > limit {
-			return "", false, fmt.tprintf("%s is bigger than %d MiB, more than a list of words", path, limit / (1024 * 1024))
-		}
-	}
-	return string(buf[:]), false, ""
+	return data, false, ""
 }
 
-// replace writes data to path through a new file next to it and a rename,
-// so a reader sees the old file or the new one. A link is followed, so it
-// stays a link; the file keeps its mode, and a new one gets mode. A file
-// the user made read-only is not replaced. The directory is made when it
-// is missing.
+// replace writes data to path through a new file next to it and a rename
+// (disk.replace_file), making its directory when it is missing.
 replace :: proc(path: string, data: string, mode: u32) -> (why: string) {
-	target := path
-	if resolved := posix.realpath(cstr(path)); resolved != nil {
-		target = strings.clone(string(resolved), context.temp_allocator)
-		posix.free(rawptr(resolved))
-	}
-	slash := strings.last_index_byte(target, '/')
-	dir := target[:max(slash, 1)] if slash >= 0 else "."
-	if !os.exists(dir) {
-		if err := os.make_directory_all(dir); err != nil {
-			return fmt.tprintf("cannot make the directory %s: %v", dir, err)
-		}
-	}
-	perm := mode
-	st: linux.Stat
-	if linux.stat(cstr(target), &st) == .NONE {
-		perm = transmute(u32)st.mode & 0o7777
-		if e := linux.access(cstr(target), linux.W_OK); e != .NONE {
-			return fmt.tprintf("%s is not writable: %s", target, errno_text(e))
-		}
-	}
-	tmp := fmt.tprintf("%s/.%s.ravnix-dict-new", dir, target[slash + 1:])
-	fd, e := linux.open(cstr(tmp), {.WRONLY, .CREAT, .TRUNC, .CLOEXEC, .NOFOLLOW}, transmute(linux.Mode)u32(0o600))
-	if e != .NONE {
-		return fmt.tprintf("cannot write next to %s: %s", target, errno_text(e))
-	}
-	rest := transmute([]u8)data
-	we := linux.Errno.NONE
-	for len(rest) > 0 {
-		n, wr := linux.write(fd, rest)
-		if wr == .EINTR {
-			continue
-		}
-		if wr != .NONE {
-			we = wr
-			break
-		}
-		rest = rest[n:]
-	}
-	if we == .NONE {
-		we = linux.fchmod(fd, transmute(linux.Mode)perm)
-	}
-	if we == .NONE {
-		we = linux.fsync(fd)
-	}
-	linux.close(fd)
-	if we != .NONE {
-		linux.unlink(cstr(tmp))
-		return fmt.tprintf("cannot write next to %s: %s", target, errno_text(we))
-	}
-	if re := linux.rename(cstr(tmp), cstr(target)); re != .NONE {
-		linux.unlink(cstr(tmp))
-		return fmt.tprintf("cannot replace %s: %s", target, errno_text(re))
-	}
-	if dfd, de := linux.open(cstr(dir), {.DIRECTORY, .CLOEXEC}); de == .NONE {
-		linux.fsync(dfd)
-		linux.close(dfd)
-	}
-	return ""
+	_, why = disk.replace_file(path, data, nil, mode, make_dir = true)
+	return
 }
 
 // lower is the key of a word, as the core folds it: rune by rune to lower
