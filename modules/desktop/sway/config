@@ -768,7 +768,12 @@ set $layout-browser 1  helium                          "$browser"
 set $layout-term    2  com.mitchellh.ghostty           "$work"
 set $layout-notes   3  obsidian                        "obsidian-open-daily"
 set $layout-music   10 chrome-music.apple.com__-Default "$music"
-exec sway-session-layout --focus 2 $layout-browser $layout-term $layout-notes $layout-music
+#
+# What stands before sway-session-layout on the next line is nothing, or a
+# wrapper (sway.nix, layoutAfter) that first waits for the user units of
+# ravnix.desktop.sessionLayout.after: the login keyring's unlock, so that
+# Helium finds its cookie key without a prompt (modules/desktop/keyring.nix).
+exec @layoutAfter@sway-session-layout --focus 2 $layout-browser $layout-term $layout-notes $layout-music
 
 ### ─── Per-machine and per-module fragments ────────────────────────────────────
 # ~/.config/sway/config.d/*.conf, in the order of their names. A module adds one

@@ -175,3 +175,22 @@ home-manager.users.alice.programs.ssh.matchBlocks."github.com" = {
 ```
 
 Record what ssh makes of each host before the switch, with `ssh -G HOST > HOST.before`, and compare it afterward with `ssh -G HOST | diff HOST.before -`. Then remove the old file, or move it out of `~/.ssh`, and switch.
+
+## After the laptop's first login: the keyring for a YubiKey tap
+
+When you log in at the greeter with your password, PAM hands it to gnome-keyring, and the login keyring opens. Helium keeps its cookie key there ("Chromium Safe Storage"), so it starts without asking. A YubiKey tap gives PAM no password, and the keyring stays locked. With `ravnix.desktop.keyring.autoUnlock.enable = true` in your private flake, the user service `ravnix-keyring-unlock` opens it after every login, before Helium starts, with the keyring's password kept as a systemd credential of your user. The keyring itself stays encrypted. The credential is encrypted for this machine: its TPM2 when it has one, the host key in `/var/lib/systemd/`, the machine ID, your UID and your user name. A copy of the file is of no use on another machine or to another user.
+
+First give the keyring a password of its own, one that is not your login password. PAM created the keyring with your login password, and every program that runs as you can decrypt the credential again with `systemd-creds --user decrypt`, as it can read every secret of the unlocked keyring. With its own password, the credential gives such a program nothing it could not read already. With your login password, it would give it the password that sudo asks for. Seahorse changes it: `nix run nixpkgs#seahorse`, then Change Password on the Login keyring. A password login still works afterward: PAM's attempt with your login password fails, and the service unlocks the keyring.
+
+Then, after the switch that turned the option on, run these two lines once on the laptop, in a terminal. `systemd-ask-password` asks for the keyring's password without echo, so it never stands on a command line or in your shell's history:
+
+```sh
+mkdir -p -m 0700 ~/.config/credstore.encrypted
+systemd-ask-password -n 'Login keyring password:' |
+  systemd-creds --user encrypt --name=ravnix-keyring-login - \
+    ~/.config/credstore.encrypted/ravnix-keyring-login
+```
+
+The next login with a tap opens the keyring. What the service did is one line in `journalctl --user -u ravnix-keyring-unlock`: it unlocked the keyring, found it unlocked already (a password login), found no credential, or warns that the password does not unlock the keyring. In every case but the first it changes nothing.
+
+Whenever the keyring's password changes, run the two lines again. Until you do, a tap leaves the keyring locked and the journal warns about it. To turn the unlock off without a rebuild, delete `~/.config/credstore.encrypted/ravnix-keyring-login`.

@@ -158,6 +158,67 @@ in
       '';
     };
 
+    keyring.autoUnlock.enable = mkOption {
+      type = types.bool;
+      default = false;
+      example = true;
+      description = ''
+        Unlock the login keyring after every login, also after one that
+        gives PAM no password, such as a YubiKey tap at the greeter. Helium
+        keeps its cookie key ("Chromium Safe Storage") in that keyring, and
+        without the unlock it asks for the keyring's password at every
+        start. The keyring stays encrypted with its password. The password
+        is kept as a systemd credential of your user, encrypted for this
+        machine: its TPM2 when it has one, the host key in
+        `/var/lib/systemd/`, the machine ID, your UID and your user name.
+        Right after the login, before the graphical session and the login
+        layout start, the user service `ravnix-keyring-unlock` hands it to
+        the gnome-keyring daemon that the login started. It does nothing
+        (and says so in one line of the journal) when the credential is not
+        there, when the keyring is already unlocked (a password login), or
+        when the password is wrong.
+
+        Set it up once, on the laptop, in a terminal. The password is
+        asked without echo and never stands on a command line:
+
+        ```sh
+        mkdir -p -m 0700 ~/.config/credstore.encrypted
+        systemd-ask-password -n 'Login keyring password:' |
+          systemd-creds --user encrypt --name=ravnix-keyring-login - \
+            ~/.config/credstore.encrypted/ravnix-keyring-login
+        ```
+
+        Run the same two lines again whenever the keyring's password
+        changes. A password login with the new password still unlocks it,
+        but after a tap the service warns that the stored password does not
+        unlock the keyring, and leaves it locked. Read what it did with
+        `journalctl --user -u ravnix-keyring-unlock`. Deleting the file
+        turns the unlock off without a rebuild.
+
+        Every program that runs as you can decrypt the credential again
+        (`systemd-creds --user decrypt`), as it can read every secret of the
+        unlocked keyring. If the keyring's password is your login password,
+        which is how PAM creates it, such a program learns your login
+        password, and with it sudo. So give the keyring a password of its
+        own (with Seahorse, for example) before you store it here; the
+        unlock does not need the two to match.
+      '';
+    };
+
+    sessionLayout.after = mkOption {
+      type = types.listOf (types.strMatching "[A-Za-z0-9:_.@-]+[.](service|target)");
+      default = [ ];
+      internal = true;
+      example = [ "ravnix-keyring.target" ];
+      description = ''
+        User units that the login layout (`sway-session-layout`, which
+        starts Helium, the terminal, Obsidian and the music player) waits
+        for: Sway's config starts them with `systemctl --user start` and
+        runs the layout once that has returned, whether they started or
+        failed. Empty runs the layout at once.
+      '';
+    };
+
     kanshi.exec = mkOption {
       type = types.listOf types.nonEmptyStr;
       default = [

@@ -21,6 +21,12 @@ of `desktop-sway` opens the ring, looks at the pixels and clicks an application
 of it (which has to be Sway's child, outside the service). The module lists its
 one style exception in its header: the round ring.
 
+`keyring.nix` opens the login keyring after a login that gave PAM no
+password, a YubiKey tap (`ravnix.desktop.keyring.autoUnlock`,
+`tools/ravnix-keyring-unlock`); `tests/desktop/keyring-autounlock.nix` checks
+it in four stages (`evalChecks`, `gate`, `daemons`, `vm`). The login layout
+waits for it through `ravnix.desktop.sessionLayout.after`.
+
 ## Test seams in the scripts
 
 A script puts its runtime inputs first on its `PATH`, so a stub on the `PATH`

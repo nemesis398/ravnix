@@ -232,6 +232,22 @@ let
     w: "workspace ${toString w.number} output ${lib.concatMapStringsSep " " quote w.outputs}"
   ) cfg.workspaceOutputs;
 
+  # What the login layout waits for (ravnix.desktop.sessionLayout.after; the
+  # keyring's unlock, keyring.nix): a wrapper that starts those user units,
+  # waits for the start to return, and then runs the layout with its
+  # arguments as Sway gave them. A failed start is said on stderr, which is
+  # Sway's log, and the layout runs anyway: an app that finds the keyring
+  # locked asks for its password, but the desktop still comes up.
+  layoutAfter =
+    if cfg.sessionLayout.after == [ ] then
+      ""
+    else
+      "${pkgs.writeShellScript "session-layout-after" ''
+        ${os.systemd.package}/bin/systemctl --user start -- ${lib.escapeShellArgs cfg.sessionLayout.after} ||
+          echo "session-layout-after: ${toString cfg.sessionLayout.after} did not start; the login layout starts anyway" >&2
+        exec "$@"
+      ''} ";
+
   # The config, for the cursor home-manager has (home.pointerCursor): the one
   # source of the theme and the size, which the theme module sets and which
   # reach the processes as XCURSOR_THEME and XCURSOR_SIZE in hm-session-vars.sh.
@@ -245,6 +261,7 @@ let
     terminalPlain = cfg.terminal.plain;
     workspaceOutputs = workspaceBlock;
     polkitAgent = "${pkgs.lxqt.lxqt-policykit}/bin/lxqt-policykit-agent";
+    inherit layoutAfter;
     askBinding =
       if askEnabled then
         "bindsym $mod+Shift+a      exec $ask"

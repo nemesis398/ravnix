@@ -373,6 +373,14 @@
         # it through rbw at the moment you ask.
         rbwItem = "Open WebUI - API key";
       };
+
+      # Unlock the login keyring after a login that gives PAM no password,
+      # such as a YubiKey tap at the greeter, with the keyring's password
+      # kept as a systemd credential of your user. It needs a one-time setup
+      # on the laptop; the option's description has the command, and the
+      # advice to give the keyring a password of its own first. Until then
+      # it does nothing.
+      keyring.autoUnlock.enable = false;
     };
 
     # Where rbw finds your secrets at runtime. Only the server and the
