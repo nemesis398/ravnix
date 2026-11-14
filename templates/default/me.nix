@@ -515,8 +515,8 @@
     # `ravnix.backup.nas = { ... };`, beside this null), never here: two
     # hosts with one host name would prune each other's snapshots. The null
     # below is a default (a lib.mkDefault, written out because this file is
-    # plain data), so a host module's plain value replaces it. For the
-    # laptop, for example:
+    # plain data), so a host module's plain value replaces it; `host` must
+    # be that machine's networking.hostName. For the laptop, for example:
     #   backup.nas = {
     #     # The host's one name at the NAS: the name its snapshots carry,
     #     # its repository's path and its login's user. The retention

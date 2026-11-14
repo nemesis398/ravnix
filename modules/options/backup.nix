@@ -113,6 +113,15 @@ let
   backup = config.ravnix.backup.nas;
   hosts = config.ravnix.hosts;
 
+  # The machine's own name, where NixOS gives one; the options module is
+  # also evaluated without NixOS (home-manager, the tests), and then there
+  # is none to compare with. An empty one is a name taken from DHCP.
+  hostName =
+    let
+      name = config.networking.hostName or "";
+    in
+    if name == "" then null else name;
+
   nas = types.submodule (sub: {
     options = {
       repository = mkOption {
@@ -140,7 +149,21 @@ let
           the path of its repository, and its login's user name at the
           rest-server. The NAS's jobs and the retention file's
           `[targets.<target>.hosts.<host>]` know the host by it, and it
-          must be unique in the estate's Internxt repository.
+          must be unique in the estate's Internxt repository. It must be
+          the machine's `networking.hostName`, unless `ignoreHostName`
+          says otherwise.
+        '';
+      };
+
+      ignoreHostName = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Allow a `host` other than the machine's `networking.hostName`: for
+          a machine renamed after its first backup, whose snapshots keep
+          the old name. Without it, a host module copied from another
+          host's, with that host's name left in, is refused instead of
+          backing up into that host's repository.
         '';
       };
 
@@ -269,6 +292,14 @@ in
         message = "ravnix.backup.nas.host is \"${backup.host}\", the name of ravnix.hosts.${backup.host}, which runs ${
           hosts.${backup.host}.runtime or "?"
         }: its own backups may carry that name in the shared Internxt repository, and a prune by --host would take the two for one. Choose another name.";
+      }
+      {
+        assertion = hostName == null || backup.ignoreHostName || backup.host == hostName;
+        message = "ravnix.backup.nas.host is \"${backup.host}\", but this machine is ${
+          toString hostName
+        } (networking.hostName): it would back up into ${backup.host}'s repository under that host's name. Set host to ${
+          toString hostName
+        }, or, for a machine renamed after its first backup, set ravnix.backup.nas.ignoreHostName = true.";
       }
     ];
 }

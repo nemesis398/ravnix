@@ -65,6 +65,22 @@ let
     { ravnix.backup.nas = base; }
     { ravnix.backup.nas = null; }
   ];
+  # The machine's own name, as NixOS has it; the options module alone does
+  # not declare networking, so the test does.
+  named =
+    hostName: attrs:
+    let
+      e = eval [
+        template
+        registered
+        {
+          options.networking.hostName = lib.mkOption { type = lib.types.str; };
+          config.networking.hostName = hostName;
+        }
+        { ravnix.backup.nas = lib.mkForce (base // attrs); }
+      ];
+    in
+    e.values.success && e.failed == [ ];
   # Two hosts' values in one configuration are still two definitions.
   twoValues = eval [
     template
@@ -176,6 +192,11 @@ let
     ++ lib.optional (
       nullBesideValue.values.success
     ) "a plain null beside a plain value is accepted, so the value wins in silence"
+    ++ lib.optional (!named "huginn" { }) "a host named as its machine is refused"
+    ++ lib.optional (named "muninn" { }) "a host named after another machine (networking.hostName muninn) is accepted"
+    ++ lib.optional (
+      !named "muninn" { ignoreHostName = true; }
+    ) "a name other than networking.hostName is refused even with ignoreHostName"
     # The repository is derived from the NAS's address, a placeholder in
     # the template that is reported once, as ravnix.hosts.nas.address.
     ++ lib.optional (lib.any (lib.hasPrefix "ravnix.backup.nas.repository ") besideNull.config.warnings) "the derived repository is reported as a placeholder too"
