@@ -51,9 +51,31 @@ in
 
     # fzf: completion, Ctrl-T (file), Alt-C (cd). The init is in bash.nix; it
     # has to come before atuin's, which takes Ctrl-R back.
+    #
+    # The colors are the roles: fzf's default scheme is ANSI-256 (a grey
+    # selection that is no step of the ladder, a blue match), and
+    # catppuccin/nix has no fzf port with an accent. The match, the pointer,
+    # the prompt and the counters are the accent, the selected row is
+    # Surface1, a frame is Surface2.
     fzf = {
       enable = true;
       enableBashIntegration = false;
+      colors = {
+        fg = roles.text;
+        bg = roles.canvas;
+        hl = roles.accent;
+        "fg+" = roles.text;
+        "bg+" = roles.selected;
+        "hl+" = roles.accent;
+        gutter = roles.canvas;
+        info = roles.accent;
+        prompt = roles.accent;
+        pointer = roles.accent;
+        marker = roles.accent;
+        spinner = roles.accent;
+        header = roles.secondary;
+        border = roles.line;
+      };
     };
 
     zoxide = {
