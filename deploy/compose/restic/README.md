@@ -15,6 +15,20 @@ muninn ──┘  (LAN, or NetBird's route)        prune by nas policy          
                                                                          policy, --host HOST
 ```
 
+The hosts find the server through the service registry, as they find the
+Nix cache and builder: `ravnix.services.restic-server = { enable = true;
+host = "<the NAS in ravnix.hosts>"; port = <RESTIC_PORT>; }`. A host's
+repository is derived from it, `rest:<url>/<host>/`, so a new address of
+the NAS is a change of one line.
+
+**One name per host.** `ravnix.backup.nas.host` is the name the snapshots
+carry, the repository's path (`/volume1/restic/HOST`), the login's user in
+`htpasswd`, the retention file's `[targets.<target>.hosts.<host>]`, and the
+`--host` of every job below. The module derives the path and the user from
+it, so they cannot differ; it refuses a name that `ravnix.hosts` gives to
+a machine that is not a ravnix host, such as the NAS, which may back
+itself up under its own name into the same Internxt repository.
+
 What exists: the server (`docker-compose.yaml`), the host side, and
 `ravnix-retention` (`tools/ravnix-retention`), which turns the retention
 file into the flags of `restic forget`. What follows is the design of what
@@ -26,11 +40,12 @@ does not exist yet: the deploy (Step 5) and the two jobs on the NAS (Step 6).
    uid and gid. Make `/volume1/docker/restic/` for the compose file, its
    `.env` (the variables in the compose file's header) and `htpasswd`,
    readable by that owner only.
-2. **The logins.** One line per host, `HOST:BCRYPT`, with the password of the
-   host's `loginItem` from Bitwarden: `htpasswd -B -i htpasswd HOST`, the
-   password on standard input from `rbw get` on a machine that has the vault,
-   never on a command line. With `--private-repos` the user name must be the
-   first path segment of the host's `repository`.
+2. **The logins.** One line per host, `HOST:BCRYPT`, where `HOST` is the
+   host's `ravnix.backup.nas.host` and the password is its `loginItem`'s
+   from Bitwarden: `htpasswd -B -i htpasswd HOST`, the password on standard
+   input from `rbw get` on a machine that has the vault, never on a command
+   line. With `--private-repos` the user reaches only `/HOST/`, the path the
+   module derives.
 3. **The repositories, on the NAS.** A host never runs `restic init`. Each
    host's repository is made beside the server, with the chunker parameters
    of the Internxt repository, so that `restic copy` deduplicates into it
@@ -79,6 +94,21 @@ Internxt repository's password and rclone remote (Internxt is reached
 through rclone, as the estate's existing restic jobs reach it). No host
 gets any of them.
 
+**The hosts it knows.** The job is configured with the list of host
+names, and refuses to start, naming the problem, when:
+
+- a name is in the list twice: two machines under one name would be
+  pruned as one group, `--group-by host`, and one machine's dailies would
+  push out the other's;
+- a name is one of the estate's own: a name that another job backs up
+  under into the Internxt repository, the NAS's own host name among them
+  (the estate's offsite job forgets with `--host <the NAS's name>
+  --group-by host`). The private flake lists those names beside the hosts,
+  and the job checks the list against them before every run;
+- a name has snapshots in the Internxt repository that this job did not
+  copy (`restic snapshots --host HOST` there, compared with the original
+  ids of the NAS repository's snapshots): another machine is using it.
+
 **One run**, daily after the hosts' backup window (they back up at
 `onCalendar` with up to 10 minutes of random delay), for each host the job
 is configured with:
@@ -105,7 +135,8 @@ private flake's deploy notes; only then is the real prune turned on.
 
 **How a run reports.** Not decided: the NAS cannot run `ravnix-notify`
 (it reads the Matrix token from rbw). Either the job writes a status file
-that muninn reads over `ssh nas-admin` and posts to the `backups` room, or
+that muninn reads over ssh, at the NAS's `sshTarget` in `ravnix.hosts`, and
+posts to the `backups` room, or
 it pings an Uptime Kuma push monitor. A host whose newest snapshot is older
 than two days is the alarm either way.
 
@@ -139,6 +170,10 @@ into it, or start fresh.
 
 ## Open points
 
+- **A host name in two places.** Each host's evaluation sees only its own
+  `ravnix.backup.nas.host`, so the module cannot see that two hosts chose
+  one name; the job's checks above can, and the template says to set the
+  value per host, never in me.nix.
 - **The estate's other jobs on the Internxt repository** must prune with
   `--host` too. A forget without it, from the estate's existing restic job,
   would apply that job's policy to huginn's and muninn's snapshots. Check
