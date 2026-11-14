@@ -20,6 +20,9 @@
 #     login keyring after a tap;
 #   - pamu2fcfg, for the enrollment, is on the system's PATH, and polkit's
 #     helper may read the home and the key's hidraw device;
+#   - sshd's stack has no pam_u2f: a login from elsewhere must not wait for,
+#     or take, a touch on the key at the laptop (sshd asks PAM for no password
+#     today, but a later KbdInteractiveAuthentication would);
 #   - with the option off, no PAM file names pam_u2f and pamu2fcfg is not
 #     installed; the server shape stays the same with the option on;
 #   - an origin that would break the PAM line (white space, a bracket, empty)
@@ -212,6 +215,8 @@ let
     ++ check (
       (laptopOn.systemd.services."polkit-agent-helper@".serviceConfig.ProtectHome or null) == "read-only"
     ) "laptop: polkit's helper cannot read the home"
+    ++ check laptopOn.services.openssh.enable "laptop: no sshd, so the sshd case reads nothing"
+    ++ check (!lib.any isU2f (linesOf laptopOn "sshd")) "laptop: sshd's stack has pam_u2f"
     ++ lib.concatMap (carries "another origin" otherOrigin "pam://example") services
     ++ anyU2f "laptop with the option off" laptopOff
     ++ greetdFirst "laptop with the option off" laptopOff

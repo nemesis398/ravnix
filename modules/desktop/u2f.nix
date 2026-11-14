@@ -7,9 +7,11 @@
 # WHERE IT REACHES. security.pam.u2f.enable is the default of every PAM
 # service's own u2f.enable, and NixOS puts the u2f rule ahead of pam_unix in
 # each service with default rules: swaylock (its service: swaylock.nix), sudo,
-# su, polkit-1 and login (the console). greetd has no rules of its own; its
-# stacks are substacks of `login`, so tuigreet runs login's u2f line first and
-# login's session part still starts the keyring (pam_gnome_keyring, greetd.nix).
+# su, polkit-1 and login (the console), and the rest of them as on Fedora
+# (passwd, chsh, run0, cups and their kin), all but sshd (below). greetd has
+# no rules of its own; its stacks are substacks of `login`, so tuigreet runs
+# login's u2f line first, and login's session part still starts the keyring
+# (pam_gnome_keyring, greetd.nix).
 # After a tap no password reaches pam_gnome_keyring's auth part, so only a
 # passwordless login keyring opens by itself; with a password on it, the
 # keyring asks for it the first time an application wants a secret. The early
@@ -82,5 +84,12 @@ in
     # pamu2fcfg, for the enrollment. NixOS adds the package for its man pages
     # too; it is named here because the enrollment depends on it.
     environment.systemPackages = [ pkgs.pam_u2f ];
+
+    # Not for a login from elsewhere: the key is at the laptop, and a remote
+    # prompt would wait for a touch there, or take one meant for a prompt on
+    # the laptop. sshd asks PAM for no password today (password and
+    # keyboard-interactive logins are off), so this only keeps a later change
+    # from opening that door.
+    security.pam.services.sshd.u2f.enable = lib.mkIf config.services.openssh.enable false;
   };
 }
