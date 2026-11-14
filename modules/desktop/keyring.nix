@@ -20,6 +20,15 @@
 # UnlockWithMasterPassword: no second daemon, no prompt, nothing in argv or
 # the environment. tools/ravnix-keyring-unlock/README.md has the details.
 #
+# SETUP. `ravnix-keyring-unlock setup` makes the credential once, from a
+# terminal of the session (modules/options/desktop.nix has the steps): it
+# gives the keyring the password of the Bitwarden item that
+# ravnix.desktop.keyring.autoUnlock.rbwItem names and stores it. The tool is
+# on the user's PATH for that, wrapped so that it knows the item
+# (RAVNIX_KEYRING_RBW_ITEM, which --item overrides); it finds rbw,
+# systemd-ask-password and systemd-creds on the PATH of the terminal. The
+# service runs the tool itself, not the wrapper.
+#
 # WHEN. ravnix-keyring.target stands for "the unlock has run" in this
 # graphical session. It pulls the service in and waits for it, and it is
 # wanted by, and ordered before, graphical-session-pre.target (which Sway's
@@ -45,6 +54,21 @@
 }:
 let
   cfg = config.ravnix.desktop.keyring.autoUnlock;
+  tool = pkgs.ravnix.ravnix-keyring-unlock;
+  # The setup's command, with the item of rbwItem as its default.
+  setupCommand =
+    if cfg.rbwItem == null then
+      tool
+    else
+      pkgs.runCommand "ravnix-keyring-unlock"
+        {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          inherit (tool) meta;
+        }
+        ''
+          makeWrapper ${lib.getExe tool} "$out/bin/ravnix-keyring-unlock" \
+            --set-default RAVNIX_KEYRING_RBW_ITEM ${lib.escapeShellArg cfg.rbwItem}
+        '';
 in
 {
   config = lib.mkIf cfg.enable {
@@ -80,7 +104,7 @@ in
       description = "Unlock the login keyring with its stored password";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = lib.getExe pkgs.ravnix.ravnix-keyring-unlock;
+        ExecStart = lib.getExe tool;
         # Found by name in ~/.config/credstore.encrypted/ (the user
         # manager's $XDG_CONFIG_HOME/credstore.encrypted); a missing file is
         # not an error, the tool reports it.
@@ -100,6 +124,8 @@ in
         SystemCallArchitectures = "native";
       };
     };
+
+    environment.systemPackages = [ setupCommand ];
 
     ravnix.desktop.sessionLayout.after = [ "ravnix-keyring.target" ];
   };

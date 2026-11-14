@@ -179,9 +179,10 @@ in
         there, when the keyring is already unlocked (a password login), or
         when the password is wrong.
 
-        First give the keyring a password of its own (with Seahorse, for
-        example), and keep it in your password manager. Every program that
-        runs as you can decrypt the credential again
+        The keyring gets a password of its own, which you keep in your
+        password manager: the password of the Bitwarden item that
+        `ravnix.desktop.keyring.autoUnlock.rbwItem` names. Every program
+        that runs as you can decrypt the credential again
         (`systemd-creds --user decrypt`), as it can read every secret of the
         unlocked keyring. If the keyring's password were your login
         password, which is how PAM creates it, such a program would learn
@@ -190,10 +191,44 @@ in
         that password again; you need it to redo the setup, and without it
         every item of the keyring is lost.
 
-        Then set it up once, on the laptop, in a terminal.
-        `systemd-ask-password` shows the input masked, one asterisk per
-        character (press Tab first to show nothing at all), and the password
-        never stands on a command line:
+        Make that item first, with Bitwarden's password generator (in bwm or
+        the web vault; Vaultwarden refuses `rbw add`), name it in `rbwItem`,
+        and switch. Then run one command once, on the laptop, in a terminal
+        of the graphical session, with the vault unlocked (`rbw unlock`):
+
+        ```sh
+        ravnix-keyring-unlock setup
+        ```
+
+        It reads the new password from the item through rbw, asks once for
+        the keyring's current password (your login password, unless you
+        gave the keyring another one), masked by `systemd-ask-password`, one
+        asterisk per character, changes the keyring's password to the
+        item's, stores it as the credential
+        `~/.config/credstore.encrypted/ravnix-keyring-login`, and checks that
+        the keyring opens with what the credential holds. Nothing is copied
+        or pasted, and no password stands on a command line. A wrong current
+        password changes nothing. If the setup stops halfway, run it again:
+        when the keyring has the item's password already, it asks for
+        nothing and only stores the credential. `--item NAME` names another
+        item.
+
+        Run the setup again whenever the credential no longer decrypts:
+        after the TPM was cleared (a firmware update or a firmware reset can
+        clear a firmware TPM), after a reinstall, and on a new machine; and
+        after the item's password changed, when it asks for the old one.
+        Until then a tap leaves the keyring locked. After a change of the
+        keyring's password the service warns that the stored one does not
+        unlock the keyring; when the credential no longer decrypts, the
+        service fails with systemd's decryption error, and
+        `systemctl --user --failed` lists it. Read what it did with
+        `journalctl --user -u ravnix-keyring-unlock`.
+
+        The manual way, without the setup command: change the keyring's
+        password to one of its own yourself, then store it with these lines.
+        `systemd-ask-password` shows the input masked (press Tab first to
+        show nothing at all), and the password never stands on a command
+        line:
 
         ```sh
         mkdir -p -m 0700 ~/.config/credstore.encrypted
@@ -202,16 +237,20 @@ in
             ~/.config/credstore.encrypted/ravnix-keyring-login
         ```
 
-        Run the same two lines again whenever the keyring's password
-        changes, and whenever the credential no longer decrypts: after the
-        TPM was cleared (a firmware update or a firmware reset can clear a
-        firmware TPM), after a reinstall, and on a new machine. Until then a
-        tap leaves the keyring locked. After a change of the password the
-        service warns that the stored one does not unlock the keyring; when
-        the credential no longer decrypts, the service fails with systemd's
-        decryption error, and `systemctl --user --failed` lists it. Read
-        what it did with `journalctl --user -u ravnix-keyring-unlock`.
         Deleting the file turns the unlock off without a rebuild.
+      '';
+    };
+
+    keyring.autoUnlock.rbwItem = mkOption {
+      type = types.nullOr (types.strMatching "[^\n]+");
+      default = null;
+      example = "GNOME Keyring - login (huginn)";
+      description = ''
+        The name or id of the Bitwarden item whose password the login keyring
+        gets, which `ravnix-keyring-unlock setup` reads through rbw (see
+        `ravnix.desktop.keyring.autoUnlock.enable`). Make it with Bitwarden's
+        password generator before the setup. null names none; then the setup
+        needs `--item NAME`.
       '';
     };
 

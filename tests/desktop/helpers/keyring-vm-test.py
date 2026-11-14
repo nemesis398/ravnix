@@ -1,5 +1,6 @@
 # The VM half of desktop-keyring-autounlock. tests/desktop/keyring-autounlock.nix
-# puts USER, KEYRING_PASSWORD and SECRET in front of this file.
+# puts USER, KEYRING_PASSWORD, SECRET, ITEM and NEW_PASSWORD in front of
+# this file.
 #
 # greetd's initial_session logs the user in without any authentication, so
 # PAM's auth stack never sees a password: pam_gnome_keyring starts the
@@ -205,3 +206,112 @@ assert locked() == "b true", "with a wrong password the keyring did not stay loc
 failed = as_user("systemctl --user --failed --no-legend", check=False)[1]
 assert "ravnix-keyring" not in failed, f"a unit failed: {failed}"
 machine.fail(f"journalctl -b --no-pager | grep -qF -- {shlex.quote(KEYRING_PASSWORD)}")
+
+# ── the one command: ravnix-keyring-unlock setup ──────────────────────────────
+# In the session that is still open, with the keyring locked and a wrong
+# credential in place: the setup from the user's PATH, which knows the item
+# of rbwItem (ITEM), reads its password (NEW_PASSWORD) from a stand-in for
+# rbw, asks for the keyring's current one (KEYRING_PASSWORD) with the real
+# systemd-ask-password in a terminal of script(1), and stores the credential
+# with the real systemd-creds.
+FAKE_RBW = f"""#!/bin/sh
+case "$1" in
+unlocked) exit 0 ;;
+get) [ "$2" = -- ] && [ "$3" = {shlex.quote(ITEM)} ] || exit 1; printf '%s\\n' {shlex.quote(NEW_PASSWORD)} ;;
+*) exit 2 ;;
+esac
+"""
+machine.succeed(
+    f"mkdir -p /run/fake-rbw && printf %s {shlex.quote(FAKE_RBW)} > /run/fake-rbw/rbw && chmod 755 /run/fake-rbw/rbw"
+)
+
+
+def run_setup(typed):
+    """The setup as typed in a terminal of the session; typed is what is
+    typed at the prompt, once it is there, or None for nothing at all. The
+    tool's lines go to a file: the terminal itself is not looked at."""
+    env = f"XDG_RUNTIME_DIR={RUN} DBUS_SESSION_BUS_ADDRESS=unix:path={RUN}/bus PATH=/run/fake-rbw:$PATH"
+    inner = f"{env} ravnix-keyring-unlock setup >/tmp/setup.out 2>&1"
+    command = f"su - {USER} -c {shlex.quote('script -qec ' + shlex.quote(inner) + ' /dev/null')}"
+    if typed is None:
+        status, _ = machine.execute(f"{command} </dev/null")
+    else:
+        # The input waits for the prompt, so that it does not reach the
+        # terminal before systemd-ask-password has turned the echo off.
+        feed = (
+            "for i in $(seq 300); do pgrep -u "
+            + USER
+            + " -f 'systemd-ask-password -n' >/dev/null && break; sleep 0.2; done; sleep 1; "
+            + f"printf '%s\\n' {shlex.quote(typed)}"
+        )
+        status, _ = machine.execute(f"({feed}) | {command}")
+    out = machine.succeed("cat /tmp/setup.out")
+    print(f"setup said: {out}")
+    for password in (KEYRING_PASSWORD, NEW_PASSWORD):
+        assert password not in out, "the setup printed a password"
+    return status, out
+
+
+def decrypted():
+    return as_user(
+        f"systemd-creds --user decrypt --name=ravnix-keyring-login {shlex.quote(cred)} -"
+    )
+
+
+def offline_unlock(password):
+    """After the logout, a daemon of its own on the keyring file, locked as
+    after a tap, and the unlock with a credential that holds password: the
+    tool's line."""
+    return machine.succeed(
+        f"su - {USER} -c "
+        + shlex.quote(
+            "export XDG_RUNTIME_DIR=$(mktemp -d); "
+            "dbus-run-session -- sh -c '"
+            "gnome-keyring-daemon --foreground --components=secrets >/dev/null 2>&1 & "
+            "d=$!; for i in $(seq 100); do busctl --user status org.freedesktop.secrets >/dev/null 2>&1 && break; sleep 0.1; done; "
+            'printf %s "$0" > "$XDG_RUNTIME_DIR/c"; '
+            'ravnix-keyring-unlock --credential "$XDG_RUNTIME_DIR/c" 2>&1; '
+            "kill $d; wait $d || true"
+            f"' {shlex.quote(password)}"
+        )
+    ).strip()
+
+
+machine.succeed(f"su - {USER} -c 'command -v ravnix-keyring-unlock'")
+status, out = run_setup(KEYRING_PASSWORD)
+assert status == 0, f"the setup failed: {out}"
+last = out.strip().splitlines()[-1]
+assert "is now the one of" in last and ITEM in last, f"the setup said: {out}"
+# It opened the keyring for this session, the daemon PAM started.
+assert locked() == "b false", "the setup left the keyring locked"
+assert decrypted() == NEW_PASSWORD, "the credential does not hold the item's password"
+machine.succeed(f"test $(stat -c %a {cred}) = 600")
+machine.succeed(f"test $(stat -c %a $(dirname {cred})) = 700")
+machine.fail(f"grep -qF {shlex.quote(NEW_PASSWORD)} {cred}")
+for password in (KEYRING_PASSWORD, NEW_PASSWORD):
+    machine.fail(f"journalctl -b --no-pager | grep -qF -- {shlex.quote(password)}")
+logout()
+
+# The keyring opens with the item's password, and no longer with the old one.
+line = offline_unlock(KEYRING_PASSWORD)
+assert "does not unlock the login keyring" in line, f"the old password: {line}"
+line = offline_unlock(NEW_PASSWORD)
+assert "unlocked the login keyring" in line, f"the item's password: {line}"
+
+# The next login without a password is unlocked by the service, with the
+# credential the setup made.
+since = cursor()
+login()
+wait_for("the keyring to report unlocked after the setup", lambda: locked() == "b false", 30)
+lines = tool_lines(since)
+assert lines == ["ravnix-keyring-unlock: unlocked the login keyring"], f"the tool said: {lines}"
+got = as_user("timeout 10 secret-tool lookup application chromium </dev/null").strip()
+assert got == SECRET, "the cookie key did not come back after the setup"
+
+# Run again, the keyring already has the item's password: nothing is asked
+# (nothing is typed, so a prompt would fail it), the credential is written
+# again.
+status, out = run_setup(None)
+assert status == 0, f"the setup again failed: {out}"
+assert "already has the password" in out.strip().splitlines()[-1], f"the setup again said: {out}"
+assert decrypted() == NEW_PASSWORD, "the credential written again does not hold the item's password"

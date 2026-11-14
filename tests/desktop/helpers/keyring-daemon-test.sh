@@ -5,7 +5,7 @@
 # The unlock against the real daemons, in the build sandbox: a private
 # dbus-daemon (dbus-run-session) and gnome-keyring-daemon 50, started the
 # way pam_gnome_keyring starts it at a login, with a password and without
-# one. Sourced by tests/desktop/keyring-autounlock.nix, which sets TOOL and
+# one; and the setup command there, with stand-ins for the programs it runs. Sourced by tests/desktop/keyring-autounlock.nix, which sets TOOL and
 # puts dbus, gnome-keyring, libsecret and busctl on PATH.
 #
 # The keyring is a throwaway one, made here with a known password and an
@@ -172,6 +172,124 @@ check "no login keyring: exit 0, one line" \
 check "no login keyring: none is created with the credential's password" \
 	test ! -e "$h/home/.local/share/keyrings/login.keyring"
 
+# ── the setup command against the real daemon ─────────────────────────────────
+# `ravnix-keyring-unlock setup` with stand-ins for rbw (the item's password
+# is NEW), systemd-ask-password (it prints the file typed, and fails without
+# one, as when nobody types) and systemd-creds (a marker before the
+# password: the sandbox has no host key), on PATH before the real ones.
+# What matters here is the daemon: ChangeWithMasterPassword checks the old
+# password also on an unlocked keyring, where an unlock takes any.
+NEW='Neues Pferd ü 7 Batterie'
+ITEM='GNOME Keyring - login (test)'
+fake=$root/fake
+mkdir -p "$fake"
+cat >"$fake/rbw" <<EOF
+#!$(command -v bash)
+echo "rbw \$*" >>"\$FAKE_LOG"
+case "\$1" in
+unlocked) exit 0 ;;
+get) [[ \$2 == -- && \$3 == "$ITEM" ]] || exit 1; printf '%s\n' '$NEW' ;;
+*) exit 2 ;;
+esac
+EOF
+cat >"$fake/systemd-ask-password" <<EOF
+#!$(command -v bash)
+echo "systemd-ask-password \$*" >>"\$FAKE_LOG"
+[[ -f \$FAKE_TYPED ]] || exit 1
+cat "\$FAKE_TYPED"
+EOF
+cat >"$fake/systemd-creds" <<EOF
+#!$(command -v bash)
+echo "systemd-creds \$*" >>"\$FAKE_LOG"
+case "\$2" in
+encrypt) printf 'fake:'; cat ;;
+decrypt) tail -c +6 "\$4" ;;
+*) exit 2 ;;
+esac
+EOF
+chmod +x "$fake"/*
+
+# setup_in HOME DAEMON TYPED|-: the daemon as PAM starts it, then the setup,
+# then what the bus says; the line in HOME/setup.out, the calls in
+# HOME/fake.log.
+setup_in() {
+	local h=$1 daemon=$2 typed=$3
+	rm -f "$h/typed" "$h/fake.log"
+	[[ $typed == - ]] || printf '%s' "$typed" >"$h/typed"
+	in_session "$h" "export FAKE_LOG=$h/fake.log FAKE_TYPED=$h/typed ITEM='$ITEM'; $daemon"'
+		set +e
+		PATH='"$fake"':$PATH "$TOOL" setup --item "$ITEM" </dev/null >"'"$h"'/setup.out" 2>&1
+		echo "rc=$?"
+		echo "locked=$(busctl --address="$DBUS_SESSION_BUS_ADDRESS" get-property org.freedesktop.secrets \
+			/org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked 2>&1 || true)"
+	' >"$h/probe" 2>"$h/probe.err" || true
+}
+# opens_with HOME PASSWORD: in a new session after a tap, the unlock with a
+# credential that holds PASSWORD; prints the tool's line.
+opens_with() {
+	local h=$1
+	printf '%s' "$2" >"$h/try"
+	in_session "$h" "export CRED=$h/try OUT=$h/try.out; $pam_tap; $probe" >"$h/try.probe" 2>&1 || true
+	cat "$h/try.out"
+}
+asked() { grep -c '^systemd-ask-password' "$1/fake.log" || true; }
+credential_of() { echo "$1/home/.config/credstore.encrypted/ravnix-keyring-login"; }
+
+for state in password tap; do
+	h=$(home "setup-$state")
+	cp "$keyring" "$h/home/.local/share/keyrings/login.keyring"
+	daemon=$pam_password
+	[[ $state == tap ]] && daemon=$pam_tap
+	setup_in "$h" "$daemon" "$PASSWORD"
+	check "setup after a $state login: exit 0, one line that says the password is the item's now" \
+		bash -c "test '$(field "$h" rc)' = 0 && tail -n1 '$h/setup.out' | grep -q 'is now the one of' && test \$(grep -c 'is now the one of' '$h/setup.out') = 1"
+	# On an unlocked keyring an unlock would have taken the item's password,
+	# and the setup would not have asked.
+	check "setup after a $state login: it asked for the current password once" test "$(asked "$h")" = 1
+	check "setup after a $state login: the keyring is unlocked" test "$(field "$h" locked)" = "b false"
+	check "setup after a $state login: the credential holds the item's password, 0600 in a 0700 directory" \
+		bash -c "test \"\$(cat '$(credential_of "$h")')\" = 'fake:$NEW' && test \$(stat -c %a '$(credential_of "$h")') = 600 && test \$(stat -c %a '$h/home/.config/credstore.encrypted') = 700"
+	check "setup after a $state login: no password in any line" no_password_in "$h/setup.out" "$h/fake.log" "$h/probe" "$h/probe.err"
+	opens_with "$h" "$NEW" >/dev/null
+	check "setup after a $state login: the next tap login opens with the item's password" \
+		bash -c "grep -q 'unlocked the login keyring' '$h/try.out' && test \"\$(sed -n 's/^lookup=//p' '$h/try.probe')\" = '$SECRET'"
+	opens_with "$h" "$PASSWORD" >/dev/null
+	check "setup after a $state login: the old password no longer opens it" \
+		grep -q 'does not unlock the login keyring' "$h/try.out"
+done
+
+# A run again, on the keyring the setup gave the item's password, locked
+# (a tap) and unlocked (a password login with it): nothing is asked, and
+# the credential is written again.
+h=$(home setup-again)
+cp "$root/setup-tap/home/.local/share/keyrings/login.keyring" "$h/home/.local/share/keyrings/login.keyring"
+pam_new="printf %s '$NEW' | gnome-keyring-daemon --daemonize --login >/dev/null"
+for login in tap password; do
+	daemon=$pam_tap
+	[[ $login == password ]] && daemon=$pam_new
+	rm -rf "$h/home/.config"
+	setup_in "$h" "$daemon" -
+	check "setup again after a $login login: exit 0, the keyring has the password already, nothing asked" \
+		bash -c "test '$(field "$h" rc)' = 0 && grep -q 'already has the password' '$h/setup.out' && test '$(asked "$h")' = 0"
+	check "setup again after a $login login: the credential holds the item's password" \
+		test "$(cat "$(credential_of "$h")")" = "fake:$NEW"
+done
+
+# A wrong current password, on an unlocked keyring: nothing changes.
+h=$(home setup-wrong)
+cp "$keyring" "$h/home/.local/share/keyrings/login.keyring"
+setup_in "$h" "$pam_password" "Pferd but not the one"
+check "setup with a wrong current password: exit 1, it says so, nothing changed" \
+	bash -c "test '$(field "$h" rc)' = 1 && grep -q 'does not open the login keyring; nothing changed' '$h/setup.out'"
+check "setup with a wrong current password: the keyring file and the credential are as they were" \
+	bash -c "test \"\$(sha256sum <'$h/home/.local/share/keyrings/login.keyring')\" = '$fixture_hash' && test ! -e '$(credential_of "$h")'"
+
+# No login keyring: the setup makes none.
+h=$(home setup-nokeyring)
+setup_in "$h" "$pam_tap" "$PASSWORD"
+check "setup without a login keyring: exit 1, and none is made" \
+	bash -c "test '$(field "$h" rc)' = 1 && grep -q 'no login keyring' '$h/setup.out' && test ! -e '$h/home/.local/share/keyrings/login.keyring' && test '$(asked "$h")' = 0"
+
 # ── no Secret Service at all ───────────────────────────────────────────────────
 h=$(home nobus)
 printf %s "$PASSWORD" >"$h/cred"
@@ -183,7 +301,7 @@ check "no bus: exit 1, one line" bash -c "test $rc = 1 && test \$(wc -l <'$h/out
 
 if ((fails > 0)); then
 	echo "keyring daemon tests: $fails failed" >&2
-	for f in "$root"/*/probe "$root"/*/probe.err "$root"/*/out; do
+	for f in "$root"/*/probe "$root"/*/probe.err "$root"/*/out "$root"/*/setup.out "$root"/*/try.out "$root"/*/try.probe; do
 		echo "--- $f" >&2
 		sed 's/^/  | /' "$f" >&2
 	done

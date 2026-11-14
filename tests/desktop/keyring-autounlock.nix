@@ -6,18 +6,25 @@
 #   eval     the evaluated hosts: off by default, and with it on the user
 #            service, its credential by name, its target and the ordering
 #            against the graphical session, the tray autostart and the login
-#            layout; no password in the store; the setup command in the
-#            option and the install doc names the credential the tool reads.
+#            layout; no password in the store; the setup command on the
+#            user's PATH, knowing the item of rbwItem; the option and the
+#            install doc give `ravnix-keyring-unlock setup` first and the
+#            manual pipe after it, which names the credential the tool reads.
 #   gate     the wrapper Sway puts before the login layout: it starts the
 #            target, waits, and runs the layout with its arguments as given,
 #            also when the start fails.
 #   daemons  ravnix-keyring-unlock against a private dbus-daemon and the real
 #            gnome-keyring-daemon 50, started as pam_gnome_keyring starts it
-#            after a tap and after a password (helpers/keyring-daemon-test.sh).
+#            after a tap and after a password, and its setup there with
+#            stand-ins for rbw, the prompt and systemd-creds
+#            (helpers/keyring-daemon-test.sh).
 #   vm       a login through greetd that gives PAM no password, with an
 #            encrypted keyring and the credential made by the setup command:
 #            the keyring is unlocked before Helium starts, without a prompt;
-#            no credential and a wrong one leave it locked with one line.
+#            no credential and a wrong one leave it locked with one line;
+#            then `ravnix-keyring-unlock setup` with a stand-in rbw changes
+#            the keyring's password to the item's, and the next tap login
+#            unlocks it with the credential the setup made.
 {
   self,
   inputs,
@@ -48,11 +55,14 @@ let
   };
   huginnOff = huginnOf [ ];
   huginn = huginnOf [ on ];
+  # The desktop module alone, and without an item: the setup then needs
+  # --item.
   desktop = inputs.nixpkgs.lib.nixosSystem {
     inherit system;
     modules = hostModules ++ [
       self.nixosModules.desktop
       on
+      { ravnix.desktop.keyring.autoUnlock.rbwItem = lib.mkForce null; }
     ];
   };
   # With the Secret Service switched off, the option is an error that says why.
@@ -76,6 +86,12 @@ let
       );
     in
     if m == null then "" else lib.head m;
+  # The variable the wrapper sets and the tool reads, from the source too.
+  itemVariable = "RAVNIX_KEYRING_RBW_ITEM";
+  toolReadsItem = lib.hasInfix ''os.get_env("${itemVariable}"'' (
+    builtins.readFile ../../tools/ravnix-keyring-unlock/main.odin
+  );
+  setupCommand = "ravnix-keyring-unlock setup";
   setupLine = "systemd-creds --user encrypt --name=${credential} - \\";
   storePath = "~/.config/credstore.encrypted/${credential}";
   installDoc = builtins.readFile ../../docs/install-from-another-distro.md;
@@ -84,6 +100,10 @@ let
   serviceOf = host: (units host).services.ravnix-keyring-unlock or null;
   targetOf = host: (units host).targets.ravnix-keyring or null;
   unitText = host: name: (units host).units.${name}.text or "";
+  # The packages of the system that give a program ravnix-keyring-unlock.
+  setupPackages =
+    host:
+    lib.filter (p: (p.meta.mainProgram or "") == "ravnix-keyring-unlock") host.config.environment.systemPackages;
 
   hostChecks =
     name: host:
@@ -173,6 +193,19 @@ let
     ) "off: the login layout waits for something"
     ++ hostChecks "laptop" huginn
     ++ hostChecks "desktop" desktop
+    ++ lib.optional (setupPackages huginnOff != [ ]) "off: the setup command is on the PATH"
+    ++ lib.optional (
+      lib.length (setupPackages huginn) != 1
+    ) "laptop: the setup command is not on the PATH once"
+    # With rbwItem set, the command is a wrapper of its own; without, the tool.
+    ++ lib.optional (
+      huginn.config.ravnix.desktop.keyring.autoUnlock.rbwItem == null
+    ) "laptop: the template sets no rbwItem"
+    ++ lib.optional (
+      lib.any (p: p == tool) (setupPackages huginn)
+    ) "laptop: rbwItem is set, but the PATH has the tool without it"
+    ++ lib.optional (setupPackages desktop != [ tool ]) "desktop: without rbwItem the PATH does not have the tool itself"
+    ++ lib.optional (!toolReadsItem) "the tool does not read ${itemVariable}, which the wrapper sets"
     ++ lib.optional (
       !lib.any (a: !a.assertion && lib.hasInfix "autoUnlock" a.message) noKeyring.config.assertions
     ) "without gnome-keyring the option is no error"
@@ -194,7 +227,21 @@ let
               && lib.hasInfix storePath text
               && lib.hasInfix "systemd-ask-password -n" text
             )
-          ) "${what} lacks the setup command for ${storePath}"
+          ) "${what} lacks the manual setup for ${storePath}"
+          # The one command comes first, the manual pipe after it.
+          ++ lib.optional (
+            !lib.hasInfix setupCommand before
+          ) "${what} does not give `${setupCommand}` before the manual setup"
+          ++ lib.optional (
+            !lib.hasInfix "rbwItem" before
+          ) "${what} does not say that rbwItem names the item the setup reads"
+          ++ lib.optional (
+            !lib.hasInfix "rbw unlock" before
+          ) "${what} does not say that the setup needs the vault unlocked"
+          # Seahorse is not installed, and the setup does its part.
+          ++ lib.optional (
+            lib.hasInfix "eahorse" text
+          ) "${what} still sends you to Seahorse"
           ++ lib.optional (
             !lib.hasInfix "a password of its own" before
           ) "${what} does not advise a keyring password of its own before the setup command"
@@ -289,7 +336,22 @@ let
     STUB_RC=1 ./wrapper bin/layout x >out 2>err || rc=$?
     [[ $rc == 7 && -e layout.args ]] || fail "a failed start keeps the layout from running"
     grep -q 'did not start' err || fail "a failed start is not said"
-    echo "gate: the layout waits for ravnix-keyring.target, gets its arguments as given, and runs when the start fails" > $out
+
+    # The setup's command on the PATH: the tool, with the item of rbwItem as
+    # the default of ${itemVariable}, which the environment still overrides.
+    setup=${lib.getExe (lib.head (setupPackages huginn ++ [ pkgs.hello ]))}
+    grep -qF '${tool}/bin/ravnix-keyring-unlock' "$setup" || fail "the setup command does not run the tool: $setup"
+    printf '#!%s\nprintf "%%s\\n" "$RAVNIX_KEYRING_RBW_ITEM" "$@"\n' ${pkgs.runtimeShell} >bin/show
+    chmod +x bin/show
+    sed "s|${tool}/bin/ravnix-keyring-unlock|$PWD/bin/show|" "$setup" >setup
+    chmod +x setup
+    got=$(env -u ${itemVariable} ./setup setup --bus x)
+    [[ $got == ${
+      lib.escapeShellArg "${huginn.config.ravnix.desktop.keyring.autoUnlock.rbwItem}\nsetup\n--bus\nx"
+    } ]] || fail "the setup command got: $got"
+    got=$(${itemVariable}=other ./setup setup)
+    [[ $got == $'other\nsetup' ]] || fail "the environment does not win over rbwItem: $got"
+    echo "gate: the layout waits for ravnix-keyring.target, gets its arguments as given, and runs when the start fails; the setup command knows rbwItem" > $out
   '';
 
   daemons =
@@ -311,6 +373,8 @@ let
       '';
 
   gpuAddress = "0000:00:10.0";
+  # The item the VM's setup reads, from a stand-in for rbw.
+  vmItem = "GNOME Keyring - login (vm)";
   vm = pkgs.testers.runNixOSTest {
     name = "desktop-keyring-autounlock";
     # As in tests/desktop/sway.nix: the overlay and the unfree names of the
@@ -332,6 +396,7 @@ let
         ];
         warnings = lib.mkForce [ ];
         system.stateVersion = "26.05";
+        ravnix.desktop.keyring.autoUnlock.rbwItem = lib.mkForce vmItem;
 
         # A login that gives PAM no password: greetd's initial session logs
         # the user in without authenticating, as a YubiKey tap leaves PAM
@@ -371,6 +436,8 @@ let
       USER = "${user}"
       KEYRING_PASSWORD = "Pferd Batterie ü 42"
       SECRET = "cookie-key-0123456789"
+      ITEM = "${vmItem}"
+      NEW_PASSWORD = "Neues Pferd ü 7 Batterie"
     ''
     + builtins.readFile ./helpers/keyring-vm-test.py;
   };

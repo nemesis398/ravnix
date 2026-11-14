@@ -23,9 +23,11 @@ one style exception in its header: the round ring.
 
 `keyring.nix` opens the login keyring after a login that gave PAM no
 password, a YubiKey tap (`ravnix.desktop.keyring.autoUnlock`,
-`tools/ravnix-keyring-unlock`); `tests/desktop/keyring-autounlock.nix` checks
-it in four stages (`evalChecks`, `gate`, `daemons`, `vm`). The login layout
-waits for it through `ravnix.desktop.sessionLayout.after`.
+`tools/ravnix-keyring-unlock`), and puts its one-time setup,
+`ravnix-keyring-unlock setup`, on the PATH with the Bitwarden item of
+`rbwItem`; `tests/desktop/keyring-autounlock.nix` checks it in four
+stages (`evalChecks`, `gate`, `daemons`, `vm`). The login layout waits for
+it through `ravnix.desktop.sessionLayout.after`.
 
 ## Test seams in the scripts
 

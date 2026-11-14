@@ -398,10 +398,14 @@
       # Unlock the login keyring after a login that gives PAM no password,
       # such as a YubiKey tap at the greeter, with the keyring's password
       # kept as a systemd credential of your user. It needs a one-time setup
-      # on the laptop; the option's description has the command, and the
-      # advice to give the keyring a password of its own first. Until then
-      # it does nothing.
-      keyring.autoUnlock.enable = false;
+      # on the laptop, `ravnix-keyring-unlock setup`, which gives the keyring
+      # the password of the Bitwarden item rbwItem names (make it with
+      # Bitwarden's generator first) and stores it; the option's description
+      # has the steps. Until then it does nothing.
+      keyring.autoUnlock = {
+        enable = false;
+        rbwItem = "GNOME Keyring - login (huginn)";
+      };
     };
 
     # Where rbw finds your secrets at runtime. Only the server and the
