@@ -49,6 +49,9 @@ Language_Tool :: struct {
 	tries:       int,
 	// How many words a page of the list holds.
 	page:        int,
+	// The most pages the list is read in: past them, the server is taken
+	// to ignore the offset, and the read fails.
+	max_pages:   int,
 }
 
 LT_SERVER :: "https://api.languagetoolplus.com"
@@ -56,6 +59,8 @@ LT_TIMEOUT :: 30 * time.Second
 LT_BACKOFF :: 2 * time.Second
 LT_TRIES :: 6
 LT_PAGE :: 500
+// 1000 pages of 500 are half a million words, far above any real list.
+LT_MAX_PAGES :: 1000
 // The longest a Retry-After is waited for.
 LT_MAX_WAIT :: 60 * time.Second
 
@@ -306,8 +311,12 @@ languagetool_read :: proc() -> ([]string, Error) {
 	// Until a page comes back empty: a server that gives fewer words than
 	// asked for (a cap below the limit) must not end the list early, or
 	// every word past the first page would be added again at each sync.
+	max_pages := languagetool.max_pages if languagetool.max_pages > 0 else LT_MAX_PAGES
 	offset := 0
-	for {
+	for pages := 0;; pages += 1 {
+		if pages == max_pages {
+			return nil, fmt.tprintf("LanguageTool's word list did not end after %d pages; does the server ignore the offset?", max_pages)
+		}
 		body, why := lt_request(true, "words", {{"offset", fmt.tprint(offset)}, {"limit", fmt.tprint(page)}})
 		if why != "" {
 			return nil, why

@@ -44,6 +44,8 @@ Fake_LT :: struct {
 	hang:        bool,
 	// The most words a page holds, whatever limit asks; 0 is no cap.
 	cap:         int,
+	// Every page is the first one, whatever offset asks.
+	same_page:   bool,
 	// The key was found in a process's command line or environment.
 	leaked:      string,
 	requests:    int,
@@ -239,6 +241,9 @@ handle :: proc(s: ^Fake_LT, client: net.TCP_Socket) {
 		if s.cap > 0 {
 			limit = min(limit, s.cap)
 		}
+		if s.same_page {
+			offset = 0
+		}
 		b := strings.builder_make()
 		strings.write_string(&b, `{"words": [`)
 		for i in offset ..< min(offset + limit, len(s.words)) {
@@ -328,6 +333,29 @@ languagetool_lists_every_page :: proc(t: ^testing.T) {
 	testing.expect_value(t, fake_lt_log(f, s), "GET offset=0 limit=3\nGET offset=2 limit=3\nGET offset=4 limit=3\nGET offset=6 limit=3\nGET offset=7 limit=3")
 	_, leaked := fake_lt_seen(s)
 	testing.expect_value(t, leaked, "")
+}
+
+@(test)
+languagetool_gives_up_on_a_list_that_does_not_end :: proc(t: ^testing.T) {
+	// A server that ignores the offset gives the first page again and
+	// again: the paging stops after its most pages, with one line.
+	f := fixture(t)
+	defer fixture_destroy(f)
+	context.allocator = f.a
+	s := fake_lt_start(f)
+	defer fake_lt_stop(s)
+	fake_lt_set(s, "a", "b", "c", "d")
+	sync.mutex_lock(&s.mutex)
+	s.same_page = true
+	sync.mutex_unlock(&s.mutex)
+	tools.languagetool.max_pages = 5
+	_, err := tools.languagetool_read()
+	message, failed := err.?
+	testing.expectf(t, failed && strings.contains(message, "did not end after 5 pages") && !strings.contains(message, "\n"), "%v", err)
+	requests, _ := fake_lt_seen(s)
+	testing.expect_value(t, requests, 5)
+	// The default is far above any real list.
+	testing.expect(t, tools.LT_MAX_PAGES * tools.LT_PAGE >= 100_000)
 }
 
 @(test)

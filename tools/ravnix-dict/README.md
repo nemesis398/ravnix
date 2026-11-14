@@ -299,7 +299,9 @@ quotes the store.
 
 The word list of a LanguageTool Premium account, in the cloud. The API lists
 the words 500 at a time (`GET /v2/words`, until a page comes back empty, so
-a server that caps the page lower still gives every word) and adds and deletes one word per
+a server that caps the page lower still gives every word; after 1000 pages
+the read fails, since a server that ignores the offset would never give an
+empty one) and adds and deletes one word per
 request (`POST /v2/words/add`, `/v2/words/delete`); a write sends only the
 difference to the list the read got, deletes first, so a word whose spelling
 changed is deleted in its old spelling before the new one is added. A word
@@ -424,7 +426,7 @@ member, missing, malformed or nested too deep, a Handy that ignores
 SIGTERM, one that cannot be started again, a word Handy got between read
 and write, the mode and a link, and 10 000 words. `languagetool_test.odin`
 runs a stand-in of the words API on 127.0.0.1 in a thread, through the real
-curl: paging, only the difference written (deletes first, phrases left
+curl: paging, a server that ignores the offset, only the difference written (deletes first, phrases left
 out, odd characters encoded), a 429 waited out with and without
 `Retry-After`, a limit that stays, a 5xx, a refusal and an answer that
 repeats the key (neither message holds it), answers that are no word list,
