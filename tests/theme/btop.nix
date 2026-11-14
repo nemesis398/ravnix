@@ -90,14 +90,18 @@ let
       lib.optional (s.${k} or null != roles.accent) "${k} is not the accent"
       ++ lib.optional (st.${k} or null != teal.ravnix.theme.roles.accent) "${k} does not follow the accent"
     ) followAccent
-    # Warm hues only at the end of a load gradient: Peach and Red mean a
-    # warning, so no gradient starts or passes through one.
+    # Warm hues only at the end of a gradient: Peach and Red mean a warning,
+    # so no gradient starts or passes through one. btop picks the temperature
+    # color at temp / temp_max, so a Peach middle is drawn at about half the
+    # critical temperature, an idle machine.
     ++ lib.concatMap (
       k:
-      lib.optional (
-        lib.elem s.${k} [ palette.peach palette.red palette.maroon ]
-      ) "${k} starts a gradient in a warm hue"
-    ) (lib.filter (k: lib.hasSuffix "_start" k) (lib.attrNames s))
+      lib.optional (lib.elem s.${k} [
+        palette.peach
+        palette.red
+        palette.maroon
+      ]) "${k} is a warm hue before the end of a gradient"
+    ) (lib.filter (k: lib.hasSuffix "_start" k || lib.hasSuffix "_mid" k) (lib.attrNames s))
     ++ lib.optional (s.selected_bg != roles.selected) "selected_bg is not Surface1"
     ++ lib.optional (s.main_bg != roles.canvas) "main_bg is not Base";
 in

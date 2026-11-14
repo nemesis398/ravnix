@@ -8,12 +8,14 @@
 #     the accent;
 #   - a box outline is Surface2. btop has no focus that moves between boxes,
 #     so no box claims the accent, and none is a state hue;
-#   - state is a state hue: a load gradient runs from the accent to Peach at
-#     its top, and the temperature one on to Red, so when something on screen
-#     is warm, something is hot;
+#   - state is a state hue: a load gradient runs in the accent and turns Peach
+#     only at its top, and the temperature one turns Red only at the sensor's
+#     critical value (btop draws the middle at half of it, an idle machine), so
+#     when something on screen is warm, something is hot;
 #   - the selected row is Surface1, the meter background a wash;
-#   - neutral series (download against upload, the memory kinds) differ in the
-#     step they take on the ladder, not in a hue.
+#   - the neutral series (the memory kinds, upload) differ in the step they
+#     take on the ladder, not in a hue; download is the accent, the one series
+#     that stands for place.
 { config, ... }:
 let
   inherit (config.ravnix.theme) palette roles;
@@ -46,7 +48,7 @@ let
       (slot "proc_box" roles.line)
       (slot "div_line" roles.line)
     ]
-    ++ gradient "temp" roles.accent palette.peach palette.red
+    ++ gradient "temp" roles.accent roles.accent palette.red
     ++ load "cpu"
     ++ flat "free" roles.muted
     ++ flat "cached" roles.placeholder
