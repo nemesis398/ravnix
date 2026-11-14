@@ -34,7 +34,13 @@ outputs=$("$SWAYMSG" -t get_outputs 2>/dev/null) || { echo "sway-mirror: cannot 
 ext=$(jq -r '[.[] | select(.active and (.name | test("^eDP") | not))][0].name // empty' <<<"$outputs") || exit 1
 pan=$(jq -r '[.[] | select(.active and (.name | test("^eDP")))][0].name // empty' <<<"$outputs") || exit 1
 
-if [ -z "$ext" ] || [ -z "$pan" ]; then
+# Which one is missing: with the lid closed the panel is off and an external
+# display may well be there.
+if [ -z "$pan" ]; then
+  notify "Mirror: no laptop panel"
+  exit 0
+fi
+if [ -z "$ext" ]; then
   notify "Mirror: no external display"
   exit 0
 fi

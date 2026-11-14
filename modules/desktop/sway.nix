@@ -119,11 +119,13 @@ let
         util-linux
         jq
         libnotify
+        coreutils
       ] { };
       sway-brightness = bash "sway-brightness" [
         brightnessctl
         libnotify
         coreutils
+        util-linux
       ] { };
       sway-clipboard = bash "sway-clipboard" [
         cliphist

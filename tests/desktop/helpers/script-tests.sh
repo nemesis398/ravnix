@@ -508,6 +508,15 @@ PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" --toggle-mic >/dev/null
 [ $? = 1 ] || bad "sway-volume --toggle-mic does not fail when pactl does"
 [ ! -s "$pa/notifications" ] || bad "sway-volume --toggle-mic shows a state it could not read: $(cat "$pa/notifications")"
 rm -f "$pa/mic-broken"
+for args in "--toggle-mic --increase 5" "--increase 5 --toggle-mic" "--toggle-mic --decrease 5" "--set-volume 30 --toggle-mic" "--toggle-mic --limit 50"; do
+  printf 'no\n' >"$pa/mic"
+  printf '40\n' >"$pa/volume"
+  : >"$pa/notifications"
+  # shellcheck disable=SC2086
+  PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" $args >/dev/null 2>&1
+  [ $? = 2 ] || bad "sway-volume $args is not refused with status 2"
+  [ "$(cat "$pa/mic")" = no ] && [ "$(cat "$pa/volume")" = 40 ] && [ ! -s "$pa/notifications" ] || bad "sway-volume $args changed something though it was refused"
+done
 ok "sway-volume --toggle-mic"
 
 # ── sway-brightness ──────────────────────────────────────────────────────────
@@ -521,7 +530,7 @@ cat >"$stubs/brightnessctl" <<STUB
 [ -f "$bl/broken" ] && exit 1
 printf '%s\n' "\$*" >>"$bl/calls"
 case "\$*" in
-  get) cat "$bl/raw" ;;
+  get) [ -f "$bl/slow" ] && sleep 0.1; cat "$bl/raw" ;;
   max) cat "$bl/max" ;;
   "-q set "[0-9]*) echo "\$3" >"$bl/raw" ;;
   *) echo "brightnessctl: unsupported in 0.5.1: \$*" >&2; exit 2 ;;
@@ -614,6 +623,18 @@ for args in "" "sideways" "up down" "5%+"; do
   BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=$bl/notify "$bright" $args >/dev/null 2>&1
   [ $? = 2 ] || bad "sway-brightness '$args' is not refused with status 2"
 done
+# A held key starts runs on top of each other: each must see the result of the
+# one before, so no step is lost. The stand-in reads slowly to make them overlap.
+printf '255\n' >"$bl/max"; printf '0\n' >"$bl/raw"
+: >"$bl/slow"
+runs=()
+for _ in 1 2 3 4 5 6; do
+  BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=$bl/notify "$bright" up >/dev/null 2>&1 &
+  runs+=($!)
+done
+wait "${runs[@]}"
+rm -f "$bl/slow"
+[ "$(pct_of "$(cat "$bl/raw")" 255)" = 10 ] || bad "six overlapping sway-brightness runs reach $(pct_of "$(cat "$bl/raw")" 255)%, not 10% (1 2 3 4 5 10): a step was lost"
 # Without a notification daemon the brightness still changes.
 printf '255\n' >"$bl/max"; printf '100\n' >"$bl/raw"
 BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=/nonexistent "$bright" up >/dev/null 2>&1
@@ -667,6 +688,8 @@ mirror_run '[{"name":"eDP-1","active":true},{"name":"DP-3","active":false}]'
 [ ! -s "$mi/swaymsg.log" ] || bad "sway-mirror mirrors onto an inactive output"
 mirror_run '[{"name":"DP-3","active":true}]'
 [ ! -s "$mi/swaymsg.log" ] || bad "sway-mirror mirrors with no laptop panel"
+grep -qiF 'no laptop panel' "$mi/notifications" || bad "sway-mirror blames the wrong thing when the lid is closed (no panel, an external display): $(cat "$mi/notifications")"
+! grep -qiF 'no external display' "$mi/notifications" || bad "sway-mirror says there is no external display though there is one: $(cat "$mi/notifications")"
 mirror_run '[{"name":"eDP-1","active":true},{"name":"DP-3; exec touch '"$mi"'/pwned","active":true}]'
 [ ! -s "$mi/swaymsg.log" ] && [ ! -e "$mi/pwned" ] || bad "sway-mirror puts an output name with a command in it into a Sway command: $(cat "$mi/swaymsg.log")"
 mirror_run 'not json'

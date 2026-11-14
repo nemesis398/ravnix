@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # sway-wait-sni — wait until a StatusNotifier tray host is on the session bus.
 # Waybar is the host (its tray module owns org.kde.StatusNotifierWatcher), and
-# the XDG autostart entries that carry a tray icon (the Nextcloud and Bitwarden
-# clients) lose their icon when they start first, so the sway config runs
+# the XDG autostart entries that carry a tray icon (the Nextcloud client, for
+# one) lose their icon when they start first, so the sway config runs
 #
 #   sway-wait-sni && systemctl --user start ravnix-autostart.target
 #

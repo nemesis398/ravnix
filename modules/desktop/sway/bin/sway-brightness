@@ -30,6 +30,13 @@ case ${1:-}:$# in
   *) echo "usage: sway-brightness up|down" >&2; exit 2 ;;
 esac
 
+# One run at a time: a held key repeats about 25 times a second, and two runs
+# that read the same value would set the same target and lose a step. Later runs
+# wait for the lock (at most 5 s) and then see the result of the one before.
+lockdir=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}
+exec 9>"$lockdir/sway-brightness.lock" || { echo "sway-brightness: cannot open the lock file in $lockdir" >&2; exit 1; }
+flock -w 5 9 || { echo "sway-brightness: another run holds the lock" >&2; exit 1; }
+
 # A number is digits and nothing else: the value goes into arithmetic, where
 # bash would run a command hidden in an index (x[$(cmd)]).
 read_number() { # read_number ARG...: what brightnessctl ARG... prints, if a number
@@ -51,7 +58,12 @@ max=$(read_number max) || fail "cannot read the maximum brightness"
 raw=$(read_number get) || fail "cannot read the brightness"
 [ "$raw" -le "$max" ] || raw=$max
 
-# The percentage the raw value reads as, rounded to the nearest.
+# The percentage the raw value reads as, rounded to the nearest. A backlight
+# with 100 levels or more can show every percent exactly. With fewer, a level
+# is wider than 1 % and the steps come out irregular (63 levels go 2, 3, 5, 10,
+# 14, 16, 21, 25 %); that cannot be better at that resolution, every press still
+# moves one level, and the notification shows the real percentage. Do not "fix"
+# the grid for it.
 percent_of() { echo $(( ($1 * 200 + max) / (2 * max) )); }
 
 now=$(percent_of "$raw")

@@ -28,6 +28,7 @@ limit=100
 change=0
 set_to=-1
 toggle_mic=0
+volume_args=0
 
 usage() {
   echo "usage: sway-volume [--sink S] [--limit N] [--increase N|--decrease N|--set-volume N] | --toggle-mic" >&2
@@ -46,15 +47,21 @@ number() {
 while [ $# -gt 0 ]; do
   case $1 in
     --sink) [ $# -ge 2 ] || usage; sink=$2; shift ;;
-    -l|--limit) limit=$(number "${2:-}") || exit 2; shift ;;
-    --set-volume) set_to=$(number "${2:-}") || exit 2; shift ;;
-    -i|--increase) change=$(number "${2:-}") || exit 2; shift ;;
+    -l|--limit) limit=$(number "${2:-}") || exit 2; volume_args=1; shift ;;
+    --set-volume) set_to=$(number "${2:-}") || exit 2; volume_args=1; shift ;;
+    -i|--increase) change=$(number "${2:-}") || exit 2; volume_args=1; shift ;;
     --toggle-mic) toggle_mic=1 ;;
-    -d|--decrease) change=-$(number "${2:-}") || exit 2; shift ;;
+    -d|--decrease) change=-$(number "${2:-}") || exit 2; volume_args=1; shift ;;
     *) usage ;;
   esac
   shift
 done
+
+# The microphone key changes no volume; both together would silently drop one.
+if [ "$toggle_mic" -eq 1 ] && [ "$volume_args" -eq 1 ]; then
+  echo "sway-volume: --toggle-mic takes no volume option" >&2
+  exit 2
+fi
 
 clamp() {
   if [ "$1" -lt 0 ]; then echo 0
