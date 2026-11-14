@@ -389,7 +389,7 @@ let
       !lib.elem "7=${roles.label}" hm.programs.ghostty.settings.palette
     ) "ghostty's palette slot 7 is not the label role: the nmtui colors assume it"
     ++ lib.optional (
-      !(lib.hasInfix "root=lightgray,black" config.environment.sessionVariables.NEWT_COLORS)
+      !(lib.hasInfix "root=lightgray,default" config.environment.sessionVariables.NEWT_COLORS)
     ) "nmtui's text is not lightgray (ANSI 7, the label role)"
     ++ lib.optional (
       !lib.elem "clngdbkpkpeebahjckkjfobafhncgmne" (policy.ExtensionInstallForcelist or [ ])

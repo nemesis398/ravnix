@@ -116,9 +116,8 @@
 #                     light/dark preference.
 #   nmtui             newt's own color scheme (NEWT_COLORS below maps it onto the
 #                     terminal's palette, so it carries the Catppuccin colors
-#                     but keeps newt's boxes). Its background is palette slot 0
-#                     (Surface1), not Base. Open for Task 3.7: slang may take a
-#                     `default` color, which would give Text on Base.
+#                     but keeps newt's boxes). Its background is the terminal's
+#                     default, Base.
 #   Helium DevTools   in the theme in dark mode only; light mode stays stock.
 #                     Three legacy tokens stay translucent, as the stock ones
 #                     are: --color-background-opacity-50 and -80 and
@@ -297,39 +296,42 @@ in
     # this is set (obsidian, bazecor, helium); otherwise they use
     # XWayland, with a blurred window at a fractional scale.
     NIXOS_OZONE_WL = "1";
-    # nmtui's color scheme, in the colors of the terminal's palette: newt names
-    # the 16 ANSI slots, which ghostty maps onto Catppuccin Mocha (the theme
-    # module's palette). black is slot 0, Surface1, so the background is that
-    # and not Base: newt is given palette slots. slang, which draws it, may know
-    # a `default` color name (root=default,default would then be Text on Base);
-    # that is to be tried on screen in Task 3.7, not guessed here. lightgray
-    # is slot 7, Subtext1, the nearest slot to Text (white is slot 15, which is
-    # Subtext0, and dimmer); gray is slot 8, Surface2; brightmagenta is slot 13,
-    # the accent. Not seen on screen.
+    # nmtui's color scheme. newt names the 16 ANSI slots, which ghostty maps
+    # onto Catppuccin Mocha (the theme module's palette), and it takes the name
+    # `default` as well (tests/theme/nmtui.nix): the terminal's own foreground
+    # and background, Text on Base. So the window is `default`, and the old
+    # `black` background, which is slot 0 and so Surface1, is gone; `black`
+    # stays only as the text on an accent fill, the darkest of the 16 slots
+    # and the nearest to Crust. `black` is also the one wash the screen keeps,
+    # Surface1: the entry field, the selected row of an unfocused list, the
+    # empty part of a progress bar and the compact button. lightgray is slot 7, Subtext1, the nearest
+    # slot to Text (white is slot 15, Subtext0, and dimmer); gray is slot 8,
+    # Surface2; brightmagenta is slot 13, the accent. The shadow is drawn in the
+    # background's color, so there is none. Not seen on screen.
     NEWT_COLORS = lib.concatStringsSep " " [
-      "root=lightgray,black"
-      "window=lightgray,black"
-      "border=brightmagenta,black"
-      "title=brightmagenta,black"
+      "root=lightgray,default"
+      "window=lightgray,default"
+      "border=brightmagenta,default"
+      "title=brightmagenta,default"
       "button=black,brightmagenta"
       "actbutton=black,brightmagenta"
       "compactbutton=lightgray,black"
-      "checkbox=lightgray,black"
+      "checkbox=lightgray,default"
       "actcheckbox=black,brightmagenta"
       "entry=lightgray,black"
-      "disentry=gray,black"
-      "label=lightgray,black"
-      "listbox=lightgray,black"
+      "disentry=gray,default"
+      "label=lightgray,default"
+      "listbox=lightgray,default"
       "actlistbox=black,brightmagenta"
       "sellistbox=lightgray,black"
       "actsellistbox=black,brightmagenta"
-      "textbox=lightgray,black"
+      "textbox=lightgray,default"
       "acttextbox=black,brightmagenta"
-      "helpline=lightgray,black"
-      "roottext=lightgray,black"
+      "helpline=lightgray,default"
+      "roottext=lightgray,default"
       "emptyscale=lightgray,black"
-      "fullscale=brightmagenta,black"
-      "shadow=black,black"
+      "fullscale=brightmagenta,default"
+      "shadow=default,default"
     ];
   };
 
