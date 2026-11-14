@@ -256,7 +256,7 @@ The style becomes code in four places.
 
 ## ⚠️ Where the Fedora configs differ
 
-Verified against the configs on 2026-11-07. A later audit of the Fedora setup found eight more rows, which are added before the last row. Everything not listed already matches. The login greeter, the boot text and the NixOS logo have no Fedora counterpart, and the wallpaper and the lock image change by design (see *Identity*), so screenshots cannot judge them: they are judged against this document.
+Verified against the configs on 2026-11-07. A later audit of the Fedora setup found eight more rows, and a later review four more, which are added before the last row. Everything not listed already matches. The login greeter, the boot text and the NixOS logo have no Fedora counterpart, and the wallpaper and the lock image change by design (see *Identity*), so screenshots cannot judge them: they are judged against this document.
 
 | Config | Today | Ravnix |
 | --- | --- | --- |
@@ -277,6 +277,10 @@ Verified against the configs on 2026-11-07. A later audit of the Fedora setup fo
 | `sway-radial` | alpha 0.92 and an 80 ms opacity fade | opaque, no fade; the round ring stays |
 | MangoHud `background_alpha` | 0.8 | 1 |
 | starship git status, `❯` and `✗` weight | shown after the branch; bold | unchanged; the *Prompt* row now says so |
+| Waybar workspace button hover | the Surface0 wash only; the transparent border shows the wash | the wash plus a 2 px accent underline, as every other module has |
+| dunst `separator_height` | not set, so dunst's own 2 | 1, to keep to "1 px frames, 2 px markers" |
+| Neovim float frames (`FloatBorder`, `NoiceConfirmBorder`, `NoiceCmdlinePopupBorder`, the single borders of `floats.lua`) | Catppuccin's own, grey | a 1 px accent frame: a float is floating (rule 2) |
+| Helium frame and omnibox | Crust | Mantle: a strip that frames the work (rule 1) |
 | keyboard-layout diagram | rounded boxes | square boxes |
 
 ## 🧭 Left to the builder
