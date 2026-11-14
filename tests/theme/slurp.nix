@@ -42,6 +42,8 @@ let
   # The store path of the themed slurp, as plain text to look for.
   slurpPath = h: builtins.unsafeDiscardStringContext (toString (one h));
 
+  portal = mauve.config.xdg.portal.wlr.settings.screencast or { };
+
   extra =
     lib.optional (lib.length (slurps mauve) != 1) "the host has ${toString (lib.length (slurps mauve))} themed slurps, not one"
     ++ lib.optional (plainSlurps mauve != [ ]) "the unthemed slurp is still in the system packages"
@@ -60,7 +62,17 @@ let
     # transparent layer is drawn.
     ++ lib.optional (!has mauve "-b" "${roles.canvas}00") "the background (-b) is not clear"
     ++ lib.optional (!has mauve "-s" "${roles.canvas}00") "the selection (-s) is not clear"
-    ++ lib.optional (!has mauve "-B" "${roles.canvas}00") "the box highlight (-B) is not clear";
+    ++ lib.optional (!has mauve "-B" "${roles.canvas}00") "the box highlight (-B) is not clear"
+    # xdg-desktop-portal-wlr has a slurp of its own (the screen-share output
+    # chooser, in the portal's PATH), so it is told to run the themed one with
+    # the portal's own default arguments.
+    ++ lib.optional (
+      portal.chooser_type or null != "simple"
+    ) "the portal's chooser_type is ${toString (portal.chooser_type or null)}, not simple"
+    ++ lib.optional (
+      builtins.unsafeDiscardStringContext (portal.chooser_cmd or "")
+      != "${slurpPath mauve}/bin/slurp -f 'Monitor: %o' -or"
+    ) "the portal's chooser_cmd is not the themed slurp with the portal's default arguments: ${portal.chooser_cmd or "unset"}";
 in
 colors.check "theme-slurp" {
   inherit palette extra;

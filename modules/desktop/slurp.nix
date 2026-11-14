@@ -12,11 +12,20 @@
 #   -B  the highlight of the windows to choose from: clear as well
 #   -F  the font of the size box
 #
-# Clear is an alpha of 0 on Base, not a translucent fill: the style allows
-# no transparency, and an opaque Surface0 over the selection would hide what
-# is being captured. The size box (-d) takes its colors from slurp itself.
-# The module replaces slurp and grimshot in the system packages, which
-# sway.nix no longer lists.
+# An exception (docs/style.md, rule 9): the dim and the selection are clear, an
+# alpha of 0 on Base, which draws nothing. A Surface wash over the live screen
+# would either hide the pixels being captured (opaque) or need translucency
+# (forbidden), so the 1 px accent frame alone says where you are. The size box
+# (-d) takes its colors from slurp itself.
+#
+# xdg-desktop-portal-wlr calls a slurp of its own to choose the output when a
+# page shares the screen, and grim -g "$(slurp)" for the Screenshot portal;
+# both would show the stock white dim. The screen-share chooser is told to run
+# this slurp, with the portal's own default arguments (-f 'Monitor: %o' -or).
+# The Screenshot portal's own call is left as it is.
+#
+# The module replaces slurp and grimshot in the system packages, which sway.nix
+# no longer lists.
 { config, lib, pkgs, ... }:
 let
   inherit (config.ravnix.theme) roles lineWidth font;
@@ -47,6 +56,11 @@ let
   grimshot = pkgs.sway-contrib.grimshot.override { inherit slurp; };
 in
 {
+  xdg.portal.wlr.settings.screencast = {
+    chooser_type = "simple";
+    chooser_cmd = "${slurp}/bin/slurp -f 'Monitor: %o' -or";
+  };
+
   environment.systemPackages = [
     slurp
     grimshot
