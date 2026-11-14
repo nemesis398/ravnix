@@ -35,7 +35,7 @@ needs no state.
 | Exit | Means |
 | --- | --- |
 | 0 | done, or nothing to do (`add` of a word that is there with all its fields); an unavailable adapter, skipped, is no failure |
-| 1 | failed: the dictionary is missing; a first sync on the host that cannot reach every tool (an unavailable adapter, or `--adapter`); too big, not writable or not one (not UTF-8, a NUL, a git merge conflict); `remove` of a word that is not there; the lock was held for a minute; the state cannot be read or written; an adapter failed (the others are synced all the same); `RAVNIX_DICT_ADAPTERS` names an adapter that does not exist |
+| 1 | failed: the dictionary is missing; a first sync on the host that cannot reach every tool (an unavailable adapter, a tool whose read fails, or `--adapter`); too big, not writable or not one (not UTF-8, a NUL, a git merge conflict); `remove` of a word that is not there; the lock was held for a minute; the state cannot be read or written; an adapter failed (the others are synced all the same); `RAVNIX_DICT_ADAPTERS` names an adapter that does not exist |
 | 64 | bad usage: an unknown command or option, a missing or extra argument, a word or value the file cannot hold |
 
 ## The file
@@ -383,6 +383,14 @@ out would be merged by the watcher later, unattended: with LanguageTool's
 vault locked it fails with `languagetool: the vault is locked (unlock the
 vault first: rbw unlock); the first sync on this host must reach every
 tool, so it syncs nothing`, and `sync --adapter NAME` is refused until then.
+A tool whose read fails (LanguageTool misconfigured, refused or down, a
+Handy store that is not Handy's) fails it the same way: its own line,
+then `the first sync on this host must reach every tool, so it syncs
+nothing`, and no word goes into the file or a tool and no known list is
+written. A tool that was read but whose write fails does not hold the
+first sync back: its words are in the file and the known list, and the
+next sync gives it the words it lacks, since a word missing from a tool is
+never a removal.
 After it, a locked vault skips LanguageTool quietly, and one adapter may
 sync alone.
 
@@ -400,7 +408,9 @@ adapter between a removal and the sync that carries it, a tool restored
 from an old list, the emptied file, a merge conflict, a corrupt and a lost
 state, duplicates and empty words from a tool, a 50 000 word sync each way,
 a file changed while sync reads the tools, a removed word that turns up in a
-tool again and is added back, and an adapter that is unavailable.
+tool again and is added back, an adapter that is unavailable, and a first
+sync that cannot reach or read every tool (with the real LanguageTool and
+Handy adapters as well).
 
 The adapters are tested against real processes (`fakes.odin`): the test
 program itself, started through a link whose name says which part to play,

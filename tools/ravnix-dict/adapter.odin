@@ -249,7 +249,7 @@ sync_once :: proc(cfg: Config, list: []Adapter, allow_empty, partial: bool) -> O
 	// known list, which the watcher waits for, so a tool it left out (one
 	// adapter given, or LanguageTool behind a locked vault) would be merged
 	// later by the watcher, unattended. It reaches every tool, or syncs
-	// nothing.
+	// nothing; a tool whose read fails is caught after the reads, below.
 	if !known_found {
 		if partial {
 			warn(cfg, "the first sync on this host must reach every tool: run ravnix-dict sync without --adapter")
@@ -309,6 +309,12 @@ sync_once :: proc(cfg: Config, list: []Adapter, allow_empty, partial: bool) -> O
 		}
 		t.raw = raw
 		read_tool(cfg, t)
+	}
+	// A first sync that could not read a tool writes nothing: no word into
+	// the file or a tool, and no known list. Every write comes after this.
+	if !known_found && failed {
+		warn(cfg, "the first sync on this host must reach every tool, so it syncs nothing")
+		return .Failed
 	}
 
 	// New in a tool: into the dictionary, in the order of the adapters.

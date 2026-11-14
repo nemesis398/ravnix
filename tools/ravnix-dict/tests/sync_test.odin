@@ -255,6 +255,10 @@ an_adapter_that_fails_leaves_the_others_synced_and_exits_1 :: proc(t: ^testing.T
 	f := fixture(t)
 	defer fixture_destroy(f)
 	write_file(f, f.file, "a\n")
+	// Not the first sync on this host: that one syncs nothing when a read
+	// fails (a_first_sync_whose_read_of_a_tool_fails_syncs_nothing).
+	testing.expect_value(t, os.make_directory(f.state), nil)
+	write_file(f, join(f, "state", "known"), "# the last sync's words\na\n")
 	set(ALPHA, "from-alpha")
 	set(BETA, "from-beta")
 	set(GAMMA, "from-gamma")
@@ -666,4 +670,75 @@ the_first_sync_waits_until_every_tool_can_be_reached :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(r.out, "beta: skipped"))
 	r = run(f, list[:], "sync", "--adapter", "alpha")
 	testing.expect_value(t, r.code, 0)
+}
+
+// first_sync_fails says that a first sync with list fails and writes
+// nothing: no known list, no change to the file, no write to alpha.
+first_sync_fails :: proc(f: ^Fixture, list: []dict.Adapter, says: string, loc := #caller_location) {
+	known := join(f, "state", "known")
+	r := run(f, list, "sync")
+	testing.expectf(f.t, r.code == 1, "exit %d: %s", r.code, r.err, loc = loc)
+	testing.expectf(f.t, strings.contains(r.err, says) && strings.contains(r.err, "the first sync on this host must reach every tool, so it syncs nothing"), "%q", r.err, loc = loc)
+	testing.expectf(f.t, !os.exists(known), "a known list is written", loc = loc)
+	testing.expectf(f.t, read_file(f, f.file) == "a\n", "the file is changed: %q", read_file(f, f.file), loc = loc)
+	testing.expectf(f.t, stores[ALPHA].writes == 0, "alpha is written", loc = loc)
+}
+
+@(test)
+a_first_sync_whose_read_of_a_tool_fails_syncs_nothing :: proc(t: ^testing.T) {
+	// A tool that is there but whose read fails (a misconfigured or failing
+	// LanguageTool, a malformed Handy store) is left out as surely as one
+	// behind a locked vault: the known list it would leave is the gate the
+	// watcher waits for, and the watcher would then merge that tool alone.
+	f := fixture(t)
+	defer fixture_destroy(f)
+	context.allocator = f.a
+	write_file(f, f.file, "a\n")
+	set(ALPHA, "b")
+	set(BETA, "c")
+	stores[BETA].fail_read = true
+	core := [2]dict.Adapter{{name = "alpha", read = read_alpha, write = write_alpha}, {name = "beta", read = read_beta, write = write_beta}}
+	first_sync_fails(f, core[:], "beta: cannot read its words")
+	stores[BETA].fail_read = false
+
+	// LanguageTool: no vault item named, a refusal (403), a server error.
+	s := fake_lt_start(f)
+	defer fake_lt_stop(s)
+	fake_lt_set(s, "lt")
+	lt := [2]dict.Adapter {
+		{name = "alpha", read = read_alpha, write = write_alpha},
+		{name = "languagetool", read = tools.languagetool_read, write = tools.languagetool_write, unavailable = tools.languagetool_unavailable},
+	}
+	_ = lt_vault(f, true, LT_KEY, LT_USER)
+	tools.languagetool.rbw_item = ""
+	first_sync_fails(f, lt[:], "ravnix.dictionary.languagetool.rbwItem")
+	tools.languagetool_reset()
+	tools.languagetool.rbw_item, tools.languagetool.user, tools.languagetool.key = "", LT_USER, LT_KEY
+	fake_lt_answer(s, status = 403, body = `{"message":"no"}`)
+	first_sync_fails(f, lt[:], "403")
+	tools.languagetool_reset()
+	fake_lt_answer(s, status = 503, body = "down")
+	first_sync_fails(f, lt[:], "languagetool: cannot read its words")
+	requests, leaked := fake_lt_seen(s)
+	testing.expect_value(t, leaked, "")
+	// Only reads: no word was added to the account or deleted from it.
+	testing.expectf(t, !strings.contains(fake_lt_log(f, s), "add") && !strings.contains(fake_lt_log(f, s), "delete"), "%d requests: %s", requests, fake_lt_log(f, s))
+
+	// Handy, with a store that is not Handy's.
+	settings := handy_setup(f)
+	defer handy_reap()
+	write_file(f, settings, `{"settings": {"custom_words": "NixOS"}}`)
+	handy := [2]dict.Adapter {
+		{name = "alpha", read = read_alpha, write = write_alpha},
+		{name = "handy", read = tools.handy_read, write = tools.handy_write, must_stop = true},
+	}
+	first_sync_fails(f, handy[:], "handy: cannot read its words")
+	testing.expect_value(t, read_file(f, settings), `{"settings": {"custom_words": "NixOS"}}`)
+
+	// Every tool read: the first sync, and the known list.
+	write_file(f, settings, `{"settings": {"custom_words": ["h"]}}`)
+	r := run(f, handy[:], "sync")
+	testing.expectf(t, r.code == 0, "%s", r.err)
+	testing.expect(t, os.exists(join(f, "state", "known")))
+	testing.expect_value(t, read_file(f, f.file), "a\nb\nh\n")
 }
