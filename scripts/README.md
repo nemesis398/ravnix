@@ -14,6 +14,7 @@ of each script.
 | `lib/git-snapshot.sh` | lays out the index or a commit as plain files, for the checks to read what git will commit or push |
 | `hooks/stop-gate.sh` | the Claude Code Stop hook: the fast gate before the agent may stop |
 | `hooks/no-verify-guard.sh` | the Claude Code PreToolUse hook: refuses commands that skip or redirect the git hooks |
+| `style-parity.sh` | the config parity diff of the style acceptance: normalises generated configs and their stow sources (ini, toml, yaml, CSS, JSONC, Sway, shell and Python scripts) and prints the differences a config file does not allow; it takes the stow tree, the built trees and the config as arguments, and the config (with the personal values) lives in the private flake. Header of the script has the config format |
 | `try-huginn.sh` | boots the installed laptop from its raw disk in QEMU, only after `ravnix-disk-guard` allows it; packaged as `packages/try-huginn`, which `packages/try-huginn/README.md` describes |
 | `../.githooks/` | `pre-commit` (fast gate), `commit-msg` (boundary check on the message), `pre-push` (each pushed commit, message and ref name, then the full gate) |
 
