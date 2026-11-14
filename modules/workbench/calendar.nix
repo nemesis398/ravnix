@@ -31,14 +31,73 @@
 # that counts the pair and its two storages (feed_x_local, feed_x_remote), so
 # a feed x-local beside a feed x is refused too.
 #
-# Style (docs/style.md, rule 9, an exception): khal draws with the terminal's
-# 16 ANSI colors, which the terminal sets to Catppuccin Mocha; its dates and
+# Style (docs/style.md): ikhal's [palette] gives every element a 24-bit color,
+# written from the roles below. The focused row is Surface1, the cursor and
+# today are the accent (with Crust text on a fill), a focused frame is the
+# accent and an unfocused one Surface2, an alert is Crust on Red; its dates and
 # times are ISO unless the user sets programs.khal.locale.
 { config, lib, ... }:
 let
   os = config;
   user = os.ravnix.user.username;
   calendar = os.ravnix.calendar;
+  inherit (os.ravnix.theme) palette roles;
+
+  # One element of ikhal's palette: `key = fg, bg, mono, fg-high, bg-high`.
+  # The low-color pair stays empty (khal draws in 24-bit color), and `mono`
+  # carries bold where the dark theme had it.
+  element =
+    {
+      fg,
+      bg,
+      mono ? "",
+    }:
+    "'', '', '${mono}', '${fg}', '${bg}'";
+  on = fg: bg: {
+    inherit fg bg;
+  };
+  boldOn = fg: bg: {
+    inherit fg bg;
+    mono = "bold";
+  };
+  # Every element of khal's dark theme (khal/ui/colors.py).
+  paletteOf = lib.mapAttrs (_: element) {
+    header = on roles.label roles.dock;
+    footer = on roles.secondary roles.dock;
+    "line header" = boldOn roles.text roles.wash;
+    "alt header" = boldOn roles.label roles.canvas;
+    bright = boldOn roles.accent roles.canvas;
+    list = on roles.text roles.canvas;
+    "list focused" = boldOn roles.text roles.selected;
+    edit = on roles.text roles.wash;
+    "edit focus" = boldOn roles.text roles.selected;
+    button = on roles.text roles.wash;
+    "button focused" = boldOn roles.deepest roles.accent;
+    "reveal focus" = on roles.text roles.wash;
+    "today focus" = boldOn roles.deepest roles.accent;
+    today = boldOn roles.accent roles.canvas;
+    "date header" = on roles.secondary roles.canvas;
+    "date header focused" = boldOn roles.text roles.selected;
+    "date header selected" = on roles.text roles.wash;
+    dayname = on roles.secondary roles.canvas;
+    monthname = on roles.secondary roles.canvas;
+    weeknumber_right = on roles.muted roles.canvas;
+    alert = on roles.deepest palette.red;
+    mark = on roles.accent roles.wash;
+    frame = on roles.line roles.canvas;
+    "frame focus" = on roles.accent roles.canvas;
+    "frame focus color" = on roles.accent roles.canvas;
+    "frame focus top" = on roles.accent roles.canvas;
+    eventcolumn = on roles.text roles.canvas;
+    "eventcolumn focus" = on roles.text roles.canvas;
+    calendar = on roles.text roles.canvas;
+    "calendar focus" = on roles.text roles.canvas;
+    editbx = on roles.text roles.wash;
+    editcp = on roles.deepest roles.accent;
+    popupbg = boldOn roles.text roles.dock;
+    popupper = on roles.text roles.selected;
+    caption = boldOn roles.label roles.canvas;
+  };
   # A feed's name as vdirsyncer can have it in a section name, and the
   # sections the feed makes: its pair and the two storages of it.
   spelled = name: lib.replaceStrings [ "." "-" ] [ "_" "_" ] name;
@@ -227,6 +286,7 @@ in
             default_calendar = calendar.defaultCalendar;
           };
           keybindings.save = "ctrl s";
+          palette = paletteOf;
         };
       };
     }
