@@ -183,6 +183,11 @@ let
       lib.concatMap
         (
           { what, text }:
+          let
+            # What stands before the setup command: the advice must come
+            # first, where someone who copies the command reads it.
+            before = lib.head (lib.splitString setupLine text);
+          in
           lib.optional (
             !(
               lib.hasInfix setupLine text
@@ -190,6 +195,30 @@ let
               && lib.hasInfix "systemd-ask-password -n" text
             )
           ) "${what} lacks the setup command for ${storePath}"
+          ++ lib.optional (
+            !lib.hasInfix "a password of its own" before
+          ) "${what} does not advise a keyring password of its own before the setup command"
+          # That password is never typed again, so it has to be kept.
+          ++ lib.optional (
+            !lib.hasInfix "password manager" before
+          ) "${what} does not say to keep the keyring's own password in the password manager"
+          # The events after which the credential no longer decrypts.
+          ++ map (e: "${what} does not name ${e} as a reason to redo the setup") (
+            lib.filter (e: !lib.hasInfix e text) [
+              "TPM"
+              "firmware update"
+              "reinstall"
+              "new machine"
+            ]
+          )
+          # Encrypted at rest, but it now opens for anyone who can log in.
+          ++ lib.optional (
+            !lib.hasInfix "whoever can log in as you" text
+          ) "${what} does not say that the keyring now opens for whoever can log in as you"
+          # systemd-ask-password masks the input; it does not hide it.
+          ++ lib.optional (
+            lib.hasInfix "without echo" text || !lib.hasInfix "masked" text
+          ) "${what} says the prompt hides the input; systemd-ask-password masks it"
         )
         [
           {
@@ -198,7 +227,8 @@ let
           }
           {
             what = "docs/install-from-another-distro.md";
-            text = installDoc;
+            # The doc's section about the keyring.
+            text = lib.last (lib.splitString "the keyring for a YubiKey tap" installDoc);
           }
         ];
 

@@ -167,9 +167,10 @@ in
         gives PAM no password, such as a YubiKey tap at the greeter. Helium
         keeps its cookie key ("Chromium Safe Storage") in that keyring, and
         without the unlock it asks for the keyring's password at every
-        start. The keyring stays encrypted with its password. The password
-        is kept as a systemd credential of your user, encrypted for this
-        machine: its TPM2 when it has one, the host key in
+        start. The keyring stays encrypted with its password, but it now
+        opens for whoever can log in as you, with a tap as well. The
+        password is kept as a systemd credential of your user, encrypted
+        for this machine: its TPM2 when it has one, the host key in
         `/var/lib/systemd/`, the machine ID, your UID and your user name.
         Right after the login, before the graphical session and the login
         layout start, the user service `ravnix-keyring-unlock` hands it to
@@ -178,8 +179,21 @@ in
         there, when the keyring is already unlocked (a password login), or
         when the password is wrong.
 
-        Set it up once, on the laptop, in a terminal. The password is
-        asked without echo and never stands on a command line:
+        First give the keyring a password of its own (with Seahorse, for
+        example), and keep it in your password manager. Every program that
+        runs as you can decrypt the credential again
+        (`systemd-creds --user decrypt`), as it can read every secret of the
+        unlocked keyring. If the keyring's password were your login
+        password, which is how PAM creates it, such a program would learn
+        your login password, and with it sudo. With a password of its own,
+        no login unlocks the keyring but this service, so you never type
+        that password again; you need it to redo the setup, and without it
+        every item of the keyring is lost.
+
+        Then set it up once, on the laptop, in a terminal.
+        `systemd-ask-password` shows the input masked, one asterisk per
+        character (press Tab first to show nothing at all), and the password
+        never stands on a command line:
 
         ```sh
         mkdir -p -m 0700 ~/.config/credstore.encrypted
@@ -189,19 +203,15 @@ in
         ```
 
         Run the same two lines again whenever the keyring's password
-        changes. A password login with the new password still unlocks it,
-        but after a tap the service warns that the stored password does not
-        unlock the keyring, and leaves it locked. Read what it did with
-        `journalctl --user -u ravnix-keyring-unlock`. Deleting the file
-        turns the unlock off without a rebuild.
-
-        Every program that runs as you can decrypt the credential again
-        (`systemd-creds --user decrypt`), as it can read every secret of the
-        unlocked keyring. If the keyring's password is your login password,
-        which is how PAM creates it, such a program learns your login
-        password, and with it sudo. So give the keyring a password of its
-        own (with Seahorse, for example) before you store it here; the
-        unlock does not need the two to match.
+        changes, and whenever the credential no longer decrypts: after the
+        TPM was cleared (a firmware update or a firmware reset can clear a
+        firmware TPM), after a reinstall, and on a new machine. Until then a
+        tap leaves the keyring locked. After a change of the password the
+        service warns that the stored one does not unlock the keyring; when
+        the credential no longer decrypts, the service fails with systemd's
+        decryption error, and `systemctl --user --failed` lists it. Read
+        what it did with `journalctl --user -u ravnix-keyring-unlock`.
+        Deleting the file turns the unlock off without a rebuild.
       '';
     };
 
