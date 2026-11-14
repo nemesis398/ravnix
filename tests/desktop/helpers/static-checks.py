@@ -189,7 +189,11 @@ def main():
         expect(re.search(r"^bindsym XF86Display\s+exec sway-mirror$", flaptop, re.M), label("50-laptop.conf: F7 (XF86Display) does not run sway-mirror"))
         expect(re.search(r"^bindsym \$mod\+p\s+exec sway-mirror$", flaptop, re.M), label("50-laptop.conf: F7 as Super+P does not run sway-mirror"))
         for key in ("XF86RFKill", "XF86WLAN"):
-            expect(re.search(rf"^bindsym --locked {key}\s+exec sway-airplane$", flaptop, re.M), label(f"50-laptop.conf: F8 ({key}) is not bound locked to sway-airplane"))
+            expect(re.search(rf"^bindsym --locked {key}\s+exec sway-airplane key$", flaptop, re.M), label(f"50-laptop.conf: F8 ({key}) is not bound locked to `sway-airplane key` (the kernel toggles; a plain toggle here would undo it)"))
+            expect(re.search(rf"^\s+bindsym --locked {key}\s+exec sway-airplane key$", flaptop, re.M), label(f"50-laptop.conf: game mode does not repeat F8 ({key})"))
+        for key in ("XF86Display", r"\$mod\+p"):
+            expect(re.search(rf"^\s+bindsym {key}\s+exec sway-mirror$", flaptop, re.M), label(f"50-laptop.conf: game mode does not repeat F7 ({key})"))
+        expect(not re.search(r"exec sway-airplane\s*$", flaptop, re.M), label("50-laptop.conf runs sway-airplane without key or toggle"))
         # F10 and F12 were measured and stay as they are (F9 and F11 stay unbound: their keysyms are not read).
         expect(re.search(r"^bindsym \$mod\+l\s+exec \$lock$", flaptop, re.M), label("50-laptop.conf lost F10 (Super+L locks)"))
         expect(re.search(r"^bindsym XF86Calculator\s+exec \$calc$", flaptop, re.M), label("50-laptop.conf lost F12 (XF86Calculator)"))

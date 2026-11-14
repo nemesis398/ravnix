@@ -1,51 +1,147 @@
 #!/usr/bin/env bash
-# sway-airplane — switch every radio off, or back on, and say which it is now.
-# The F8 key runs it.
+# sway-airplane — airplane mode for every radio, and the notification of it.
 #
-#   sway-airplane
+#   sway-airplane key      the F8 key runs this (XF86RFKill, XF86WLAN)
+#   sway-airplane toggle   switch every radio off, or back on, on request
 #
-# One press toggles. Airplane mode is on when no radio is active (soft- and
-# hard-unblocked); a press then unblocks everything, otherwise it blocks
-# everything. The notification names the state read AFTER the change, so a
-# radio the hardware switch holds, or a change rfkill refused, is not claimed.
+# `key` does NOT toggle. NixOS kernels have RFKILL_INPUT=y, so the kernel's
+# rfkill-input handler already toggles on KEY_RFKILL (all radios) and KEY_WLAN
+# (Wi-Fi only) from every input device, the same events Sway sees, and it is
+# done before Sway has started this script. A second toggle here would undo it.
+# So `key`:
+#   1. reads the radios; if they are as this script left them at the last run
+#      ($XDG_RUNTIME_DIR/sway-airplane.state), the kernel has not acted yet (or
+#      does not act on this key), so it waits for a change, up to WAIT_MS
+#      milliseconds (default 1000), polling every 50 ms;
+#   2. nothing changed: it reports the state, says "unchanged", and toggles
+#      nothing;
+#   3. otherwise makes every radio agree with the Wi-Fi one (so a KEY_WLAN that
+#      moved only Wi-Fi moves Bluetooth too: `rfkill block all` or `unblock
+#      all`), and reports the state it reads back.
+# The first press since login has no state to compare with: the radios as read
+# are taken as the kernel's result.
+#
+# `toggle` is the explicit switch for a menu or a binding of a key the kernel
+# ignores: on when no radio is active (soft- and hard-unblocked), and then it
+# unblocks everything, otherwise it blocks everything.
+#
+# Leaving airplane mode unblocks ALL radios, including one switched off on
+# purpose before (typically Bluetooth); the script does not remember that.
+#
+# The notification names the state read AFTER the change, so a radio the
+# hardware switch holds, or a change rfkill refused, is not claimed.
 #
 # The session user may use /dev/rfkill: systemd's 70-uaccess.rules tags it, so
 # the user on the active seat gets an ACL. NetworkManager and BlueZ follow the
 # rfkill state, and systemd-rfkill restores it after a boot.
 set -uo pipefail
 
-# Overridable, so that the toggle can be tested without radios
+# Overridable, so that the logic can be tested without radios
 # (tests/desktop/helpers/script-tests.sh).
 RFKILL=${RFKILL:-rfkill}
 NOTIFY_SEND=${NOTIFY_SEND:-notify-send}
+WAIT_MS=${WAIT_MS:-1000}
 
-[ $# -eq 0 ] || { echo "usage: sway-airplane" >&2; exit 2; }
+usage() {
+  echo "usage: sway-airplane key|toggle" >&2
+  exit 2
+}
+
+case ${1:-}:$# in
+  key:1|toggle:1) mode=$1 ;;
+  *) usage ;;
+esac
+# A number is digits and nothing else: the value goes into arithmetic.
+case $WAIT_MS in
+  ''|*[!0-9]*) echo "sway-airplane: WAIT_MS is not a number: $WAIT_MS" >&2; exit 2 ;;
+esac
+
+statefile=
+[ -z "${XDG_RUNTIME_DIR:-}" ] || statefile=$XDG_RUNTIME_DIR/sway-airplane.state
 
 notify() {
   "$NOTIFY_SEND" --app-name sway --expire-time 1500 \
     --hint string:x-canonical-private-synchronous:airplane --transient "$1" 2>/dev/null || true
 }
 
-# on | off | none. Fails when rfkill does or its answer is no JSON.
-state() {
-  local json
-  json=$("$RFKILL" -J 2>/dev/null) || return 1
-  jq -r '[.. | objects | select(has("soft") and has("hard"))] as $radios
-         | if ($radios | length) == 0 then "none"
-           elif any($radios[]; .soft == "unblocked" and .hard == "unblocked") then "off"
-           else "on" end' <<<"$json" 2>/dev/null
+fail_read() {
+  echo "sway-airplane: cannot read the radios with rfkill" >&2
+  notify "Airplane mode: cannot read the radios"
+  exit 1
 }
 
-before=$(state) || { echo "sway-airplane: cannot read the radios with rfkill" >&2; notify "Airplane mode: cannot read the radios"; exit 1; }
-case $before in
-  none) notify "Airplane mode: no radios"; exit 1 ;;
-  on) want=off; action=unblock ;;
-  off) want=on; action=block ;;
-  *) echo "sway-airplane: odd state: $before" >&2; exit 1 ;;
-esac
+# Sets json, sig (one entry per radio) and airplane (on | off | none). Fails
+# when rfkill does or its answer is no JSON.
+read_radios() {
+  json=$("$RFKILL" -J 2>/dev/null) || return 1
+  sig=$(jq -r '[.. | objects | select(has("soft") and has("hard")) | "\(.type // "?"):\(.id // "?"):\(.soft):\(.hard)"] | sort | join(",")' <<<"$json" 2>/dev/null) || return 1
+  airplane=$(jq -r '[.. | objects | select(has("soft") and has("hard"))] as $radios
+         | if ($radios | length) == 0 then "none"
+           elif any($radios[]; .soft == "unblocked" and .hard == "unblocked") then "off"
+           else "on" end' <<<"$json" 2>/dev/null) || return 1
+}
 
-"$RFKILL" "$action" all 2>/dev/null
+save() {
+  [ -z "$statefile" ] || printf '%s\n' "$sig" >"$statefile" 2>/dev/null || true
+}
 
-after=$(state) || { notify "Airplane mode: cannot read the radios"; exit 1; }
-notify "Airplane mode: $after"
-[ "$after" = "$want" ] || { echo "sway-airplane: rfkill $action all did not take" >&2; exit 1; }
+read_radios || fail_read
+if [ "$airplane" = none ]; then
+  notify "Airplane mode: no radios"
+  exit 1
+fi
+
+if [ "$mode" = toggle ]; then
+  case $airplane in
+    on) want=off; action=unblock ;;
+    *) want=on; action=block ;;
+  esac
+  "$RFKILL" "$action" all 2>/dev/null
+  read_radios || { notify "Airplane mode: cannot read the radios"; exit 1; }
+  save
+  notify "Airplane mode: $airplane"
+  [ "$airplane" = "$want" ] || { echo "sway-airplane: rfkill $action all did not take" >&2; exit 1; }
+  exit 0
+fi
+
+# key
+base=
+[ -z "$statefile" ] || base=$(cat "$statefile" 2>/dev/null || true)
+if [ -n "$base" ] && [ "$sig" = "$base" ]; then
+  waited=0
+  while [ "$waited" -lt "$WAIT_MS" ] && [ "$sig" = "$base" ]; do
+    sleep 0.05
+    waited=$(( waited + 50 ))
+    read_radios || fail_read
+  done
+  if [ "$sig" = "$base" ]; then
+    echo "sway-airplane: no radio changed within ${WAIT_MS} ms of the key" >&2
+    notify "Airplane mode: $airplane (unchanged, the key changed nothing)"
+    exit 0
+  fi
+fi
+
+# Every radio the hardware switch does not hold takes the Wi-Fi radio's state.
+agree() {
+  local wlan
+  wlan=$(jq -r '[.. | objects | select(has("soft") and .type == "wlan")][0].soft // empty' <<<"$json" 2>/dev/null)
+  [ -n "$wlan" ] || return 0
+  [ "$(jq -r --arg w "$wlan" '[.. | objects | select(has("soft") and .hard == "unblocked" and .soft != $w)] | length' <<<"$json" 2>/dev/null)" = 0 ] && return 0
+  if [ "$wlan" = blocked ]; then action=block; else action=unblock; fi
+  "$RFKILL" "$action" all 2>/dev/null
+  read_radios || return 2
+  # Still apart: rfkill did not take it.
+  [ "$(jq -r --arg w "$wlan" '[.. | objects | select(has("soft") and .hard == "unblocked" and .soft != $w)] | length' <<<"$json" 2>/dev/null)" = 0 ] || return 1
+}
+agree
+status=$?
+save
+if [ "$status" = 2 ]; then
+  notify "Airplane mode: cannot read the radios"
+  exit 1
+elif [ "$status" = 1 ]; then
+  echo "sway-airplane: rfkill $action all did not take" >&2
+  notify "Airplane mode: $airplane (rfkill did not change every radio)"
+  exit 1
+fi
+notify "Airplane mode: $airplane"

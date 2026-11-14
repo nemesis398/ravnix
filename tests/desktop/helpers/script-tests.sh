@@ -700,25 +700,36 @@ mirror_run '[{"name":"eDP-1","active":true}]' running
 ok "sway-mirror"
 
 # ── sway-airplane ────────────────────────────────────────────────────────────
+# The kernel (RFKILL_INPUT=y on NixOS) already toggles on the F8 key, so `key`
+# does not toggle: it waits for the kernel's change, makes every radio agree
+# with the Wi-Fi one, and reports what it reads. `toggle` is the explicit one.
 air=$(script sway-airplane)
 ar=$work/ar
 mkdir -p "$ar"
-# A stand-in rfkill: ar/soft holds the soft state of the two radios (blocked or
-# unblocked), ar/hard the hardware state of the Wi-Fi one.
+# A stand-in rfkill with two radios: ar/soft-wlan and ar/soft-bt hold their soft
+# state (blocked or unblocked), ar/hard the hardware state of the Wi-Fi one.
+# With ar/flip-at N the Nth read of the state finds both blocked, as when the
+# kernel is slow. With ar/refuse a block or unblock changes nothing.
 cat >"$ar/rfkill" <<STUB
 #!/bin/sh
 [ -f "$ar/dead" ] && { echo "rfkill: cannot open /dev/rfkill" >&2; exit 1; }
 printf '%s\n' "\$*" >>"$ar/calls"
 case "\$*" in
-  "-J") cat <<JSON
+  "-J")
+    n=\$(( \$(cat "$ar/jcount" 2>/dev/null || echo 0) + 1 ))
+    echo "\$n" >"$ar/jcount"
+    if [ -f "$ar/flip-at" ] && [ "\$n" = "\$(cat "$ar/flip-at")" ]; then
+      echo blocked >"$ar/soft-wlan"; echo blocked >"$ar/soft-bt"
+    fi
+    cat <<JSON
 {"rfkilldevices": [
-  {"id": 0, "type": "wlan", "device": "phy0", "soft": "\$(cat "$ar/soft")", "hard": "\$(cat "$ar/hard")"},
-  {"id": 1, "type": "bluetooth", "device": "hci0", "soft": "\$(cat "$ar/soft")", "hard": "unblocked"}
+  {"id": 0, "type": "wlan", "device": "phy0", "soft": "\$(cat "$ar/soft-wlan")", "hard": "\$(cat "$ar/hard")"},
+  {"id": 1, "type": "bluetooth", "device": "hci0", "soft": "\$(cat "$ar/soft-bt")", "hard": "unblocked"}
 ]}
 JSON
   ;;
-  "block all") [ -f "$ar/refuse" ] || echo blocked >"$ar/soft" ;;
-  "unblock all") [ -f "$ar/refuse" ] || echo unblocked >"$ar/soft" ;;
+  "block all") [ -f "$ar/refuse" ] || { echo blocked >"$ar/soft-wlan"; echo blocked >"$ar/soft-bt"; } ;;
+  "unblock all") [ -f "$ar/refuse" ] || { echo unblocked >"$ar/soft-wlan"; echo unblocked >"$ar/soft-bt"; } ;;
   *) exit 2 ;;
 esac
 STUB
@@ -727,49 +738,137 @@ cat >"$ar/notify" <<STUB
 printf '%s\n' "\$*" >>"$ar/notifications"
 STUB
 chmod +x "$ar/rfkill" "$ar/notify"
-air_run() { # air_run SOFT [HARD]: one press
-  rm -f "$ar/dead" "$ar/refuse"
-  printf '%s\n' "$1" >"$ar/soft"
-  printf '%s\n' "${2:-unblocked}" >"$ar/hard"
-  : >"$ar/calls"; : >"$ar/notifications"
-  RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" >/dev/null 2>&1
+ar_radios() { # ar_radios WLAN BT [HARD]: the stand-in's state
+  printf '%s\n' "$1" >"$ar/soft-wlan"
+  printf '%s\n' "$2" >"$ar/soft-bt"
+  printf '%s\n' "${3:-unblocked}" >"$ar/hard"
 }
-air_run unblocked
-[ "$(cat "$ar/soft")" = blocked ] || bad "sway-airplane does not switch the radios off"
-grep -qF 'Airplane mode: on' "$ar/notifications" || bad "switching airplane mode on shows: $(cat "$ar/notifications")"
+ar_run() { # ar_run WAIT_MS ARGS...: one run; leaves the status in $airc
+  local wait=$1
+  shift
+  : >"$ar/calls"; : >"$ar/notifications"; rm -f "$ar/jcount"
+  WAIT_MS=$wait RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" "$@" >/dev/null 2>&1
+  airc=$?
+}
+ar_changed() { grep -Eq '^(un)?block' "$ar/calls"; }
+ar_prime() { # ar_prime WLAN BT: a first press, which records the state as the baseline
+  rm -f "$ar/dead" "$ar/refuse" "$ar/flip-at" "$XDG_RUNTIME_DIR/sway-airplane.state"
+  ar_radios "$1" "$2"
+  ar_run 0 key
+}
+ar_press() { # ar_press WLAN BT [HARD]: the kernel has changed the radios, then the key's script runs
+  ar_radios "$1" "$2" "${3:-unblocked}"
+  ar_run 300 key
+}
+
+# The kernel blocked everything before the script ran: report it, change nothing.
+ar_prime unblocked unblocked
+ar_press blocked blocked
+[ "$airc" = 0 ] || bad "sway-airplane key exits $airc after the kernel blocked all radios"
+! ar_changed || bad "sway-airplane key toggles again after the kernel did: $(cat "$ar/calls")"
+grep -qF 'Airplane mode: on' "$ar/notifications" || bad "after the kernel blocked all radios the notification is: $(cat "$ar/notifications")"
 grep -q 'synchronous:airplane' "$ar/notifications" || bad "the airplane notification does not replace the one before"
-air_run blocked
-[ "$(cat "$ar/soft")" = unblocked ] || bad "sway-airplane does not switch the radios back on"
-grep -qF 'Airplane mode: off' "$ar/notifications" || bad "switching airplane mode off shows: $(cat "$ar/notifications")"
-# A radio the hardware switch holds stays blocked: the notification says what is.
-air_run blocked blocked
-grep -qF 'Airplane mode: off' "$ar/notifications" || bad "with the Wi-Fi hard-blocked the state read after the change is wrong: $(cat "$ar/notifications")"
-# The change did not take: say so, do not claim it.
-air_run unblocked
-printf 'unblocked\n' >"$ar/soft"; : >"$ar/refuse"; : >"$ar/notifications"
-RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" >/dev/null 2>&1
-airc=$?
-[ "$airc" = 1 ] || bad "sway-airplane exits $airc when rfkill did not change"
-! grep -qF 'Airplane mode: on' "$ar/notifications" || bad "sway-airplane claims airplane mode though rfkill did not change: $(cat "$ar/notifications")"
-grep -qF 'Airplane mode' "$ar/notifications" || bad "sway-airplane is silent when rfkill refuses the change"
-# No access to /dev/rfkill: a notification, status 1.
-: >"$ar/dead"; : >"$ar/notifications"
-RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" >/dev/null 2>&1
-[ $? = 1 ] && [ -s "$ar/notifications" ] || bad "sway-airplane is silent or exits 0 when rfkill cannot be used"
-rm -f "$ar/dead"
+# ...and the other way.
+ar_press unblocked unblocked
+! ar_changed || bad "sway-airplane key toggles again after the kernel unblocked all: $(cat "$ar/calls")"
+grep -qF 'Airplane mode: off' "$ar/notifications" || bad "after the kernel unblocked all radios the notification is: $(cat "$ar/notifications")"
+# Only Wi-Fi moved (a KEY_WLAN): Bluetooth follows.
+ar_prime unblocked unblocked
+ar_press blocked unblocked
+[ "$airc" = 0 ] || bad "sway-airplane key exits $airc after a Wi-Fi-only block"
+[ "$(cat "$ar/soft-bt")" = blocked ] || bad "a Wi-Fi-only block leaves Bluetooth on"
+grep -qF 'Airplane mode: on' "$ar/notifications" || bad "after a Wi-Fi-only block the notification is: $(cat "$ar/notifications")"
+ar_prime blocked blocked
+ar_press unblocked blocked
+[ "$(cat "$ar/soft-bt")" = unblocked ] || bad "a Wi-Fi-only unblock leaves Bluetooth off"
+grep -qF 'Airplane mode: off' "$ar/notifications" || bad "after a Wi-Fi-only unblock the notification is: $(cat "$ar/notifications")"
+# The kernel is slow: the change shows up while the script waits.
+ar_prime unblocked unblocked
+ar_radios unblocked unblocked
+echo 3 >"$ar/flip-at"
+ar_run 3000 key
+rm -f "$ar/flip-at"
+[ "$airc" = 0 ] || bad "sway-airplane key (late kernel change) exits $airc"
+! ar_changed || bad "sway-airplane key toggles after a late kernel change: $(cat "$ar/calls")"
+grep -qF 'Airplane mode: on' "$ar/notifications" || bad "after a late kernel change the notification is: $(cat "$ar/notifications")"
+# Nothing changed within the time: report the state, do not toggle, say so.
+ar_prime unblocked unblocked
+ar_press unblocked unblocked
+[ "$airc" = 0 ] || bad "sway-airplane key exits $airc when nothing changed"
+! ar_changed || bad "sway-airplane key toggles when the kernel did nothing: $(cat "$ar/calls")"
+grep -qF 'Airplane mode: off' "$ar/notifications" || bad "with nothing changed the notification does not give the state: $(cat "$ar/notifications")"
+grep -qiF 'unchanged' "$ar/notifications" || bad "with nothing changed the notification does not say so: $(cat "$ar/notifications")"
+[ "$(cat "$ar/soft-wlan")" = unblocked ] || bad "sway-airplane key changed the radios when nothing changed"
+# No baseline (the first press since login): the state read is the result.
+rm -f "$XDG_RUNTIME_DIR/sway-airplane.state"
+ar_press blocked blocked
+! ar_changed || bad "sway-airplane key toggles on the first press: $(cat "$ar/calls")"
+grep -qF 'Airplane mode: on' "$ar/notifications" || bad "the first press shows: $(cat "$ar/notifications")"
+[ -s "$XDG_RUNTIME_DIR/sway-airplane.state" ] || bad "sway-airplane key leaves no baseline for the next press"
+# rfkill refuses to bring Bluetooth along: say what is, exit 1.
+ar_prime unblocked unblocked
+: >"$ar/refuse"
+ar_press blocked unblocked
+[ "$airc" = 1 ] || bad "sway-airplane key exits $airc when rfkill refuses"
+! grep -qF 'Airplane mode: on' "$ar/notifications" || bad "sway-airplane key claims airplane mode though Bluetooth is still on: $(cat "$ar/notifications")"
+grep -qF 'Airplane mode' "$ar/notifications" || bad "sway-airplane key is silent when rfkill refuses"
+rm -f "$ar/refuse"
+# A Wi-Fi radio the hardware switch holds, with everything soft-blocked: on,
+# and nothing to change.
+ar_prime unblocked unblocked
+ar_press blocked blocked blocked
+! ar_changed || bad "sway-airplane key changes radios that already agree: $(cat "$ar/calls")"
+grep -qF 'Airplane mode: on' "$ar/notifications" || bad "everything blocked, Wi-Fi by the hardware switch too: $(cat "$ar/notifications")"
+
+# toggle: the explicit one. It flips, whatever the kernel did.
+rm -f "$ar/dead" "$ar/refuse" "$ar/flip-at"
+ar_radios unblocked unblocked
+ar_run 0 toggle
+[ "$(cat "$ar/soft-wlan")" = blocked ] && [ "$(cat "$ar/soft-bt")" = blocked ] || bad "sway-airplane toggle does not switch the radios off"
+grep -qF 'Airplane mode: on' "$ar/notifications" || bad "toggling airplane mode on shows: $(cat "$ar/notifications")"
+ar_radios blocked blocked
+ar_run 0 toggle
+[ "$(cat "$ar/soft-wlan")" = unblocked ] || bad "sway-airplane toggle does not switch the radios back on"
+grep -qF 'Airplane mode: off' "$ar/notifications" || bad "toggling airplane mode off shows: $(cat "$ar/notifications")"
+ar_radios blocked blocked blocked
+ar_run 0 toggle
+grep -qF 'Airplane mode: off' "$ar/notifications" || bad "toggle with the Wi-Fi hard-blocked reads the wrong state: $(cat "$ar/notifications")"
+ar_radios unblocked unblocked
+: >"$ar/refuse"
+ar_run 0 toggle
+[ "$airc" = 1 ] || bad "sway-airplane toggle exits $airc when rfkill did not change"
+! grep -qF 'Airplane mode: on' "$ar/notifications" || bad "sway-airplane toggle claims airplane mode though rfkill did not change: $(cat "$ar/notifications")"
+grep -qF 'Airplane mode' "$ar/notifications" || bad "sway-airplane toggle is silent when rfkill refuses"
+rm -f "$ar/refuse"
+
+# No access to /dev/rfkill: a notification, status 1, both ways.
+for mode in key toggle; do
+  : >"$ar/dead"
+  ar_run 0 "$mode"
+  [ "$airc" = 1 ] && [ -s "$ar/notifications" ] || bad "sway-airplane $mode is silent or exits $airc when rfkill cannot be used"
+  rm -f "$ar/dead"
+done
 # A machine without radios.
 cat >"$ar/rfkill-none" <<STUB
 #!/bin/sh
 case "\$*" in -J) echo '{"rfkilldevices": []}' ;; *) printf '%s\n' "\$*" >>"$ar/calls-none" ;; esac
 STUB
 chmod +x "$ar/rfkill-none"
-: >"$ar/notifications"; rm -f "$ar/calls-none"
-RFKILL=$ar/rfkill-none NOTIFY_SEND=$ar/notify "$air" >/dev/null 2>&1
-airc=$?
-[ "$airc" = 1 ] && [ ! -e "$ar/calls-none" ] || bad "sway-airplane exits $airc or acts on a machine without radios"
-grep -qiF 'no radio' "$ar/notifications" || bad "sway-airplane does not say a machine has no radios: $(cat "$ar/notifications")"
-RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" frobnicate >/dev/null 2>&1
-[ $? = 2 ] || bad "sway-airplane takes an argument"
+for mode in key toggle; do
+  : >"$ar/notifications"; rm -f "$ar/calls-none"
+  RFKILL=$ar/rfkill-none NOTIFY_SEND=$ar/notify "$air" "$mode" >/dev/null 2>&1
+  airc=$?
+  [ "$airc" = 1 ] && [ ! -e "$ar/calls-none" ] || bad "sway-airplane $mode exits $airc or acts on a machine without radios"
+  grep -qiF 'no radio' "$ar/notifications" || bad "sway-airplane $mode does not say a machine has no radios: $(cat "$ar/notifications")"
+done
+for args in "" frobnicate "key extra" "toggle now" "-J"; do
+  # shellcheck disable=SC2086
+  RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" $args >/dev/null 2>&1
+  [ $? = 2 ] || bad "sway-airplane '$args' is not refused with status 2"
+done
+WAIT_MS='1;x' RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" key >/dev/null 2>&1
+[ $? = 2 ] || bad "sway-airplane takes a WAIT_MS that is no number"
+rm -f "$XDG_RUNTIME_DIR/sway-airplane.state"
 ok "sway-airplane"
 
 # ── sway-wait-sni ────────────────────────────────────────────────────────────
