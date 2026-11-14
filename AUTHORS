@@ -11,20 +11,21 @@ project, which is free software under the same license, the GNU Affero General
 Public License, version 3 or (at your option) any later version. It is copied
 unchanged.
 
-assets/nixos-logomark.svg is the NixOS logomark. It is derived from
-the colour snowflake of NixOS/nixos-artwork (icons/, installed by the
-nixos-icons package as nix-snowflake.svg), revision
+assets/nixos-logomark.svg is the NixOS logomark. It is derived from the color
+snowflake of NixOS/nixos-artwork (the file that the nixos-icons package
+installs as nix-snowflake.svg), at revision
 9d2cdedd73d64a068214482902adea3d02783ba8.
 
   Title:   NixOS logomark (nix-snowflake)
-  Author:  the NixOS contributors, NixOS/nixos-artwork
-  Source:  https://github.com/NixOS/nixos-artwork
+  Author:  Simon Frankau (original design), revised by Tim Cuthbertson
+  Source:  https://github.com/NixOS/nixos-artwork/tree/9d2cdedd73d64a068214482902adea3d02783ba8/logo
   License: Creative Commons Attribution 4.0 International (CC BY 4.0),
            https://creativecommons.org/licenses/by/4.0/
 
 Changes: colors changed. The gradient fills are replaced by two classes, one
-for each set of three arms, whose fills backdrop takes from the theme (Blue and
-Sapphire); the editor's metadata is dropped. The shapes, their rotations and
-their proportions are the original's, and backdrop draws the logo without
-rotating, mirroring, cropping or distorting it. The credit implies no
+for each set of three arms, whose fills backdrop takes from the theme (Mauve
+and Blue); a title element is added; the editor's metadata is dropped. The
+shapes, their rotations and their proportions are the original's, and backdrop
+draws the logo without rotating, mirroring, cropping or distorting it, with
+clear space of a quarter of its height around it. The credit implies no
 endorsement by the NixOS project.

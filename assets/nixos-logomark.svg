@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The NixOS logomark (nix-snowflake), from NixOS/nixos-artwork, icons/, at
-  revision 9d2cdedd73d64a068214482902adea3d02783ba8 (the file that nixos-icons
-  installs as nix-snowflake.svg). License: Creative Commons Attribution 4.0
-  International, https://creativecommons.org/licenses/by/4.0/ (see AUTHORS).
-  Changed from the original: the gradient fills are gone and each arm has a
+  The NixOS logomark (nix-snowflake), from NixOS/nixos-artwork at revision
+  9d2cdedd73d64a068214482902adea3d02783ba8 (the color snowflake that
+  nixos-icons installs as nix-snowflake.svg). Title: NixOS logomark. Author:
+  Simon Frankau (original design), revised by Tim Cuthbertson. Source:
+  https://github.com/NixOS/nixos-artwork/tree/9d2cdedd73d64a068214482902adea3d02783ba8/logo
+  License: Creative Commons Attribution 4.0 International,
+  https://creativecommons.org/licenses/by/4.0/ (see AUTHORS).
+  Changes: colors changed. The gradient fills are gone and each arm has a
   class, "dark" or "light", whose fill backdrop sets from the theme's colors
-  (Blue and Sapphire); the editor's metadata is dropped. The shapes, their
-  rotations, and their proportions are the original's.
+  (Mauve and Blue); a title element is added; the editor's metadata is
+  dropped. The shapes, rotations and proportions are the original's.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="535" height="535" viewBox="0 0 501.56251 501.56249">
   <title>NixOS</title>

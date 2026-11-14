@@ -26,6 +26,9 @@ failures = []
 
 # The cells the art may use: those the console's font holds (mark-art.py).
 CELLS = set(" ▀▄█")
+# The one-pixel gaps of the art that are no seam, (x, y) in art pixels, two
+# pixels to a cell: the notch at the edge of each eye.
+EYE_NOTCHES = [(9, 5), (29, 22)]
 # tuigreet's box is 80 columns by default: a frame and a padding of one on
 # each side leave 76 for the greeting.
 GREETING_WIDTH = 76
@@ -269,10 +272,10 @@ def main():
     # above and below or left and right, a line through the mark one pixel
     # thick. The console draws the half blocks as exact halves of the cell and
     # the lines of text touch, so what the art shows is what the pixels say.
-    # The only such pixels are the notch of each eye, one per eye, which is
-    # the shape of the mark and no seam.
+    # The only such pixels are the notch of each eye, one per eye (EYE_NOTCHES),
+    # which is the shape of the mark and no seam.
     notches = thin_gaps(art)
-    expect(len(notches) <= 2, f"the art has {len(notches)} one-pixel gaps (x, y): {notches}; the two eyes account for two")
+    expect(notches == EYE_NOTCHES, f"the art has the one-pixel gaps (x, y) {notches}, not the two notches of the eyes {EYE_NOTCHES}; a regenerated art that moves an eye moves them, and any other is a seam")
 
     # The interval check itself, on a fixture with two unsafe image modules.
     caught = sorted(k for k, _ in image_interval_problems(jsonc(args["imageFixture"], "the image fixture")))
