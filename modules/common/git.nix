@@ -11,6 +11,8 @@
 }:
 let
   inherit (config.ravnix) user dev;
+  inherit (config.ravnix.theme) palette roles;
+  color = import ../theme/color.nix { inherit lib; };
   devCheckout = pkgs.callPackage ./dev-checkout.nix { };
 in
 {
@@ -40,17 +42,49 @@ in
       };
       interactive.diffFilter = "delta --color-only";
 
-      delta = {
-        syntax-theme = "Catppuccin Mocha";
-        line-numbers = true;
-        # n and N jump between files in the pager.
-        navigate = true;
-        minus-style = "red bold";
-        plus-style = "green bold";
-        # The attribute is `line-number`, not `line`: a bare `line` makes
-        # delta abort with "Invalid color or style attribute: line".
-        hunk-header-style = "file line-number bold yellow";
-      };
+      # The diff is a wash of its state hue over Base with the syntax colors
+      # kept (docs/style.md: a row is a wash), the changed words a stronger
+      # one, and delta's Blue file names and boxes are gone, since Blue is the
+      # busy state: a file name is Subtext1, a hunk's position the accent, a
+      # frame Surface2. The hex colors are the roles' and the washes the
+      # theme's arithmetic (modules/theme/color.nix).
+      delta =
+        let
+          wash =
+            percent: hue:
+            color.mix {
+              over = roles.canvas;
+              tint = hue;
+              inherit percent;
+            };
+        in
+        {
+          syntax-theme = "Catppuccin Mocha";
+          line-numbers = true;
+          # n and N jump between files in the pager.
+          navigate = true;
+          minus-style = "syntax ${wash 20 palette.red}";
+          plus-style = "syntax ${wash 20 palette.green}";
+          minus-emph-style = "bold syntax ${wash 35 palette.red}";
+          plus-emph-style = "bold syntax ${wash 35 palette.green}";
+          minus-empty-line-marker-style = "syntax ${wash 20 palette.red}";
+          plus-empty-line-marker-style = "syntax ${wash 20 palette.green}";
+          line-numbers-minus-style = palette.red;
+          line-numbers-plus-style = palette.green;
+          line-numbers-zero-style = roles.muted;
+          line-numbers-left-style = roles.line;
+          line-numbers-right-style = roles.line;
+          file-style = "bold ${roles.label}";
+          file-decoration-style = "${roles.line} ul";
+          # The attribute is `line-number`, not `line`: a bare `line` makes
+          # delta abort with "Invalid color or style attribute: line". The
+          # code fragment after the position is Subtext0; the position
+          # itself and the file are styled apart, or delta draws them Blue.
+          hunk-header-style = "file line-number bold ${roles.secondary}";
+          hunk-header-file-style = "bold ${roles.label}";
+          hunk-header-line-number-style = "bold ${roles.accent}";
+          hunk-header-decoration-style = "${roles.line} box";
+        };
 
       diff = {
         tool = "delta";
