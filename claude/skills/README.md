@@ -52,6 +52,7 @@ sentence. A hook whose key is missing stays quiet.
 | `laptop.checkout` | string, an absolute path | `laptop` | the ravnix checkout the laptop is built from (`ravnix.dev.checkout`) |
 | `laptop.privateFlake` | string, an absolute path | `laptop` | the private flake |
 | `laptop.note` | string, an absolute path | `laptop` | the machine's note, which `machine-facts --write` keeps |
+| `laptop.hostName` | string | `laptop` | the laptop's host name, which the switch step compares with `hostname`; ravnix sets it on the laptop shape from `networking.hostName` |
 
 `handoff.workspaces` looks like this:
 

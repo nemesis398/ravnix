@@ -3,7 +3,9 @@
 # the laptop skill, the manual for changing and switching the laptop, is
 # linked on the laptop only, so a session on the server is never offered a
 # switch to the laptop's system; every other skill is linked on both, and a
-# skill of the private flake's still reaches the server.
+# skill of the private flake's still reaches the server. The laptop's own
+# networking.hostName is the skill value laptop.hostName, which the skill's
+# switch step compares with the host it runs on.
 {
   self,
   inputs,
@@ -35,6 +37,8 @@ let
   own = { ravnix.claude.skills.own-skill = ../claude/fixtures/own-skill; };
   m = (build (server ++ [ own ])).config;
   h = (build (laptop ++ [ own ])).config;
+  hNamed = (build (laptop ++ [ { networking.hostName = "raven"; } ])).config;
+  hostValue = c: (hm c).ravnix.claude.skillValues.laptop.hostName or null;
 
   hm = c: c.home-manager.users.${user};
   linked =
@@ -47,7 +51,9 @@ let
     ++ check (linked h "laptop") "the laptop does not link the laptop skill"
     ++ check (lib.all (linked m) [ "handoff" "journal" "prose" ]) "the server lost a skill other than laptop"
     ++ check (lib.all (linked h) [ "handoff" "journal" "prose" ]) "the laptop lost a skill other than laptop"
-    ++ check (linked m "own-skill" && linked h "own-skill") "a skill of the private flake's does not reach both shapes";
+    ++ check (linked m "own-skill" && linked h "own-skill") "a skill of the private flake's does not reach both shapes"
+    ++ check (hostValue h == h.networking.hostName) "the laptop skill's laptop.hostName is ${toString (hostValue h)}, not the host's name ${h.networking.hostName}"
+    ++ check (hostValue hNamed == "raven") "a laptop named raven renders laptop.hostName ${toString (hostValue hNamed)}";
 in
 pkgs.runCommand "glue-claude-skills-shapes" { } (
   if failures == [ ] then

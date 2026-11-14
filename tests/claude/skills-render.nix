@@ -52,6 +52,8 @@ let
       checkout = "/home/alice/Git/ravnix";
       privateFlake = "/home/alice/Git/private";
       note = "/home/alice/Notes/Laptop.md";
+      # Not huginn, so the guard is seen to compare with the value.
+      hostName = "corvid";
     };
   };
 
@@ -209,6 +211,7 @@ let
           "laptop.checkout"
           "laptop.privateFlake"
           "laptop.note"
+          "laptop.hostName"
         ];
         prose = [
           "user.name"
@@ -426,8 +429,9 @@ else
       check "a script of the tree without the value names it" $?
 
       # The laptop skill's build-and-switch block, as an agent would run it,
-      # with nix, sudo and hostname stubbed: on another host it stops before
-      # sudo, on huginn it switches huginn.
+      # with nix, sudo and hostname stubbed: on a host other than the
+      # configured laptop.hostName (here corvid, even on one called huginn)
+      # it stops before sudo, and on corvid it switches.
       work=$TMPDIR/laptop; mkdir -p "$work/stub" "$work/checkout"
       for c in nix sudo; do
         printf '#!/bin/sh\necho "%s $*" >> %s\n' "$c" "$work/calls" > "$work/stub/$c"
@@ -436,13 +440,16 @@ else
       chmod +x "$work"/stub/*
       block=$(awk '/^[*][*]Changing the desktop[*][*]/ { f = 1 } f && /^```bash$/ { b = 1; next } b && /^```$/ { exit } b' ${fullTree}/laptop/SKILL.md)
       block=''${block//\/home\/alice\/Git\/ravnix/$work\/checkout}
-      FAKE_HOST=muninn PATH=$work/stub:$PATH ${pkgs.bash}/bin/bash -c "$block" >/dev/null 2>&1 && rc=0 || rc=$?
-      [ "$rc" != 0 ] && ! grep -q '^sudo' "$work/calls" 2>/dev/null
-      check "on a host that is not huginn the switch step stops before sudo" $?
+      for other in muninn huginn; do
+        rm -f "$work/calls"
+        FAKE_HOST=$other PATH=$work/stub:$PATH ${pkgs.bash}/bin/bash -c "$block" >/dev/null 2>&1 && rc=0 || rc=$?
+        [ "$rc" != 0 ] && ! grep -q '^sudo' "$work/calls" 2>/dev/null
+        check "on $other, not the configured laptop, the switch step stops before sudo" $?
+      done
       rm -f "$work/calls"
-      FAKE_HOST=huginn PATH=$work/stub:$PATH ${pkgs.bash}/bin/bash -c "$block" >/dev/null 2>&1 && rc=0 || rc=$?
+      FAKE_HOST=corvid PATH=$work/stub:$PATH ${pkgs.bash}/bin/bash -c "$block" >/dev/null 2>&1 && rc=0 || rc=$?
       [ "$rc" = 0 ] && grep -qx 'sudo nixos-rebuild switch --flake /home/alice/Git/private#huginn --override-input ravnix git+file:.' "$work/calls"
-      check "on huginn the switch step switches huginn" $?
+      check "on the configured laptop the switch step switches" $?
       awk '/^## Start here/,/^## Which/' ${fullTree}/laptop/SKILL.md | rg -q 'hostname' && rc=0 || rc=$?
       check "the laptop skill's first steps check the host" $rc
 
