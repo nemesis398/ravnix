@@ -32,6 +32,7 @@ DISC = (
 
 def assets(lab, ravnix_mark=None, phyllon=True):
     lab.assets.mkdir()
+    shutil.copy(SHIPPED / "nixos-logomark.svg", lab.assets / "nixos-logomark.svg")
     if phyllon:
         shutil.copy(PHYLLON, lab.assets / "phyllon-mark.svg")
     if ravnix_mark is not None:
@@ -44,6 +45,7 @@ def wordmark(lab, kind="lock"):
     if not plain.exists():
         plain.mkdir()
         (plain / "phyllon-mark.svg").write_bytes(PHYLLON.read_bytes())
+        shutil.copy(SHIPPED / "nixos-logomark.svg", plain / "nixos-logomark.svg")
     return lab.render(kind, name="wordmark-%s.png" % kind, BACKDROP_ASSETS=str(plain))[0]
 
 

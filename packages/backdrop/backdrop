@@ -14,11 +14,13 @@
 # output. On it: the ravnix mark in the middle, the phyllon mark top left at the
 # same size, both in the accent; the fastfetch facts with the NixOS logo (in
 # Blue and Sapphire) top right; and, when the user lists any, their tool logos
-# in Surface grays, spread around the rest. The NixOS logo is fastfetch's own
-# and is made of block glyphs by design: it is drawn as the terminal shows it,
-# not redrawn as a vector, and its blocks, like the swatches of the Palette
-# row, are rectangles on whole pixels (draw_block) so that they meet without a
-# seam. The Palette row shows all eight of the terminal's colors, the state
+# in Surface grays, spread around the rest. The NixOS logo is the vendored
+# vector assets/nixos-logomark.svg, drawn in Blue and Sapphire as large as the
+# block glyphs of fastfetch's own logo were, in the same place (take_logo takes
+# those glyphs out of the facts and logo_box measures where they were). Where
+# the vector is missing or cannot be drawn, the glyphs stay. The swatches of
+# the Palette row, and the glyph logo when it stays, are rectangles on whole
+# pixels (draw_block) so that they meet without a seam. The Palette row shows all eight of the terminal's colors, the state
 # hues among them: it is a picture of the terminal's colors, not a state. The
 # lock image is Base (or the same image) and the ravnix mark alone, sized to
 # sit inside swaylock's ring, so nothing about the machine can be read on a
@@ -43,7 +45,8 @@
 #   tools    SVG files of tool logos, in order, or []
 #
 # Other seams, for tests and for running from a checkout:
-#   BACKDROP_ASSETS  the directory of the marks (default: ../../assets of this file)
+#   BACKDROP_ASSETS  the directory of the marks and the NixOS logo (default:
+#                    ../../assets of this file)
 #   BACKDROP_FACTS   a file holding what fastfetch prints, drawn instead of
 #                    running fastfetch
 #   BACKDROP_FASTFETCH_SECONDS   how long fastfetch gets (default 10)
@@ -180,6 +183,8 @@ class Theme:
         self.base, self.text = c["base"], c["text"]
         self.blue, self.sapphire = c["blue"], c["sapphire"]
         self.surface1, self.surface2 = c["surface1"], c["surface2"]
+        # The NixOS logo's two sets of arms: the dark ones and the light ones.
+        self.logo_dark, self.logo_light = self.blue, self.sapphire
         # The terminal's 16 colors, for the SGR colors fastfetch writes
         # (docs/style.md, Color, Rules): black is Surface1, red Red, green
         # Green, yellow Yellow, blue Blue, magenta Pink, cyan Teal, white
@@ -362,6 +367,43 @@ def draw_ravnix(cr, theme, cx, cy, scale, mark):
 
 def first_line(error):
     return (str(error).strip().splitlines() or [type(error).__name__])[0]
+
+
+# --- The NixOS logo ---------------------------------------------------------------
+
+LOGO_FILE = "nixos-logomark.svg"
+
+
+def nixos_logo(assets, theme):
+    # (handle, ink box) of the NixOS logomark, a vendored SVG whose arms carry
+    # the classes "dark" and "light" and no color of their own: the fills are
+    # the theme's, set here. None, with one line, when the file is missing,
+    # cannot be read or draws nothing; the block glyphs of fastfetch stay then.
+    path = assets / LOGO_FILE
+    css = ".dark{fill:#%02x%02x%02x}.light{fill:#%02x%02x%02x}" % (*theme.logo_dark, *theme.logo_light)
+    try:
+        handle = svg_handle(path.read_bytes())
+        handle.set_stylesheet(css.encode())
+        ink = ink_box(handle)
+    except (OSError, GLib.Error) as e:
+        log(f"cannot use the nixos logo {path}: {getattr(e, 'strerror', None) or first_line(e)}; drawing fastfetch's glyphs")
+        return None
+    if ink is None:
+        log(f"cannot use the nixos logo {path}: it draws nothing; drawing fastfetch's glyphs")
+        return None
+    return handle, ink
+
+
+def draw_logo(cr, logo, box):
+    # The logo's drawn part, as large as it goes inside box = (x0, y0, x1, y1)
+    # with its proportions as the file has them, and in the middle of it.
+    handle, (ix, iy, iw, ih) = logo
+    x0, y0, x1, y1 = box
+    k = min((x1 - x0) / iw, (y1 - y0) / ih)
+    side = INK_UNIT * k
+    x = (x0 + x1) / 2 - (ix + iw / 2) * k
+    y = (y0 + y1) / 2 - (iy + ih / 2) * k
+    draw_svg(cr, handle, x, y, side, side)
 
 
 # --- The user's image ----------------------------------------------------------
@@ -625,7 +667,7 @@ def fastfetch_text(theme):
     # logo has six color slots, the odd ones for one set of its arms and the
     # even ones for the other; a config that sets only the first two would
     # leave the rest in the terminal's blue and cyan, which are Blue and Teal.
-    colors = [theme.blue, theme.sapphire] * 3
+    colors = [theme.logo_dark, theme.logo_light] * 3
     flags = " ".join(f"--logo-color-{i + 1} {shlex.quote('38;2;%d;%d;%d' % c)}" for i, c in enumerate(colors))
     script = f"fastfetch --pipe false {flags}; s=$?; exit \"$s\""
     try:
@@ -684,6 +726,65 @@ BLOCK_ELEMENTS = {
 }
 
 
+LOGO_MIN_CELLS = 32
+
+
+def take_logo(lines):
+    # (lines, cells): the facts without the logo fastfetch draws in block
+    # glyphs, and the cells (row, column, glyph) the logo had. The logo is the
+    # block elements left of the first character of the facts that is neither
+    # a block element nor a space (the frame of the first line); the swatches
+    # of the Palette row are right of it and stay. Without such a character,
+    # or with fewer than LOGO_MIN_CELLS blocks left of it (a few blocks before
+    # a word are text), the lines come back as they were, with no cells.
+    def cell_chars(runs):
+        for col, chunk, _, _ in runs:
+            at = col
+            for ch in chunk:
+                yield at, ch
+                at += cells(ch)
+
+    info = min((at for runs in lines for at, ch in cell_chars(runs)
+                if ch not in BLOCK_ELEMENTS and not ch.isspace()), default=None)
+    if info is None:
+        return lines, []
+    found, kept = [], []
+    for row, runs in enumerate(lines):
+        out = []
+        for col, chunk, color, bold in runs:
+            text, at = "", col
+            for ch in chunk:
+                if ch in BLOCK_ELEMENTS and at < info:
+                    found.append((row, at, ch))
+                    ch = " "
+                text += ch
+                at += cells(ch)
+            out.append((col, text, color, bold))
+        kept.append(out)
+    if len(found) < LOGO_MIN_CELLS:
+        return lines, []
+    return kept, found
+
+
+def block_rects(ch, cx, cy, advance, line_h):
+    # The rectangles of one block element in the cell at (cx, cy), on whole
+    # pixels: (x0, y0, x1, y1) each.
+    return [(cx + round(advance * left / 8), cy + round(line_h * top / 8),
+             cx + round(advance * right / 8), cy + round(line_h * bottom / 8))
+            for left, top, right, bottom in BLOCK_ELEMENTS[ch]]
+
+
+def logo_box(found, px, py, advance, line_h):
+    # (x0, y0, x1, y1) in px of what the block glyphs of the logo covered, or
+    # None when there were none: the box the vector logo takes.
+    rects = [r for row, col, ch in found
+             for r in block_rects(ch, px + col * advance, py + row * line_h, advance, line_h)]
+    if not rects:
+        return None
+    return (min(r[0] for r in rects), min(r[1] for r in rects),
+            max(r[2] for r in rects), max(r[3] for r in rects))
+
+
 def panel_layout(cr):
     # Whole-pixel advances and line heights, so that text sits on the pixel
     # grid (the block characters are not text: see draw_block).
@@ -727,9 +828,7 @@ def draw_block(cr, ch, cx, cy, advance, line_h):
     # and nothing is antialiased, so cells meet without a seam.
     cr.save()
     cr.set_antialias(cairo.Antialias.NONE)
-    for left, top, right, bottom in BLOCK_ELEMENTS[ch]:
-        x0, x1 = cx + round(advance * left / 8), cx + round(advance * right / 8)
-        y0, y1 = cy + round(line_h * top / 8), cy + round(line_h * bottom / 8)
+    for x0, y0, x1, y1 in block_rects(ch, cx, cy, advance, line_h):
         cr.rectangle(x0, y0, x1 - x0, y1 - y0)
     cr.fill()
     cr.restore()
@@ -801,12 +900,23 @@ def render(kind, path, width, height, scale, theme, image, tools, assets):
 
     if kind == "wall":
         lines = facts(theme)
+        # The logo of the facts is the vector, when there is one: the block
+        # glyphs come out of the lines and the vector takes their place.
+        logo, found = None, []
+        split, cells_of_logo = take_logo(lines)
+        if cells_of_logo:
+            logo = nixos_logo(assets, theme)
+            if logo is not None:
+                lines, found = split, cells_of_logo
         px, py, fsize = PANEL_X * width, PANEL_Y * height, PANEL_FONT * height
         fsize, advance, line_h = fit_panel(cr, theme, lines, px, width, fsize)
+        box = logo_box(found, round(px), round(py), advance, line_h) if found else None
         usable = load_tools(tools)
         if usable:
             obstacles = [(*center, size / 2), (*corner, size / 2)]
             panel = panel_boxes(lines, px, py, advance, line_h, width)
+            if box is not None:
+                panel.append((box[0], box[1], width, box[3]))
             spots = tool_spots(len(usable), width, height, obstacles, panel, scale)
             if len(spots) < len(usable):
                 log(f"no room for {len(usable) - len(spots)} of the {len(usable)} tool logos")
@@ -817,6 +927,8 @@ def render(kind, path, width, height, scale, theme, image, tools, assets):
             draw_mark_svg(cr, phyllon, *corner, size, theme.accent)
         except (OSError, GLib.Error) as e:
             log(f"cannot draw the phyllon mark: {first_line(e)}")
+        if box is not None:
+            draw_logo(cr, logo, box)
         draw_panel(cr, theme, lines, px, py, fsize)
 
     draw_ravnix(cr, theme, *center, scale, mark)

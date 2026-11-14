@@ -28,13 +28,25 @@ physical resolution (the lock ring's radius is logical too).
 | wallpaper | Base, or the user's own picture scaled until it covers the output and cropped at the middle. On it: the ravnix mark in the middle and the phyllon mark in the top left corner, at the same size and both in the accent; the NixOS logo in Blue and Sapphire with the system facts, drawn through fastfetch, in the top right; and the user's tool logos, if any, in Surface1 and Surface2 alternately, spread evenly around the rest |
 | lock image | Base, or the same picture, and the ravnix mark alone, sized to sit inside the 110 px lock ring (its inner edge is at 105 px). It never runs fastfetch and never draws a logo, so nothing about the machine can be read on a locked screen |
 
-The NixOS logo is fastfetch's own, made of block glyphs by design, and is drawn
-as the terminal shows it, not redrawn as a vector. The block elements (U+2580 to
-U+259F, but not the three shades) of the facts, in the logo and in the swatches,
-are not drawn from the font: a font's block is as tall as its ascent plus
-descent, not the panel's line height, and blocks above one another meet at a
-blended pixel. They are rectangles with every edge on a whole pixel, as
-terminals draw them, so they meet without a seam.
+The NixOS logo is a vector, `assets/nixos-logomark.svg`, the logomark of
+NixOS/nixos-artwork (CC BY 4.0, credited in `AUTHORS`). Its two sets of arms
+carry the classes `dark` and `light` and no color; the wallpaper sets them to
+Blue and Sapphire. fastfetch still prints its own logo, in block glyphs, and
+`backdrop` takes those glyphs out of the facts (the block elements left of the
+first character of the facts that is none) and draws the vector in the box they
+covered: as large as it goes inside, in the middle of it, with the proportions
+of the file and no rotation, mirror, crop or stretch. When the file is missing,
+cannot be read or draws nothing, the glyphs stay and there is one line in the
+journal. The wallpaper has no logo when fastfetch prints none.
+
+The block elements (U+2580 to U+259F, but not the three shades) of the facts,
+in the swatches and in the glyph logo that stands in, are not drawn from the
+font: a font's block is as tall as its ascent plus descent, not the panel's
+line height, and blocks above one another meet at a blended pixel. They are
+rectangles with every edge on a whole pixel, as terminals draw them, so they
+meet without a seam. The frame of the facts is line-drawing characters of the
+font and is one unbroken stroke at the sizes and scales in use (a test checks
+it).
 
 The Palette row of the facts shows the terminal's eight colors, all of them,
 Red, Green, Yellow and Blue among them, as on the terminal. It is a picture of
@@ -75,14 +87,14 @@ with one line that says what. `lock-screen` then locks on plain Base.
 | Seam | For |
 | --- | --- |
 | `BACKDROP_CONFIG` | the config file |
-| `BACKDROP_ASSETS` | the directory of the marks (the package sets it; from a checkout it is `assets/`) |
+| `BACKDROP_ASSETS` | the directory of the marks and the NixOS logo (the package sets it; from a checkout it is `assets/`) |
 | `BACKDROP_FACTS` | a file holding what fastfetch prints, drawn instead of running fastfetch |
 | `BACKDROP_FASTFETCH_SECONDS` | how long fastfetch gets, 10 by default |
 | `XDG_CACHE_HOME` | where `backdrop/` keeps the images |
 
 Without `BACKDROP_FACTS`, `backdrop` runs the user's `fastfetch` (its config is
 the one home-manager writes), with the logo's six color slots set to Blue and
-Sapphire. It needs no network.
+Sapphire (the colors of the vector as well). It needs no network.
 
 ## What goes wrong, and what happens
 
@@ -96,6 +108,7 @@ cannot be written fail the command.
 | the picture is missing, unreadable, not an image, truncated, not an absolute path, or larger than 64 megapixels | the default, one line |
 | a tool logo is missing, is not an SVG or draws nothing | that logo is skipped, one line |
 | the ravnix mark cannot be read, is not an SVG or draws nothing | the wordmark, one line |
+| the NixOS logo is missing, cannot be read, is not an SVG or draws nothing | fastfetch's block glyphs, one line |
 | no room for the logos (a tiny output) | the logos that fit, one line |
 | fastfetch is missing, fails or takes more than 10 s | no facts, one line |
 | the facts are hostile (control codes, binary, huge) | cut to 80 lines of 240 columns and drawn |

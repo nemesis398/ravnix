@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The NixOS logomark (nix-snowflake), from NixOS/nixos-artwork, icons/, at
+  revision 9d2cdedd73d64a068214482902adea3d02783ba8 (the file that nixos-icons
+  installs as nix-snowflake.svg). License: Creative Commons Attribution 4.0
+  International, https://creativecommons.org/licenses/by/4.0/ (see AUTHORS).
+  Changed from the original: the gradient fills are gone and each arm has a
+  class, "dark" or "light", whose fill backdrop sets from the theme's colors
+  (Blue and Sapphire); the editor's metadata is dropped. The shapes, their
+  rotations, and their proportions are the original's.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="535" height="535" viewBox="0 0 501.56251 501.56249">
+  <title>NixOS</title>
+  <g transform="translate(-156.41121,933.30685)">
+    <g transform="matrix(0.99994059,0,0,0.99994059,-0.06321798,33.188377)">
+      <path id="light" class="light" fill-rule="evenodd" d="m 309.54892,-710.38827 122.19683,211.67512 -56.15706,0.5268 -32.6236,-56.8692 -32.85645,56.5653 -27.90237,-0.011 -14.29086,-24.6896 46.81047,-80.4901 -33.22946,-57.8257 z"/>
+      <use xlink:href="#light" class="light" transform="rotate(60,407.11155,-715.78724)"/>
+      <use xlink:href="#light" class="light" transform="rotate(-60,407.31177,-715.70016)"/>
+      <use xlink:href="#light" class="light" transform="rotate(180,407.41868,-715.7565)"/>
+      <path id="dark" class="dark" fill-rule="evenodd" d="m 309.54892,-710.38827 122.19683,211.67512 -56.15706,0.5268 -32.6236,-56.8692 -32.85645,56.5653 -27.90237,-0.011 -14.29086,-24.6896 46.81047,-80.4901 -33.22946,-57.8256 z"/>
+      <use xlink:href="#dark" class="dark" transform="rotate(120,407.33916,-716.08356)"/>
+      <use xlink:href="#dark" class="dark" transform="rotate(-120,407.28823,-715.86995)"/>
+    </g>
+  </g>
+</svg>

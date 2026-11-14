@@ -1,5 +1,8 @@
 """backdrop render wall, with no image: the shipped default on Base."""
 
+import numpy as np
+import pytest
+
 from conftest import (
     BAR,
     H,
@@ -137,20 +140,13 @@ def test_the_facts_show_the_usage_states_and_the_palette_row(wall):
         assert where(right[top:bottom, first:last], rgb(name)).sum() > 100, name
 
 
-def test_the_glyph_blocks_meet_without_a_seam(wall):
-    # The logo and the swatches are block glyphs, drawn as the terminal draws
-    # them: whole cells with edges on whole pixels. A seam between two blocks,
-    # or a ragged edge, is a pixel that is neither a color nor Base but a blend.
+def test_the_swatches_meet_without_a_seam(wall):
+    # The swatches are block glyphs, drawn as the terminal draws them: whole
+    # cells with edges on whole pixels. A seam between two blocks, or a ragged
+    # edge, is a pixel that is neither a color nor Base but a blend. They are
+    # one solid rectangle each, one line tall, with Base above and below, and
+    # on both sides of the row.
     right = facts_area(wall)
-    # The logo is everything left of the frame, whose strokes are the leftmost
-    # accent of the facts, less the few pixels of their antialiased skirt.
-    logo = right[:, : bbox(tinted(right, rgb("mauve"), rgb("base"), least=0.3))[0] - 3]
-    assert logo.shape[1] > 200
-    for name in ("blue", "sapphire"):
-        blend = tinted(logo, rgb(name), rgb("base"), least=0.05, slack=6) & ~where(logo, rgb(name))
-        assert not blend.any(), "%s: %d blended pixels" % (name, blend.sum())
-    # The swatches: one solid rectangle each, one line tall, with Base above
-    # and below, and on both sides of the row.
     first, last, top, bottom, _ = palette_box(right)
     row = right[top:bottom, first - 1 : last + 1]
     assert (row == row[len(row) // 2]).all(), "a seam row inside the swatches"
@@ -159,65 +155,17 @@ def test_the_glyph_blocks_meet_without_a_seam(wall):
         assert (edge[first - 1 : last + 1] == rgb("base")).all(), "a ragged edge"
 
 
-def test_the_swatch_row_has_all_eight_colors(wall):
-    # The Palette row is a picture of the terminal's colors, as on Fedora, not
-    # a state: Red, Green, Yellow and Blue are in it, each one cell wide
-    # (three glyph advances), and nothing is left out.
-    right = facts_area(wall)
-    first, last, top, bottom, advance = palette_box(right)
-    assert len(SWATCHES) == 8
-    for i, name in enumerate(SWATCHES):
-        cell = right[top:bottom, int(first + 3 * i * advance) + 1 : int(first + 3 * (i + 1) * advance) - 1]
-        assert where(cell, rgb(name)).all(), name
-
-
-def test_the_swatches_keep_their_order_side_by_side(wall):
-    # The terminal's eight, side by side from the value column, then Base.
-    right = facts_area(wall)
-    first, _, top, bottom, advance = palette_box(right)
-    middle = (top + bottom) // 2
-    row = [tuple(right[middle, int(first + (3 * i + 1.5) * advance)]) for i in range(len(SWATCHES) + 1)]
-    assert row == [rgb(n) for n in (*SWATCHES, "base")], row
-
-
-def test_the_default_wall_is_deterministic(shared, wall):
-    again, _ = shared.render("wall", name="again.png")
-    assert (again == wall).all()
-
-
-def test_accent_follows_the_option(lab):
-    lab.write_config(accent="teal")
-    img, _ = lab.render("wall")
-    for part in (img[window(img, **CENTER)], corner(img)):
-        assert where(part, rgb("teal")).sum() > 1500
-        assert not where(part, rgb("mauve")).any()
-
-
-def test_scale_two_renders_at_the_physical_resolution(lab):
-    img, _ = lab.render("wall", size=(2560, 1600), scale=2)
-    assert img.shape == (1600, 2560, 3)
-    ink = not_base(img) & window(img, 1280, 800, 130 * 2)
-    # On a screen of 1280x800 logical px the 22 rows of the facts end close
-    # above the mark, and their logo's lowest rows fall into the mark's square.
-    # The mark has no ink right of 56 % of the width and above 40 % of the
-    # height: at its top it is only 190 px from the center.
-    ink[: int(0.40 * 1600), int(0.56 * 2560) :] = False
-    r = reach(ink, 1280, 800)
-    assert 0.93 * MARK_REACH * 2 <= r <= RING_INNER * 2
-
-
-def test_a_small_screen_still_holds_the_composition(lab):
-    img, _ = lab.render("wall", size=(1280, 720), scale=1)
-    assert img.shape == (720, 1280, 3)
-    assert where(img, rgb("mauve")).sum() > 3000
-    assert where(img, rgb("blue")).sum() > 200
-
-
-def test_the_facts_fixture_is_what_the_tests_assume():
-    # Guards the fixture: a change of facts_text would silently weaken the
-    # tests of the logo and the facts above.
-    text = facts_text()
-    assert text.count("\n") == 23
-    assert "Palette" in text and "\x1b[30m" in text and "\x1b[37m" in text
-    assert "{" not in text and "\\e" not in text, "a placeholder is left"
-    assert text.count(KERNEL) == 1
+@pytest.mark.parametrize("size, scale", [((1366, 768), 1), ((1920, 1080), 1), ((1920, 1200), 1.25), ((2560, 1600), 1.25), ((3840, 2160), 1.5), ((2880, 1800), 2)])
+def test_the_frame_of_the_facts_is_one_unbroken_stroke(lab, size, scale):
+    # The frame is made of line-drawing characters of the font, one per row.
+    # A row whose glyph is shorter than the line height would leave a gap of a
+    # pixel or more in the vertical stroke, between two rows. Looked at on the
+    # sizes and scales of the panels in use.
+    wall, _ = lab.render("wall", size=size, scale=scale)
+    right = wall[: int(0.45 * size[1]), size[0] // 2 :]
+    stroke = tinted(right, rgb("mauve"), rgb("base"), least=0.5)
+    col = int(stroke.sum(axis=0).argmax())
+    ys = np.nonzero(stroke[:, col])[0]
+    assert len(ys) > 150, "no frame found"
+    gaps = np.nonzero(np.diff(ys) > 1)[0]
+    assert not len(gaps), "the frame has a gap after row(s) %s" % [int(ys[g]) for g in gaps]

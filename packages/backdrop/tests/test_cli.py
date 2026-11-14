@@ -20,6 +20,7 @@ from conftest import (
     palette_box,
     palette_row_offset,
     rgb,
+    tinted,
     where,
 )
 
@@ -582,6 +583,12 @@ def test_the_real_fastfetch_draws_the_logo_and_the_facts_with_no_network(lab):
     assert where(right, rgb("sapphire")).sum() > 500
     assert where(right, rgb("text")).sum() > 100
     assert len(proc.stderr.splitlines()) <= 1, proc.stderr
+    # The logo of the real fastfetch is replaced by the vector: large arms,
+    # and edges that are antialiased, which the whole-pixel glyphs have not.
+    assert where(right, rgb("blue")).sum() > 20000 and where(right, rgb("sapphire")).sum() > 20000
+    logo = right[:, : int(0.74 * W) - W // 2]
+    edge = tinted(logo, rgb("sapphire"), rgb("base"), least=0.05, slack=40) & ~where(logo, rgb("sapphire")) & ~where(logo, rgb("base"))
+    assert edge.sum() > 400, "the logo has no antialiased edge: the glyphs stand in"
     # The Palette row is one line that starts in the value column, as on the
     # terminal: fastfetch's block symbol prints the bright eight on a second
     # line with no jump to that column, and backdrop does not reflow it.

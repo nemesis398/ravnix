@@ -82,6 +82,9 @@ stdenvNoCC.mkDerivation {
     # holes: drawn in the accent, its eyes stay open.
     install -Dm644 ${../../assets/phyllon-mark.svg} $out/share/backdrop/phyllon-mark.svg
     install -Dm644 ${../../assets/ravnix-mark.svg} $out/share/backdrop/ravnix-mark.svg
+    # The NixOS logomark, a vendored vector (CC BY 4.0, AUTHORS): the
+    # wallpaper draws it where fastfetch's block-glyph logo would be.
+    install -Dm644 ${../../assets/nixos-logomark.svg} $out/share/backdrop/nixos-logomark.svg
     patchShebangs $out/libexec/backdrop/lock-screen
 
     makeWrapper ${python}/bin/python3 $out/bin/backdrop \
