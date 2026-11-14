@@ -62,6 +62,10 @@
     # services nix-cache and nix-builder:
     #   nix-cache = { enable = true; host = "nas"; port = 8501; };
     #   nix-builder = { enable = true; host = "nas"; port = 2224; };
+    # The restic REST server the hosts back up to (deploy/compose/restic,
+    # ravnix.backup.nas below) is the service restic-server, on its
+    # RESTIC_PORT:
+    #   restic-server = { enable = true; host = "nas"; port = 8000; };
     services = { };
 
     # What a host needs to use that cache and builder besides their place.
@@ -506,19 +510,20 @@
     # How many backups each target keeps; see the comments in the file.
     backup.retentionFile = ./backups.toml;
 
-    # This host's backup to the NAS's rest-server (deploy/compose/restic),
-    # or null for none. Per host, so set it in each host's own module, never
-    # here: two hosts with one host name would prune each other's
-    # snapshots. For the laptop, for example:
+    # This host's backup to the rest-server, services.restic-server above,
+    # or null for none. Per host, so set it in each host's own module (as
+    # `ravnix.backup.nas = { ... };`, beside this null), never here: two
+    # hosts with one host name would prune each other's snapshots. For the
+    # laptop, for example:
     #   backup.nas = {
-    #     # The host's repository; its first path segment is the login's
-    #     # user name at the rest-server.
-    #     repository = "rest:http://192.0.2.30:8000/huginn/";
-    #     # The name the snapshots carry, and the retention file's
-    #     # [targets.<target>.hosts.<host>] knows.
+    #     # The host's one name at the NAS: the name its snapshots carry,
+    #     # its repository's path and its login's user. The retention
+    #     # file's [targets.<target>.hosts.<host>] knows it, and no other
+    #     # machine backing up to the estate's Internxt repository may use
+    #     # it, nor may a name of `hosts` that is not a ravnix host.
     #     host = "huginn";
-    #     # Bitwarden items: the repository password, and the login (user
-    #     # name and password) at the rest-server.
+    #     # Bitwarden items: the repository password, and the password of
+    #     # the login at the rest-server.
     #     passwordItem = "Restic - huginn repository";
     #     loginItem = "Restic - huginn rest-server login";
     #     # The home, minus ~/.cache and CACHEDIR.TAG directories (always),

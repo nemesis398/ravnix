@@ -1,6 +1,9 @@
-# The values of ravnix.backup.nas that its types refuse, and the unusual
-# ones that are right. A login in the repository URL would be in the store;
-# a `!` in exclude is keep's job (modules/common/backup-excludes.nix); a
+# The values of ravnix.backup.nas that its types and assertions refuse, and
+# the unusual ones that are right. The repository is derived, from the
+# rest-server in ravnix.services and the host name, so it cannot be typed,
+# and a host without that service is refused; a host name that is the name
+# of another kind of machine in ravnix.hosts (the NAS, whose own backups
+# may carry it in the shared Internxt repository) is refused; a `!` in exclude is keep's job (modules/common/backup-excludes.nix); a
 # host name with a dash in front would be an option on restic's command
 # line; a path with a trailing slash, `//`, `.` or `..` is not one path.
 {
@@ -12,34 +15,61 @@
 let
   eval = import ./helpers/eval.nix { inherit lib self; };
   template = ../../templates/default/me.nix;
+  # The template's NAS runs the rest-server.
+  registered = {
+    ravnix.services.restic-server = {
+      enable = true;
+      host = "nas";
+      port = 8000;
+    };
+  };
   base = {
-    repository = "rest:http://192.0.2.30:8000/huginn/";
     host = "huginn";
     passwordItem = "Restic - huginn repository";
     loginItem = "Restic - huginn login";
   };
-  accepted =
-    attrs:
+  acceptedWith =
+    modules: attrs:
     let
-      e = eval [
-        template
-        { ravnix.backup.nas = lib.mkForce (base // attrs); }
-      ];
+      e = eval (
+        [
+          template
+          { ravnix.backup.nas = lib.mkForce (base // attrs); }
+        ]
+        ++ modules
+      );
     in
     e.values.success && e.failed == [ ];
+  accepted = acceptedWith [ registered ];
+
+  derived =
+    (eval [
+      template
+      registered
+      { ravnix.backup.nas = lib.mkForce base; }
+    ]).config.ravnix.backup.nas.repository;
+
+  # A host's module sets the value beside the template's null, as the
+  # template says to, without lib.mkForce.
+  besideNull = eval [
+    template
+    registered
+    { ravnix.backup.nas = base; }
+  ];
+  # Two hosts' values in one configuration are still two definitions.
+  twoValues = eval [
+    template
+    registered
+    { ravnix.backup.nas = base; }
+    { ravnix.backup.nas.host = "muninn"; }
+  ];
 
   refused = {
-    "a login in the repository URL" = {
-      repository = "rest:http://huginn:secret@192.0.2.30:8000/huginn/";
+    "a repository typed by hand" = {
+      repository = "rest:http://192.0.2.30:8000/huginn/";
     };
-    "a repository that is not rest" = {
-      repository = "sftp:nas:/restic/huginn";
-    };
-    "a repository without a scheme" = {
-      repository = "rest:192.0.2.30:8000/huginn/";
-    };
-    "a repository with a space" = {
-      repository = "rest:http://192.0.2.30:8000/hu ginn/";
+    "a host named like the NAS" = {
+      host = "nas";
     };
     "a host with a leading dash" = {
       host = "-huginn";
@@ -94,11 +124,11 @@ let
 
   allowed = {
     "the defaults" = { };
-    "https and no port" = {
-      repository = "rest:https://nas.example.org/huginn";
+    "the other ravnix host" = {
+      host = "muninn";
     };
-    "an IPv6 address" = {
-      repository = "rest:http://[2001:db8::30]:8000/huginn/";
+    "a host that is in no registry" = {
+      host = "box-2";
     };
     "a host with a dash and an underscore" = {
       host = "Box_2-a";
@@ -126,7 +156,18 @@ let
   };
 
   failures =
-    lib.mapAttrsToList (what: _: "accepted ${what}") (lib.filterAttrs (_: accepted) refused)
+    lib.optional (acceptedWith [ ] { }) "accepted a backup without a rest-server in ravnix.services"
+    ++ lib.optional (
+      derived != "rest:http://192.0.2.30:8000/huginn/"
+    ) "the repository is ${derived}, not the registered rest-server's url at /huginn/"
+    ++ lib.optional (
+      !(besideNull.values.success && besideNull.failed == [ ])
+    ) "a host module's value beside the template's null is refused"
+    ++ lib.optional twoValues.values.success "two host names in one configuration are accepted"
+    # The repository is derived from the NAS's address, a placeholder in
+    # the template that is reported once, as ravnix.hosts.nas.address.
+    ++ lib.optional (lib.any (lib.hasPrefix "ravnix.backup.nas.repository ") besideNull.config.warnings) "the derived repository is reported as a placeholder too"
+    ++ lib.mapAttrsToList (what: _: "accepted ${what}") (lib.filterAttrs (_: accepted) refused)
     ++ lib.mapAttrsToList (what: _: "refused ${what}") (lib.filterAttrs (_: a: !(accepted a)) allowed);
 in
 pkgs.runCommand "options-backup-nas" { } (

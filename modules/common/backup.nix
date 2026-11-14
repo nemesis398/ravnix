@@ -1,7 +1,9 @@
 # The host's backup to the NAS, for home-manager: restic, as the user, from
 # a user unit and its timer, to the rest-server on the NAS
 # (deploy/compose/restic), over the LAN or NetBird's route to it. It is on
-# only where ravnix.backup.nas is set (modules/options/backup.nix).
+# only where ravnix.backup.nas is set (modules/options/backup.nix), and the
+# repository is derived there from ravnix.services.restic-server and the
+# host's one name, which is also the login's user.
 #
 # The server takes new data and refuses to delete any (`--append-only`), so
 # this host can add snapshots and never remove one: no `restic forget`, no
@@ -22,10 +24,11 @@
 #   - the repository password, which opens every snapshot: restic asks for it
 #     through --password-command, a script that runs `rbw get`, so it goes
 #     from rbw to restic through a pipe and is in no environment;
-#   - the rest-server login, which only lets the host append: restic reads it
-#     from RESTIC_REST_USERNAME and RESTIC_REST_PASSWORD (it has no command
-#     for them), set for the restic process alone, as nextcloud-sync passes
-#     its password. Not in the URL, which is in the store.
+#   - the rest-server login, which only lets the host append: its user is
+#     the host name, and its password the item's. restic reads both from
+#     RESTIC_REST_USERNAME and RESTIC_REST_PASSWORD (it has no command for
+#     them), set for the restic process alone, as nextcloud-sync passes its
+#     password. Not in the URL, which is in the store.
 #
 # When the vault is locked, nothing can be read, so the run stops before it
 # starts restic, says so, and exits 75 (../workbench/unlocked.nix). A failed
@@ -80,21 +83,17 @@ let
         what = "the backup's login";
       }}
       item=${lib.escapeShellArg cfg.loginItem}
-      user=$(${rbw} get --field username -- "$item") || {
-        echo "rbw could not read the user name of the item $item" >&2
-        exit 1
-      }
       login=$(${rbw} get -- "$item") || {
         echo "rbw could not read the password of the item $item" >&2
         exit 1
       }
-      if [ -z "$user" ] || [ -z "$login" ]; then
-        echo "the item $item needs a user name and a password: the host's login at the rest-server" >&2
+      if [ -z "$login" ]; then
+        echo "the item $item has no password: the host's login at the rest-server" >&2
         exit 1
       fi
       export RESTIC_REPOSITORY=${lib.escapeShellArg cfg.repository}
       export RESTIC_PASSWORD_COMMAND=${password}
-      RESTIC_REST_USERNAME=$user RESTIC_REST_PASSWORD=$login \
+      RESTIC_REST_USERNAME=${lib.escapeShellArg cfg.host} RESTIC_REST_PASSWORD=$login \
         restic backup --host ${lib.escapeShellArg cfg.host} --exclude-caches \
           ${lib.escapeShellArgs (map (p: "--exclude=${p}") excludes.patterns)} \
           -- ${lib.escapeShellArgs (map expand cfg.paths)}

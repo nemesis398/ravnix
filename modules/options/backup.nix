@@ -106,19 +106,42 @@ let
     description = "restic exclude pattern, not starting with `!` (use keep)";
   };
 
-  nas = types.submodule {
+  # The NAS's rest-server (deploy/compose/restic), placed like every service
+  # in ravnix.services, so a new address of the NAS is a change of one line.
+  server = config.ravnix.services.restic-server or null;
+  noServer = "ravnix.backup.nas is set, but no rest-server is registered: set ravnix.services.restic-server = { enable = true; host = \"<the NAS in ravnix.hosts>\"; port = <its RESTIC_PORT>; } (deploy/compose/restic)";
+  backup = config.ravnix.backup.nas;
+  hosts = config.ravnix.hosts;
+
+  # nullOr, but a null gives way to a value instead of conflicting with it.
+  # substSubModules is how the module system rebuilds a type that holds a
+  # submodule, so it must make this type again, not a plain nullOr.
+  nullGivesWay =
+    elem:
+    types.nullOr elem
+    // {
+      merge =
+        loc: defs:
+        let
+          values = lib.filter (d: d.value != null) defs;
+        in
+        if values == [ ] then null else elem.merge loc values;
+      substSubModules = m: nullGivesWay (elem.substSubModules m);
+    };
+
+  nas = types.submodule (sub: {
     options = {
       repository = mkOption {
-        # No user or password in the URL: it would be in the store, which
-        # every user of the host can read. The login comes from loginItem.
-        type = types.strMatching "rest:https?://[^/@[:space:]]+(/[^@[:space:]]*)?" // {
-          description = "restic REST URL, rest:http(s)://host[:port]/path/, without a login in it";
-        };
-        example = "rest:http://192.0.2.10:8000/huginn/";
+        type = types.str;
+        readOnly = true;
+        # One name for all three: the snapshots' host, the repository's
+        # path and, with the server's --private-repos, the login's user.
+        default = if server != null && server.enable then "rest:${server.url}/${sub.config.host}/" else throw noServer;
+        defaultText = lib.literalExpression ''"rest:''${ravnix.services.restic-server.url}/''${host}/"'';
         description = ''
-          The host's repository on the NAS's rest-server, over the LAN
-          (or NetBird's route to it). With the server's `--private-repos`,
-          the first path segment is the login's user name.
+          The host's repository on the NAS's rest-server, over the LAN (or
+          NetBird's route to it), derived from ravnix.services.restic-server
+          and `host`. Read-only.
         '';
       };
 
@@ -128,10 +151,12 @@ let
         };
         example = "huginn";
         description = ''
-          The host name the snapshots carry (restic's `--host`), whatever
-          the machine is called at the moment. The NAS's prune jobs and
-          the retention file's `[targets.<target>.hosts.<host>]` know the
-          host by it.
+          The host's one name at the NAS: the host name the snapshots carry
+          (restic's `--host`), whatever the machine is called at the moment,
+          the path of its repository, and its login's user name at the
+          rest-server. The NAS's jobs and the retention file's
+          `[targets.<target>.hosts.<host>]` know the host by it, and it
+          must be unique in the estate's Internxt repository.
         '';
       };
 
@@ -149,9 +174,10 @@ let
         type = types.strMatching "[^\n]+";
         example = "Restic - huginn rest-server login";
         description = ''
-          The Bitwarden item whose user name and password are the host's
-          login at the rest-server (its `.htpasswd`). rbw reads it at each
-          run, and restic gets it in the environment of its own process.
+          The Bitwarden item whose password is the host's login at the
+          rest-server (its line in `htpasswd`, whose user is `host`). rbw
+          reads it at each run, and restic gets it in the environment of its
+          own process.
         '';
       };
 
@@ -201,7 +227,7 @@ let
         description = "When the backup runs, as systemd's OnCalendar. A missed run is made up after boot, and a failed one is tried again after 30 minutes.";
       };
     };
-  };
+  });
 in
 {
   options.ravnix.backup.retentionFile = mkOption {
@@ -221,23 +247,44 @@ in
   };
 
   options.ravnix.backup.nas = mkOption {
-    type = types.nullOr nas;
+    # A null gives way to a value: me.nix says null, and the module of the
+    # host that backs up sets its own beside it, without lib.mkForce. Two
+    # values are merged as the submodule merges them.
+    type = nullGivesWay nas;
     default = null;
     description = ''
       This host's backup to the NAS: restic, as the user, to the NAS's
       rest-server, which takes new snapshots and refuses to delete any
       (`--append-only`). Pruning is the NAS's job, by the retention file;
       the NAS also copies every host's snapshots to Internxt, so no host
-      needs that credential. null: the host makes no backup.
+      needs that credential. null: the host makes no backup. Set it in
+      the module of the host that backs up, never in me.nix, which every
+      host reads.
     '';
   };
 
   # Checked only once the file is set: an unset value is reported as missing
   # by default.nix instead.
-  config.assertions = lib.optionals options.ravnix.backup.retentionFile.isDefined (
-    map (problem: {
-      assertion = false;
-      message = "ravnix.backup.retentionFile: ${problem}.";
-    }) problems
-  );
+  config.assertions =
+    lib.optionals options.ravnix.backup.retentionFile.isDefined (
+      map (problem: {
+        assertion = false;
+        message = "ravnix.backup.retentionFile: ${problem}.";
+      }) problems
+    )
+    ++ lib.optionals (backup != null) [
+      {
+        assertion = server != null && server.enable;
+        message = "${noServer}.";
+      }
+      {
+        # The NAS, or any machine that is not a ravnix host, may back
+        # itself up under its own name into the shared Internxt
+        # repository, and a prune by --host would take both for one.
+        assertion = !(hosts ? ${backup.host}) || hosts.${backup.host}.runtime == "nixos";
+        message = "ravnix.backup.nas.host is \"${backup.host}\", the name of ravnix.hosts.${backup.host}, which runs ${
+          hosts.${backup.host}.runtime or "?"
+        }: its own backups may carry that name in the shared Internxt repository, and a prune by --host would take the two for one. Choose another name.";
+      }
+    ];
 }

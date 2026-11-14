@@ -11,18 +11,20 @@
 # - The evaluated home-manager configuration: no unit and no timer without
 #   ravnix.backup.nas; with it, a oneshot unit that restarts after a failure
 #   but not after restic's exit 3, and a timer; the problems above as
-#   assertions that home-manager refuses; and no secret, `forget`, `prune`
-#   or `init` in the script.
+#   assertions that home-manager refuses; the repository derived from the
+#   registered rest-server and the host name; and no secret, `forget`,
+#   `prune` or `init` in the script.
 # - The script itself, run against a real rest-server on loopback with the
 #   flags of deploy/compose/restic (`--append-only --private-repos` and the
 #   logins), and a stand-in for rbw:
-#   the snapshot carries the host name of the option, not the machine's; the carved-back
+#   the snapshot carries the host name of the option, not the machine's,
+#   and so do the repository's path and the login's user; the carved-back
 #   folders are in it with everything below, one of them with brackets in
 #   its name, and the rest of the excluded directory, ~/.cache and a
 #   CACHEDIR.TAG directory are not; a second run adds a snapshot; the
 #   host's login cannot forget it, and cannot read another host's
 #   repository; with the vault locked the run exits 75 and starts no
-#   restic; with a login item without a user name it says so.
+#   restic; with a login item without a password it says so.
 {
   self,
   inputs,
@@ -51,7 +53,6 @@ let
 
   repository = "rest:http://127.0.0.1:${toString port}/huginn/";
   nas = {
-    inherit repository;
     host = "huginn";
     passwordItem = "Restic - huginn repository";
     loginItem = "Restic - huginn login";
@@ -75,8 +76,7 @@ let
         unlocked) [ ! -e "$FAKE_RBW_LOCKED" ] ;;
         get)
           case "$*" in
-            "get --field username -- Restic - huginn login") cat "$FAKE_RBW_USER" ;;
-            "get -- Restic - huginn login") echo login-secret ;;
+            "get -- Restic - huginn login") cat "$FAKE_RBW_LOGIN" ;;
             "get -- Restic - huginn repository") echo repository-secret ;;
             *) echo "rbw: no item: $*" >&2; exit 1 ;;
           esac ;;
@@ -95,7 +95,17 @@ let
         programs.rbw.package = lib.mkForce fakeRbw;
         ravnix.backup.nas = lib.mkForce value;
       }
+      registered
     ]).config;
+  # The rest-server in the registry, on the template's NAS, here on loopback.
+  registered = {
+    ravnix.hosts.nas.address = lib.mkForce "127.0.0.1";
+    ravnix.services.restic-server = {
+      enable = true;
+      host = "nas";
+      inherit port;
+    };
+  };
   on = configWith nas;
   off = (hm [ ]).config;
   # home-manager refuses a configuration whose assertions fail, as a host
@@ -362,7 +372,14 @@ let
     )
     ++ lib.optional (
       !lib.hasInfix "--host huginn" script
-    ) "the script does not pin the snapshot's host";
+    ) "the script does not pin the snapshot's host"
+    ++ lib.optional (
+      !lib.hasInfix "RESTIC_REPOSITORY=${repository}" script
+    ) "the script's repository is not the registered rest-server's, at the host's path"
+    ++ lib.optional (lib.hasInfix "--field" script) "the script reads the login's user name from the item"
+    ++ lib.optional (
+      !lib.hasInfix "RESTIC_REST_USERNAME=huginn" script
+    ) "the login's user is not the host name";
 in
 pkgs.runCommand "common-backup"
   {
@@ -432,8 +449,8 @@ pkgs.runCommand "common-backup"
           sleep 0.1
         done
 
-        export FAKE_RBW_LOG=${build}/rbw.log FAKE_RBW_LOCKED=${build}/locked FAKE_RBW_USER=${build}/user
-        echo huginn >"$FAKE_RBW_USER"
+        export FAKE_RBW_LOG=${build}/rbw.log FAKE_RBW_LOCKED=${build}/locked FAKE_RBW_LOGIN=${build}/login
+        echo login-secret >"$FAKE_RBW_LOGIN"
         ${backup}/bin/ravnix-backup || fail "the backup failed: $(cat ${build}/server.log)"
         ${backup}/bin/ravnix-backup || fail "the second backup failed"
 
@@ -470,12 +487,12 @@ pkgs.runCommand "common-backup"
         [ "$(local_repo snapshots --json | jq length)" = 2 ] || fail "a locked run made a snapshot"
         rm "$FAKE_RBW_LOCKED"
 
-        # A login item without a user name.
-        : >"$FAKE_RBW_USER"
+        # A login item without a password.
+        : >"$FAKE_RBW_LOGIN"
         status=0
-        ${backup}/bin/ravnix-backup 2>${build}/nouser.log || status=$?
-        [ "$status" = 1 ] || fail "a login without a user name exited $status"
-        grep -q 'needs a user name and a password' ${build}/nouser.log || fail "the run does not say the login lacks a user name"
+        ${backup}/bin/ravnix-backup 2>${build}/nologin.log || status=$?
+        [ "$status" = 1 ] || fail "a login without a password exited $status"
+        grep -q 'has no password' ${build}/nologin.log || fail "the run does not say the login lacks a password: $(cat ${build}/nologin.log)"
 
         # rbw was asked for the items by name, and the repository password
         # through --password-command.
