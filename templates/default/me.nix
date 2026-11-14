@@ -511,6 +511,11 @@
     # list gets them without a rebuild.
     dictionary.file = "/home/alice/src/ravnix-private/dictionary.txt";
 
+    # A user service syncs the dictionary with the tools' word lists (Handy,
+    # LanguageTool, the prose skill) whenever one of them changes. false
+    # leaves it to `ravnix-dict sync`, run by hand.
+    dictionary.watch = true;
+
     # The languages the editor installs language servers, formatters and
     # linters for. All of them; drop the ones you do not edit to keep the
     # editor small (the Odin toolchain behind "odin" is 2.3 GiB). Edit this

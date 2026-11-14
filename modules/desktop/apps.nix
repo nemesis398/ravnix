@@ -311,6 +311,10 @@ in
   # libadwaita, see the header) go through.
   programs.dconf.enable = lib.mkDefault true;
 
+  # Handy is installed here, so ravnix-dict keeps its custom words in step
+  # with the dictionary (tools/ravnix-dict, modules/common/dictionary.nix).
+  ravnix.dictionary.adapters.handy = lib.mkDefault true;
+
   # No Flatpak at all on NixOS.
   services.flatpak.enable = lib.mkDefault false;
 

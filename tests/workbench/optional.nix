@@ -197,8 +197,11 @@ let
       (
         # The declared user services and timers of a bare server are herdr's
         # server, the glue's ravnix-link-deliver, which delivers queued
-        # requests to the laptop from boot (Task 5.3), and rbw's agent
-        # (modules/common/rbw.nix): none of them is an optional value's, and
+        # requests to the laptop from boot (Task 5.3), rbw's agent
+        # (modules/common/rbw.nix), and the dictionary's sync, a service and
+        # its timer (modules/common/dictionary-watch.nix, on unless
+        # ravnix.dictionary.watch is false): none of them is an optional
+        # value's, and
         # any other unit is one of theirs. rbw's 12-hour lock is not in the
         # list, because rbw-relock is a transient unit that systemd-run starts
         # at an unlock, and unitsOf reads only declared units.
@@ -208,6 +211,7 @@ let
             "herdr-server"
             "ravnix-link-deliver"
             "rbw-agent"
+            "ravnix-dict-sync"
           ]
         ) (unitsOf nothing) != [ ]
       )
