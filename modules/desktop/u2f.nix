@@ -32,26 +32,42 @@
 #
 #   auth [success=ignore default=1] pam_exec.so quiet quiet_log seteuid ravnix-tap-ask
 #
-# When the user has a mapping and a FIDO key is plugged in, the tool shows a
-# fuzzel popup in the user's Sway session on the laptop, run as the user
-# through setpriv, never as root: the command line, the user, and where the
-# sudo came from (a terminal here, the server's ssh link, a program without a
-# terminal). Allow (exit 0) goes on to pam_u2f, and the key blinks. Deny, Esc,
-# no answer in 30 s, an Allow sooner than a second (typed through), a locked
-# screen, no session, or any failure exits non-zero, which jumps over the one
-# pam_u2f line: the rest of the stack runs as before, so a terminal sudo asks
-# for the password, and a sudo without a terminal fails because it cannot ask.
-# A jump changes no result of the stack, so a failure of the tool can only
-# skip the tap, never grant anything. Only sudo: polkit has a dialog of its
-# own, and swaylock and tuigreet are the laptop's own screen.
+# A sudo over ssh, which on the laptop is the server's link, is refused at
+# once: no popup, no tap, one line in the journal. The tool tells it by the
+# login session logind put sudo in, which the caller cannot change from
+# inside it, then by an sshd ancestor and SSH_CONNECTION. For a local sudo,
+# when the user has a mapping and a FIDO key is plugged in, the tool shows a
+# fuzzel popup on the socket the session's own Sway listens on, run as the
+# user through setpriv, never as root: the command line (a longer one than
+# fits gets no popup), the user, and a terminal or the program that ran it.
+# Allow (exit 0) goes on to pam_u2f, and the key blinks. Deny, Esc, no answer
+# in 30 s, an Allow sooner than a second (typed through), a locked screen, no
+# session, or any failure exits non-zero, which jumps over the one pam_u2f
+# line: the rest of the stack runs as before, so a terminal sudo asks for the
+# password, and a sudo without a terminal fails because it cannot ask. A jump
+# changes no result of the stack, so a failure of the tool can only skip the
+# tap, never grant anything. Only sudo has the line: swaylock and tuigreet
+# are the laptop's own screen, and polkit is below.
 #
-# The popup is consent, not a wall. A program that already runs as the user
-# on the laptop, the laptop-access link included, can answer the popup itself
-# (Sway lets any client type, as wtype does) and can start sudo so that it
-# looks like it came from elsewhere. What it cannot do is touch the key: the
-# popup makes sure that the touch it asks for names the command it allows.
-# Taking arbitrary commands from the link (a forced command) is what would
-# close that, and is the link's to decide (tools/ravnix-tap-ask/README.md).
+# POLKIT has no popup of ours. pkexec over the link would otherwise get one:
+# with a terminal (script), pkexec runs its own text agent, polkit-1's stack
+# runs pam_u2f, and the cue goes to the link. So polkit refuses, before any
+# authentication, a subject outside a local, active session (an ssh login
+# has no seat, so it is not local); root is left alone, since it gains
+# nothing. A local request is one from the user's session on the laptop,
+# where Sway's polkit agent shows its dialog, the action named, before the
+# key blinks. polkit counts a process outside any session (a unit of the
+# user's systemd) as the user's display session, so such a request is local.
+#
+# WHAT THIS DOES NOT DO. The popup and the refusals are consent against a
+# mistaken touch, not a defense against a hostile link. The link runs any
+# command as the user, and a program that runs as the user can leave the ssh
+# session (systemd-run --user, swaymsg exec) so that its sudo or pkexec is a
+# local one, answer the popup itself (Sway lets any client type, as wtype
+# does), and blink the key for a sudo of its own. What it cannot do is touch
+# the key. The real fix is an allowlist forced command on the link's key, so
+# that the link runs only what it is for: a separate task
+# (modules/glue/laptop-access.nix, tools/ravnix-tap-ask/README.md).
 #
 # THE LINE. `sufficient`: a tap is enough, and a failure (no key, a key that is
 # not enrolled, no ~/.config/Yubico/u2f_keys, no touch in time) is ignored and
@@ -139,6 +155,21 @@ in
     # local program's, the very case sudo's popup is for; a wider
     # listenAddresses would make it a remote one. The password still works.
     security.pam.services.cups.u2f.enable = lib.mkIf config.services.printing.enable false;
+
+    # polkit refuses a subject outside a local, active session (POLKIT,
+    # above). polkit runs the rules files in the order of their names, and
+    # NixOS's 10-nixos.rules comes before polkit's 50-default.rules, whose
+    # rule makes wheel the admin; the first rule that decides wins.
+    security.polkit.extraConfig = ''
+      // ravnix (modules/desktop/u2f.nix): no polkit authentication, and so no
+      // tap, for a subject outside a local, active session, such as an ssh
+      // login. Root is left alone.
+      polkit.addRule(function (action, subject) {
+        if (subject.user != "root" && (!subject.local || !subject.active)) {
+          return polkit.Result.NO;
+        }
+      });
+    '';
 
     # sudo asks on the screen first (SUDO ASKS ON THE SCREEN FIRST, above).
     # The order is relative to pam_u2f's, as NixOS advises, so that the jump

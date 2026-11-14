@@ -30,6 +30,10 @@
 #     (seteuid), so only the tool's exit 0 (Allow in the popup on the laptop's
 #     screen) reaches pam_u2f, and any other result skips that one line; no
 #     other service has the line;
+#   - polkit refuses, before any authentication, a subject outside a local
+#     active session (an ssh login, the laptop-access link), root excepted:
+#     the rule is in /etc/polkit-1/rules.d/10-nixos.rules with the option on
+#     and not with it off;
 #   - the option changes nothing but these lines: every PAM file with the
 #     option on, without its pam_u2f and ravnix-tap-ask lines, is the file
 #     with the option off, line for line, and no service is added or lost;
@@ -212,6 +216,23 @@ let
         s: check (!lib.any isGate (linesOf c s)) "${name}: ${s} has a ravnix-tap-ask line"
       ) (lib.filter (s: s != "sudo") (lib.attrNames c.security.pam.services));
 
+  # polkit's rule against subjects outside a local, active session.
+  polkitRules = c: c.environment.etc."polkit-1/rules.d/10-nixos.rules".text or "";
+  remoteRule = [
+    "polkit.addRule(function (action, subject) {"
+    ''if (subject.user != "root" && (!subject.local || !subject.active)) {''
+    "return polkit.Result.NO;"
+  ];
+  polkitRule =
+    name: c:
+    check c.security.polkit.enable "${name}: polkit is off"
+    ++ lib.concatMap (
+      l: check (lib.hasInfix l (polkitRules c)) "${name}: polkit's rules lack ${l}"
+    ) remoteRule;
+  noPolkitRule =
+    name: c:
+    check (!lib.hasInfix "subject.local" (polkitRules c)) "${name}: polkit's rules refuse remote subjects";
+
   # The option on, without its own lines, is the option off.
   onlyTheseLines =
     lib.concatMap (
@@ -267,6 +288,8 @@ let
     ++ check (laptopOn.security.pam.services ? cups) "laptop: no cups, so the cups case reads nothing"
     ++ check (!lib.any isU2f (linesOf laptopOn "cups")) "laptop: cups's stack has pam_u2f"
     ++ gate "laptop" laptopOn
+    ++ polkitRule "laptop" laptopOn
+    ++ noPolkitRule "laptop with the option off" laptopOff
     ++ gate "another origin" otherOrigin
     ++ onlyTheseLines
     ++ lib.concatMap (carries "another origin" otherOrigin "pam://example") services
