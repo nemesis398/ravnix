@@ -57,7 +57,7 @@ in
       rbwItem = mkOption {
         type = types.nullOr (types.strMatching "[^\n]+");
         default = null;
-        example = "LanguageTool - API token";
+        example = "LanguageTool";
         description = ''
           The name or id of the Bitwarden item whose password is the API key
           of your LanguageTool Premium account, which ravnix-dict reads

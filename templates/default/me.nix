@@ -508,7 +508,8 @@
 
     # Your dictionary, as an absolute path to it in your checkout of this
     # flake: the tools add words to it at runtime, and every tool with a word
-    # list gets them without a rebuild.
+    # list gets them without a rebuild. Leave it out on a host that should
+    # have no dictionary: it gets no sync of one.
     dictionary.file = "/home/alice/src/ravnix-private/dictionary.txt";
 
     # A user service syncs the dictionary with the tools' word lists (Handy,
@@ -517,10 +518,11 @@
     dictionary.watch = true;
 
     # Your LanguageTool Premium account, whose word list the laptop keeps in
-    # step with the dictionary: the Bitwarden item whose password is the API
-    # key, and the account you log in with.
+    # step with the dictionary: the name of your Bitwarden item whose
+    # password is the API key, and the account you log in with. Both are
+    # placeholders, and warn until you replace them.
     dictionary.languagetool = {
-      rbwItem = "LanguageTool - API token";
+      rbwItem = "languagetool.example.org";
       username = "alice@example.org";
     };
 

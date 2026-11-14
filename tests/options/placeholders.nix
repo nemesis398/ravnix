@@ -41,6 +41,8 @@ let
     "ravnix.secrets.rbwBaseUrl"
     "ravnix.matrix.homeserver"
     "ravnix.matrix.rooms.sessions.botUser"
+    "ravnix.dictionary.languagetool.rbwItem"
+    "ravnix.dictionary.languagetool.username"
   ];
 
   # One value at a time, in a skill value, which takes any string.

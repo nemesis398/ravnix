@@ -160,7 +160,7 @@ pkgs.runCommand "common-dictionary-watch" { nativeBuildInputs = [ pkgs.gnugrep ]
       grep -qF ${lib.escapeShellArg prose} ${wrapper plain} || fail "the wrapper does not name the prose dictionary"
       # LanguageTool's account, from the options (the template's
       # placeholders), and nothing when they are null.
-      grep -qF "LANGUAGETOOL_RBW_ITEM-'LanguageTool - API token'" ${wrapper plain} || fail "the wrapper does not name the vault item: $(grep LANGUAGETOOL ${wrapper plain})"
+      grep -qF "LANGUAGETOOL_RBW_ITEM-'languagetool.example.org'" ${wrapper plain} || fail "the wrapper does not name the vault item: $(grep LANGUAGETOOL ${wrapper plain})"
       grep -qF "LANGUAGETOOL_USERNAME-'alice@example.org'" ${wrapper plain} || fail "the wrapper does not name the account"
       grep -q RAVNIX_DICT_FILE ${wrapper plain} || fail "the wrapper does not name the dictionary"
       if grep -q RAVNIX_DICT_FILE ${wrapper noDictionary}; then fail "a host without a dictionary names one"; fi
