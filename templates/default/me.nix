@@ -622,13 +622,19 @@
     #     vault.root = "/home/alice/Notes";
     #     plane.mcpUrl = "https://plane.example.org/mcp";
     #   };
-    # ravnix's skills are linked into ~/.claude/skills; claude.skills adds
-    # your own by name (a directory with a SKILL.md), or leaves one out:
-    #   skills.laptop = null;
-    # skillOverrides hides a skill from the model ("off", or
-    # "user-invocable-only" to keep /NAME) without uninstalling it:
-    #   skillOverrides.json-canvas = "off";
     claude.skillValues = { };
+
+    # ravnix's skills are linked into ~/.claude/skills; this adds your own by
+    # name (a directory with a SKILL.md, or one pinned from upstream as a
+    # flake input), replaces one of ravnix's, or leaves one out with null:
+    #   skills = { my-skill = ./claude/skills/my-skill; laptop = null; };
+    claude.skills = { };
+
+    # How Claude Code lists a skill to the model, by name: "off" hides it,
+    # "user-invocable-only" keeps only /NAME, "name-only" drops its
+    # description. The skill stays installed. For example:
+    #   skillOverrides = { json-canvas = "off"; };
+    claude.skillOverrides = { };
 
     # The MCP servers Claude Code starts with in every project, by name, each
     # the JSON of one server as Claude Code's mcpServers holds it. A header or
