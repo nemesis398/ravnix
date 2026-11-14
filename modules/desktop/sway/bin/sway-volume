@@ -4,11 +4,15 @@
 # it works while the screen is locked.
 #
 #   sway-volume [--sink SINK] [--limit PERCENT] [--increase STEP | --decrease STEP | --set-volume PERCENT]
+#   sway-volume --toggle-mic
 #
 # Without a change it only shows the current volume: the mute key runs it after
 # toggling. The volume is clamped to 0..LIMIT (default 100), so a held key never
 # goes above the limit. The notification replaces the one before it (the
 # synchronous hint) and carries the volume as a progress bar.
+#
+# --toggle-mic is the microphone key (F4): it mutes or unmutes the default
+# source and shows "Microphone: muted" or "Microphone: on".
 set -uo pipefail
 
 # pactl prints in the locale of the session; the parsing below reads English.
@@ -23,9 +27,10 @@ sink="@DEFAULT_SINK@"
 limit=100
 change=0
 set_to=-1
+toggle_mic=0
 
 usage() {
-  echo "usage: sway-volume [--sink S] [--limit N] [--increase N|--decrease N|--set-volume N]" >&2
+  echo "usage: sway-volume [--sink S] [--limit N] [--increase N|--decrease N|--set-volume N] | --toggle-mic" >&2
   exit 2
 }
 
@@ -44,6 +49,7 @@ while [ $# -gt 0 ]; do
     -l|--limit) limit=$(number "${2:-}") || exit 2; shift ;;
     --set-volume) set_to=$(number "${2:-}") || exit 2; shift ;;
     -i|--increase) change=$(number "${2:-}") || exit 2; shift ;;
+    --toggle-mic) toggle_mic=1 ;;
     -d|--decrease) change=-$(number "${2:-}") || exit 2; shift ;;
     *) usage ;;
   esac
@@ -76,6 +82,21 @@ unreadable() {
   echo "sway-volume: cannot read the volume of $sink" >&2
   exit 1
 }
+
+if [ "$toggle_mic" -eq 1 ]; then
+  "$PACTL" set-source-mute @DEFAULT_SOURCE@ toggle 2>/dev/null || {
+    echo "sway-volume: cannot toggle the microphone" >&2
+    exit 1
+  }
+  case $("$PACTL" get-source-mute @DEFAULT_SOURCE@ 2>/dev/null) in
+    *yes) text="Microphone: muted" ;;
+    *no) text="Microphone: on" ;;
+    *) echo "sway-volume: cannot read the microphone state" >&2; exit 1 ;;
+  esac
+  "$NOTIFY_SEND" --app-name sway --expire-time 800 \
+    --hint string:x-canonical-private-synchronous:mic --transient "$text"
+  exit 0
+fi
 
 if [ "$change" -ne 0 ]; then
   now=$(volume_of "$sink") || unreadable

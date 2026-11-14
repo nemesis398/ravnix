@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# sway-mirror — show the laptop screen on the external display (wl-mirror), or
+# stop doing so. The F7 key and the Mirror row of sway-settings both run it.
+#
+#   sway-mirror
+#
+# One press toggles: a running wl-mirror is ended, otherwise wl-mirror shows the
+# panel 1:1, fullscreen, on the first active external output. Without an
+# external output it says so and does nothing. A notification names the new
+# state; it replaces the one before (the synchronous hint).
+set -uo pipefail
+
+# Overridable, so that the toggle can be tested without a compositor
+# (tests/desktop/helpers/script-tests.sh).
+SWAYMSG=${SWAYMSG:-swaymsg}
+PGREP=${PGREP:-pgrep}
+PKILL=${PKILL:-pkill}
+NOTIFY_SEND=${NOTIFY_SEND:-notify-send}
+
+[ $# -eq 0 ] || { echo "usage: sway-mirror" >&2; exit 2; }
+
+notify() {
+  "$NOTIFY_SEND" --app-name sway --expire-time 1500 \
+    --hint string:x-canonical-private-synchronous:mirror --transient "$1" 2>/dev/null || true
+}
+
+if "$PGREP" -x wl-mirror >/dev/null 2>&1; then
+  "$PKILL" -x wl-mirror
+  notify "Mirror: off"
+  exit 0
+fi
+
+outputs=$("$SWAYMSG" -t get_outputs 2>/dev/null) || { echo "sway-mirror: cannot ask Sway for its outputs" >&2; exit 1; }
+ext=$(jq -r '[.[] | select(.active and (.name | test("^eDP") | not))][0].name // empty' <<<"$outputs") || exit 1
+pan=$(jq -r '[.[] | select(.active and (.name | test("^eDP")))][0].name // empty' <<<"$outputs") || exit 1
+
+if [ -z "$ext" ] || [ -z "$pan" ]; then
+  notify "Mirror: no external display"
+  exit 0
+fi
+
+# The names go into a Sway command; a name that holds anything else than what
+# connectors are called is not passed on.
+for name in "$ext" "$pan"; do
+  case $name in
+    ''|*[!A-Za-z0-9._-]*) echo "sway-mirror: odd output name: $name" >&2; exit 1 ;;
+  esac
+done
+
+"$SWAYMSG" -q "exec wl-mirror --fullscreen-output $ext $pan"
+notify "Mirror: laptop screen on $ext"

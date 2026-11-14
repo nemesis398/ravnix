@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# sway-airplane — switch every radio off, or back on, and say which it is now.
+# The F8 key runs it.
+#
+#   sway-airplane
+#
+# One press toggles. Airplane mode is on when no radio is active (soft- and
+# hard-unblocked); a press then unblocks everything, otherwise it blocks
+# everything. The notification names the state read AFTER the change, so a
+# radio the hardware switch holds, or a change rfkill refused, is not claimed.
+#
+# The session user may use /dev/rfkill: systemd's 70-uaccess.rules tags it, so
+# the user on the active seat gets an ACL. NetworkManager and BlueZ follow the
+# rfkill state, and systemd-rfkill restores it after a boot.
+set -uo pipefail
+
+# Overridable, so that the toggle can be tested without radios
+# (tests/desktop/helpers/script-tests.sh).
+RFKILL=${RFKILL:-rfkill}
+NOTIFY_SEND=${NOTIFY_SEND:-notify-send}
+
+[ $# -eq 0 ] || { echo "usage: sway-airplane" >&2; exit 2; }
+
+notify() {
+  "$NOTIFY_SEND" --app-name sway --expire-time 1500 \
+    --hint string:x-canonical-private-synchronous:airplane --transient "$1" 2>/dev/null || true
+}
+
+# on | off | none. Fails when rfkill does or its answer is no JSON.
+state() {
+  local json
+  json=$("$RFKILL" -J 2>/dev/null) || return 1
+  jq -r '[.. | objects | select(has("soft") and has("hard"))] as $radios
+         | if ($radios | length) == 0 then "none"
+           elif any($radios[]; .soft == "unblocked" and .hard == "unblocked") then "off"
+           else "on" end' <<<"$json" 2>/dev/null
+}
+
+before=$(state) || { echo "sway-airplane: cannot read the radios with rfkill" >&2; notify "Airplane mode: cannot read the radios"; exit 1; }
+case $before in
+  none) notify "Airplane mode: no radios"; exit 1 ;;
+  on) want=off; action=unblock ;;
+  off) want=on; action=block ;;
+  *) echo "sway-airplane: odd state: $before" >&2; exit 1 ;;
+esac
+
+"$RFKILL" "$action" all 2>/dev/null
+
+after=$(state) || { notify "Airplane mode: cannot read the radios"; exit 1; }
+notify "Airplane mode: $after"
+[ "$after" = "$want" ] || { echo "sway-airplane: rfkill $action all did not take" >&2; exit 1; }

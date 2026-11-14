@@ -530,7 +530,7 @@ set $volume_helper sway-volume
 bindsym --locked XF86AudioRaiseVolume exec $volume_helper --limit "$volume_limit" --increase "$volume_step"
 bindsym --locked XF86AudioLowerVolume exec $volume_helper --limit "$volume_limit" --decrease "$volume_step"
 bindsym --locked XF86AudioMute        exec pactl set-sink-mute   @DEFAULT_SINK@   toggle && $volume_helper
-bindsym --locked XF86AudioMicMute     exec pactl set-source-mute @DEFAULT_SOURCE@ toggle
+bindsym --locked XF86AudioMicMute     exec $volume_helper --toggle-mic
 
 # Brightness — sway-brightness steps by 5 % and by 1 % at or below 5 %, and
 # shows the value it read back (external DDC monitor: it does nothing without a
@@ -607,7 +607,7 @@ mode "game" {
     bindsym --locked XF86AudioRaiseVolume exec $volume_helper --limit "$volume_limit" --increase "$volume_step"
     bindsym --locked XF86AudioLowerVolume exec $volume_helper --limit "$volume_limit" --decrease "$volume_step"
     bindsym --locked XF86AudioMute        exec pactl set-sink-mute   @DEFAULT_SINK@   toggle && $volume_helper
-    bindsym --locked XF86AudioMicMute     exec pactl set-source-mute @DEFAULT_SOURCE@ toggle
+    bindsym --locked XF86AudioMicMute     exec $volume_helper --toggle-mic
     bindsym XF86MonBrightnessDown exec sway-brightness down
     bindsym XF86MonBrightnessUp   exec sway-brightness up
     bindsym --locked XF86AudioPlay exec playerctl play-pause

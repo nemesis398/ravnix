@@ -12,7 +12,8 @@
 #                  switched back; a replug gets kanshi's profile again. Shown
 #                  only for an external display of 3200 px or wider.
 #   Mirror         wl-mirror shows the panel 1:1, fullscreen on the external
-#                  display. Shown only with an external display.
+#                  display (sway-mirror, which the laptop's F7 key runs too).
+#                  Shown only with an external display.
 #   Audio output   laptop speakers / the external display's HDMI sink; running
 #                  streams move along. Shown only when an HDMI sink is plugged.
 #   Do not disturb dunst paused / running.
@@ -152,12 +153,8 @@ menu() {
     "$r_disp")
       if [ "$disp" = sharp ]; then display_set "$READABLE_SCALE"; else display_set 1; fi ;;
     "$r_mirror")
-      if [ "$mirror" = on ]; then
-        pkill -x wl-mirror; notify "Mirror" "off"
-      else
-        swaymsg -q "exec wl-mirror --fullscreen-output $(jq -r .name <<<"$ext") $(jq -r .name <<<"$pan")"
-        notify "Mirror" "Laptop screen on $(jq -r .name <<<"$ext")"
-      fi ;;
+      # The same toggle as the F7 key.
+      sway-mirror ;;
     "$r_audio")
       if [ "$cur" = "$hdmi" ]; then audio_set "$spk" "Laptop speakers"
       else audio_set "$hdmi" "Display (HDMI)"; fi ;;

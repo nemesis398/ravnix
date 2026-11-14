@@ -472,6 +472,44 @@ PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" --increase 5 >/dev/null
 rm -f "$pa/garbage"
 ok "sway-volume"
 
+# ── sway-volume: the microphone key ──────────────────────────────────────────
+# The F4 key toggles the default source and shows the new state, as the volume
+# keys do.
+cat >"$stubs/pactl" <<STUB
+#!/bin/sh
+case "\$1" in
+  get-sink-volume) echo "Volume: front-left: 32768 /  \$(cat "$pa/volume")% / -18.06 dB" ;;
+  set-sink-volume) echo "\${3%\%}" >"$pa/volume" ;;
+  get-sink-mute) echo "Mute: \$(cat "$pa/mute")" ;;
+  set-source-mute) [ -f "$pa/mic-broken" ] && exit 1
+                   [ "\$3" = toggle ] || exit 2
+                   if [ "\$(cat "$pa/mic")" = yes ]; then echo no >"$pa/mic"; else echo yes >"$pa/mic"; fi ;;
+  get-source-mute) [ -f "$pa/mic-broken" ] && exit 1
+                   echo "Mute: \$(cat "$pa/mic")" ;;
+esac
+STUB
+chmod +x "$stubs/pactl"
+mic() { # mic START: the state after one press, and what was shown
+  printf '%s\n' "$1" >"$pa/mic"
+  : >"$pa/notifications"
+  PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" --toggle-mic >/dev/null 2>&1
+  echo $? >"$pa/mic-rc"
+  cat "$pa/mic"
+}
+[ "$(mic no)" = yes ] || bad "sway-volume --toggle-mic does not mute a live microphone"
+grep -qF 'Microphone: muted' "$pa/notifications" || bad "muting the microphone shows: $(cat "$pa/notifications")"
+grep -q 'synchronous:mic' "$pa/notifications" || bad "the microphone notification does not replace the one before"
+[ "$(mic yes)" = no ] || bad "sway-volume --toggle-mic does not unmute a muted microphone"
+grep -qF 'Microphone: on' "$pa/notifications" || bad "unmuting the microphone shows: $(cat "$pa/notifications")"
+: >"$pa/mic-broken"
+printf 'no\n' >"$pa/mic"
+: >"$pa/notifications"
+PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" --toggle-mic >/dev/null 2>&1
+[ $? = 1 ] || bad "sway-volume --toggle-mic does not fail when pactl does"
+[ ! -s "$pa/notifications" ] || bad "sway-volume --toggle-mic shows a state it could not read: $(cat "$pa/notifications")"
+rm -f "$pa/mic-broken"
+ok "sway-volume --toggle-mic"
+
 # ── sway-brightness ──────────────────────────────────────────────────────────
 # nixpkgs' brightnessctl is 0.5.1: no --percentage. The script reads get and max
 # and does its own arithmetic, so the stand-in answers only what 0.5.1 answers.
@@ -581,6 +619,135 @@ printf '255\n' >"$bl/max"; printf '100\n' >"$bl/raw"
 BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=/nonexistent "$bright" up >/dev/null 2>&1
 [ "$(pct_of "$(cat "$bl/raw")" 255)" = 40 ] || bad "sway-brightness does not change the brightness when the notification fails"
 ok "sway-brightness"
+
+# ── sway-mirror ──────────────────────────────────────────────────────────────
+mirror=$(script sway-mirror)
+mi=$work/mi
+mkdir -p "$mi"
+cat >"$mi/swaymsg" <<STUB
+#!/bin/sh
+case "\$*" in
+  "-t get_outputs") cat "$mi/outputs.json" ;;
+  *) printf '%s\n' "\$*" >>"$mi/swaymsg.log" ;;
+esac
+STUB
+cat >"$mi/pgrep" <<STUB
+#!/bin/sh
+[ -f "$mi/running" ]
+STUB
+cat >"$mi/pkill" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$mi/pkill.log"
+rm -f "$mi/running"
+STUB
+cat >"$mi/notify" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$mi/notifications"
+STUB
+chmod +x "$mi"/swaymsg "$mi"/pgrep "$mi"/pkill "$mi"/notify
+mirror_run() { # mirror_run OUTPUTS-JSON [running]: runs the key on that machine
+  printf '%s\n' "$1" >"$mi/outputs.json"
+  rm -f "$mi/running"
+  [ "${2:-}" = running ] && : >"$mi/running"
+  : >"$mi/swaymsg.log"; : >"$mi/pkill.log"; : >"$mi/notifications"
+  SWAYMSG=$mi/swaymsg PGREP=$mi/pgrep PKILL=$mi/pkill NOTIFY_SEND=$mi/notify "$mirror" >/dev/null 2>&1
+  mrc=$?
+}
+one='[{"name":"eDP-1","active":true},{"name":"DP-3","active":true}]'
+mirror_run "$one"
+grep -qxF -- '-q exec wl-mirror --fullscreen-output DP-3 eDP-1' "$mi/swaymsg.log" || bad "sway-mirror does not start wl-mirror from the panel on the external output: $(cat "$mi/swaymsg.log")"
+grep -qF 'DP-3' "$mi/notifications" || bad "sway-mirror does not say where the screen is shown: $(cat "$mi/notifications")"
+mirror_run "$one" running
+[ -s "$mi/pkill.log" ] && [ ! -s "$mi/swaymsg.log" ] || bad "sway-mirror does not end a running mirror, or starts another"
+grep -qF 'off' "$mi/notifications" || bad "sway-mirror does not say it is off: $(cat "$mi/notifications")"
+mirror_run '[{"name":"eDP-1","active":true}]'
+[ "$mrc" = 0 ] && [ ! -s "$mi/swaymsg.log" ] || bad "sway-mirror acts without an external display"
+grep -qiF 'no external display' "$mi/notifications" || bad "sway-mirror says nothing without an external display: $(cat "$mi/notifications")"
+mirror_run '[{"name":"eDP-1","active":true},{"name":"DP-3","active":false}]'
+[ ! -s "$mi/swaymsg.log" ] || bad "sway-mirror mirrors onto an inactive output"
+mirror_run '[{"name":"DP-3","active":true}]'
+[ ! -s "$mi/swaymsg.log" ] || bad "sway-mirror mirrors with no laptop panel"
+mirror_run '[{"name":"eDP-1","active":true},{"name":"DP-3; exec touch '"$mi"'/pwned","active":true}]'
+[ ! -s "$mi/swaymsg.log" ] && [ ! -e "$mi/pwned" ] || bad "sway-mirror puts an output name with a command in it into a Sway command: $(cat "$mi/swaymsg.log")"
+mirror_run 'not json'
+[ "$mrc" = 1 ] && [ ! -s "$mi/swaymsg.log" ] || bad "sway-mirror does not fail on an answer that is no JSON"
+# A running mirror ends even when the display is gone.
+mirror_run '[{"name":"eDP-1","active":true}]' running
+[ -s "$mi/pkill.log" ] || bad "sway-mirror leaves a mirror running after the display was unplugged"
+ok "sway-mirror"
+
+# ── sway-airplane ────────────────────────────────────────────────────────────
+air=$(script sway-airplane)
+ar=$work/ar
+mkdir -p "$ar"
+# A stand-in rfkill: ar/soft holds the soft state of the two radios (blocked or
+# unblocked), ar/hard the hardware state of the Wi-Fi one.
+cat >"$ar/rfkill" <<STUB
+#!/bin/sh
+[ -f "$ar/dead" ] && { echo "rfkill: cannot open /dev/rfkill" >&2; exit 1; }
+printf '%s\n' "\$*" >>"$ar/calls"
+case "\$*" in
+  "-J") cat <<JSON
+{"rfkilldevices": [
+  {"id": 0, "type": "wlan", "device": "phy0", "soft": "\$(cat "$ar/soft")", "hard": "\$(cat "$ar/hard")"},
+  {"id": 1, "type": "bluetooth", "device": "hci0", "soft": "\$(cat "$ar/soft")", "hard": "unblocked"}
+]}
+JSON
+  ;;
+  "block all") [ -f "$ar/refuse" ] || echo blocked >"$ar/soft" ;;
+  "unblock all") [ -f "$ar/refuse" ] || echo unblocked >"$ar/soft" ;;
+  *) exit 2 ;;
+esac
+STUB
+cat >"$ar/notify" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$ar/notifications"
+STUB
+chmod +x "$ar/rfkill" "$ar/notify"
+air_run() { # air_run SOFT [HARD]: one press
+  rm -f "$ar/dead" "$ar/refuse"
+  printf '%s\n' "$1" >"$ar/soft"
+  printf '%s\n' "${2:-unblocked}" >"$ar/hard"
+  : >"$ar/calls"; : >"$ar/notifications"
+  RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" >/dev/null 2>&1
+}
+air_run unblocked
+[ "$(cat "$ar/soft")" = blocked ] || bad "sway-airplane does not switch the radios off"
+grep -qF 'Airplane mode: on' "$ar/notifications" || bad "switching airplane mode on shows: $(cat "$ar/notifications")"
+grep -q 'synchronous:airplane' "$ar/notifications" || bad "the airplane notification does not replace the one before"
+air_run blocked
+[ "$(cat "$ar/soft")" = unblocked ] || bad "sway-airplane does not switch the radios back on"
+grep -qF 'Airplane mode: off' "$ar/notifications" || bad "switching airplane mode off shows: $(cat "$ar/notifications")"
+# A radio the hardware switch holds stays blocked: the notification says what is.
+air_run blocked blocked
+grep -qF 'Airplane mode: off' "$ar/notifications" || bad "with the Wi-Fi hard-blocked the state read after the change is wrong: $(cat "$ar/notifications")"
+# The change did not take: say so, do not claim it.
+air_run unblocked
+printf 'unblocked\n' >"$ar/soft"; : >"$ar/refuse"; : >"$ar/notifications"
+RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" >/dev/null 2>&1
+airc=$?
+[ "$airc" = 1 ] || bad "sway-airplane exits $airc when rfkill did not change"
+! grep -qF 'Airplane mode: on' "$ar/notifications" || bad "sway-airplane claims airplane mode though rfkill did not change: $(cat "$ar/notifications")"
+grep -qF 'Airplane mode' "$ar/notifications" || bad "sway-airplane is silent when rfkill refuses the change"
+# No access to /dev/rfkill: a notification, status 1.
+: >"$ar/dead"; : >"$ar/notifications"
+RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" >/dev/null 2>&1
+[ $? = 1 ] && [ -s "$ar/notifications" ] || bad "sway-airplane is silent or exits 0 when rfkill cannot be used"
+rm -f "$ar/dead"
+# A machine without radios.
+cat >"$ar/rfkill-none" <<STUB
+#!/bin/sh
+case "\$*" in -J) echo '{"rfkilldevices": []}' ;; *) printf '%s\n' "\$*" >>"$ar/calls-none" ;; esac
+STUB
+chmod +x "$ar/rfkill-none"
+: >"$ar/notifications"; rm -f "$ar/calls-none"
+RFKILL=$ar/rfkill-none NOTIFY_SEND=$ar/notify "$air" >/dev/null 2>&1
+airc=$?
+[ "$airc" = 1 ] && [ ! -e "$ar/calls-none" ] || bad "sway-airplane exits $airc or acts on a machine without radios"
+grep -qiF 'no radio' "$ar/notifications" || bad "sway-airplane does not say a machine has no radios: $(cat "$ar/notifications")"
+RFKILL=$ar/rfkill NOTIFY_SEND=$ar/notify "$air" frobnicate >/dev/null 2>&1
+[ $? = 2 ] || bad "sway-airplane takes an argument"
+ok "sway-airplane"
 
 # ── sway-wait-sni ────────────────────────────────────────────────────────────
 sni=$(script sway-wait-sni)

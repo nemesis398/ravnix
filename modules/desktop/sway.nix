@@ -115,6 +115,11 @@ let
         coreutils
         swayPackage
       ] { };
+      sway-airplane = bash "sway-airplane" [
+        util-linux
+        jq
+        libnotify
+      ] { };
       sway-brightness = bash "sway-brightness" [
         brightnessctl
         libnotify
@@ -136,6 +141,12 @@ let
         libnotify
         fuzzel
         less
+      ] { };
+      sway-mirror = bash "sway-mirror" [
+        swayPackage
+        jq
+        procps
+        libnotify
       ] { };
       sway-mouse = bash "sway-mouse" [
         swayPackage

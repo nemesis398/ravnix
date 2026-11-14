@@ -41,6 +41,8 @@ real thing, and the tests set them:
 | `MAGIC_CMD` | `waybar-peripherals` | `magic-trackpad-battery` |
 | `PACTL`, `NOTIFY_SEND` | `sway-volume` | `pactl`, `notify-send` |
 | `BRIGHTNESSCTL`, `NOTIFY_SEND` | `sway-brightness` | `brightnessctl`, `notify-send` |
+| `SWAYMSG`, `PGREP`, `PKILL`, `NOTIFY_SEND` | `sway-mirror` | `swaymsg`, `pgrep`, `pkill`, `notify-send` |
+| `RFKILL`, `NOTIFY_SEND` | `sway-airplane` | `rfkill`, `notify-send` |
 | `BUSCTL` | `sway-wait-sni` | `busctl` |
 | `WAYBAR_MATCH`, `SWAYLOCK_MATCH` | `waybar-launch`, `waybar-clock`, `keep-awake` | the command-line patterns (`^waybar( \|$)`, `^swaylock( \|$)`) that find Waybar and swaylock |
 

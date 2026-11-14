@@ -337,7 +337,7 @@ let
     lib.listToAttrs (
       map (p: lib.nameValuePair p.name "${p}/bin/${p.name}") (
         lib.filter (
-          p: builtins.match "waybar-[a-z]+|sway-(volume|brightness|wait-sni)" p.name != null || p.name == "keep-awake"
+          p: builtins.match "waybar-[a-z]+|sway-(volume|brightness|mirror|airplane|wait-sni)" p.name != null || p.name == "keep-awake"
         ) host.config.environment.systemPackages
       )
     );
