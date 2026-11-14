@@ -28,6 +28,7 @@
     ./nvim.nix
     ./scripts.nix
     ./chrome-devtools-mcp.nix
+    ./claude-theme.nix
     ./dictionary.nix
     ./dictionary-watch.nix
     ./backup.nix
