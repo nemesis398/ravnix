@@ -1,0 +1,83 @@
+# How many restic snapshots each backup target keeps. Each host backs up to
+# the NAS only, and the NAS copies every host's snapshots to Internxt; the
+# prune jobs on the NAS read this file and forget whatever falls outside it,
+# per host. `restic forget --dry-run` shows what a change would delete before
+# it applies.
+#
+# Each count is a whole number of 0 or more; 0 keeps none of that kind.
+
+[targets.nas]
+daily = 7
+weekly = 4
+monthly = 6
+yearly = 0
+
+[targets.internxt]
+daily = 7
+weekly = 4
+monthly = 12
+yearly = 2
+
+# A host that keeps a different number gets a table of its own, which wins
+# over the target's numbers for that host. For example:
+#
+# [targets.nas.hosts.muninn]
+# daily = 14
+
+# Overrides for the bench, so the reader walks more than two tables.
+
+[targets.nas.hosts.alpha]
+daily = 14
+
+[targets.internxt.hosts.alpha]
+monthly = 24
+yearly = 3
+
+[targets.nas.hosts.bravo]
+daily = 14
+
+[targets.internxt.hosts.bravo]
+monthly = 24
+yearly = 3
+
+[targets.nas.hosts.charlie]
+daily = 14
+
+[targets.internxt.hosts.charlie]
+monthly = 24
+yearly = 3
+
+[targets.nas.hosts.delta]
+daily = 14
+
+[targets.internxt.hosts.delta]
+monthly = 24
+yearly = 3
+
+[targets.nas.hosts.echo]
+daily = 14
+
+[targets.internxt.hosts.echo]
+monthly = 24
+yearly = 3
+
+[targets.nas.hosts.foxtrot]
+daily = 14
+
+[targets.internxt.hosts.foxtrot]
+monthly = 24
+yearly = 3
+
+[targets.nas.hosts.golf]
+daily = 14
+
+[targets.internxt.hosts.golf]
+monthly = 24
+yearly = 3
+
+[targets.nas.hosts.huginn]
+daily = 14
+
+[targets.internxt.hosts.huginn]
+monthly = 24
+yearly = 3
