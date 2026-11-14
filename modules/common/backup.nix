@@ -51,11 +51,12 @@ let
   rbw = lib.getExe' config.programs.rbw.package "rbw";
 
   # ~/.cache goes through the same builder, so a glob character in the
-  # home is escaped there too.
+  # home is escaped there too, but as what is left out always: keep cannot
+  # take a path back from it.
   excludes = import ./backup-excludes.nix { inherit lib; } {
     inherit home;
-    inherit (cfg) paths keep;
-    exclude = [ "~/.cache" ] ++ cfg.exclude;
+    inherit (cfg) paths exclude keep;
+    always = [ "~/.cache" ];
   };
   expand =
     p:

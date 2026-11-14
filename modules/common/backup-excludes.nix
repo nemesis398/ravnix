@@ -2,7 +2,7 @@
 # ravnix.backup.nas's paths, exclude and keep. Not a module: backup.nix and
 # its test call it as
 #
-#   import ./backup-excludes.nix { inherit lib; } { home; paths; exclude; keep; }
+#   import ./backup-excludes.nix { inherit lib; } { home; paths; exclude; keep; always; }
 #   => { patterns = [ "--exclude" values, in order ]; problems = [ messages ]; }
 #
 # Why keep is an option and not a `!` pattern in exclude. restic never goes
@@ -19,13 +19,17 @@
 # path's parents too, so the order matters: a pattern for a deeper level
 # comes later, and at one level the way back comes after the exclusion. The
 # other entries of exclude follow, so they can only leave out more, never
-# take anything back.
+# take anything back, and the entries of always, which nothing takes back,
+# come last.
 { lib }:
 {
   home,
   paths,
   exclude,
   keep,
+  # Left out whatever keep says, such as ~/.cache; a kept path inside one
+  # is refused.
+  always ? [ ],
 }:
 let
   expand =
@@ -46,17 +50,24 @@ let
   # own characters do not count), so "under" means what it says.
   plain = p: builtins.match ".*[][*?\\].*" (lib.removePrefix "~" p) == null;
 
+  # The user's pattern, with the home in front of it escaped.
+  pattern' =
+    e:
+    if e == "~" then
+      escape home
+    else if lib.hasPrefix "~/" e then
+      escape home + lib.removePrefix "~" e
+    else
+      e;
+  fixed = map (e: {
+    path = expand e;
+    plain = plain e;
+    pattern = pattern' e;
+  }) always;
   excluded = map (e: {
     path = expand e;
     plain = plain e;
-    # The user's pattern, with the home in front of it escaped.
-    pattern =
-      if e == "~" then
-        escape home
-      else if lib.hasPrefix "~/" e then
-        escape home + lib.removePrefix "~" e
-      else
-        e;
+    pattern = pattern' e;
   }) exclude;
   kept = lib.unique (map expand keep);
   backedUp = map expand paths;
@@ -66,6 +77,7 @@ let
   stray = lib.filter (k: carvedFrom k == [ ]) outer;
   carving = lib.filter (k: carvedFrom k != [ ]) outer;
   outside = lib.filter (k: !lib.any (p: p == k || under p k) backedUp) kept;
+  sealed = k: lib.filter (e: e.path == k || under e.path k) fixed;
 
   # The steps from the outermost excluded directory down to k.
   steps =
@@ -104,12 +116,15 @@ let
   pattern = s: if s.back then "!${escape s.dir}" else "${escape s.dir}/*";
   carved = lib.unique (lib.concatMap carvedFrom carving);
 
-  buried = p: map (e: e.path) (lib.filter (e: e.plain && (e.path == p || under e.path p)) excluded);
+  buried =
+    p: map (e: e.path) (lib.filter (e: e.plain && (e.path == p || under e.path p)) (excluded ++ fixed));
   isKept = p: lib.any (k: k == p || under k p) kept;
 in
 {
   patterns =
-    map pattern ordered ++ map (e: e.pattern) (lib.filter (e: !lib.elem e.path carved) excluded);
+    map pattern ordered
+    ++ map (e: e.pattern) (lib.filter (e: !lib.elem e.path carved) excluded)
+    ++ map (e: e.pattern) fixed;
   problems =
     map (
       k:
@@ -118,6 +133,10 @@ in
     ++ map (
       k: "ravnix.backup.nas.keep has ${k}, which is inside no entry of paths: nothing backs it up. Drop it, or add a path above it"
     ) outside
+    ++ map (
+      k:
+      "ravnix.backup.nas.keep has ${k}, which is inside ${(lib.head (sealed k)).path}, which is left out always: drop it"
+    ) (lib.filter (k: sealed k != [ ]) kept)
     ++ lib.concatMap (
       p:
       let

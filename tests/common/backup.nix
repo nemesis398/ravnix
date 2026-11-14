@@ -125,6 +125,7 @@ let
         paths = [ "~" ];
         exclude = [ ];
         keep = [ ];
+        always = [ ];
       }
       // args
     )).patterns;
@@ -136,6 +137,7 @@ let
         paths = [ "~" ];
         exclude = [ ];
         keep = [ ];
+        always = [ ];
       }
       // args
     )).problems;
@@ -303,6 +305,14 @@ let
       want = "ravnix.backup.nas.keep has /h/N/a, which is inside no entry of paths";
     }
     {
+      what = "a kept path inside what is left out always";
+      args = {
+        always = [ "~/.cache" ];
+        keep = [ "~/.cache/k" ];
+      };
+      want = "ravnix.backup.nas.keep has /h/.cache/k, which is inside /h/.cache, which is left out always";
+    }
+    {
       what = "a backup path that is an exclude";
       args = {
         paths = [ "~/N" ];
@@ -360,6 +370,18 @@ let
     ++ lib.optional (
       !refused (nas // { paths = [ "~/Nextcloud/other" ]; })
     ) "a backup path inside an exclude is not refused"
+    ++ lib.optional (!refused (nas // { keep = [ "~/.cache/k" ]; })) "a kept path inside ~/.cache is not refused"
+    ++ lib.optional (
+      patternsOf {
+        always = [ "~/.cache" ];
+        exclude = [ "~/N" ];
+        keep = [ "~/N/a" ];
+      } != [
+        "/h/N/*"
+        "!/h/N/a"
+        "/h/.cache"
+      ]
+    ) "what is left out always is not an exclude of its own"
     ++ map (word: "the script says ${word}") (
       lib.filter (word: lib.hasInfix word script) [
         "forget"

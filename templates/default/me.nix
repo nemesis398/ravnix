@@ -528,8 +528,9 @@
     #     # the login at the rest-server.
     #     passwordItem = "Restic - huginn repository";
     #     loginItem = "Restic - huginn rest-server login";
-    #     # The home, minus ~/.cache and CACHEDIR.TAG directories (always),
-    #     # minus what another copy holds, plus a folder taken back.
+    #     # The home, minus ~/.cache and CACHEDIR.TAG directories (always,
+    #     # and keep cannot take them back), minus what another copy
+    #     # holds, plus a folder taken back.
     #     paths = [ "~" ];
     #     exclude = [ "~/Nextcloud" "~/Git" ];
     #     keep = [ "~/Nextcloud/notes" ];

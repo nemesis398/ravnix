@@ -209,8 +209,9 @@ let
         description = ''
           What is left out, as restic exclude patterns; a leading `~` is the
           home. `~/.cache` and every directory with a CACHEDIR.TAG are left
-          out always. Leave out what another copy holds already: a synced
-          folder, the repositories a forge has.
+          out always, and keep cannot take a path back from them. Leave
+          out what another copy holds already: a synced folder, the
+          repositories a forge has.
         '';
       };
 
