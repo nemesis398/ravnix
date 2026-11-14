@@ -513,7 +513,9 @@
     # This host's backup to the rest-server, services.restic-server above,
     # or null for none. Per host, so set it in each host's own module (as
     # `ravnix.backup.nas = { ... };`, beside this null), never here: two
-    # hosts with one host name would prune each other's snapshots. For the
+    # hosts with one host name would prune each other's snapshots. The null
+    # below is a default (a lib.mkDefault, written out because this file is
+    # plain data), so a host module's plain value replaces it. For the
     # laptop, for example:
     #   backup.nas = {
     #     # The host's one name at the NAS: the name its snapshots carry,
@@ -533,7 +535,11 @@
     #     keep = [ "~/Nextcloud/notes" ];
     #     onCalendar = "daily";
     #   };
-    backup.nas = null;
+    backup.nas = {
+      _type = "override";
+      priority = 1000;
+      content = null;
+    };
 
     # Your dictionary, as an absolute path to it in your checkout of this
     # flake: the tools add words to it at runtime, and every tool with a word

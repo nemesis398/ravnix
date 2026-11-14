@@ -113,22 +113,6 @@ let
   backup = config.ravnix.backup.nas;
   hosts = config.ravnix.hosts;
 
-  # nullOr, but a null gives way to a value instead of conflicting with it.
-  # substSubModules is how the module system rebuilds a type that holds a
-  # submodule, so it must make this type again, not a plain nullOr.
-  nullGivesWay =
-    elem:
-    types.nullOr elem
-    // {
-      merge =
-        loc: defs:
-        let
-          values = lib.filter (d: d.value != null) defs;
-        in
-        if values == [ ] then null else elem.merge loc values;
-      substSubModules = m: nullGivesWay (elem.substSubModules m);
-    };
-
   nas = types.submodule (sub: {
     options = {
       repository = mkOption {
@@ -247,10 +231,10 @@ in
   };
 
   options.ravnix.backup.nas = mkOption {
-    # A null gives way to a value: me.nix says null, and the module of the
-    # host that backs up sets its own beside it, without lib.mkForce. Two
-    # values are merged as the submodule merges them.
-    type = nullGivesWay nas;
+    # me.nix writes its null at lib.mkDefault's priority, so the value of
+    # the host that backs up wins over it; a plain null beside a plain value
+    # is still a conflict, and lib.mkForce null turns a backup off.
+    type = types.nullOr nas;
     default = null;
     description = ''
       This host's backup to the NAS: restic, as the user, to the NAS's

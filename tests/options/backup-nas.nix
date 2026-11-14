@@ -56,6 +56,15 @@ let
     registered
     { ravnix.backup.nas = base; }
   ];
+  # A plain null beside a plain value, as a host module that turns the
+  # backup off beside a value left in me.nix: a conflict, not a silent
+  # backup under the other value's name.
+  nullBesideValue = eval [
+    template
+    registered
+    { ravnix.backup.nas = base; }
+    { ravnix.backup.nas = null; }
+  ];
   # Two hosts' values in one configuration are still two definitions.
   twoValues = eval [
     template
@@ -164,6 +173,9 @@ let
       !(besideNull.values.success && besideNull.failed == [ ])
     ) "a host module's value beside the template's null is refused"
     ++ lib.optional twoValues.values.success "two host names in one configuration are accepted"
+    ++ lib.optional (
+      nullBesideValue.values.success
+    ) "a plain null beside a plain value is accepted, so the value wins in silence"
     # The repository is derived from the NAS's address, a placeholder in
     # the template that is reported once, as ravnix.hosts.nas.address.
     ++ lib.optional (lib.any (lib.hasPrefix "ravnix.backup.nas.repository ") besideNull.config.warnings) "the derived repository is reported as a placeholder too"
