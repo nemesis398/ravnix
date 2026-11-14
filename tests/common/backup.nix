@@ -4,22 +4,25 @@
 #   directory with a path kept inside it becomes the steps restic needs, in
 #   restic's order, for one level and for several, for two kept paths in
 #   one directory and for a kept path inside another; the other excludes
-#   follow unchanged. A kept path inside no plain exclude, and a backup path
-#   inside an exclude, are refused by name.
+#   follow unchanged; a glob character in a kept path or the home is escaped,
+#   so it names that folder and no other. A kept path inside no plain
+#   exclude or outside every backup path, and a backup path inside an
+#   exclude, are refused by name.
 # - The evaluated home-manager configuration: no unit and no timer without
 #   ravnix.backup.nas; with it, a oneshot unit that restarts after a failure
 #   but not after restic's exit 3, and a timer; the problems above as
-#   assertions that home-manager refuses; and no secret, `forget`, `prune` or `init` in the script.
+#   assertions that home-manager refuses; and no secret, `forget`, `prune`
+#   or `init` in the script.
 # - The script itself, run against a real rest-server on loopback with the
 #   flags of deploy/compose/restic (`--append-only --private-repos` and the
 #   logins), and a stand-in for rbw:
-#   the snapshot carries the host name of the option, not the machine's;
-#   the carved-back folder is in it with everything below, the rest of the
-#   excluded directory, ~/.cache and a CACHEDIR.TAG directory are not; a
-#   second run adds a snapshot; the host's login cannot forget it, and
-#   cannot read another host's repository; with the vault locked the run
-#   exits 75 and starts no restic; with a login item without a user name it
-#   says so.
+#   the snapshot carries the host name of the option, not the machine's; the carved-back
+#   folders are in it with everything below, one of them with brackets in
+#   its name, and the rest of the excluded directory, ~/.cache and a
+#   CACHEDIR.TAG directory are not; a second run adds a snapshot; the
+#   host's login cannot forget it, and cannot read another host's
+#   repository; with the vault locked the run exits 75 and starts no
+#   restic; with a login item without a user name it says so.
 {
   self,
   inputs,
@@ -46,8 +49,9 @@ let
   port = 8000;
   compose = ../../deploy/compose/restic/docker-compose.yaml;
 
+  repository = "rest:http://127.0.0.1:${toString port}/huginn/";
   nas = {
-    repository = "rest:http://127.0.0.1:${toString port}/huginn/";
+    inherit repository;
     host = "huginn";
     passwordItem = "Restic - huginn repository";
     loginItem = "Restic - huginn login";
@@ -55,7 +59,10 @@ let
       "~/Nextcloud"
       "*.iso"
     ];
-    keep = [ "~/Nextcloud/notes" ];
+    keep = [
+      "~/Nextcloud/notes"
+      "~/Nextcloud/[2024] notes"
+    ];
   };
 
   # The version only answers rbw.nix's check for an agent that serves SSH.
@@ -219,6 +226,26 @@ let
       ];
     }
     {
+      what = "glob characters in a kept path and in the home";
+      args = {
+        home = "/h[1]";
+        exclude = [ "~/N" ];
+        keep = [ "~/N/[a] b*?\\c" ];
+      };
+      want = [
+        "/h\\[1]/N/*"
+        "!/h\\[1]/N/\\[a] b\\*\\?\\\\c"
+      ];
+    }
+    {
+      what = "the home's glob characters in an exclude, the user's own kept";
+      args = {
+        home = "/h*";
+        exclude = [ "~/*.iso" ];
+      };
+      want = [ "/h\\*/*.iso" ];
+    }
+    {
       what = "absolute paths";
       args = {
         exclude = [ "/srv/x" ];
@@ -255,6 +282,15 @@ let
         exclude = [ "~/N" ];
       };
       want = "ravnix.backup.nas.paths has /h/N/a, which exclude leaves out (/h/N)";
+    }
+    {
+      what = "a kept path outside every backup path";
+      args = {
+        paths = [ "~/Documents" ];
+        exclude = [ "~/N" ];
+        keep = [ "~/N/a" ];
+      };
+      want = "ravnix.backup.nas.keep has /h/N/a, which is inside no entry of paths";
     }
     {
       what = "a backup path that is an exclude";
@@ -353,7 +389,9 @@ pkgs.runCommand "common-backup"
         # The home: a folder taken back from an excluded directory, the rest
         # of it, a cache, a CACHEDIR.TAG directory, a wildcard's file.
         mkdir -p ${home}/Nextcloud/notes/deep ${home}/Nextcloud/other ${home}/.cache/x \
-          ${home}/project/target ${home}/doc
+          ${home}/project/target ${home}/doc "${home}/Nextcloud/[2024] notes" "${home}/Nextcloud/2 notes"
+        echo y >"${home}/Nextcloud/[2024] notes/y"
+        echo n >"${home}/Nextcloud/2 notes/n"
         echo a >${home}/Nextcloud/notes/a
         echo b >${home}/Nextcloud/notes/deep/b
         echo o >${home}/Nextcloud/other/o
@@ -404,17 +442,17 @@ pkgs.runCommand "common-backup"
         [ "$(local_repo snapshots --json | jq -r '.[].hostname' | sort -u)" = huginn ] ||
           fail "the snapshots carry another host name: $(local_repo snapshots --json | jq -r '.[].hostname')"
         listing=$(local_repo ls latest | sed 's|^${home}||')
-        for kept in /Nextcloud/notes/a /Nextcloud/notes/deep/b /doc/d /project; do
-          grep -qx "$kept" <<<"$listing" || fail "$kept is not in the snapshot: $listing"
+        for kept in /Nextcloud/notes/a /Nextcloud/notes/deep/b "/Nextcloud/[2024] notes/y" /doc/d /project; do
+          grep -qxF "$kept" <<<"$listing" || fail "$kept is not in the snapshot: $listing"
         done
-        for gone in /Nextcloud/other /Nextcloud/top /.cache /project/target/built /doc/disk.iso; do
-          if grep -qx "$gone" <<<"$listing"; then fail "$gone is in the snapshot"; fi
+        for gone in /Nextcloud/other /Nextcloud/top "/Nextcloud/2 notes" /.cache /project/target/built /doc/disk.iso; do
+          if grep -qxF "$gone" <<<"$listing"; then fail "$gone is in the snapshot"; fi
         done
 
         # The host appends and never deletes, and reads no other repository.
         export RESTIC_REST_USERNAME=huginn RESTIC_REST_PASSWORD=login-secret RESTIC_PASSWORD=repository-secret
         id=$(local_repo snapshots --json | jq -r '.[0].short_id')
-        if restic --repo ${nas.repository} --no-cache forget "$id" >${build}/forget.log 2>&1; then
+        if restic --repo ${repository} --no-cache forget "$id" >${build}/forget.log 2>&1; then
           fail "the host's login forgot a snapshot: $(cat ${build}/forget.log)"
         fi
         [ "$(local_repo snapshots --json | jq length)" = 2 ] || fail "a snapshot is gone after the refused forget"

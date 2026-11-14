@@ -47,9 +47,12 @@ let
   home = config.home.homeDirectory;
   rbw = lib.getExe' config.programs.rbw.package "rbw";
 
+  # ~/.cache goes through the same builder, so a glob character in the
+  # home is escaped there too.
   excludes = import ./backup-excludes.nix { inherit lib; } {
     inherit home;
-    inherit (cfg) paths exclude keep;
+    inherit (cfg) paths keep;
+    exclude = [ "~/.cache" ] ++ cfg.exclude;
   };
   expand =
     p:
@@ -93,7 +96,7 @@ let
       export RESTIC_PASSWORD_COMMAND=${password}
       RESTIC_REST_USERNAME=$user RESTIC_REST_PASSWORD=$login \
         restic backup --host ${lib.escapeShellArg cfg.host} --exclude-caches \
-          ${lib.escapeShellArgs (map (p: "--exclude=${p}") ([ "${home}/.cache" ] ++ excludes.patterns))} \
+          ${lib.escapeShellArgs (map (p: "--exclude=${p}") excludes.patterns)} \
           -- ${lib.escapeShellArgs (map expand cfg.paths)}
     '';
   };

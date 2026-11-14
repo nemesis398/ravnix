@@ -187,8 +187,10 @@ let
         example = [ "~/Nextcloud/notes" ];
         description = ''
           Paths inside an entry of `exclude` that are backed up all the
-          same, with everything below them. Each must lie inside an
-          `exclude` entry that is a plain path, without `*`, `?` or `[`.
+          same, with everything below them. Each must lie inside an entry
+          of `paths` and inside an `exclude` entry that is a plain path,
+          without `*`, `?` or `[`. A `*`, `?`, `[` or `\` in a kept path is
+          that character, not a wildcard.
         '';
       };
 

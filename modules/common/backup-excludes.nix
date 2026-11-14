@@ -36,17 +36,36 @@ let
       home + lib.removePrefix "~" p
     else
       p;
+  # restic reads `*`, `?`, `[` and `\` in a pattern as a wildcard, a class
+  # and an escape (Go's filepath.Match). In a path of its own, a kept one or
+  # the home, each is that character, so the pattern escapes it: an
+  # unescaped `[2024] notes` would match `2 notes` and lose the folder.
+  escape = lib.replaceStrings [ "\\" "*" "?" "[" ] [ "\\\\" "\\*" "\\?" "\\[" ];
   under = parent: p: lib.hasPrefix "${parent}/" p;
-  # A path without restic's wildcards, so "under" means what it says.
-  plain = p: builtins.match ".*[][*?\\\\].*" p == null;
+  # A pattern without restic's wildcards, as the user wrote it (the home's
+  # own characters do not count), so "under" means what it says.
+  plain = p: builtins.match ".*[][*?\\].*" (lib.removePrefix "~" p) == null;
 
-  excluded = map expand exclude;
+  excluded = map (e: {
+    path = expand e;
+    plain = plain e;
+    # The user's pattern, with the home in front of it escaped.
+    pattern =
+      if e == "~" then
+        escape home
+      else if lib.hasPrefix "~/" e then
+        escape home + lib.removePrefix "~" e
+      else
+        e;
+  }) exclude;
   kept = lib.unique (map expand keep);
+  backedUp = map expand paths;
   # A path kept inside another kept path is kept by that one already.
   outer = lib.filter (k: !lib.any (other: under other k) kept) kept;
-  carvedFrom = k: lib.filter (e: plain e && under e k) excluded;
+  carvedFrom = k: map (e: e.path) (lib.filter (e: e.plain && under e.path k) excluded);
   stray = lib.filter (k: carvedFrom k == [ ]) outer;
   carving = lib.filter (k: carvedFrom k != [ ]) outer;
+  outside = lib.filter (k: !lib.any (p: p == k || under p k) backedUp) kept;
 
   # The steps from the outermost excluded directory down to k.
   steps =
@@ -82,19 +101,23 @@ let
   ordered = lib.sort (a: b: depth a < depth b || (depth a == depth b && !a.back && b.back)) (
     lib.unique (lib.concatMap steps carving)
   );
-  pattern = s: if s.back then "!${s.dir}" else "${s.dir}/*";
+  pattern = s: if s.back then "!${escape s.dir}" else "${escape s.dir}/*";
   carved = lib.unique (lib.concatMap carvedFrom carving);
 
-  buried = p: lib.filter (e: plain e && (e == p || under e p)) excluded;
+  buried = p: map (e: e.path) (lib.filter (e: e.plain && (e.path == p || under e.path p)) excluded);
   isKept = p: lib.any (k: k == p || under k p) kept;
 in
 {
-  patterns = map pattern ordered ++ lib.filter (e: !lib.elem e carved) excluded;
+  patterns =
+    map pattern ordered ++ map (e: e.pattern) (lib.filter (e: !lib.elem e.path carved) excluded);
   problems =
     map (
       k:
       "ravnix.backup.nas.keep has ${k}, which is inside no plain path of exclude (one without *, ? or [): it is backed up anyway, or a wildcard leaves it out; drop it, or exclude its parent by name"
     ) stray
+    ++ map (
+      k: "ravnix.backup.nas.keep has ${k}, which is inside no entry of paths: nothing backs it up. Drop it, or add a path above it"
+    ) outside
     ++ lib.concatMap (
       p:
       let
