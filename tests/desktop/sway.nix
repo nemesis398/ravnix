@@ -290,6 +290,7 @@ let
 
   # The template sets ravnix.desktop.ask; a user who leaves it out gets no popup.
   askOff = hostOf [ { ravnix.desktop.ask = lib.mkForce null; } ];
+  askOffStub = "${lib.findFirst (p: p.name == "sway-ask") (throw "ravnix.desktop.ask is null and sway-ask is not installed: the radial menu's sector would run a command that is not found") askOff.config.environment.systemPackages}/bin/sway-ask";
   # What another module does with the seams: a fragment of config.d, and the
   # main terminal of the glue.
   seam = hostOf [
@@ -467,6 +468,9 @@ let
     ];
     scriptList = pkgs.writeText "scripts" (
       lib.concatStringsSep "\n" (lib.mapAttrsToList (n: p: "${n} ${p}") (scriptsOf mauve)) + "\n"
+      # The sway-ask of a host without ravnix.desktop.ask: the radial menu may
+      # still offer its sector, so the command must exist and say why it does nothing.
+      + "sway-ask-off ${askOffStub}\n"
     );
     kanshiConfig = source mauve "kanshi/config";
   } (builtins.readFile ./helpers/script-tests.sh);

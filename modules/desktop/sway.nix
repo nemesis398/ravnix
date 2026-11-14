@@ -243,6 +243,16 @@ let
         flakeIgnore = pyIgnore;
       };
     }
+    // lib.optionalAttrs (!askEnabled) {
+      # The command stays when the option is null: a radial menu of the user's
+      # may offer a sector for it, and a command that is not found does
+      # nothing without a word. The key and the launcher entry stay away.
+      sway-ask = helpers.bash {
+        name = "sway-ask";
+        src = bin + "/sway-ask-off";
+        runtimeInputs = [ pkgs.libnotify ];
+      };
+    }
     // lib.optionalAttrs askEnabled {
       sway-ask = helpers.python {
         name = "sway-ask";

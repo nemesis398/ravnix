@@ -391,7 +391,10 @@ def main():
     ask = args["ask"]
     expect("sway-ask" in ask["entriesOn"], "ravnix.desktop.ask is set and the launcher has no AI Chat entry")
     expect("sway-ask" not in ask["entriesOff"], "ravnix.desktop.ask is null and the launcher still lists AI Chat")
-    expect("sway-ask" not in ask["installedOff"], "ravnix.desktop.ask is null and sway-ask is still installed")
+    # The command stays: the radial menu of a user may offer a sector for it,
+    # and a sector whose command is not found does nothing without a word. What
+    # is installed then is a stand-in that says why (script-tests.sh runs it).
+    expect("sway-ask" in ask["installedOff"], "ravnix.desktop.ask is null and sway-ask is not installed, so a radial menu sector for it runs a command that is not found")
     off = read(ask["swayOff"])
     expect(not re.search(r"^\s*bindsym\s+\$mod\+Shift\+a\b", off, re.M), "ravnix.desktop.ask is null and $mod+Shift+a is still bound")
     expect("# $mod+Shift+a is free" in off, "ravnix.desktop.ask is null and the config does not say the key is free")

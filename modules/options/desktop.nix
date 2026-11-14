@@ -153,8 +153,10 @@ in
       description = ''
         The quick AI popup (`sway-ask`, `$mod+Shift+a`), a fuzzel window that
         sends your question to a model of your Open WebUI and shows the answer
-        with a prompt for the follow-up. Null leaves it out: no command, no
-        launcher entry, and the key stays free.
+        with a prompt for the follow-up. Null leaves it out: no launcher entry,
+        and the key stays free. The command `sway-ask` stays, as a stand-in that
+        says the popup is not set up and exits 1, so that a sector of your
+        radial menu for it does not run a command that is not found.
       '';
     };
 

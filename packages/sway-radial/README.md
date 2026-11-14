@@ -145,8 +145,9 @@ commands and `.desktop` ids the menu may name) and `SWAY_RADIAL_TEST_LIBINPUT_H`
 
 The Nix check judges the default menu only. The two list tests (`.desktop` ids,
 programs) get their lists from the desktop host that the check evaluates, with
-nothing optional set (`sway-ask` is installed only with `ravnix.desktop.ask`, so
-it is not on the list), and they look at each program of a command: the first
+nothing optional set (without `ravnix.desktop.ask`, `sway-ask` is a stand-in that
+says the popup is not set up and fails, so a menu of yours may keep its sector
+for it), and they look at each program of a command: the first
 word, the one behind `ghostty -e` or `ghostty-float -e`, and each one inside an
 `sh -c` script. They do not run on a menu of your own in the check, because the
 programs and apps of your host are yours: with `SWAY_RADIAL_TEST_MENU` set and no

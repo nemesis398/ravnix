@@ -57,12 +57,11 @@ let
   themeFile = lib.removePrefix "SWAY_RADIAL_THEME=" themeLine;
 
   # The desktop module on a stubbed host, for the providers below. It is the host
-  # of a user who set nothing optional: sway-ask exists only when
-  # ravnix.desktop.ask is set, and the default menu is for everyone, so what only
-  # an option installs is not on the list. The NetBird client is the glue's
-  # (modules/glue/netbird.nix), which the laptop shape brings beside the
-  # desktop, so that module is on this host too, as the laptop and no other
-  # glue module.
+  # of a user who set nothing optional: sway-ask is then a stand-in, and the
+  # default menu is for everyone, so what only an option makes work is not in
+  # it. The NetBird client is the glue's (modules/glue/netbird.nix), which the
+  # laptop shape brings beside the desktop, so that module is on this host too,
+  # as the laptop and no other glue module.
   desktop = inputs.nixpkgs.lib.nixosSystem {
     inherit system;
     modules = hostModules ++ [
@@ -78,8 +77,8 @@ let
   );
 
   # The scripts of the Sway config and the bar that this host installs, by name:
-  # a file in those directories that the host does not install (sway-ask, here)
-  # is not a program the menu may run.
+  # a file in those directories that the host does not install is not a
+  # program the menu may run.
   scripts = lib.filter (name: lib.elem name installed) (
     lib.concatMap (dir: lib.attrNames (builtins.readDir dir)) [
       ../../modules/desktop/sway/bin
@@ -134,9 +133,13 @@ let
     ];
   };
 in
+# sway-ask is always installed: the AI popup with ravnix.desktop.ask, and a
+# stand-in that says why it does nothing without (a menu of the user's may
+# offer a sector for it). The default menu is for everyone and holds no
+# sector for it; the list tests would not see one, so this does.
 assert lib.assertMsg (
-  !lib.elem "sway-ask" scripts
-) "tests/desktop/sway-radial.nix: sway-ask is on the list of programs the default menu may run, but it is installed only when ravnix.desktop.ask is set";
+  !lib.hasInfix "sway-ask" (builtins.readFile ../../packages/sway-radial/menu.toml)
+) "tests/desktop/sway-radial.nix: the default menu offers sway-ask, which does nothing on a host without ravnix.desktop.ask";
 assert lib.assertMsg (missingProviders == [ ])
   "tests/desktop/sway-radial.nix: the desktop module and the glue's NetBird client no longer install the package behind: ${lib.concatStringsSep ", " missingProviders}";
 pkgs.runCommand "desktop-sway-radial"

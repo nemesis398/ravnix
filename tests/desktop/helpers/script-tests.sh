@@ -887,6 +887,45 @@ done
 rm -f "$stubs/busctl"
 ok "sway-wait-sni"
 
+# ── sway-ask without ravnix.desktop.ask ──────────────────────────────────────
+# The radial menu of a user may still offer the AI ask sector; the command it
+# runs must exist, say why nothing happens, and fail.
+askoff=$(script sway-ask-off)
+sa=$work/askoff
+mkdir -p "$sa"
+{ echo "#!$BASH"; cat <<'NS'
+printf '%s|%s\n' "$*" "${NOTIFY_CALLS_NOTE:-}" >>"$ASKOFF_CALLS"
+exit "${NOTIFY_EXIT:-0}"
+NS
+} >"$sa/notify-send"
+chmod +x "$sa/notify-send"
+export ASKOFF_CALLS=$sa/calls
+askoff_run() { # askoff_run [ENV=VALUE]... -- ARGS...: output in $out, status in $rc
+  local env=()
+  while [ "${1:-}" != -- ] && [ $# -gt 0 ]; do env+=("$1"); shift; done
+  shift
+  out=$(env NOTIFY_SEND="$sa/notify-send" "${env[@]}" "$askoff" "$@" 2>&1)
+  rc=$?
+}
+askoff_check() { # askoff_check LABEL
+  [ $rc = 1 ] || bad "sway-ask without the option exits $rc for [$1], not 1"
+  grep -q 'ravnix.desktop.ask' <<<"$out" || bad "sway-ask without the option does not name the option for [$1]: $out"
+}
+for args in "" "--ask hello" "--ask" "-- -x" "a b c d e f g"; do
+  : >"$ASKOFF_CALLS"
+  # shellcheck disable=SC2086 # the words are the point
+  askoff_run -- $args
+  askoff_check "$args"
+  grep -q 'ravnix.desktop.ask' "$ASKOFF_CALLS" || bad "sway-ask without the option shows no notification for [$args]: $(cat "$ASKOFF_CALLS")"
+done
+# A notification daemon that is gone, or notify-send itself, changes nothing: the
+# message is on stderr and the status is 1.
+askoff_run NOTIFY_EXIT=1 --
+askoff_check "notify-send failing"
+askoff_run NOTIFY_SEND=/nonexistent/notify-send --
+askoff_check "no notify-send"
+ok "sway-ask without ravnix.desktop.ask says why and exits 1"
+
 # The decoys, called waybar and swaylock like the real programs, were in reach of
 # every kill and signal above and must have survived them all.
 kill -0 "$decoy_waybar" 2>/dev/null || bad "a process called waybar was killed or signalled: the scripts do not stay with WAYBAR_MATCH"

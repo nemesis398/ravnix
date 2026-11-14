@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# sway-ask on a host without ravnix.desktop.ask: what the command is instead of
+# the AI popup. A radial menu of the user's own may still have a sector for
+# sway-ask (the menu is a file of the private flake, and the desktop module
+# cannot edit it), and a sector whose command is not found does nothing without
+# a word. This says why and fails; with the option set, the real sway-ask is
+# installed in its place (modules/desktop/sway.nix).
+set -uo pipefail
+
+# Overridable, so that it can be tested without a notification daemon
+# (tests/desktop/helpers/script-tests.sh).
+NOTIFY_SEND=${NOTIFY_SEND:-notify-send}
+
+message="the AI popup is not set up: set ravnix.desktop.ask in the private flake"
+echo "sway-ask: $message" >&2
+"$NOTIFY_SEND" --app-name sway-ask --expire-time 4000 "sway-ask" "$message" 2>/dev/null || true
+exit 1
