@@ -70,6 +70,14 @@ in
 
   ravnix.shape = "laptop";
 
+  # nix run, nix shell and the flake commands, as on the server. Without
+  # these two, nix refuses them with "experimental Nix feature 'nix-command'
+  # is disabled".
+  nix.settings.experimental-features = [
+    "nix-command"
+    "flakes"
+  ];
+
   # The file systems, the swap on disk (none; zram is the swap) and the
   # initrd's LUKS device come from the layout, by GPT label and mapper name,
   # not by the device.

@@ -191,6 +191,15 @@ let
     ++ check (evaluates bare) "the shape without a hardware module does not evaluate"
     ++ check (evaluates twice) "the shape and the hardware module imported twice do not evaluate"
 
+    # nix run and nix shell need the experimental features, as on the server.
+    ++ check (
+      has c.nix.settings.experimental-features "nix-command" && has c.nix.settings.experimental-features "flakes"
+    ) "huginn does not enable nix-command and flakes, so nix run and nix shell fail"
+    ++ check (
+      has bare.config.nix.settings.experimental-features "nix-command"
+      && has bare.config.nix.settings.experimental-features "flakes"
+    ) "the shape without a hardware module does not enable nix-command and flakes"
+
     # The desktop comes with the shape. It brings the common module, which
     # the shape imports too; the key loads it once, so it adds its home
     # modules once. An unkeyed second copy would add them again.
