@@ -23,6 +23,8 @@
 #   - sshd's stack has no pam_u2f: a login from elsewhere must not wait for,
 #     or take, a touch on the key at the laptop (sshd asks PAM for no password
 #     today, but a later KbdInteractiveAuthentication would);
+#   - nor does cups's: its web interface asks PAM from an HTTP request, where
+#     no one at the laptop sees what a blink is for;
 #   - with the option off, no PAM file names pam_u2f and pamu2fcfg is not
 #     installed; the server shape stays the same with the option on;
 #   - an origin that would break the PAM line (white space, a bracket, a `#`,
@@ -217,6 +219,8 @@ let
     ) "laptop: polkit's helper cannot read the home"
     ++ check laptopOn.services.openssh.enable "laptop: no sshd, so the sshd case reads nothing"
     ++ check (!lib.any isU2f (linesOf laptopOn "sshd")) "laptop: sshd's stack has pam_u2f"
+    ++ check (laptopOn.security.pam.services ? cups) "laptop: no cups, so the cups case reads nothing"
+    ++ check (!lib.any isU2f (linesOf laptopOn "cups")) "laptop: cups's stack has pam_u2f"
     ++ lib.concatMap (carries "another origin" otherOrigin "pam://example") services
     ++ anyU2f "laptop with the option off" laptopOff
     ++ greetdFirst "laptop with the option off" laptopOff

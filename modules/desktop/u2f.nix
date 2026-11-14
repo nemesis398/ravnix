@@ -8,7 +8,8 @@
 # service's own u2f.enable, and NixOS puts the u2f rule ahead of pam_unix in
 # each service with default rules: swaylock (its service: swaylock.nix), sudo,
 # su, polkit-1 and login (the console), and the rest of them as on Fedora
-# (passwd, chsh, run0, cups and their kin), all but sshd (below). greetd has
+# (passwd, chsh, chfn and their kin; run0 and a unit's PAMName carry the line
+# but never authenticate through it), all but sshd and cups (below). greetd has
 # no rules of its own; its stacks are substacks of `login`, so tuigreet runs
 # login's u2f line first, and login's session part still starts the keyring
 # (pam_gnome_keyring, greetd.nix).
@@ -91,5 +92,12 @@ in
     # keyboard-interactive logins are off), so this only keeps a later change
     # from opening that door.
     security.pam.services.sshd.u2f.enable = lib.mkIf config.services.openssh.enable false;
+
+    # Nor for CUPS's web interface, which asks PAM from an HTTP request: the
+    # cue goes into an HTTP error, and nobody at the laptop learns what a
+    # blink is for. It listens on localhost alone today, so the request is a
+    # local program's, the very case sudo's popup is for; a wider
+    # listenAddresses would make it a remote one. The password still works.
+    security.pam.services.cups.u2f.enable = lib.mkIf config.services.printing.enable false;
   };
 }
