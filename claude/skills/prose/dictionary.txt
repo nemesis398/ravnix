@@ -1,0 +1,12 @@
+# Terms LanguageTool should not complain about, one per line.
+#
+# This list ships with the skill and holds no words. The checker reads it
+# only when you have no list of your own at
+# ${XDG_CONFIG_HOME:-~/.config}/prose/dictionary.txt; with yours present,
+# this file is not read. On a ravnix host ravnix-dict keeps yours, together
+# with the dictionaries of your other tools (ravnix.dictionary).
+#
+# Matching is case-insensitive, which also stops LanguageTool "correcting"
+# the casing of a term: listing `restic` keeps it from becoming `Restic`.
+#
+# Most of a common stack already lives in IGNORE_WORDS inside check.py.
