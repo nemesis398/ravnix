@@ -282,10 +282,13 @@ file while Handy runs is undone at its next save. A write therefore:
    session's environment, and removes the note. Handy reads the new list
    as it starts.
 
-A sync that ends between the stop and the start (its timeout, a stop of
-the service, a crash), or a start that fails, leaves the note, and the next
-sync's read starts Handy before anything else; a note while Handy runs is
-only removed. Without the note, a Handy the user quit stays quit.
+A stop that fails (systemctl exits non-zero, or its stop job runs past
+the time allowed) writes nothing, and Handy is not left to the next sync:
+one that still runs needs no start and the note is removed, one that is
+down is started again at once. A sync that ends between the stop and the
+start (its timeout, a stop of the service, a crash), or a start that fails,
+leaves the note, and the next sync's read starts Handy before anything
+else; a note while Handy runs is only removed. Without the note, a Handy the user quit stays quit.
 
 A store without `custom_words`, or without `settings`, gets them; a missing
 store is no words, and a write makes one that holds only them, which Handy
@@ -423,7 +426,7 @@ stops it, writes, and starts it again, and the word survives its next quit,
 while a write made with it running is undone (Review Focus 2 of the plan);
 also every other byte of the store kept, a store with and without the
 member, missing, malformed or nested too deep, a Handy that ignores
-SIGTERM, one that cannot be started again, a word Handy got between read
+SIGTERM, one that cannot be started again, one whose stop fails, a word Handy got between read
 and write, the mode and a link, and 10 000 words. `languagetool_test.odin`
 runs a stand-in of the words API on 127.0.0.1 in a thread, through the real
 curl: paging, a server that ignores the offset, only the difference written (deletes first, phrases left

@@ -249,6 +249,17 @@ handy_write :: proc(words: []string) -> Error {
 			}
 		}
 		if why := handy_stop(pids); why != "" {
+			// Not left to the next sync: a Handy that runs on needs no
+			// start, one that is down is started at once.
+			if len(handy_processes()) > 0 {
+				if m := marker(); m != "" {
+					linux.unlink(cstr(m))
+				}
+				return why
+			}
+			if err := handy_start(); err != nil {
+				return fmt.tprintf("%s; and Handy could not be started again (the next sync tries): %s", why, err.?)
+			}
 			return why
 		}
 	}

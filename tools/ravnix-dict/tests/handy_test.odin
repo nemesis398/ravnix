@@ -509,3 +509,52 @@ the_unit_of_a_process_comes_from_its_cgroup :: proc(t: ^testing.T) {
 	testing.expect_value(t, tools.unit_of_cgroup(""), "")
 	testing.expect_value(t, tools.unit_of_cgroup("0::/\n"), "")
 }
+
+@(test)
+a_handy_that_cannot_be_stopped_is_started_again_at_once :: proc(t: ^testing.T) {
+	// The stop fails: the write is not made, and Handy is not left to the
+	// next sync. One still running needs no start; one that is down is
+	// started at once, and only a failed start keeps the marker.
+	f := fixture(t)
+	defer fixture_destroy(f)
+	context.allocator = f.a
+	defer handy_reap()
+	settings := handy_setup(f)
+	tools.handy.unit_of = proc(pid: int) -> string {return tools.HANDY_UNIT}
+	write_file(f, settings, HANDY_STORE)
+	testing.expect_value(t, start_fake_handy(), nil)
+	pids := tools.handy_processes()
+	testing.expect_value(t, len(pids), 1)
+	write_file(f, join(f, "systemd", "systemctl-pids"), fmt.aprintf("%d\n", pids[0]))
+
+	// systemctl fails and Handy runs on: no start, and no marker.
+	write_file(f, join(f, "systemd", "systemctl-fail"), "")
+	write_file(f, join(f, "systemd", "systemctl-keep"), "")
+	_, _ = tools.handy_read()
+	err := tools.handy_write({"Ravnixtest"})
+	message, failed := err.?
+	testing.expectf(t, failed && strings.contains(message, "cannot stop Handy"), "%v", err)
+	testing.expect_value(t, handy_starts, 1)
+	testing.expect(t, !os.exists(stopped_marker(f)))
+	testing.expect_value(t, read_file(f, settings), HANDY_STORE)
+
+	// systemctl stops it and fails all the same: started again at once.
+	os.remove(join(f, "systemd", "systemctl-keep"))
+	_, _ = tools.handy_read()
+	err = tools.handy_write({"Ravnixtest"})
+	message, failed = err.?
+	testing.expectf(t, failed && strings.contains(message, "cannot stop Handy") && !strings.contains(message, "next sync"), "%v", err)
+	testing.expect_value(t, handy_starts, 2)
+	testing.expect_value(t, len(tools.handy_processes()), 1)
+	testing.expect(t, !os.exists(stopped_marker(f)))
+
+	// And when that start fails too, the marker stays for the next sync.
+	pids = tools.handy_processes()
+	write_file(f, join(f, "systemd", "systemctl-pids"), fmt.aprintf("%d\n", pids[0]))
+	tools.handy.start = proc() -> tools.Error {return "no session"}
+	_, _ = tools.handy_read()
+	err = tools.handy_write({"Ravnixtest"})
+	message, failed = err.?
+	testing.expectf(t, failed && strings.contains(message, "cannot stop Handy") && strings.contains(message, "no session") && strings.contains(message, "next sync"), "%v", err)
+	testing.expect(t, os.exists(stopped_marker(f)))
+}

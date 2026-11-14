@@ -15,7 +15,9 @@
 //   systemctl --user stop UNIT
 //       systemd stopping Handy's unit, next to a file systemctl-fake: it
 //       logs its arguments in systemctl-log, sends SIGTERM to each process
-//       listed in systemctl-pids and waits until it has ended.
+//       listed in systemctl-pids and waits until it has ended. With
+//       systemctl-fail it then exits 1, as a stop job that timed out does;
+//       with systemctl-keep as well it fails without stopping anything.
 package ravnix_dict_tests
 
 import "base:runtime"
@@ -108,6 +110,10 @@ fake_systemctl :: proc(dir: string, args: []string) -> ! {
 	log_path := strings.concatenate({dir, "/systemctl-log"})
 	log, _ := os.read_entire_file(log_path, context.allocator)
 	_ = os.write_entire_file(log_path, strings.concatenate({string(log), strings.join(args, " "), "\n"}))
+	failing := os.exists(strings.concatenate({dir, "/systemctl-fail"}))
+	if failing && os.exists(strings.concatenate({dir, "/systemctl-keep"})) {
+		os.exit(1)
+	}
 	if len(args) == 3 && args[0] == "--user" && args[1] == "stop" {
 		listed, _ := os.read_entire_file(strings.concatenate({dir, "/systemctl-pids"}), context.allocator)
 		for line in strings.split_lines(string(listed)) {
@@ -127,7 +133,7 @@ fake_systemctl :: proc(dir: string, args: []string) -> ! {
 			}
 		}
 	}
-	os.exit(0)
+	os.exit(1 if failing else 0)
 }
 
 // self_exe is the test program, which the links point at.
