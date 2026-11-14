@@ -160,8 +160,8 @@ def distance_to_box(px, py, box):
 # {yellow} and {red} are the "R;G;B" of palette entries. Memory is in the
 # accent, Swap in Yellow and Disk in Red, as fastfetch colors a percentage
 # that is low, high and over the limit; the Palette row is the eight colors of
-# the terminal, of which the wallpaper draws the four that are no state hue, and
-# the logo is the NixOS one, in block glyphs, bold.
+# the terminal, all of which the wallpaper draws, and the logo is the NixOS
+# one, in block glyphs, bold.
 FASTFETCH = HERE / "fastfetch.ansi"
 KERNEL = "6.18.2"  # a value that occurs once, for the tests that change a fact
 FASTFETCH_ROLES = {

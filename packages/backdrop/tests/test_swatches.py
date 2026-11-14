@@ -30,7 +30,7 @@ STATE_CODES = {
 }
 
 
-def palette_row(first, last="35", run="\u2588\u2588\u2588"):
+def palette_row(first, last="35", run="███"):
     return "\x1b[%sm%s\x1b[%sm%s\x1b[m\n" % (first, run, last, run)
 
 
@@ -38,18 +38,18 @@ def palette_row(first, last="35", run="\u2588\u2588\u2588"):
 def test_a_state_hue_swatch_of_the_terminal_is_drawn(lab, code):
     right, proc = render_facts(lab, palette_row(code))
     assert lab.journal(proc) == []
-    only_pink, _ = render_facts(lab, "\x1b[35m\u2588\u2588\u2588\x1b[m\n")
+    only_pink, _ = render_facts(lab, "\x1b[35m███\x1b[m\n")
     assert (right != only_pink).any(), "the swatch is left out"
     assert where(right, rgb(STATE_CODES[code])).sum() > 500, "three cells of it"
 
 
-@pytest.mark.parametrize("run", ["\u2588\u2588\u2588 ", " \u2588\u2588\u2588", " \u2588\u2588\u2588 ", "\u2588\u2588"])
+@pytest.mark.parametrize("run", ["███ ", " ███", " ███ ", "██"])
 def test_padding_does_not_hide_a_swatch(lab, run):
     right, _ = render_facts(lab, palette_row("31", run=run))
     assert where(right, rgb("red")).sum() > 100, "the swatch is left out"
 
 
-@pytest.mark.parametrize("symbol", ["\u25cf", "\u25a0", "\u25b2", "\u25c6"])
+@pytest.mark.parametrize("symbol", ["●", "■", "▲", "◆"])
 @pytest.mark.parametrize("code", ["31", "33", "34", "38;5;2", "38;5;12"])
 def test_the_symbols_of_the_other_colors_shapes_are_drawn_too(lab, code, symbol):
     # fastfetch's colors module can print circles, squares, triangles or
@@ -59,7 +59,7 @@ def test_the_symbols_of_the_other_colors_shapes_are_drawn_too(lab, code, symbol)
 
 
 def test_all_eight_colors_in_one_row_are_all_drawn(lab):
-    row = "".join("\x1b[%dm\u2588\u2588\u2588" % c for c in range(30, 38)) + "\x1b[m\n"
+    row = "".join("\x1b[%dm███" % c for c in range(30, 38)) + "\x1b[m\n"
     right, _ = render_facts(lab, row)
     for name in ("surface1", "red", "green", "yellow", "blue", "pink", "teal", "subtext1"):
         assert where(right, rgb(name)).sum() > 500, name
@@ -89,7 +89,7 @@ BARS = {"31": "red", "32": "green", "33": "yellow", "91": "red", "92": "green", 
 
 @pytest.mark.parametrize("code", BARS)
 def test_a_bar_of_squares_in_the_terminals_state_colors_keeps_its_hue(lab, code):
-    right, _ = render_facts(lab, "Disk  \x1b[%sm\u25a0\u25a0\u25a0\u25a0\u25a0\u25a0\u25a0\u25a0\x1b[m\x1b[37m--\x1b[m 80%%\n" % code)
+    right, _ = render_facts(lab, "Disk  \x1b[%sm■■■■■■■■\x1b[m\x1b[37m--\x1b[m 80%%\n" % code)
     assert where(right, rgb(BARS[code])).sum() > 100
 
 
@@ -99,5 +99,5 @@ def test_a_bar_of_blocks_keeps_its_hue(lab):
 
 
 def test_a_status_dot_keeps_its_hue(lab):
-    right, _ = render_facts(lab, "Failed  \x1b[31m\u25cf\x1b[m 2 units\n")
+    right, _ = render_facts(lab, "Failed  \x1b[31m●\x1b[m 2 units\n")
     assert where(right, rgb("red")).sum() > 20

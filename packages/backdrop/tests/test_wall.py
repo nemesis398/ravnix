@@ -130,7 +130,7 @@ def test_the_facts_show_the_usage_states_and_the_palette_row(wall):
     red = tinted(above, rgb("red"), rgb("base"))
     assert yellow.sum() > 50 and red.sum() > 50
     (_, ya, _, yb), (_, ra, _, rb) = bbox(yellow), bbox(red)
-    assert yb - ya <= bottom - top and rb - ra <= bottom - top, "a row of swatches, not a line of text"
+    assert yb - ya <= bottom - top and rb - ra <= bottom - top, "the Yellow or Red text above the Palette row is taller than one line"
     assert yb <= ra, "Swap is not above Disk"
     # The eight swatches: one line, in the order of the terminal's colors.
     for name in SWATCHES:
@@ -161,8 +161,8 @@ def test_the_glyph_blocks_meet_without_a_seam(wall):
 
 def test_the_swatch_row_has_all_eight_colors(wall):
     # The Palette row is a picture of the terminal's colors, as on Fedora, not
-    # a state: Red, Green, Yellow and Blue are in it, each a whole cell wide
-    # and three glyphs of the row, and nothing is left out.
+    # a state: Red, Green, Yellow and Blue are in it, each one cell wide
+    # (three glyph advances), and nothing is left out.
     right = facts_area(wall)
     first, last, top, bottom, advance = palette_box(right)
     assert len(SWATCHES) == 8
