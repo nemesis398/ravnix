@@ -34,10 +34,13 @@ switched to.
 
 ## Start here, every time
 
-1. **Read the note**, `{{laptop.note}}`. It is the manual.
-2. **Read the module before you change what it makes.** `AGENTS.md` and
+1. **Check where you are: `hostname`.** Only on huginn does a switch go
+   live. On any other host (a session on the server, muninn), edit and
+   build only, and leave the switch for a session on huginn; say so.
+2. **Read the note**, `{{laptop.note}}`. It is the manual.
+3. **Read the module before you change what it makes.** `AGENTS.md` and
    `docs/style.md` of the ravnix checkout bind every change there.
-3. **If the task touches hardware, disks, partitions, boot, the GPU or
+4. **If the task touches hardware, disks, partitions, boot, the GPU or
    anything destructive: run `machine-facts` and believe its output over any
    prose,** this file and the note included.
 
@@ -92,11 +95,14 @@ then build the host against the checkout and switch to it:
 cd {{laptop.checkout}}
 nix build {{laptop.privateFlake}}#nixosConfigurations.huginn.config.system.build.toplevel \
   --override-input ravnix git+file:.
+[ "$(hostname)" = huginn ] || { echo "this is $(hostname), not huginn: switch on huginn" >&2; exit 1; }
 sudo nixos-rebuild switch --flake {{laptop.privateFlake}}#huginn --override-input ravnix git+file:.
 ```
 
 `git+file:` takes the tracked files only, so `git add` a new file first, or
-the build does not see it. Ask {{user.name}} before the `sudo` step.
+the build does not see it. The line before the switch refuses on any host
+but huginn: never drop it, and never switch huginn's configuration from
+another host. Ask {{user.name}} before the `sudo` step.
 
 **After a switch** → reloading Sway does not restart dunst, swayidle or the
 clipboard watchers, which are user services or plain `exec`s; restart what

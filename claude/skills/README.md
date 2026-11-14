@@ -13,7 +13,7 @@ from an earlier setup; their scripts were Python there and stay Python
 | `conventional-commits` | commit messages in Conventional Commits 1.0.0, in the shape of the repository's history |
 | `simplify-changes` | the strict, behavior-preserving simplification pass |
 | `conscience` | a sparring partner against folklore code, speculative abstraction and unexamined convenience |
-| `laptop` | how to change the laptop, huginn: which repository, how to build and switch, what never to touch |
+| `laptop` | how to change the laptop, huginn: which repository, how to build and switch, what never to touch; installed on the laptop shape only |
 
 ## How a skill gets its values
 
@@ -92,6 +92,10 @@ the scripts.
 of them into one tree in the store and links each directory at
 `~/.claude/skills/NAME`. It is one tree because `journal` imports
 `ai-memory`'s note reader from beside itself.
+
+`laptop` is linked on the laptop shape only (`modules/glue/claude-skills.nix`
+leaves it out on any other), and its switch step refuses on a host that is
+not huginn, so no session on the server switches it to the laptop's system.
 
 `ravnix.claude.skills` adds skills beside ravnix's own, by name: a skill of
 the private flake's, or one pinned from upstream as a flake input. A name of
