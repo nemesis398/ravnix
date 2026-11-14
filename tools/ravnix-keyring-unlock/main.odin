@@ -355,6 +355,20 @@ run :: proc(credential, address: string, timeout: time.Duration, uid: u32) -> Re
 	return unlock(&c, password)
 }
 
+PR_SET_DUMPABLE :: 4
+
+// forbid_core_dumps makes the process not dumpable before it reads the
+// password: no core dump with the password in it after a crash (the unit
+// also sets LimitCORE=0), and no other process of the user can ptrace it or
+// read its /proc/PID/mem while it holds the password.
+forbid_core_dumps :: proc() -> string {
+	ret := linux.syscall(linux.SYS_prctl, PR_SET_DUMPABLE, 0, 0, 0, 0)
+	if ret < 0 {
+		return fmt.tprintf("cannot forbid core dumps: %s", errno_text(linux.Errno(-ret)))
+	}
+	return ""
+}
+
 // ── the command ──────────────────────────────────────────────────────────────
 
 USAGE :: `usage: ravnix-keyring-unlock [--credential FILE] [--bus ADDRESS]
@@ -455,6 +469,10 @@ main :: proc() {
 		os.exit(1)
 	}
 	context.allocator = virtual.arena_allocator(&arena)
+	if why := forbid_core_dumps(); why != "" {
+		fmt.eprintfln("ravnix-keyring-unlock: %s", why)
+		os.exit(1)
+	}
 	env := Env {
 		credentials_directory = os.get_env("CREDENTIALS_DIRECTORY", context.allocator),
 		bus_address           = os.get_env("DBUS_SESSION_BUS_ADDRESS", context.allocator),

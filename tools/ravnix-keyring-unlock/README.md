@@ -70,7 +70,11 @@ their command line.
 
 Every read and write waits 10 s at the most, all of it together. The
 password, the credential's buffer and every buffer that held a message with
-it are overwritten with zeros when they are no longer needed.
+it are overwritten with zeros when they are no longer needed. Before it reads
+the credential, the tool makes itself undumpable (`PR_SET_DUMPABLE` 0): a
+crash writes no core dump with the password in it, and no other process of
+the user can ptrace it or read its `/proc/PID/mem`. The unit also sets
+`LimitCORE=0`. It exits 1 if the kernel refuses.
 
 ## Output and exit status
 
