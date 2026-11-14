@@ -31,8 +31,8 @@ needs no state.
 
 | Exit | Means |
 | --- | --- |
-| 0 | done, or nothing to do (`add` of a word that is there with all its fields) |
-| 1 | failed: the dictionary is missing, too big, not writable or not one (not UTF-8, a NUL, a git merge conflict); `remove` of a word that is not there; the lock was held for a minute; the state cannot be read or written; an adapter failed (the others are synced all the same) |
+| 0 | done, or nothing to do (`add` of a word that is there with all its fields); an unavailable adapter, skipped, is no failure |
+| 1 | failed: the dictionary is missing, too big, not writable or not one (not UTF-8, a NUL, a git merge conflict); `remove` of a word that is not there; the lock was held for a minute; the state cannot be read or written; an adapter failed (the others are synced all the same); `RAVNIX_DICT_ADAPTERS` names an adapter that does not exist |
 | 64 | bad usage: an unknown command or option, a missing or extra argument, a word or value the file cannot hold |
 
 ## The file
@@ -179,8 +179,10 @@ has the word, cannot bring it back: the word is in `removed`, so the tool's
 copy is dropped, not taken.
 
 **Bringing a word back** goes through the dictionary only: `ravnix-dict
-add`, or the line written again by hand. A removed word that is typed into
-a tool again is taken out of the tool at the next sync.
+add`, or the line written again by hand. A removed word that turns up in a
+tool again, typed in or written back by Handy from its memory, is taken out
+of the tool at the next sync: strip it, add it back on purpose (the
+maintainer's rule, 2026-11-14).
 
 **An emptied dictionary.** A file with no word left, when the last sync
 knew some, is more often an editor that truncated the file before writing
@@ -207,22 +209,132 @@ back, the same gap as a line deleted by hand before a host's first sync
 Error :: Maybe(string)
 
 Adapter :: struct {
-	name:      string,
-	read:      proc() -> ([]string, Error),
-	write:     proc(words: []string) -> Error,
-	must_stop: bool,
+	name:        string,
+	read:        proc() -> ([]string, Error),
+	write:       proc(words: []string) -> Error,
+	must_stop:   bool,
+	unavailable: proc() -> string,
 }
 ```
 
 `read` gives the tool's list as the tool has it, `write` gives it a whole
 new list, and `must_stop` says that writing stops the tool for a moment;
-the adapter stops and starts the tool itself. What `read` returns is
-allocated in the context's allocator, which the core frees: an adapter
-frees nothing it returns. `Error` is a message for the user, or nil; as
-`Maybe(string)` it is the same type in every package, so an adapter in a
-package of its own needs nothing from this one. The list `main` syncs is
-`adapters()` in `adapter.odin`, empty until Task 7.2 adds Handy,
-LanguageTool and the prose skill's dictionary.
+the adapter stops and starts the tool itself. `unavailable`, when an
+adapter has one, says why the tool cannot be reached right now (`""`
+when it can): sync then prints `NAME: skipped: REASON`, neither reads nor
+writes it, and that is no failure. What `read` returns is allocated in the
+context's allocator, which the core frees: an adapter frees nothing it
+returns. `Error` is a message for the user, or nil; as `Maybe(string)` it
+is the same type in every package, so the adapters live in a package of
+their own, `adapters/`, which needs nothing from this one.
+
+Which adapters `sync` reads is `RAVNIX_DICT_ADAPTERS`, their names
+separated by commas, read in the order `handy`, `languagetool`, `prose`
+whatever the order named; without it, none (the bench, a test, a shell
+without the module). A name that is no adapter is an error before any
+command runs. `adapters()` in `adapter.odin` builds the list from the
+environment (`Setup`):
+
+| Variable | Is | Default |
+| --- | --- | --- |
+| `RAVNIX_DICT_ADAPTERS` | the adapters to sync | none |
+| `RAVNIX_DICT_HANDY_SETTINGS` | Handy's settings store | `$XDG_DATA_HOME/com.pais.handy/settings_store.json`, `~/.local/share/...` |
+| `RAVNIX_DICT_PROSE_FILE` | the prose skill's dictionary | `$XDG_CONFIG_HOME/prose/dictionary.txt`, `~/.config/...` |
+| `RAVNIX_DICT_LANGUAGETOOL_SERVER` | the words API, without `/v2` | `https://api.languagetoolplus.com` |
+| `LANGUAGETOOL_USERNAME`, `LANGUAGETOOL_API_KEY`, `LANGUAGETOOL_RBW_ITEM` | LanguageTool's credentials, as the editor reads them | see below |
+
+The module (`modules/common/dictionary.nix`) sets the first three in the
+wrapper on the PATH, from `ravnix.dictionary.adapters`: the prose skill's
+everywhere, LanguageTool's on the laptop shape (`ravnix.shape`), Handy's
+where the desktop installs Handy (`modules/desktop/apps.nix`). The
+environment still wins over the wrapper.
+
+### Handy
+
+Handy's custom words are `settings.custom_words` in its settings store, a
+JSON file that also holds every other setting of Handy, API keys among them.
+Handy keeps the store in memory and writes all of it back when a setting
+changes and when it quits (tauri-plugin-store), so a list written into the
+file while Handy runs is undone at its next save. A write therefore:
+
+1. finds Handy's processes of this user in `/proc`, by name
+   (`.handy-wrapped`, nixpkgs' wrapped binary, or `handy`; not
+   `Handy-worker`, which ends with its parent), and asks them to quit
+   (SIGTERM through a pidfd), killing what is left after ten seconds;
+2. reads the store again, since what Handy saved as it quit is the newest;
+   a word it has there that the last read did not, typed into its window in
+   the meantime, is kept after the words given, and the next sync takes it
+   into the dictionary;
+3. replaces the value of `custom_words`, and nothing else: every other
+   byte of the store stays as it was, in Handy's own layout (serde_json's,
+   two spaces per level), and the store is replaced through a rename, with
+   its mode, a link followed;
+4. starts Handy again, if it ran, by starting the session's unit of
+   handy-launch's autostart entry, `app-handy@autostart.service`, so it gets
+   the session's environment; Handy reads the new list as it starts.
+
+A store without `custom_words`, or without `settings`, gets them; a missing
+store is no words, and a write makes one that holds only them, which Handy
+completes with its defaults (its settings have a container-level
+`serde(default)`). A store that is not JSON, or whose `custom_words` is not
+an array of strings, is an error and stays as it is; since Handy writes it
+in place, a read that meets half a file tries again, three times. No message
+quotes the store.
+
+### LanguageTool
+
+The word list of a LanguageTool Premium account, in the cloud. The API lists
+the words 500 at a time (`GET /v2/words`) and adds and deletes one word per
+request (`POST /v2/words/add`, `/v2/words/delete`); a write sends only the
+difference to the list the read got, deletes first, so a word whose spelling
+changed is deleted in its old spelling before the new one is added. A word
+with white space is left out: the API takes no phrase. A 429 is waited out
+(its `Retry-After`, at most a minute, or 2 s doubling), and so are a 5xx and
+a connection that broke off, six tries in all; a 401 or 403 says that the
+account or the key was refused.
+
+The requests run through curl (the store path the package is built with),
+and curl's configuration, the key in it, goes to curl on its standard input
+(`curl -q --config -`): the key is on no command line, in no environment
+of another process and in no file, and no message holds it. main takes
+`LANGUAGETOOL_API_KEY` out of its own environment before it starts
+anything.
+
+The credentials are found as the editor's LanguageTool code finds them
+(`modules/common/nvim/lua/ravnix_languagetool.lua`): the environment, then
+the vault through rbw, only while `rbw unlocked` says it is (the item that
+`LANGUAGETOOL_RBW_ITEM` names, `LanguageTool` by default: the key is its
+password, the account its `username` field), then
+`~/.config/languagetool/credentials`, `KEY=VALUE` lines. Without a key and
+an account the adapter is unavailable, and sync skips it: a locked vault is
+the usual state, not a failure, and the watcher's timer syncs it once the
+vault is open.
+
+### prose
+
+The prose skill's own dictionary of the user, `~/.config/prose/dictionary.txt`:
+a word per line, `#` comments, read as the skill's checker reads it (a line,
+trimmed, that is not empty and does not start with `#`). The list that
+ships with the skill is not written. A write keeps the comments, the blank
+lines and the line breaks where they are, keeps each word's line in its place
+with the spelling given, drops the lines of the words it is not given, and
+appends the new words; a missing file is made with a comment that says
+where its words come from.
+
+## The watcher
+
+`modules/common/dictionary-watch.nix` runs `ravnix-dict sync` as the user
+service `ravnix-dict-sync`: started by a path unit whenever the dictionary
+or a list in a file changes (Handy's store, the prose dictionary), and by a
+timer two minutes after login and 15 minutes after each run, for what no
+file shows (LanguageTool's list) and for a change that came while a sync
+ran. It is the wrapper of the shell, with home-manager's `XDG_STATE_HOME`,
+so the shell and the service share one state and one lock. Without a
+dictionary at the configured path the service does not run.
+`ravnix.dictionary.watch = false` leaves the three units out.
+
+A sync that writes a list changes a file the path unit watches, which starts
+one more sync; that one finds every list in step and writes nothing.
 
 ## Tests and bench
 
@@ -237,7 +349,33 @@ reset tool, `remove` and a line deleted by hand, a crash and a failed
 adapter between a removal and the sync that carries it, a tool restored
 from an old list, the emptied file, a merge conflict, a corrupt and a lost
 state, duplicates and empty words from a tool, a 50 000 word sync each way,
-and a file changed while sync reads the tools.
+a file changed while sync reads the tools, a removed word that turns up in a
+tool again and is added back, and an adapter that is unavailable.
+
+The adapters are tested against real processes (`fakes.odin`): the test
+program itself, started through a link whose name says which part to play,
+stands in for Handy and for rbw. `handy_test.odin` runs a Handy that reads
+its store as it starts and writes its memory back as it quits: a write
+stops it, writes, and starts it again, and the word survives its next quit,
+while a write made with it running is undone (Review Focus 2 of the plan);
+also every other byte of the store kept, a store with and without the
+member, missing, malformed or nested too deep, a Handy that ignores
+SIGTERM, one that cannot be started again, a word Handy got between read
+and write, the mode and a link, and 10 000 words. `languagetool_test.odin`
+runs a stand-in of the words API on 127.0.0.1 in a thread, through the real
+curl: paging, only the difference written (deletes first, phrases left
+out, odd characters encoded), a 429 waited out with and without
+`Retry-After`, a limit that stays, a 5xx, a refusal and an answer that
+repeats the key (neither message holds it), answers that are no word list,
+a server that does not answer and one that is not there, and the
+credentials from the vault, the file, a locked vault and no rbw; while curl
+waits for each answer, the stand-in looks through `/proc` for the key in a
+command line or an environment. `prose_test.odin` reads as the checker
+does, keeps the layout, makes a missing file, refuses one that is not
+UTF-8, and keeps a link, the mode and a read-only file. `setup_test.odin`
+checks `RAVNIX_DICT_ADAPTERS` and the paths. The editor's side of the
+file's format is `tests/common/nvim-dictionary.nix`, on the same lines as
+`the_editor_and_the_core_read_lang_alike` here.
 
 The leak check of `ravnix-dict-tests` (`ODIN_TEST_FAIL_ON_BAD_MEMORY`)
 covers almost nothing here: `run` puts a whole command into one arena,
@@ -275,20 +413,36 @@ file no longer has.
   are two keys, so a tool that returns NFD puts a second spelling of the
   word into the file. Odin's core has no normalization to apply.
 - A removed word typed into a tool again is taken out of the tool at the
-  next sync, unattended once the watcher (Task 7.2) runs it; sync counts
-  such words on standard output but does not name them. This is the price
-  of a tool restored from an old backup not bringing a word back; whether
-  a word typed into a tool long after its removal should win is a
-  decision for the maintainer.
-- The editor's LanguageTool code refuses fewer words than ravnix-dict: it
-  can append a word that starts with `#` (read as a comment), or one with
-  a control character or over 256 bytes (a line that is skipped, with a
-  warning). Such a word is lost to sync until that code applies the same
-  rules (Task 7.2).
-- The state's place comes from `XDG_STATE_HOME`. A shell and a systemd
-  user unit that see different values have two states and two locks; the
-  watcher of Task 7.2 should give the unit the shell's value, or
-  `--state`.
+  next sync, unattended once the watcher runs it; sync counts such words on
+  standard output but does not name them. This is the maintainer's rule
+  (strip it, add it back on purpose), so that a tool restored from an old
+  backup, or Handy saving its memory, brings no word back.
+- Handy is found by its process name only (`.handy-wrapped`, `handy`). A
+  Handy started under another name is not stopped, and a write while it
+  runs is undone at its next save. A Handy stopped for a write ends a
+  dictation in progress; a sync stops it only when its list changes.
+- Handy is started again through `app-handy@autostart.service`, the unit
+  the session's XDG autostart makes of handy-launch's entry. In a session
+  without that unit, the words are written and the start fails, with a
+  message that says so; Handy then needs a start by hand.
+- LanguageTool's list cannot hold a word with white space (`Open WebUI`).
+  The adapter leaves such words out, so the list never has them, and every
+  sync counts them as written to it again, without a request.
+- Two hosts that sync one LanguageTool account each take its new words into
+  their own checkout of the dictionary, and a removal on one host goes back
+  into the cloud from the other until it has pulled the removal; that is
+  why the adapter is on the laptop only by default.
+- A change that comes while a sync runs starts no second sync (systemd
+  merges the start into the one that runs); the timer catches it within 15
+  minutes.
+- The first sync with LanguageTool adds every word of the dictionary with
+  a request each, and its rate limit (80 a minute on Premium) makes it take
+  minutes, with the lock held: an `add` by hand waits a minute for it, then
+  gives up.
+- The state's place comes from `XDG_STATE_HOME`. The watcher's service
+  gets home-manager's `xdg.stateHome`, which is the shell's when
+  home-manager exports it (`xdg.enable`) or when neither sets it; a shell
+  with another value has a second state and a second lock.
 - A crash between writing the new file and renaming it leaves
   `.NAME.ravnix-dict-new` next to the dictionary, in the private flake's
   checkout, where `git add -A` would commit it. The next command that

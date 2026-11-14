@@ -365,10 +365,34 @@ run_list :: proc(cfg: Config) -> int {
 }
 
 main :: proc() {
-	env := Environment {
-		file       = os.get_env("RAVNIX_DICT_FILE", context.allocator),
-		state_home = os.get_env("XDG_STATE_HOME", context.allocator),
-		home       = os.get_env("HOME", context.allocator),
+	get :: proc(name: string) -> string {
+		return os.get_env(name, context.allocator)
 	}
-	os.exit(run(os.args[1:], env, adapters(), os.stdout, os.stderr))
+	env := Environment {
+		file       = get("RAVNIX_DICT_FILE"),
+		state_home = get("XDG_STATE_HOME"),
+		home       = get("HOME"),
+	}
+	list, why := adapters(
+		Setup {
+			names = get("RAVNIX_DICT_ADAPTERS"),
+			home = env.home,
+			config_home = get("XDG_CONFIG_HOME"),
+			data_home = get("XDG_DATA_HOME"),
+			handy_settings = get("RAVNIX_DICT_HANDY_SETTINGS"),
+			prose_file = get("RAVNIX_DICT_PROSE_FILE"),
+			languagetool_server = get("RAVNIX_DICT_LANGUAGETOOL_SERVER"),
+			languagetool_user = get("LANGUAGETOOL_USERNAME"),
+			languagetool_key = get("LANGUAGETOOL_API_KEY"),
+			languagetool_item = get("LANGUAGETOOL_RBW_ITEM"),
+		},
+	)
+	// The key is in the adapter now; nothing ravnix-dict starts (curl, rbw,
+	// systemctl) inherits it, as the editor does with it too.
+	os.unset_env("LANGUAGETOOL_API_KEY")
+	if why != "" {
+		fmt.eprintfln("ravnix-dict: %s", why)
+		os.exit(1)
+	}
+	os.exit(run(os.args[1:], env, list, os.stdout, os.stderr))
 }

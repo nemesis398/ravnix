@@ -494,3 +494,89 @@ read_sneaky :: proc() -> ([]string, dict.Error) {
 write_sneaky :: proc(words: []string) -> dict.Error {
 	return nil
 }
+
+@(test)
+a_removed_word_that_turns_up_in_a_tool_is_stripped_until_it_is_added :: proc(t: ^testing.T) {
+	// The maintainer's rule (2026-11-14): strip it, add it back on purpose.
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, f.file, "keep\nword\n")
+	set(ALPHA, "keep", "word")
+	set(BETA)
+	set(GAMMA)
+	sync_ok(f)
+	testing.expect_value(t, run(f, nil, "remove", "word").code, 0)
+	sync_ok(f)
+	testing.expect_value(t, joined(f, GAMMA), "keep")
+	// Handy, quitting, writes its list from memory, and the word with it.
+	set(GAMMA, "keep", "Word")
+	sync_ok(f)
+	testing.expect_value(t, joined(f, GAMMA), "keep")
+	testing.expect_value(t, read_file(f, f.file), "keep\n")
+	// And again, in another tool, many syncs later.
+	sync_ok(f)
+	set(BETA, "word", "keep")
+	sync_ok(f)
+	testing.expect_value(t, joined(f, BETA), "keep")
+	// add clears the record: the word is back in the file and every tool.
+	testing.expect_value(t, run(f, nil, "add", "word").code, 0)
+	sync_ok(f)
+	testing.expect_value(t, read_file(f, f.file), "keep\nword\n")
+	testing.expect_value(t, joined(f, ALPHA), "keep,word")
+	testing.expect_value(t, joined(f, BETA), "keep,word")
+	testing.expect_value(t, joined(f, GAMMA), "keep,word")
+	testing.expect(t, !has(lines(f, read_file(f, join(f, "state", "removed"))), "word"))
+	// Once back, a tool that loses it gets it again, like any word.
+	set(GAMMA, "keep")
+	sync_ok(f)
+	testing.expect_value(t, joined(f, GAMMA), "keep,word")
+}
+
+@(test)
+add_right_after_remove_brings_the_word_back :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, f.file, "keep\nword\n")
+	set(ALPHA, "keep", "word")
+	set(BETA, "keep", "word")
+	set(GAMMA, "keep", "word")
+	sync_ok(f)
+	// Changed one's mind before any sync carried the removal.
+	testing.expect_value(t, run(f, nil, "remove", "word").code, 0)
+	testing.expect_value(t, run(f, nil, "add", "Word").code, 0)
+	sync_ok(f)
+	testing.expect_value(t, read_file(f, f.file), "keep\nWord\n")
+	testing.expect_value(t, joined(f, ALPHA), "keep,Word")
+	testing.expect_value(t, joined(f, GAMMA), "keep,Word")
+}
+
+@(thread_local)
+gone_reason: string
+
+@(test)
+an_unavailable_adapter_is_skipped_and_is_no_failure :: proc(t: ^testing.T) {
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, f.file, "a\n")
+	set(ALPHA, "b")
+	set(BETA, "c")
+	gone_reason = "the vault is locked"
+	defer gone_reason = ""
+	list := [2]dict.Adapter {
+		{name = "alpha", read = read_alpha, write = write_alpha},
+		{name = "beta", read = read_beta, write = write_beta, unavailable = proc() -> string {return gone_reason}},
+	}
+	r := run(f, list[:], "sync")
+	testing.expectf(t, r.code == 0, "sync exits 0: %s", r.err)
+	testing.expectf(t, strings.contains(r.out, "beta: skipped: the vault is locked"), "%s", r.out)
+	testing.expect_value(t, stores[BETA].reads, 0)
+	testing.expect_value(t, stores[BETA].writes, 0)
+	testing.expect_value(t, read_file(f, f.file), "a\nb\n")
+	testing.expect_value(t, joined(f, ALPHA), "b,a")
+	// Once it is there again, it is synced.
+	gone_reason = ""
+	r = run(f, list[:], "sync")
+	testing.expect_value(t, r.code, 0)
+	testing.expect_value(t, joined(f, BETA), "c,a,b")
+	testing.expect_value(t, read_file(f, f.file), "a\nb\nc\n")
+}

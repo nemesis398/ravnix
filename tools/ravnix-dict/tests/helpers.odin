@@ -12,6 +12,9 @@ import dict ".."
 
 Fixture :: struct {
 	t:     ^testing.T,
+	// The allocator the fixture itself came from; a test may set
+	// context.allocator to the arena after making it.
+	owner: runtime.Allocator,
 	arena: virtual.Arena,
 	a:     runtime.Allocator,
 	dir:   string,
@@ -24,6 +27,7 @@ Fixture :: struct {
 fixture :: proc(t: ^testing.T) -> ^Fixture {
 	f := new(Fixture)
 	f.t = t
+	f.owner = context.allocator
 	if virtual.arena_init_growing(&f.arena) != nil {
 		testing.fail_now(t, "no memory for the fixture's arena")
 	}
@@ -51,7 +55,7 @@ fixture_destroy :: proc(f: ^Fixture) {
 	fixture_allocator = {}
 	stores = {}
 	write_log = nil
-	free(f)
+	free(f, f.owner)
 }
 
 join :: proc(f: ^Fixture, parts: ..string) -> string {

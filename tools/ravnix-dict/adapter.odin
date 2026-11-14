@@ -11,26 +11,117 @@
 // allocator; the core frees them, so an adapter does not. Error is a
 // message for the user, or nil; as Maybe(string) it is the same type in
 // every package, so an adapter in a package of its own needs nothing from
-// this one to be one.
+// this one to be one. unavailable, when an adapter has it, says why the
+// tool cannot be reached right now (LanguageTool without credentials, the
+// vault locked): sync then skips the adapter and says so, and that is no
+// failure.
 package ravnix_dict
 
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import tools "adapters"
 
 Error :: Maybe(string)
 
 Adapter :: struct {
-	name:      string,
-	read:      proc() -> ([]string, Error),
-	write:     proc(words: []string) -> Error,
-	must_stop: bool,
+	name:        string,
+	read:        proc() -> ([]string, Error),
+	write:       proc(words: []string) -> Error,
+	must_stop:   bool,
+	unavailable: proc() -> string,
 }
 
-// adapters is the adapters main syncs. Task 7.2 fills it: Handy,
-// LanguageTool and the prose skill's dictionary.
-adapters :: proc() -> []Adapter {
-	return nil
+// ADAPTER_NAMES is every adapter there is, in the order sync reads them.
+ADAPTER_NAMES :: []string{"handy", "languagetool", "prose"}
+
+// Setup is where the adapters find their tools: what main reads from the
+// environment.
+Setup :: struct {
+	// RAVNIX_DICT_ADAPTERS: the names of the adapters to sync, separated
+	// by commas; none when it is empty.
+	names:                string,
+	home:                 string, // HOME
+	config_home:          string, // XDG_CONFIG_HOME
+	data_home:            string, // XDG_DATA_HOME
+	handy_settings:       string, // RAVNIX_DICT_HANDY_SETTINGS
+	prose_file:           string, // RAVNIX_DICT_PROSE_FILE
+	languagetool_server:  string, // RAVNIX_DICT_LANGUAGETOOL_SERVER
+	languagetool_user:    string, // LANGUAGETOOL_USERNAME
+	languagetool_key:     string, // LANGUAGETOOL_API_KEY
+	languagetool_item:    string, // LANGUAGETOOL_RBW_ITEM
+}
+
+// xdg is an XDG base directory: the variable when it is an absolute path,
+// else fallback under HOME.
+@(private)
+xdg :: proc(value, home, fallback: string) -> string {
+	if strings.has_prefix(value, "/") {
+		return value
+	}
+	if home == "" {
+		return ""
+	}
+	return strings.concatenate({home, "/", fallback})
+}
+
+// adapters is the adapters setup names, each set up from setup; why names
+// an adapter that does not exist, or a path that cannot be found.
+adapters :: proc(setup: Setup) -> (list: []Adapter, why: string) {
+	out := make([dynamic]Adapter)
+	wanted := make(map[string]struct{})
+	for part in strings.split(setup.names, ",") {
+		name := strings.trim_space(part)
+		if name == "" {
+			continue
+		}
+		if !contains(ADAPTER_NAMES, name) {
+			return nil, fmt.tprintf("RAVNIX_DICT_ADAPTERS names %s; the adapters are %s", name, strings.join(ADAPTER_NAMES, ", "))
+		}
+		wanted[name] = {}
+	}
+	data := xdg(setup.data_home, setup.home, ".local/share")
+	config := xdg(setup.config_home, setup.home, ".config")
+	for name in ADAPTER_NAMES {
+		if name not_in wanted {
+			continue
+		}
+		switch name {
+		case "handy":
+			settings := setup.handy_settings
+			if settings == "" && data != "" {
+				settings = strings.concatenate({data, "/com.pais.handy/settings_store.json"})
+			}
+			if settings == "" {
+				return nil, "the handy adapter finds no settings: set RAVNIX_DICT_HANDY_SETTINGS, XDG_DATA_HOME or HOME"
+			}
+			tools.handy = {settings = settings}
+			append(&out, Adapter{name = name, read = tools.handy_read, write = tools.handy_write, must_stop = true})
+		case "languagetool":
+			tools.languagetool_reset()
+			tools.languagetool = {
+				server   = setup.languagetool_server,
+				user     = setup.languagetool_user,
+				key      = setup.languagetool_key,
+				rbw_item = setup.languagetool_item,
+			}
+			if config != "" {
+				tools.languagetool.credentials = strings.concatenate({config, "/languagetool/credentials"})
+			}
+			append(&out, Adapter{name = name, read = tools.languagetool_read, write = tools.languagetool_write, unavailable = tools.languagetool_unavailable})
+		case "prose":
+			file := setup.prose_file
+			if file == "" && config != "" {
+				file = strings.concatenate({config, "/prose/dictionary.txt"})
+			}
+			if file == "" {
+				return nil, "the prose adapter finds no dictionary: set RAVNIX_DICT_PROSE_FILE, XDG_CONFIG_HOME or HOME"
+			}
+			tools.prose = {file = file}
+			append(&out, Adapter{name = name, read = tools.prose_read, write = tools.prose_write})
+		}
+	}
+	return out[:], ""
 }
 
 Config :: struct {
@@ -79,7 +170,7 @@ Tool :: struct {
 	raw:     []string, // as read
 	words:   []string, // trimmed, without empty words, each key once
 	keys:    map[string]struct{},
-	failed:  bool,
+	failed:  bool, // or skipped: neither read nor written
 	taken:   int,
 }
 
@@ -176,6 +267,13 @@ sync_once :: proc(cfg: Config, list: []Adapter, allow_empty: bool) -> Outcome {
 	for a, i in list {
 		t := &tools[i]
 		t.adapter = a
+		if a.unavailable != nil {
+			if reason := a.unavailable(); reason != "" {
+				fmt.fprintf(cfg.out, "%s: skipped: %s\n", a.name, reason)
+				t.failed = true
+				continue
+			}
+		}
 		raw, err := a.read()
 		if message, bad := err.?; bad {
 			warn(cfg, "%s: cannot read its words: %s", a.name, message)
