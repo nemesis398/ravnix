@@ -1,0 +1,11 @@
+#!/bin/sh
+# The fuzzel of the tests. It records its arguments, its environment and its
+# input beside the link a fixture made to it, then does what the fixture's
+# fuzzel-case.sh says. A script that is only read has no ETXTBSY race with a
+# thread that forks while a new file is still open for writing.
+dir=${0%/*}
+printf '%s\n' "$@" > "$dir/fuzzel-args"
+env > "$dir/fuzzel-env"
+cat > "$dir/fuzzel-stdin"
+# shellcheck source=/dev/null
+. "$dir/fuzzel-case.sh"

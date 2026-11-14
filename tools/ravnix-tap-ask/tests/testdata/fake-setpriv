@@ -1,0 +1,11 @@
+#!/bin/sh
+# The setpriv of the tests: a fixture links it beside the popup's files. It
+# records its arguments, one per line, and runs the command after "--" as
+# itself, since a test cannot change its uid.
+dir=${0%/*}
+printf '%s\n' "$@" > "$dir/setpriv-args"
+while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+	shift
+done
+shift
+exec "$@"

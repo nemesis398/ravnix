@@ -116,6 +116,7 @@ of those connections needs a touch from someone sitting there.
 | [`ravnix-link`](tools/ravnix-link) | Carries what the server wants from the desktop to the laptop, queued while it is away |
 | [`ravnix-notify`](tools/ravnix-notify) | Posts a message to the Matrix room of a topic, so it reaches your phone with the lid closed |
 | [`ravnix-keyring-unlock`](tools/ravnix-keyring-unlock) | Opens the login keyring after a YubiKey tap at the greeter, with its password kept as a machine-bound systemd credential |
+| [`ravnix-tap-ask`](tools/ravnix-tap-ask) | Asks on the laptop's screen, naming the command and where it came from, before sudo waits for a tap on the security key |
 | [`ravnix-dict`](tools/ravnix-dict) | Keeps one dictionary of custom words and feeds it to every tool that has a word list |
 | [`claude-code-verify`](tools/claude-code-verify) | Proves that a Claude Code binary is the one Anthropic released |
 | [`claude-roll`](tools/claude-roll) | Moves the Claude Code sessions in herdr onto the newly installed version without ending their work |
