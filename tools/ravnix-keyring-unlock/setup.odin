@@ -4,7 +4,9 @@
 //
 //   1. check the credential's path: no symbolic link, nothing odd;
 //   2. read the new password from the Bitwarden item through rbw, while the
-//      vault is unlocked (a locked one would prompt for its master password);
+//      vault is unlocked (a locked one would prompt for its master password),
+//      and refuse it when it is the user's login password, which the
+//      keyring must not get (pam_unix's own helper, unix_chkpwd, says);
 //   3. ask the daemon whether the keyring already has that password, with
 //      ChangeWithMasterPassword from it to itself. UnlockWithMasterPassword
 //      is no such check: an unlocked collection takes any password for it;
@@ -25,6 +27,7 @@ package ravnix_keyring_unlock
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sys/linux"
 import "core:time"
@@ -40,6 +43,9 @@ ASK_PROMPT :: "Current password of the login keyring:"
 // An encrypted credential of a password is a few kilobytes of Base64.
 MAX_CIPHERTEXT :: 256 * 1024
 GUILT_RIDDEN :: "org.gnome.keyring.InternalUnsupportedGuiltRiddenInterface"
+// NixOS's setuid wrapper of pam_unix's helper, which checks the caller's own
+// password against the shadow file.
+UNIX_CHKPWD :: "/run/wrappers/bin/unix_chkpwd"
 
 Setup :: struct {
 	// The Bitwarden item that holds the new password.
@@ -53,6 +59,9 @@ Setup :: struct {
 	rbw:          string,
 	ask_password: string,
 	creds:        string,
+	// unix_chkpwd, and the user's name, which it checks the password of.
+	chkpwd:       string,
+	user:         string,
 	// The terminal the prompt reads, and where the programs' messages and
 	// the setup's own go (nil is /dev/null).
 	tty:          ^os.File,
@@ -289,6 +298,77 @@ write_credential :: proc(path: string, data: []u8, uid: u32) -> string {
 
 // ── the passwords ────────────────────────────────────────────────────────────
 
+// is_terminal reports whether f is a terminal (TCGETS works on it).
+is_terminal :: proc(f: ^os.File) -> bool {
+	if f == nil {
+		return false
+	}
+	TCGETS :: 0x5401
+	termios: [64]u8
+	return linux.syscall(linux.SYS_ioctl, uintptr(os.fd(f)), TCGETS, uintptr(&termios[0])) == 0
+}
+
+// user_name is the name of uid in passwd, the text of /etc/passwd.
+user_name :: proc(uid: u32, passwd: string) -> (name: string, ok: bool) {
+	rest := passwd
+	for line in strings.split_lines_iterator(&rest) {
+		fields := strings.split_n(line, ":", 4, context.temp_allocator)
+		if len(fields) < 4 || fields[0] == "" {
+			continue
+		}
+		id, idok := strconv.parse_u64(fields[2], 10)
+		if idok && id == u64(uid) {
+			return fields[0], true
+		}
+	}
+	return "", false
+}
+
+// setuid_root reports whether path is an executable file of root's with the
+// setuid bit, as NixOS's wrapper of unix_chkpwd is. A copy without it could
+// not read the shadow file and would answer every password with 7, "not
+// the login password".
+setuid_root :: proc(path: string) -> bool {
+	st: linux.Stat
+	if linux.stat(strings.clone_to_cstring(path, context.temp_allocator), &st) != .NONE {
+		return false
+	}
+	return linux.S_ISREG(st.mode) && st.uid == 0 && .ISUID in st.mode && .IXUSR in st.mode
+}
+
+// check_not_login refuses a new password that is the user's login password,
+// with pam_unix's helper: the user's name and "nonull" as its arguments, the
+// password and a NUL on its standard input (a pipe: it refuses a terminal),
+// 0 when it is the login password, 7 when not. A run with another password
+// is a failed password check in the journal ("password check failed for
+// user"); the helper neither waits after it nor counts it.
+check_not_login :: proc(s: Setup, password: []u8) -> string {
+	cannot :: "cannot check the item's password against your login password"
+	if s.user == "" {
+		return fmt.tprintf("%s: your user name is not in /etc/passwd; nothing changed", cannot)
+	}
+	if s.chkpwd == "" {
+		return fmt.tprintf("%s: %s, the setuid helper of pam_unix, is not there or not setuid root; nothing changed", cannot, UNIX_CHKPWD)
+	}
+	input := make([]u8, len(password) + 1)
+	defer free_password(input)
+	copy(input, password)
+	r, missing, why := run_program({s.chkpwd, s.user, "nonull"}, input, nil, s.messages, s.timeout, 4096)
+	free_output(&r)
+	switch {
+	case missing || why != "":
+		return fmt.tprintf("%s (%s); nothing changed", cannot, why)
+	case r.status == 0:
+		return fmt.tprintf(
+			"the Bitwarden item %q holds your login password, and the keyring needs a password of its own: give the item another one (Bitwarden's generator); nothing changed",
+			printable(s.item),
+		)
+	case r.status == 7:
+		return ""
+	}
+	return fmt.tprintf("%s (unix_chkpwd ended with %d); nothing changed", cannot, r.status)
+}
+
 // take_password copies a program's output into a buffer of its own, which
 // the caller wipes and frees, and wipes the output.
 take_password :: proc(r: ^Ran, data: []u8) -> []u8 {
@@ -371,6 +451,9 @@ ask_current :: proc(s: Setup) -> (password: []u8, why: string) {
 		return nil, fmt.tprintf("systemd-ask-password is not installed (%s); nothing changed", rwhy)
 	case rwhy != "":
 		return nil, fmt.tprintf("%s; nothing changed", rwhy)
+	case r.status != 0 && !is_terminal(s.tty):
+		free_output(&r)
+		return nil, "no password was typed: the prompt needs a terminal, and the standard input is not a terminal; run the setup in a terminal of the session; nothing changed"
 	case r.status != 0:
 		free_output(&r)
 		return nil, fmt.tprintf("no password was typed (systemd-ask-password ended with %d); nothing changed", r.status)
@@ -391,8 +474,9 @@ ask_current :: proc(s: Setup) -> (password: []u8, why: string) {
 // change_password calls ChangeWithMasterPassword on the login collection:
 // from original to master, both in the plain session. denied is the
 // daemon's answer when original is not the keyring's password, and then
-// nothing changed.
-change_password :: proc(c: ^Conn, session: string, original, master: []u8) -> (denied: bool, why: string) {
+// nothing changed. unanswered goes with a why that the daemon did not give
+// (a timeout, a bus that hung up): the change may have happened.
+change_password :: proc(c: ^Conn, session: string, original, master: []u8) -> (denied: bool, why: string, unanswered: bool) {
 	// Room for all of it at once, so that no copy of a password is left
 	// behind in a buffer that grew.
 	body := make([dynamic]u8, 0, 512 + len(original) + len(master))
@@ -413,15 +497,15 @@ change_password :: proc(c: ^Conn, session: string, original, master: []u8) -> (d
 	reply, cwhy := call(c, SECRETS, "/org/freedesktop/secrets", GUILT_RIDDEN, "ChangeWithMasterPassword", "o(oayays)(oayays)", body[:])
 	wipe(body[:])
 	if cwhy != "" {
-		return false, cwhy
+		return false, cwhy, true
 	}
 	if reply.type == .Error {
 		if reply.error_name == "org.gnome.keyring.Error.Denied" {
-			return true, ""
+			return true, "", false
 		}
-		return false, fmt.tprintf("the change of the password: %s", error_text(reply))
+		return false, fmt.tprintf("the change of the password: %s", error_text(reply)), false
 	}
-	return false, ""
+	return false, "", false
 }
 
 // ── the setup ────────────────────────────────────────────────────────────────
@@ -444,6 +528,9 @@ setup :: proc(s: Setup) -> Setup_Result {
 		return {.Failed, iwhy}
 	}
 	defer free_password(new_password)
+	if why := check_not_login(s, new_password); why != "" {
+		return {.Failed, why}
+	}
 
 	c: Conn
 	if why := connect(&c, s.bus, s.timeout, s.uid); why != "" {
@@ -470,7 +557,8 @@ setup :: proc(s: Setup) -> Setup_Result {
 
 	// Whether the keyring has the item's password already: a run that died
 	// after the change and before the credential.
-	denied, pwhy := change_password(&c, session, new_password, new_password)
+	// A change to the same password: if no answer comes, nothing changed.
+	denied, pwhy, _ := change_password(&c, session, new_password, new_password)
 	if pwhy != "" {
 		return {.Failed, fmt.tprintf("%s; nothing changed", pwhy)}
 	}
@@ -498,8 +586,14 @@ setup :: proc(s: Setup) -> Setup_Result {
 			}
 		}
 		conn_rearm(&c)
-		denied, pwhy = change_password(&c, session, old, new_password)
+		unanswered: bool
+		denied, pwhy, unanswered = change_password(&c, session, old, new_password)
 		switch {
+		case unanswered:
+			return {
+				.Failed,
+				fmt.tprintf("%s: it is not known whether the keyring changed, so run the setup again, which finds out", pwhy),
+			}
 		case pwhy != "":
 			return {.Failed, fmt.tprintf("%s; nothing changed", pwhy)}
 		case denied:
@@ -555,7 +649,7 @@ setup :: proc(s: Setup) -> Setup_Result {
 		return {.Failed, fmt.tprintf("the credential does not decrypt to the item's password%s", again)}
 	}
 	conn_rearm(&c)
-	denied, pwhy = change_password(&c, session, dec.output, dec.output)
+	denied, pwhy, _ = change_password(&c, session, dec.output, dec.output)
 	switch {
 	case pwhy != "":
 		return {.Failed, fmt.tprintf("checking the stored password: %s%s", pwhy, again)}

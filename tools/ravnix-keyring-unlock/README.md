@@ -99,6 +99,19 @@ unlock. Nothing is copied or pasted:
    break, which the unlock would take off the credential. The item is made
    beforehand with Bitwarden's generator, in bwm or the web vault: `rbw add`
    gets HTTP 422 from Vaultwarden.
+   Then it refuses the password when it is your login password, which the
+   keyring must not get: any program that runs as you could decrypt the
+   credential and learn the password sudo asks for. Without this, an item
+   that holds the login password would pass step 3 (PAM gave the keyring
+   that password) and be stored without a question. The check is pam_unix's
+   own helper, NixOS's setuid wrapper `/run/wrappers/bin/unix_chkpwd`, as
+   pam_unix runs it for a caller who checks their own password (Linux-PAM
+   1.7, `modules/pam_unix/unix_chkpwd.c`): the arguments are your user name
+   (from `/etc/passwd`) and `nonull`, the standard input a pipe with the
+   password and a NUL, and it exits 0 for the login password and 7 for any
+   other. The setup also stops when it cannot check: no helper that is
+   setuid and root's (a copy without the bit cannot read the shadow file
+   and answers 7 to everything), no user name, or another status.
 3. It connects to the session bus and asks the daemon whether the keyring
    already has that password, with gnome-keyring's
    `ChangeWithMasterPassword` from the password to itself. That call checks
@@ -113,7 +126,18 @@ unlock. Nothing is copied or pasted:
    `plain` session. A wrong password is `org.gnome.keyring.Error.Denied`,
    which changes nothing; the setup says so and stops. So does a typed
    password that is the item's own. With no login keyring at all it stops:
-   it never makes one.
+   it never makes one. When the change gets no answer (a timeout, a bus or
+   daemon that went away), the setup cannot know whether it happened and
+   says so; the next run finds out in step 3. When the prompt fails and the
+   standard input is not a terminal, the line says to run the setup in one.
+   A blank current password is refused: a keyring without a password is the
+   plain-text format that gnome-keyring 50 cannot read back once a secret
+   holds a line break (the option's description says why ravnix does not use
+   it). Such a keyring needs a password first, through the prompt
+   gnome-keyring shows when an application asks for a secret, or by moving
+   `~/.local/share/keyrings/login.keyring` aside and logging in once with
+   your password, which makes a new one with the login password (the items
+   of the old file do not come along); then run the setup.
 5. It encrypts the password with
    `systemd-creds --user encrypt --name=ravnix-keyring-login - -`, the
    password on standard input and the credential on standard output, and
@@ -197,9 +221,12 @@ The setup's tests (`tests/setup_test.odin`) run it against the same
 stand-in bus, which also answers `ChangeWithMasterPassword` as gnome-keyring
 50 does (it checks the old password whether the collection is locked or not,
 while an unlock of an unlocked collection takes any), and against stand-ins
-for rbw, systemd-ask-password and systemd-creds (`tests/testdata/fake`),
-which record their arguments, their environment and their input. They cover
-a locked and an unlocked keyring, a run after one that died between the
+for rbw, systemd-ask-password, systemd-creds and unix_chkpwd
+(`tests/testdata/fake`), which record their arguments, their environment and
+their input. They cover an item that holds the login password (with the
+keyring at the login password and with a password of its own), a login
+password that cannot be checked, a change that got no answer, a prompt
+without a terminal, a locked and an unlocked keyring, a run after one that died between the
 keyring and the credential, a wrong and the same current password, nobody
 typing, a locked vault, no rbw, an item that is empty, only a newline, holds
 a NUL, ends in a line break, is one byte too long or 200 KiB, the longest
@@ -233,6 +260,19 @@ bus. A run that unlocks needs a bus and a daemon, which the bench has not.
   machine ID or the host key changed), the unit fails before the tool runs,
   with systemd's message, and the keyring stays locked; the setup command
   makes a new credential.
+- Every setup with an item that is not the login password writes one
+  failed password check to the journal, from unix_chkpwd: "password check
+  failed for user (NAME)", and an audit record where Linux-PAM has audit
+  support. The helper neither waits after it nor counts it; pam_faillock
+  counts only failures of a PAM stack, and the VM test shows the login
+  password still checks right after one.
+- unix_chkpwd reads at most 512 bytes and a NUL (`PAM_MAX_RESP_SIZE`), so
+  an item longer than 512 bytes counts as not the login password. No login
+  password can be longer, since PAM takes no longer answer.
+- `RAVNIX_KEYRING_UNIX_CHKPWD` names another unix_chkpwd, which the setup
+  then takes without the setuid check. It is there for the check that runs
+  the setup in the build sandbox, which has no setuid wrapper. Whoever can
+  set it runs as you and could write the credential by hand anyway.
 - The setup writes the credential to `~/.config/credstore.encrypted/`,
   whatever `XDG_CONFIG_HOME` the terminal has. The user manager looks in its
   own `$XDG_CONFIG_HOME/credstore.encrypted/`, which is `~/.config` unless

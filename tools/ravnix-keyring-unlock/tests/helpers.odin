@@ -60,9 +60,11 @@ Behavior :: struct {
 	big_endian:   bool,
 	// A signal and a reply to another call come before every reply.
 	noise:        bool,
-	// The call that gets no answer, and the call at which the bus hangs up.
+	// The call that gets no answer, and the call at which the bus hangs up,
+	// after close_skip such calls were answered.
 	hang_on:      string,
 	close_on:     string,
+	close_skip:   int,
 	// The type of the variant Get answers with; "" is "b".
 	locked_type:  string,
 	// Get is answered with a header that announces 64 MiB.
@@ -237,7 +239,10 @@ serve_connection :: proc(f: ^Fake, c: ^kr.Conn) {
 			f.no_auto = true
 		}
 		if m.member == b.close_on {
-			return
+			if b.close_skip == 0 {
+				return
+			}
+			b.close_skip -= 1
 		}
 		if m.member == b.hang_on {
 			continue

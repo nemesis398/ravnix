@@ -23,6 +23,9 @@ NEW :: "Neues Pferd ü 7 Batterie"
 ITEM :: "GNOME Keyring - login (test)"
 // A stand-in's file the test does not write: rbw get or the prompt fails.
 ABSENT :: "\x01absent"
+// The user's login password, which unix_chkpwd knows, and the user's name.
+LOGIN :: "das Login-Pferd"
+USER :: "alice"
 
 Rig :: struct {
 	fake:       ^Fake,
@@ -63,7 +66,7 @@ stored :: proc(password: string) -> string {
 // rig_start makes the bus with b, the stand-ins, and a setup that writes its
 // credential in a home of its own. item is what rbw get prints, typed what
 // the prompt gives.
-rig_start :: proc(t: ^testing.T, b: Behavior, item: string = NEW + "\n", typed: string = PASSWORD) -> Rig {
+rig_start :: proc(t: ^testing.T, b: Behavior, item: string = NEW + "\n", typed: string = PASSWORD, login: string = LOGIN) -> Rig {
 	behavior := b
 	if behavior.password == "" {
 		behavior.password = PASSWORD
@@ -71,7 +74,7 @@ rig_start :: proc(t: ^testing.T, b: Behavior, item: string = NEW + "\n", typed: 
 	r: Rig
 	r.dir = strings.clone(scratch(t))
 	r.fake = fake_start(t, behavior)
-	for name in ([]string{"rbw", "systemd-ask-password", "systemd-creds"}) {
+	for name in ([]string{"rbw", "systemd-ask-password", "systemd-creds", "unix_chkpwd"}) {
 		if os.symlink(STUB, join(r.dir, name)) != nil {
 			testing.fail_now(t, "cannot link a stand-in")
 		}
@@ -82,6 +85,9 @@ rig_start :: proc(t: ^testing.T, b: Behavior, item: string = NEW + "\n", typed: 
 	if typed != ABSENT {
 		write_file(t, r.dir, "typed", typed)
 	}
+	if login != ABSENT {
+		write_file(t, r.dir, "login", login)
+	}
 	r.credential = strings.clone(join(r.dir, "home/.config/credstore.encrypted", kr.CREDENTIAL_NAME))
 	r.messages = strings.clone(join(r.dir, "messages"))
 	r.s = kr.Setup {
@@ -91,6 +97,8 @@ rig_start :: proc(t: ^testing.T, b: Behavior, item: string = NEW + "\n", typed: 
 		rbw          = strings.clone(join(r.dir, "rbw")),
 		ask_password = strings.clone(join(r.dir, "systemd-ask-password")),
 		creds        = strings.clone(join(r.dir, "systemd-creds")),
+		chkpwd       = strings.clone(join(r.dir, "unix_chkpwd")),
+		user         = USER,
 		timeout      = 2 * time.Second,
 		uid          = u32(linux.getuid()),
 	}
@@ -106,6 +114,7 @@ rig_free :: proc(r: ^Rig) {
 	delete(r.s.rbw)
 	delete(r.s.ask_password)
 	delete(r.s.creds)
+	delete(r.s.chkpwd)
 }
 
 // rig_run runs the setup and stops the bus, then checks that no password
@@ -223,15 +232,18 @@ sets_up_a_locked_keyring :: proc(t: ^testing.T) {
 	}
 	// The programs, with these arguments and no password among them.
 	log := ran(&r)
-	testing.expectf(t, len(log) == 5, "it ran %v", log)
-	if len(log) == 5 {
+	testing.expectf(t, len(log) == 6, "it ran %v", log)
+	if len(log) == 6 {
 		testing.expect_value(t, log[0], "rbw [unlocked]")
 		testing.expect_value(t, log[1], "rbw [get] [--] [" + ITEM + "]")
-		testing.expectf(t, strings.has_prefix(log[2], "systemd-ask-password [-n] "), "%s", log[2])
-		testing.expect_value(t, log[3], "systemd-creds [--user] [encrypt] [--name=ravnix-keyring-login] [-] [-]")
+		testing.expect_value(t, log[2], "unix_chkpwd [" + USER + "] [nonull]")
+		testing.expectf(t, strings.has_prefix(log[3], "systemd-ask-password [-n] "), "%s", log[3])
+		testing.expect_value(t, log[4], "systemd-creds [--user] [encrypt] [--name=ravnix-keyring-login] [-] [-]")
 		want := fmt.tprintf("systemd-creds [--user] [decrypt] [--name=ravnix-keyring-login] [%s] [-]", r.credential)
-		testing.expect_value(t, log[4], want)
+		testing.expect_value(t, log[5], want)
 	}
+	// unix_chkpwd got the item's password and a NUL, as pam_unix sends it.
+	testing.expect_value(t, read(join(r.dir, "chkpwd.in")), NEW + "\x00")
 	// systemd-creds got the password on its input, without rbw's newline.
 	testing.expect_value(t, read(join(r.dir, "encrypt.in")), NEW)
 	testing.expect_value(t, read(r.credential), stored(NEW))
@@ -595,4 +607,122 @@ finds_programs_on_the_path_only :: proc(t: ^testing.T) {
 		_, found := kr.find_program("rbw", p)
 		testing.expectf(t, !found, "rbw found on %q", p)
 	}
+}
+
+@(test)
+refuses_an_item_that_holds_the_login_password :: proc(t: ^testing.T) {
+	// The keyring has the login password, as PAM made it, and the item
+	// holds it too: the check that the keyring has the item's password
+	// would pass and ask for nothing. And a keyring with a password of its
+	// own, which the setup would change to the login password. Both are
+	// refused before the bus is touched.
+	for password in ([]string{LOGIN, PASSWORD}) {
+		r := rig_start(t, Behavior{locked = true, password = password}, item = LOGIN + "\n")
+		res := rig_run(t, &r)
+		testing.expectf(t, res.outcome == .Failed, "%v: %s", res.outcome, res.detail)
+		testing.expectf(t, strings.contains(res.detail, "your login password"), "%s", res.detail)
+		testing.expectf(t, strings.contains(res.detail, "a password of its own"), "%s", res.detail)
+		testing.expectf(t, strings.contains(res.detail, "nothing changed"), "%s", res.detail)
+		testing.expect_value(t, r.fake.connections, 0)
+		testing.expect_value(t, asked(&r), 0)
+		testing.expect(t, !ran_creds(&r))
+		testing.expect(t, !os.exists(r.credential))
+		testing.expect_value(t, r.fake.current, password)
+		rig_free(&r)
+	}
+}
+
+@(test)
+refuses_when_the_login_password_cannot_be_checked :: proc(t: ^testing.T) {
+	// No helper, no such user (9), and a helper that cannot be run: the
+	// setup does not go on without knowing.
+	Case :: enum {
+		No_Helper,
+		Unknown_User,
+		Missing_Helper,
+	}
+	for c in Case {
+		r := rig_start(t, Behavior{locked = true}, login = ABSENT if c == .Unknown_User else LOGIN)
+		switch c {
+		case .No_Helper:
+			delete(r.s.chkpwd)
+			r.s.chkpwd = strings.clone("")
+		case .Missing_Helper:
+			delete(r.s.chkpwd)
+			r.s.chkpwd = strings.clone(join(r.dir, "no-chkpwd"))
+		case .Unknown_User:
+		}
+		res := rig_run(t, &r)
+		testing.expectf(t, res.outcome == .Failed, "%v: %v", c, res.outcome)
+		testing.expectf(t, strings.contains(res.detail, "cannot check"), "%v: %s", c, res.detail)
+		testing.expectf(t, strings.contains(res.detail, "nothing changed"), "%v: %s", c, res.detail)
+		testing.expect_value(t, r.fake.connections, 0)
+		rig_free(&r)
+	}
+	// Without a user name there is nothing to check against either.
+	r := rig_start(t, Behavior{locked = true})
+	r.s.user = ""
+	res := rig_run(t, &r)
+	testing.expectf(t, res.outcome == .Failed && strings.contains(res.detail, "cannot check"), "%v: %s", res.outcome, res.detail)
+	testing.expect_value(t, r.fake.connections, 0)
+	rig_free(&r)
+}
+
+@(test)
+does_not_claim_nothing_changed_when_the_change_got_no_answer :: proc(t: ^testing.T) {
+	// The bus hangs up during the change from the typed password (the
+	// check before it was answered): the daemon may have changed it.
+	r := rig_start(t, Behavior{locked = true, close_on = "ChangeWithMasterPassword", close_skip = 1})
+	defer rig_free(&r)
+	res := rig_run(t, &r)
+	testing.expect_value(t, res.outcome, kr.Setup_Outcome.Failed)
+	testing.expectf(t, !strings.contains(res.detail, "nothing changed"), "%s", res.detail)
+	testing.expectf(t, strings.contains(res.detail, "not known whether"), "%s", res.detail)
+	testing.expectf(t, strings.contains(res.detail, "run the setup again"), "%s", res.detail)
+	testing.expect_value(t, asked(&r), 1)
+}
+
+@(test)
+says_so_when_the_prompt_has_no_terminal :: proc(t: ^testing.T) {
+	// The tests give the prompt no terminal (/dev/null); when it fails, the
+	// line says to run the setup in one.
+	r := rig_start(t, Behavior{locked = true}, typed = ABSENT)
+	defer rig_free(&r)
+	res := rig_run(t, &r)
+	testing.expect_value(t, res.outcome, kr.Setup_Outcome.Failed)
+	testing.expectf(t, strings.contains(res.detail, "not a terminal"), "%s", res.detail)
+	testing.expectf(t, strings.contains(res.detail, "nothing changed"), "%s", res.detail)
+}
+
+@(test)
+finds_the_user_name_in_the_passwd_file :: proc(t: ^testing.T) {
+	passwd := "root:x:0:0:System administrator:/root:/bin/sh\n# a comment\nbroken line\nalice:x:1000:100::/home/alice:/bin/sh\nbob:x:10000:100::/home/bob:/bin/sh\n"
+	name, ok := kr.user_name(1000, passwd)
+	testing.expect(t, ok)
+	testing.expect_value(t, name, "alice")
+	name, ok = kr.user_name(0, passwd)
+	testing.expect_value(t, name, "root")
+	for uid in ([]u32{100, 1, 10, 100000}) {
+		_, found := kr.user_name(uid, passwd)
+		testing.expectf(t, !found, "uid %d found", uid)
+	}
+	_, ok = kr.user_name(1000, "")
+	testing.expect(t, !ok)
+	_, ok = kr.user_name(1000, ":x:1000:100::/:/bin/sh\n")
+	testing.expect(t, !ok)
+}
+
+@(test)
+takes_only_a_setuid_root_helper :: proc(t: ^testing.T) {
+	// The real helper reads the shadow file only as root; a copy without
+	// the setuid bit answers 7 for every password, which would pass any
+	// item. So the command takes the one under /run/wrappers only when it
+	// is setuid and root's.
+	d := scratch(t)
+	defer os.remove_all(d)
+	path := write_file(t, d, "unix_chkpwd", "#!/bin/sh\n")
+	testing.expect(t, os.chmod(path, {.Read_User, .Write_User, .Execute_User}) == nil)
+	testing.expect(t, !kr.setuid_root(path))
+	testing.expect(t, !kr.setuid_root(strings.concatenate({d, "/absent"}, context.temp_allocator)))
+	testing.expect(t, !kr.setuid_root(d))
 }

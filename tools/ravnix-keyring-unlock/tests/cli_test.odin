@@ -117,6 +117,7 @@ NO_PROGRAMS :: kr.Programs {
 	rbw          = "/nonexistent/rbw",
 	ask_password = "/nonexistent/systemd-ask-password",
 	creds        = "/nonexistent/systemd-creds",
+	chkpwd       = "/nonexistent/unix_chkpwd",
 }
 
 @(test)
@@ -148,7 +149,8 @@ setup_takes_the_item_from_the_environment_or_the_argument :: proc(t: ^testing.T)
 			home = home,
 			bus_address = r.fake.address,
 			rbw_item = ITEM,
-			programs = {rbw = r.s.rbw, ask_password = r.s.ask_password, creds = r.s.creds},
+			programs = {rbw = r.s.rbw, ask_password = r.s.ask_password, creds = r.s.creds, chkpwd = r.s.chkpwd},
+			user = USER,
 		}
 		code, out := cli(t, args, env)
 		fake_stop(r.fake)

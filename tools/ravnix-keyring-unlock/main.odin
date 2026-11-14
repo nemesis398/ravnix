@@ -296,7 +296,6 @@ send_password :: proc(c: ^Conn, session: string, password: []u8) -> (denied: boo
 	return false, ""
 }
 
-// unlock does steps 2 to 4 on a connection that has logged in.
 // hello is the first call on a bus connection.
 hello :: proc(c: ^Conn) -> string {
 	reply, why := call(c, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "Hello", "", nil)
@@ -309,6 +308,7 @@ hello :: proc(c: ^Conn) -> string {
 	return ""
 }
 
+// unlock does steps 2 to 4 on a connection that has logged in.
 unlock :: proc(c: ^Conn, password: []u8) -> Result {
 	if why := hello(c); why != "" {
 		return {.Failed, why}
@@ -446,8 +446,13 @@ Env :: struct {
 	home:                  string,
 	path:                  string,
 	rbw_item:              string,
-	// The programs setup runs, as paths. Only the tests set them; empty is
-	// the program of that name on path.
+	// The user's name; only the tests set it, main looks it up in
+	// /etc/passwd.
+	user:                  string,
+	// The programs setup runs, as paths. The tests set them, and
+	// RAVNIX_KEYRING_UNIX_CHKPWD sets chkpwd for the check that runs the
+	// setup in the build sandbox, which has no setuid wrapper. Empty is the
+	// program of that name on path, and for chkpwd NixOS's setuid wrapper.
 	programs:              Programs,
 }
 
@@ -455,6 +460,7 @@ Programs :: struct {
 	rbw:          string,
 	ask_password: string,
 	creds:        string,
+	chkpwd:       string,
 }
 
 // journal_prefix reports whether fd is the journal stream that
@@ -572,6 +578,15 @@ cli_setup :: proc(args: []string, env: Env, tty, stderr: ^os.File) -> int {
 	if !has_bus {
 		bus = default_address(env.bus_address, env.runtime_dir, context.temp_allocator)
 	}
+	chkpwd := env.programs.chkpwd
+	if chkpwd == "" && setuid_root(UNIX_CHKPWD) {
+		chkpwd = UNIX_CHKPWD
+	}
+	user := env.user
+	if user == "" {
+		passwd, _ := os.read_entire_file("/etc/passwd", context.temp_allocator)
+		user, _ = user_name(u32(linux.getuid()), string(passwd))
+	}
 	r: Setup_Result
 	if env.home == "" || !strings.has_prefix(env.home, "/") {
 		r = {.Failed, "HOME is not set to a directory, and the credential goes into ~/.config/credstore.encrypted; nothing changed"}
@@ -584,6 +599,8 @@ cli_setup :: proc(args: []string, env: Env, tty, stderr: ^os.File) -> int {
 				rbw = program(env.programs.rbw, "rbw", env.path),
 				ask_password = program(env.programs.ask_password, "systemd-ask-password", env.path),
 				creds = program(env.programs.creds, "systemd-creds", env.path),
+				chkpwd = chkpwd,
+				user = user,
 				tty = tty,
 				messages = stderr,
 				timeout = SETUP_TIMEOUT,
@@ -617,6 +634,7 @@ main :: proc() {
 		env.home = os.get_env("HOME", context.allocator)
 		env.path = os.get_env("PATH", context.allocator)
 		env.rbw_item = os.get_env("RAVNIX_KEYRING_RBW_ITEM", context.allocator)
+		env.programs.chkpwd = os.get_env("RAVNIX_KEYRING_UNIX_CHKPWD", context.allocator)
 	}
 	code := cli(os.args[1:], env, os.stderr)
 	virtual.arena_destroy(&arena)

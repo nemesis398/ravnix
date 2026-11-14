@@ -1,6 +1,6 @@
 #!/bin/sh
-# The programs the setup runs, in its tests: rbw, systemd-ask-password and
-# systemd-creds. Each is a symlink to this file in a test's bin directory,
+# The programs the setup runs, in its tests: rbw, systemd-ask-password,
+# systemd-creds and unix_chkpwd. Each is a symlink to this file in a test's bin directory,
 # beside the files that say what the program does in that test:
 #   rbw-locked     `rbw unlocked` exits 1, as with a locked vault
 #   item           what `rbw get -- NAME` prints; without it, get fails
@@ -9,12 +9,15 @@
 #   encrypt-fails, decrypt-fails
 #                  systemd-creds fails
 #   decrypt-other  systemd-creds decrypts to another password
+#   login          the user's login password, which unix_chkpwd checks its
+#                  input against (the password and a NUL, as pam_unix sends
+#                  it); without it, it answers 9, user unknown
 # The stand-in for systemd-creds "encrypts" with ROT13 behind a "fake:"
 # marker, which is enough to tell the plain password from what was stored.
 # Every run appends a line to the directory's log: the program's name and
 # its arguments, each in brackets. Each program also writes its environment
-# to env.NAME, and systemd-creds encrypt its input to encrypt.in, so that a
-# test sees where the passwords went. A script that is only read (the
+# to env.NAME, systemd-creds encrypt its input to encrypt.in and unix_chkpwd
+# its input to chkpwd.in, so that a test sees where the passwords went. A script that is only read (the
 # files) has no ETXTBSY race with a thread that forks while a test writes it.
 d=${0%/*}
 n=${0##*/}
@@ -71,5 +74,18 @@ systemd-creds)
 		;;
 	*) exit 2 ;;
 	esac
+	;;
+unix_chkpwd)
+	# As Linux-PAM 1.7's: USER nonull, the password on standard input up to
+	# a NUL; 0 when it is the login password, 7 when not, 9 for no such user.
+	[ $# -eq 2 ] && [ "$2" = nonull ] || exit 4
+	cat >"$d/chkpwd.in"
+	[ -f "$d/login" ] || exit 9
+	{
+		cat "$d/login"
+		printf '\000'
+	} >"$d/chkpwd.want"
+	cmp -s "$d/chkpwd.in" "$d/chkpwd.want" && exit 0
+	exit 7
 	;;
 esac
