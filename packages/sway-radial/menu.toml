@@ -77,7 +77,7 @@ icon  = "\U000f003b"
   [[items.items]]
   dir     = "w"
   label   = "Passwords"
-  desktop = "bitwarden.desktop"
+  desktop = "bitwarden-menu.desktop"
 
   [[items.items]]
   dir     = "nw"

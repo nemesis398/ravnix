@@ -1,5 +1,6 @@
 # bitwarden-menu on huginn (modules/desktop/bitwarden-menu.nix, packages/
-# bitwarden-menu), the keyboard-driven way to the vault beside Bitwarden desktop.
+# bitwarden-menu), the keyboard-driven way to the vault, and the way to make
+# new items now that the Bitwarden desktop app is not installed.
 #
 # What an evaluation shows, and a derivation checks without a network:
 #
@@ -13,7 +14,8 @@
 #     option and saying what to do, and none for the values that are set;
 #   - the values are typed: one that would break the INI file or bwm's
 #     interpolation (a newline, a space, a percent sign) is refused;
-#   - Bitwarden desktop and rbw are unchanged by it.
+#   - rbw is unchanged by it, and the Bitwarden desktop app is not installed,
+#     whether the menu is on or off.
 #
 # The wrapper's PATH, and the clipboard, are in bitwarden-menu-wrapper.nix.
 {
@@ -115,13 +117,13 @@ let
     ++ lib.optional (
       failedOf on != [ ]
     ) "all values are set but an assertion failed: ${toString (failedOf on)}"
-    # Bitwarden desktop and the SSH agent are unchanged.
+    # The Bitwarden desktop app is not installed, and the SSH agent is unchanged.
     ++ lib.optional (
-      !has "bitwarden-desktop" on
-    ) "Bitwarden desktop is gone from the host with the menu"
+      has "bitwarden-desktop" on
+    ) "Bitwarden desktop is installed on the host with the menu"
     ++ lib.optional (
-      !has "bitwarden-desktop" off
-    ) "Bitwarden desktop is gone from the host without the menu"
+      has "bitwarden-desktop" off
+    ) "Bitwarden desktop is installed on the host without the menu"
     ++ lib.optional (!(hmOf on).programs.rbw.enable) "rbw is off in the host with the menu"
     ++ lib.optional (
       (hmOf on).programs.rbw.settings != (hmOf off).programs.rbw.settings
@@ -293,7 +295,7 @@ pkgs.runCommand "desktop-bitwarden-menu"
       grep -qx 'TryExec=bwm' "$d" || fail "the launcher has no TryExec=bwm"
       grep -qx 'Terminal=false' "$d" || fail "the launcher asks for a terminal"
       grep -q '^Name=' "$d" || fail "the launcher has no name"
-      grep -qE '^Name=Bitwarden( |$)' "$d" && ! grep -qx 'Name=Bitwarden' "$d" || fail "the launcher's name does not tell it from Bitwarden desktop's"
+      grep -qx 'Name=Bitwarden Menu' "$d" || fail "the launcher's name is not Bitwarden Menu: $(grep '^Name=' "$d")"
     fi
     [ -x "$package/bin/bwm" ] || fail "no bin/bwm in the package"
 

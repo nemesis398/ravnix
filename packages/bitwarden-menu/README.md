@@ -28,8 +28,8 @@ the result. The patch fails the build if upstream changes the lines it matches.
 - Only a copy through this `wl-copy` is kept out of the history. cliphist 0.7.0
   does not read the `x-kde-passwordManagerHint` type itself: it acts on the
   `CLIPBOARD_STATE=sensitive` that `wl-paste --watch` (wl-clipboard 2.3) sets
-  for it. A copy from the browser extension or the desktop app is recorded
-  unless that app sets the state through `wl-copy --sensitive` or an equivalent.
+  for it. A copy from the browser extension is recorded
+  unless that program sets the state through `wl-copy --sensitive` or an equivalent.
 - bwm's README says a copy is cleared "after 1 paste on Wayland". The 0.6.0
   code does not use `--paste-once`; it clears after 30 seconds. `--paste-once`
   would not help here either, because the history watcher is a paste.

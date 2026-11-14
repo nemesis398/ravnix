@@ -8,13 +8,15 @@
 #                  viewer; its policies install Stylus and the Bitwarden
 #                  extension; its DevTools are in the theme
 #                  (packages/helium-devtools-frontend); its native-messaging
-#                  hosts reach Claude Code and Bitwarden desktop
+#                  hosts reach Claude Code
 #   Notes          Obsidian
 #   Office         OnlyOffice
-#   Passwords      Bitwarden desktop; rbw, in the common module, is the
-#                  session's SSH agent; bitwarden-menu (bitwarden-menu.nix),
-#                  when ravnix.apps.bitwardenMenu.enable is true, is a menu
-#                  to the same vault
+#   Passwords      the Bitwarden extension in Helium; rbw, in the common
+#                  module, is the session's SSH agent; bitwarden-menu
+#                  (bitwarden-menu.nix), when ravnix.apps.bitwardenMenu.enable
+#                  is true, is a menu to the same vault, and the way to make
+#                  new items (with `bw`; rbw's add gets HTTP 422 from
+#                  Vaultwarden). The Bitwarden desktop app is not installed.
 #   Dictation      Handy, pinned to the iGPU (packages/handy-launch), with its
 #                  hold-to-talk driver (packages/handy-ptt) and wtype
 #   Games          Steam, Prism Launcher, MangoHud, gamemode
@@ -94,10 +96,6 @@
 #   Obsidian          Electron, on purpose: it holds the vault. Its look is the
 #                     vault's own setting (a community theme), which ravnix
 #                     must not write into the synced vault.
-#   Bitwarden         Electron with a theme setting of its own (light, dark or
-#                     system) and no way to load a palette. It follows the
-#                     system's dark preference at best, and keeps its own blue
-#                     and its rounded controls.
 #   OnlyOffice        Qt and CEF with a bundled Qt that has no Wayland plugin:
 #                     it runs through XWayland, takes no qt6ct palette, and
 #                     draws its own interface.
@@ -153,35 +151,18 @@ let
   user = config.ravnix.user.username;
 
   # Chromium extension ids, from the web store: Stylus, and the Bitwarden
-  # password manager.
+  # password manager (the extension; the desktop app is not installed).
   extensions = {
     stylus = "clngdbkpkpeebahjckkjfobafhncgmne";
     bitwarden = "nngceckbapebfimnlniiiahkandclblb";
   };
 
-  # Bitwarden, started with Electron's password store set to the Secret
-  # Service. Electron picks its keyring from the desktop environment, and
-  # Chromium does not know `sway`, so it would fall back to a store without
-  # encryption, quietly. gnome-keyring serves the Secret Service
-  # (services.gnome.gnome-keyring below).
-  bitwarden = pkgs.symlinkJoin {
-    name = "bitwarden-desktop-${pkgs.bitwarden-desktop.version}";
-    paths = [ pkgs.bitwarden-desktop ];
-    nativeBuildInputs = [ pkgs.makeWrapper ];
-    postBuild = ''
-      rm $out/bin/bitwarden
-      makeWrapper ${lib.getExe pkgs.bitwarden-desktop} $out/bin/bitwarden \
-        --add-flags --password-store=gnome-libsecret
-    '';
-    inherit (pkgs.bitwarden-desktop) meta;
-  };
-
-  # Helium's native-messaging hosts: the manifests in
-  # ~/.config/net.imput.helium/NativeMessagingHosts/ that let an extension
-  # start a program of the desktop. Claude Code writes none for Helium, and
-  # Bitwarden writes its own at each start, but only into a hosts directory
-  # that exists (below): so ravnix writes both, each in the way its owner can
-  # live with (tests/desktop/helium-bridges.nix).
+  # Helium's native-messaging host: the manifest in
+  # ~/.config/net.imput.helium/NativeMessagingHosts/ that lets an extension
+  # start a program of the desktop. Claude Code writes none for Helium, so
+  # ravnix does (tests/desktop/helium-bridges.nix). The Bitwarden desktop app
+  # is not installed, so there is no bridge to it: the extension works on its
+  # own, without biometric unlock through the app.
   #
   # Claude in Chrome: a home-manager link to the manifest below, whose path is
   # a wrapper that runs the claude of the user's profile. Claude Code is
@@ -198,46 +179,16 @@ let
   # Claude in Chrome reaches only a claude running on the laptop: a herdr pane
   # on the server cannot see it.
   #
-  # Bitwarden desktop: the manifest is a regular file, copied by an activation
-  # step, because Bitwarden rewrites it at every start (2026.10.2,
-  # native-messaging.main.ts: Helium is in its Linux list) and a failed write
-  # there skips the IPC listener, which would cut every browser off. Bitwarden
-  # points its copy at a proxy it copies beside it (.bitwarden_desktop_proxy);
-  # ravnix's at nixpkgs' proxy. Both reach the same running Bitwarden, the
-  # name and the origins are the same, and the next switch writes ravnix's
-  # again. The directory matters more than the file: Bitwarden copies its
-  # proxy into NativeMessagingHosts/ before it writes the manifest, and only
-  # the manifest's write creates a missing directory. A profile without it
-  # (one copied from another machine without NativeMessagingHosts/) makes the
-  # copy fail, generateManifests() throw and listen() be skipped. With Claude
-  # Code off, the step's mkdir is the only thing that creates it.
+  # The activation step below makes the profile and its hosts directory, 0700
+  # as Helium makes them, before the link is made: home-manager would create
+  # them 0755.
   nativeHostsDir = "net.imput.helium/NativeMessagingHosts";
-  bitwardenManifest = pkgs.writeText "com.8bit.bitwarden.json" (
-    builtins.toJSON {
-      name = "com.8bit.bitwarden";
-      description = "Bitwarden desktop <-> browser bridge";
-      path = "${pkgs.bitwarden-desktop}/libexec/desktop_proxy";
-      type = "stdio";
-      # Bitwarden's own list: the Chrome store's extension, its beta, Edge's
-      # and Opera's.
-      allowed_origins = [
-        "chrome-extension://nngceckbapebfimnlniiiahkandclblb/"
-        "chrome-extension://hccnnhgbibccigepcmlgppchkpfdophk/"
-        "chrome-extension://jbkfoedolllekgbhcbcoahefnbanhhlh/"
-        "chrome-extension://ccnckbpmaceehanjmeomladnmlffdjgn/"
-      ];
-    }
-  );
-  # PROFILE MANIFEST: create the profile and its hosts directory where they
-  # are missing, private as Helium makes them (the Claude manifest's link
-  # would otherwise create them 0755), which also keeps Bitwarden's
-  # listener alive (see above), and put a writable copy of MANIFEST there,
-  # replacing a link or an older file.
+  # PROFILE: create the profile and its hosts directory where they are
+  # missing, private as Helium makes them (the Claude manifest's link would
+  # otherwise create them 0755).
   heliumHosts = pkgs.writeShellScript "ravnix-helium-hosts" ''
     set -eu
-    hosts="$1/NativeMessagingHosts"
-    (umask 077 && ${pkgs.coreutils}/bin/mkdir -p "$hosts")
-    ${pkgs.coreutils}/bin/install -m 0644 -T "$2" "$hosts/com.8bit.bitwarden.json"
+    (umask 077 && ${pkgs.coreutils}/bin/mkdir -p "$1/NativeMessagingHosts")
   '';
 
   # "#rrggbb" as the three bytes of a Chromium theme color.
@@ -331,7 +282,6 @@ in
     pkgs.wtype
     pkgs.obsidian
     pkgs.onlyoffice-desktopeditors
-    bitwarden
     pkgs.prismlauncher
     pkgs.blanket
     pkgs.wl-mirror
@@ -344,7 +294,7 @@ in
 
   environment.sessionVariables = {
     # nixpkgs' Electron and Chromium wrappers start in native Wayland when
-    # this is set (bitwarden, obsidian, bazecor, helium); otherwise they use
+    # this is set (obsidian, bazecor, helium); otherwise they use
     # XWayland, with a blurred window at a fractional scale.
     NIXOS_OZONE_WL = "1";
     # nmtui's color scheme, in the colors of the terminal's palette: newt names
@@ -407,7 +357,8 @@ in
     alsa.enable = lib.mkDefault true;
     pulse.enable = lib.mkDefault true;
   };
-  # The Secret Service, for Bitwarden's keyring (the greeter's PAM unlocks it).
+  # The Secret Service (the greeter's PAM unlocks it): the keyring of Helium and
+  # of the other applications that keep a secret.
   services.gnome.gnome-keyring.enable = lib.mkDefault true;
 
   # Helium reads the policies of Chromium: the extensions it installs itself,
@@ -597,12 +548,12 @@ in
         # directories private. A failure only warns: the activation runs
         # under set -e, and a browser bridge is not worth the rest of the
         # home (the desktop's whole configuration comes after this step).
-        home.activation.ravnixHeliumHosts =
-          lib.hm.dag.entryBetween [ "linkGeneration" ] [ "writeBoundary" ]
-            ''
-              run ${heliumHosts} ${lib.escapeShellArg "${config.xdg.configHome}/net.imput.helium"} ${bitwardenManifest} \
-                || warnEcho "Helium's native-messaging hosts were not written; Claude in Chrome and the Bitwarden extension may not reach the desktop."
-            '';
+        home.activation.ravnixHeliumHosts = lib.mkIf claudeOn (
+          lib.hm.dag.entryBetween [ "linkGeneration" ] [ "writeBoundary" ] ''
+            run ${heliumHosts} ${lib.escapeShellArg "${config.xdg.configHome}/net.imput.helium"} \
+              || warnEcho "Helium's native-messaging hosts directory was not made; Claude in Chrome may not reach the desktop."
+          ''
+        );
 
         xdg.configFile."${nativeHostsDir}/com.anthropic.claude_code_browser_extension.json" =
           lib.mkIf claudeOn

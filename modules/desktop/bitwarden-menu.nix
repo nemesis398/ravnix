@@ -1,8 +1,9 @@
-# bitwarden-menu (`bwm`): a keyboard-driven menu to the vault, in fuzzel, beside
-# Bitwarden desktop. Off unless ravnix.apps.bitwardenMenu.enable is true, so a
-# host decides by its private flake.
-# Bitwarden desktop stays the GUI app (apps.nix), and rbw's agent stays the SSH
-# agent (modules/common/rbw.nix): this changes neither.
+# bitwarden-menu (`bwm`): a keyboard-driven menu to the vault, in fuzzel. Off
+# unless ravnix.apps.bitwardenMenu.enable is true, so a host decides by its
+# private flake.
+# The Bitwarden desktop app is not installed (apps.nix): the browser extension
+# reads the vault in Helium, rbw reads it in the terminal and is the SSH agent
+# (modules/common/rbw.nix), and this menu is where new items are made.
 #
 # Why it exists next to them: bwm drives the official CLI (`bw`), which sends
 # `encryptedFor`, so adding and editing items works against a Vaultwarden of
@@ -19,10 +20,10 @@
 #                              add a second account to it: add a vault in
 #                              me.nix, not in the menu.
 #   the launcher               `bitwarden-menu.desktop`, in the package: fuzzel
-#                              lists it as "Bitwarden Menu", beside "Bitwarden".
-#                              The radial menu's Passwords slot stays Bitwarden
-#                              desktop's; bind `bwm` to a key in the Sway
-#                              configuration if you want it one stroke away.
+#                              lists it as "Bitwarden Menu". Super+Shift+P
+#                              runs `bwm`, and the radial menu's Passwords
+#                              slot launches this entry; both do nothing
+#                              while the menu is off.
 #
 # The pinentry. bwm asks for the master password, the 2FA code and the client
 # secret through the program named by `pinentry`, which it starts without a
@@ -41,7 +42,7 @@
 # on a real compositor. bwm clears the clipboard 30 seconds after a copy with an
 # empty copy, which the same `wl-copy` marks sensitive too (see the package for
 # why). cliphist reads CLIPBOARD_STATE, not the MIME type itself, so a copy by
-# another route (a browser, the desktop app) is recorded unless it goes through
+# another route (a browser) is recorded unless it goes through
 # wl-copy --sensitive.
 #
 # --- Style exceptions (docs/style.md, rule 9) ---------------------------------
@@ -54,7 +55,7 @@
 #
 # --- Open, not verified -------------------------------------------------------
 #   - Whether bwm shows, types or edits SSH-key items: its README does not say.
-#     Bitwarden desktop is for those.
+#     The `bw` CLI that bwm drives is the thing to try for them.
 #   - Nothing here ran against a server (no network login in the build); the
 #     first run on huginn is the test of the login with the 2FA type.
 #   - The popup of pinentry-qt was not seen on screen (Task 3.7).

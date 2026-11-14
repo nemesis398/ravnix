@@ -23,7 +23,7 @@ let
 
   # The web apps whose address is the user's. Claude and Apple Music are on
   # the public internet and need no option. There is none for the password
-  # vault: Bitwarden desktop and the browser extension are its clients.
+  # vault: the browser extension and bitwarden-menu are its clients.
   selfHosted = {
     mealie = "recipes";
     nextcloud = "cloud";
@@ -78,9 +78,11 @@ in
     bitwardenMenu = mkOption {
       description = ''
         bitwarden-menu (`bwm`), a keyboard-driven menu to your Bitwarden or
-        Vaultwarden vault in fuzzel, beside Bitwarden desktop, which it leaves
-        as it is. It drives the official CLI, which sends what a current
-        Vaultwarden asks for when it adds or edits an item. Off by default;
+        Vaultwarden vault in fuzzel, next to the browser extension and rbw, which
+        it leaves as they are. The Bitwarden desktop app is not installed, so
+        this is how new items are made. It drives the official CLI, which sends
+        what a current Vaultwarden asks for when it adds or edits an item (rbw's
+        `add` gets HTTP 422). Off by default;
         when on, the three values must be set in me.nix (an assertion says so).
       '';
       default = { };

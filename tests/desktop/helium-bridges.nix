@@ -1,6 +1,6 @@
-# Helium's native-messaging hosts (modules/desktop/apps.nix): the two
-# manifests in ~/.config/net.imput.helium/NativeMessagingHosts/ that let a
-# browser extension start a program of the desktop.
+# Helium's native-messaging host (modules/desktop/apps.nix): the manifest in
+# ~/.config/net.imput.helium/NativeMessagingHosts/ that lets a browser
+# extension start a program of the desktop.
 #
 #   - Claude in Chrome (extension fcoeoabgfenejglbffodgkkbkcdhcgfn) reaches
 #     Claude Code through com.anthropic.claude_code_browser_extension.json,
@@ -13,30 +13,22 @@
 #     alone and hands stdin through; with no claude in the profile it fails.
 #     The manifest is a home-manager link, so it is there only while Claude
 #     Code is on.
-#   - Bitwarden desktop's bridge, com.8bit.bitwarden.json, names the proxy of
-#     nixpkgs' bitwarden-desktop and exactly the four extension origins
-#     Bitwarden itself writes. Bitwarden rewrites this file at every start
-#     (native-messaging.main.ts, generateManifests, then listen), and a write
-#     that fails skips listen(), which would cut every browser off. So the
-#     file is a regular file the user can write, put there by an activation
-#     step, not a link into the read-only store: the step replaces a link or
-#     an old file, and leaves a file Bitwarden can write.
+#   - There is no bridge to the Bitwarden desktop app: the app is not installed
+#     (the extension in Helium works on its own), so no com.8bit.bitwarden.json
+#     is written and nothing names bitwarden-desktop.
 #   - The step creates the profile directory 0700, as Helium does, when it is
 #     missing, and leaves the mode of one that exists. It creates
 #     NativeMessagingHosts/ in a profile that lacks it, as one copied from
-#     another machine without that directory does: Bitwarden copies its proxy
-#     into it before it writes its manifest, and does not create it, so
-#     without it generateManifests() throws and listen() is skipped.
+#     another machine without that directory does.
 #   - The step runs after writeBoundary and before linkGeneration, so the
 #     Claude manifest's link finds the directories already private; after
 #     linkGeneration, home-manager would create them 0755.
 #   - A step that cannot write only warns: the rest of the home's activation
 #     (the desktop's whole configuration) still runs. Since the step thus
 #     always exits 0, every case that must succeed asserts that it left no
-#     warning, and that the manifest is there.
-#   - Nothing of either on a host without the desktop (the server shape), and
-#     no Claude manifest with Claude Code off; Bitwarden's stays, because
-#     Bitwarden desktop is still installed.
+#     warning, and that the directories are there.
+#   - Nothing of it on a host without the desktop (the server shape), and no
+#     Claude manifest and no step with Claude Code off.
 {
   self,
   inputs,
@@ -102,7 +94,9 @@ let
       hasStep desktop && !(lib.elem "linkGeneration" hm.home.activation.${step}.before)
     ) "the step ${step} does not run before linkGeneration, whose link would create the profile 0755")
     (lib.optional (claudeFile claudeOff != null) "the Claude manifest is written with Claude Code off")
-    (lib.optional (!hasStep claudeOff) "the Bitwarden step is gone with Claude Code off")
+    (lib.optional (hasStep claudeOff) "the activation step ${step} runs with Claude Code off, with no manifest to make directories for")
+    (lib.optional (lib.any (n: lib.hasInfix "bitwarden" n) (hostFiles desktop)) "the desktop writes a Bitwarden manifest: ${toString (hostFiles desktop)}")
+    (lib.optional (lib.any (p: lib.hasPrefix "bitwarden-desktop" (lib.getName p)) desktop.environment.systemPackages) "the Bitwarden desktop app is installed")
     (lib.optional (hostFiles server != [ ]) "the server writes ${toString (hostFiles server)}")
     (lib.optional (hasStep server) "the server has the activation step ${step}")
     (lib.optional (
@@ -130,7 +124,6 @@ pkgs.runCommand "desktop-helium-bridges"
       name = "claude-profile";
       paths = [ claude ];
     };
-    proxy = "${pkgs.bitwarden-desktop}/libexec/desktop_proxy";
   }
   ''
     failed=0
@@ -178,7 +171,7 @@ pkgs.runCommand "desktop-helium-bridges"
       if ./moved 2> gone.log; then fail "the wrapper succeeds without a claude"; fi
     fi
 
-    echo "==> the Bitwarden manifest, by the activation step"
+    echo "==> the hosts directory, by the activation step"
     if [ -n "$stepData" ]; then
       export HOME=$TMPDIR/home
       run() { "$@"; }
@@ -197,48 +190,25 @@ pkgs.runCommand "desktop-helium-bridges"
 
       # A home without a Helium profile: the step makes it, private.
       succeeds "on a home without a profile"
-      bw=$hosts/com.8bit.bitwarden.json
-      [ -f "$bw" ] && [ ! -L "$bw" ] || fail "the Bitwarden manifest is not a regular file"
       [ "$(stat -c %a "$config/net.imput.helium")" = 700 ] || fail "the profile directory is $(stat -c %a "$config/net.imput.helium"), not 700"
       if [ -d "$hosts" ]; then
         [ "$(stat -c %a "$hosts")" = 700 ] || fail "the hosts directory is $(stat -c %a "$hosts"), not 700"
       else
-        fail "the step makes no NativeMessagingHosts/: Bitwarden copies its proxy there before it writes its manifest, so without it generateManifests() throws and listen() is skipped for every browser"
+        fail "the step makes no NativeMessagingHosts/"
       fi
-      [ "$(jq -r .name "$bw")" = com.8bit.bitwarden ] || fail "the Bitwarden manifest's name is $(jq -r .name "$bw")"
-      [ "$(jq -r .type "$bw")" = stdio ] || fail "the Bitwarden manifest's type is not stdio"
-      [ "$(jq -c .allowed_origins "$bw")" = '["chrome-extension://nngceckbapebfimnlniiiahkandclblb/","chrome-extension://hccnnhgbibccigepcmlgppchkpfdophk/","chrome-extension://jbkfoedolllekgbhcbcoahefnbanhhlh/","chrome-extension://ccnckbpmaceehanjmeomladnmlffdjgn/"]' ] \
-        || fail "the Bitwarden manifest allows $(jq -c .allowed_origins "$bw")"
-      [ "$(jq -r .path "$bw")" = "$proxy" ] || fail "the Bitwarden manifest's path is $(jq -r .path "$bw"), not $proxy"
-      [ -f "$proxy" ] && [ -x "$proxy" ] || fail "$proxy is no executable file"
-      # Bitwarden's own write at its start (fs.writeFile) must succeed.
-      printf '{}' > "$bw" || fail "the user cannot write the Bitwarden manifest"
+      [ -z "$(ls -A "$hosts")" ] || fail "the step writes into the hosts directory: $(ls -A "$hosts")"
 
-      # Bitwarden's file, and a link into the store, are replaced by ours.
-      succeeds "over Bitwarden's own file"
-      [ "$(jq -r .path "$bw")" = "$proxy" ] || fail "the step leaves Bitwarden's own file"
-      rm "$bw"
-      ln -s "$claudeManifest" "$bw"
-      succeeds "over a link"
-      [ -f "$bw" ] && [ ! -L "$bw" ] || fail "the step leaves a link in place"
-      [ "$(jq -r .name "$bw")" = com.8bit.bitwarden ] || fail "the step writes through the link"
-      printf '{}' > "$bw" || fail "the user cannot write the Bitwarden manifest after a link"
-
-      # A profile that exists keeps its mode, and gets the manifest.
-      succeeds "before the existing-profile case"
+      # A profile that exists keeps its mode, and gets the directory.
       chmod 750 "$config/net.imput.helium"
-      rm "$bw"
+      rm -rf "$hosts"
       succeeds "on an existing profile"
       [ "$(stat -c %a "$config/net.imput.helium")" = 750 ] || fail "the step changes the mode of an existing profile"
-      [ -f "$bw" ] && [ ! -L "$bw" ] || fail "the step writes no Bitwarden manifest into an existing profile"
-      [ "$(jq -r .path "$bw" 2> /dev/null)" = "$proxy" ] || fail "the Bitwarden manifest in an existing profile does not name $proxy"
+      [ -d "$hosts" ] || fail "the step makes no NativeMessagingHosts/ in an existing profile"
 
-      # A profile copied from another machine, without NativeMessagingHosts/
-      # (the transfer leaves it out): the step makes it.
-      rm -rf "$hosts"
-      succeeds "on a profile without NativeMessagingHosts/"
-      [ -d "$hosts" ] || fail "the step makes no NativeMessagingHosts/ in an existing profile: Bitwarden copies its proxy there before it writes its manifest, so without it generateManifests() throws and listen() is skipped for every browser"
-      [ -f "$hosts/com.8bit.bitwarden.json" ] || fail "the step writes no Bitwarden manifest into an existing profile"
+      # A profile that has the directory is left as it is, a file in it too.
+      printf 'mine' > "$hosts/other.json"
+      succeeds "on a profile that has the directory"
+      [ "$(cat "$hosts/other.json")" = mine ] || fail "the step touches a file in the hosts directory"
 
       # A profile the user cannot write (owned by another user, a full disk):
       # the step warns, and the activation goes on to its next step under

@@ -82,7 +82,7 @@ let
     name = "bitwarden-menu";
     desktopName = "Bitwarden Menu";
     genericName = "Password Menu";
-    comment = "Your vault in a keyboard menu (bwm), beside Bitwarden desktop";
+    comment = "Your vault in a keyboard menu (bwm)";
     exec = "bwm";
     tryExec = "bwm";
     icon = "dialog-password";

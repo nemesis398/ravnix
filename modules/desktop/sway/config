@@ -80,7 +80,7 @@ set $office        gtk-launch onlyoffice-desktopeditors
 #   and vnc platform plugins, with no libqwayland at all. Do not add ozone or
 #   -platform wayland flags expecting the browser fix to transfer.
 set $music         gtk-launch webapp-apple-music
-set $passwords-app gtk-launch bitwarden
+set $passwords-app bwm
 set $cloud         gtk-launch webapp-nextcloud
 set $recipes       gtk-launch webapp-mealie
 set $ai-local      gtk-launch webapp-openwebui
@@ -299,7 +299,7 @@ bindsym $mod+Shift+c exec $calc
 
 # Two families where a second modifier picks the variant, so there is only one
 # letter to remember per topic:
-#   A        quick AI popup (sway-ask)   P        Bitwarden desktop
+#   A        quick AI popup (sway-ask)   P        the vault menu (bwm)
 #   Alt+A    the self-hosted chat
 #   Ctrl+A   claude.ai, hosted
 @askBinding@

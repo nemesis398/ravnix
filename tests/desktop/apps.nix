@@ -131,12 +131,8 @@ let
       desktops = [ "onlyoffice-desktopeditors" ];
     }
     {
-      app = "bitwarden";
-      bins = [
-        "bitwarden"
-        "rbw"
-      ];
-      desktops = [ "bitwarden" ];
+      app = "rbw";
+      bins = [ "rbw" ];
     }
     {
       app = "handy";
@@ -222,8 +218,8 @@ let
     );
 
   # The five web apps, by the file name of their launcher. The Vaultwarden web
-  # app is on the spec's list of dropped apps: Bitwarden desktop and the browser
-  # extension take its place, so no launcher and no option for it may exist.
+  # app is on the spec's list of dropped apps: the browser extension and
+  # bitwarden-menu take its place, so no launcher and no option for it may exist.
   webapps = [
     "webapp-claude"
     "webapp-apple-music"
@@ -248,6 +244,7 @@ let
       "anki"
       "anki-bin"
     ];
+    "Bitwarden desktop" = [ "bitwarden-desktop" ];
     Element = [ "element-desktop" ];
     Sidra = [ "sidra" ];
     Thunderbird = [
@@ -560,7 +557,7 @@ pkgs.runCommand "desktop-apps"
     # (obsidian's is md.obsidian.Obsidian), is a key that does nothing.
     [ -x "$profile/bin/gtk-launch" ] || fail "sway: gtk-launch is not on the session's PATH, so the bindings that start an app by its .desktop id do nothing"
     ids=$(grep -v '^ *#' "$swayConfig" | grep -oE 'gtk-launch +[A-Za-z0-9_.+-]+' | awk '{print $2}' | sort -u)
-    [ "$(printf '%s\n' "$ids" | wc -l)" -ge 9 ] || fail "sway: fewer than nine gtk-launch calls found in the Sway config: $ids"
+    [ "$(printf '%s\n' "$ids" | wc -l)" -ge 8 ] || fail "sway: fewer than eight gtk-launch calls found in the Sway config: $ids"
     for id in $ids; do
       [ -e "$profile/share/applications/$id.desktop" ] || fail "sway: gtk-launch $id: there is no $id.desktop in the profile"
     done

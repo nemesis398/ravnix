@@ -4,7 +4,7 @@
 # Mealie, Nextcloud and Open WebUI are the user's own services, and each gets a
 # launcher only when its address is set (ravnix.apps.webapps.NAME.url in
 # me.nix), so no address of a user is in this repository. The password vault has
-# no web app: the spec drops it, and Bitwarden desktop and the browser extension
+# no web app: the spec drops it, and the browser extension and bitwarden-menu
 # are its clients (tests/desktop/apps.nix checks that none exists).
 #
 # Each launcher is a file webapp-NAME.desktop in the system profile, so

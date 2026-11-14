@@ -115,7 +115,7 @@ let
       "helium"
       "md.obsidian.Obsidian"
       "onlyoffice-desktopeditors"
-      "bitwarden"
+      "bitwarden-menu"
       "webapp-claude"
       "webapp-apple-music"
     ]
