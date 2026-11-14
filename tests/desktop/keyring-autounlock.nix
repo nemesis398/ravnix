@@ -106,6 +106,10 @@ let
       ++ lib.optional (
         sc.RemainAfterExit or false != false
       ) "${name}: the service stays active, and with it the decrypted password"
+      # A crash while the password is in memory writes no core dump with it.
+      ++ lib.optional (
+        sc.LimitCORE or null != 0 || !lib.hasInfix "LimitCORE=0\n" text
+      ) "${name}: the service may dump core with the password in it"
       ++ lib.optional (
         sc.ExecStart or "" != "${tool}/bin/ravnix-keyring-unlock"
       ) "${name}: the service does not run the tool (${sc.ExecStart or "nothing"})"

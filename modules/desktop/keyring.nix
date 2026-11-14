@@ -88,6 +88,9 @@ in
         # Bounds the wait of the session and the login layout if the bus
         # does not answer; the tool itself gives up after 10 s.
         TimeoutStartSec = "15s";
+        # No core dump with the password in it; the tool also makes itself
+        # undumpable, which keeps ptrace and /proc/PID/mem out as well.
+        LimitCORE = 0;
         UMask = "0077";
         NoNewPrivileges = true;
         LockPersonality = true;
