@@ -310,14 +310,21 @@ sync_with_one_adapter_reaches_only_that_one :: proc(t: ^testing.T) {
 	f := fixture(t)
 	defer fixture_destroy(f)
 	write_file(f, f.file, "a\n")
+	set(ALPHA)
+	set(BETA)
+	set(GAMMA)
+	// The first sync on a host reaches every tool (below); this is a later one.
+	sync_ok(f)
 	set(ALPHA, "x")
 	set(BETA, "y")
 	set(GAMMA, "z")
+	stores[ALPHA].reads, stores[GAMMA].reads = 0, 0
 	sync_ok(f, "--adapter", "beta")
 	testing.expect_value(t, read_file(f, f.file), "a\ny\n")
 	testing.expect_value(t, stores[ALPHA].reads, 0)
 	testing.expect_value(t, stores[GAMMA].reads, 0)
 	testing.expect_value(t, joined(f, BETA), "y,a")
+	testing.expect_value(t, joined(f, ALPHA), "x")
 	// A removal seen in a sync of one adapter reaches the others in theirs.
 	set(ALPHA, "a", "y")
 	sync_ok(f, "--adapter", "alpha")
@@ -559,6 +566,9 @@ an_unavailable_adapter_is_skipped_and_is_no_failure :: proc(t: ^testing.T) {
 	f := fixture(t)
 	defer fixture_destroy(f)
 	write_file(f, f.file, "a\n")
+	// Not the first sync on this host (that one waits; below).
+	testing.expect_value(t, os.make_directory(f.state), nil)
+	write_file(f, join(f, "state", "known"), "# the last sync's words\na\n")
 	set(ALPHA, "b")
 	set(BETA, "c")
 	gone_reason = "the vault is locked"
@@ -613,4 +623,47 @@ a_word_struck_before_the_first_sync_never_comes_in :: proc(t: ^testing.T) {
 	testing.expect_value(t, joined(f, GAMMA), "keep,new")
 	// And the sync by hand leaves what the watcher waits for.
 	testing.expect(t, os.exists(join(f, "state", "known")))
+}
+
+@(test)
+the_first_sync_waits_until_every_tool_can_be_reached :: proc(t: ^testing.T) {
+	// The first merge must not leave a tool out, LanguageTool with its vault
+	// locked above all: it would write the known list the watcher waits for,
+	// and the watcher would then merge that tool on its own.
+	f := fixture(t)
+	defer fixture_destroy(f)
+	write_file(f, f.file, "a\n")
+	set(ALPHA, "b")
+	set(BETA, "c")
+	gone_reason = "the vault is locked (unlock the vault first: rbw unlock)"
+	defer gone_reason = ""
+	list := [2]dict.Adapter {
+		{name = "alpha", read = read_alpha, write = write_alpha},
+		{name = "beta", read = read_beta, write = write_beta, unavailable = proc() -> string {return gone_reason}},
+	}
+	known := join(f, "state", "known")
+	r := run(f, list[:], "sync")
+	testing.expect_value(t, r.code, 1)
+	testing.expectf(t, strings.count(r.err, "\n") == 1 && strings.contains(r.err, "beta: the vault is locked (unlock the vault first") && strings.contains(r.err, "first sync"), "one line: %q", r.err)
+	// Nothing synced, and nothing recorded.
+	testing.expect_value(t, read_file(f, f.file), "a\n")
+	testing.expect_value(t, stores[ALPHA].reads + stores[ALPHA].writes + stores[BETA].reads, 0)
+	testing.expect(t, !os.exists(known))
+	// A first sync of one adapter is refused as well.
+	r = run(f, list[:], "sync", "--adapter", "alpha")
+	testing.expect_value(t, r.code, 1)
+	testing.expectf(t, strings.contains(r.err, "without --adapter"), "%q", r.err)
+	testing.expect(t, !os.exists(known))
+	// Unlocked: the first sync, and the known list.
+	gone_reason = ""
+	r = run(f, list[:], "sync")
+	testing.expectf(t, r.code == 0, "%s", r.err)
+	testing.expect(t, os.exists(known))
+	// From then on a locked vault skips quietly, and one adapter may sync alone.
+	gone_reason = "the vault is locked"
+	r = run(f, list[:], "sync")
+	testing.expect_value(t, r.code, 0)
+	testing.expect(t, strings.contains(r.out, "beta: skipped"))
+	r = run(f, list[:], "sync", "--adapter", "alpha")
+	testing.expect_value(t, r.code, 0)
 }

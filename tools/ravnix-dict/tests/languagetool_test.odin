@@ -530,7 +530,7 @@ only_a_locked_vault_skips_languagetool_quietly :: proc(t: ^testing.T) {
 	// Locked: skipped, and the vault is asked nothing but whether it is.
 	dir := lt_vault(f, false, LT_KEY, LT_USER)
 	why := tools.languagetool_unavailable()
-	testing.expectf(t, strings.contains(why, "locked"), "%q", why)
+	testing.expectf(t, strings.contains(why, "locked") && strings.contains(why, "unlock the vault first"), "%q", why)
 	testing.expect_value(t, read_file(f, strings.concatenate({dir, "/rbw-log"}, f.a)), "unlocked\n")
 
 	// Everything else is a misconfiguration, and fails loudly.

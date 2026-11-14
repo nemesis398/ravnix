@@ -172,7 +172,7 @@ run :: proc(args: []string, env: Environment, list: []Adapter, stdout, stderr: ^
 		if status, stop := need(cfg, true).?; stop {
 			return status
 		}
-		return sync(cfg, selected, allow_empty)
+		return sync(cfg, selected, allow_empty, partial = only != "" && len(list) > 1)
 	}
 	return usage_error(errf, "unknown command %s", command)
 }

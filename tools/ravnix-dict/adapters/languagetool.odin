@@ -91,7 +91,7 @@ languagetool_reset :: proc() {
 // is a failed sync and not a silent one.
 languagetool_unavailable :: proc() -> string {
 	c := lt_find_credentials()
-	return "the vault is locked; LanguageTool is synced once it is open" if c.locked else ""
+	return "the vault is locked (unlock the vault first: rbw unlock)" if c.locked else ""
 }
 
 @(private)

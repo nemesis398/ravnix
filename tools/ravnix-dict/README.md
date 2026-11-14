@@ -32,7 +32,7 @@ needs no state.
 | Exit | Means |
 | --- | --- |
 | 0 | done, or nothing to do (`add` of a word that is there with all its fields); an unavailable adapter, skipped, is no failure |
-| 1 | failed: the dictionary is missing, too big, not writable or not one (not UTF-8, a NUL, a git merge conflict); `remove` of a word that is not there; the lock was held for a minute; the state cannot be read or written; an adapter failed (the others are synced all the same); `RAVNIX_DICT_ADAPTERS` names an adapter that does not exist |
+| 1 | failed: the dictionary is missing; a first sync on the host that cannot reach every tool (an unavailable adapter, or `--adapter`); too big, not writable or not one (not UTF-8, a NUL, a git merge conflict); `remove` of a word that is not there; the lock was held for a minute; the state cannot be read or written; an adapter failed (the others are synced all the same); `RAVNIX_DICT_ADAPTERS` names an adapter that does not exist |
 | 64 | bad usage: an unknown command or option, a missing or extra argument, a word or value the file cannot hold |
 
 ## The file
@@ -373,9 +373,15 @@ ravnix-dict sync
 ```
 
 ravnix-dict prints no preview of its own; `ravnix-dict list` is the
-dictionary, and each tool shows its own list. On a host that syncs
-LanguageTool, open the vault first (`rbw unlock`), or the first sync skips
-it and the timer makes the first merge with it later.
+dictionary, and each tool shows its own list.
+
+The first sync reaches every tool or syncs nothing, since a tool it left
+out would be merged by the watcher later, unattended: with LanguageTool's
+vault locked it fails with `languagetool: the vault is locked (unlock the
+vault first: rbw unlock); the first sync on this host must reach every
+tool, so it syncs nothing`, and `sync --adapter NAME` is refused until then.
+After it, a locked vault skips LanguageTool quietly, and one adapter may
+sync alone.
 
 ## Tests and bench
 

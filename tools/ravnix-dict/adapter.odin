@@ -188,7 +188,9 @@ MAX_ATTEMPTS :: 5
 // sync exchanges words between the dictionary and the adapters, and
 // returns the exit status: 1 when an adapter, the dictionary or the state
 // failed, with the adapters that did not fail synced all the same.
-sync :: proc(cfg: Config, list: []Adapter, allow_empty: bool) -> int {
+// partial says that list is some of the host's adapters (--adapter), which
+// a first sync on the host refuses.
+sync :: proc(cfg: Config, list: []Adapter, allow_empty: bool, partial := false) -> int {
 	// An adapter may keep what must outlive a sync there (Handy's marker
 	// of a stop it has not undone yet).
 	tools.state_dir = cfg.state
@@ -199,7 +201,7 @@ sync :: proc(cfg: Config, list: []Adapter, allow_empty: bool) -> int {
 	}
 	defer unlock(fd)
 	for _ in 0 ..< MAX_ATTEMPTS {
-		switch sync_once(cfg, list, allow_empty) {
+		switch sync_once(cfg, list, allow_empty, partial) {
 		case .Done:
 			return 0
 		case .Failed:
@@ -212,7 +214,7 @@ sync :: proc(cfg: Config, list: []Adapter, allow_empty: bool) -> int {
 }
 
 @(private)
-sync_once :: proc(cfg: Config, list: []Adapter, allow_empty: bool) -> Outcome {
+sync_once :: proc(cfg: Config, list: []Adapter, allow_empty, partial: bool) -> Outcome {
 	d, data, ok := load(cfg)
 	if !ok {
 		return .Failed
@@ -240,6 +242,28 @@ sync_once :: proc(cfg: Config, list: []Adapter, allow_empty: bool) -> Outcome {
 			"word" if len(known) == 1 else "words",
 		)
 		return .Failed
+	}
+
+	// The first sync on this host is the first merge: every tool's words
+	// into the dictionary, and all of them to every tool. It writes the
+	// known list, which the watcher waits for, so a tool it left out (one
+	// adapter given, or LanguageTool behind a locked vault) would be merged
+	// later by the watcher, unattended. It reaches every tool, or syncs
+	// nothing.
+	if !known_found {
+		if partial {
+			warn(cfg, "the first sync on this host must reach every tool: run ravnix-dict sync without --adapter")
+			return .Failed
+		}
+		for a in list {
+			if a.unavailable == nil {
+				continue
+			}
+			if reason := a.unavailable(); reason != "" {
+				warn(cfg, "%s: %s; the first sync on this host must reach every tool, so it syncs nothing", a.name, reason)
+				return .Failed
+			}
+		}
 	}
 
 	// The removals: what the last sync knew and the file no longer holds,
