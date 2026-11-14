@@ -25,8 +25,8 @@
 #     today, but a later KbdInteractiveAuthentication would);
 #   - with the option off, no PAM file names pam_u2f and pamu2fcfg is not
 #     installed; the server shape stays the same with the option on;
-#   - an origin that would break the PAM line (white space, a bracket, empty)
-#     is refused by the option's type.
+#   - an origin that would break the PAM line (white space, a bracket, a `#`,
+#     which starts a comment, or empty) is refused by the option's type.
 #
 # A VM cannot touch a key, so the tap itself is tested by hand on the laptop.
 {
@@ -227,6 +227,7 @@ let
       "pam://a b"
       "pam://a]b"
       "pam://a\nb"
+      "pam://a#b"
     ]
     ++ lib.concatMap accepted [
       "pam://ravnix"

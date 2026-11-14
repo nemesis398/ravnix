@@ -8,11 +8,11 @@ let
   inherit (lib) mkOption types;
 
   # The origin goes into the PAM line as `origin=VALUE appid=VALUE`: white
-  # space would split it into two arguments and a bracket would end the
-  # bracketed form NixOS writes for an argument with a space, so neither may
-  # be in it.
-  origin = types.strMatching "[^][:space:]]+" // {
-    description = "pam_u2f origin without white space or brackets, such as pam://ravnix";
+  # space would split it into two arguments, a bracket would end the bracketed
+  # form NixOS writes for an argument with a space, and Linux-PAM reads a line
+  # only up to its first `#`, so none of them may be in it.
+  origin = types.strMatching "[^][#[:space:]]+" // {
+    description = "pam_u2f origin without white space, brackets or #, such as pam://ravnix";
   };
 in
 {
