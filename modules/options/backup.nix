@@ -194,19 +194,44 @@ let
           `repository=<the repository password>` and `login=<the
           rest-server login's password>`. ravnix does not write it: write it
           once by hand from the password manager, as root, without a secret
-          in a command line, the environment or the shell's history:
+          in a command line, the environment or the shell's history, with
+          your path in `f`:
 
           ```sh
-          sudo install -d -m 700 /var/lib/ravnix
-          { printf 'repository='; rbw get -- "<passwordItem>"
-            printf 'login='; rbw get -- "<loginItem>"; } |
-            sudo install -m 600 /dev/stdin /var/lib/ravnix/backup-secrets
+          rbw unlock && sudo -v && (
+            set -euo pipefail
+            f=/var/lib/ravnix/backup-secrets
+            sudo install -d -m 700 -- "$(dirname -- "$f")"
+            trap 'sudo rm -f -- "$f.new"' EXIT
+            { printf 'repository='; rbw get -- "<passwordItem>"
+              printf 'login='; rbw get -- "<loginItem>"; } |
+              sudo install -m 600 /dev/stdin "$f.new"
+            sudo awk 'NR == 1 && /^repository=./ { r = 1 }
+              NR == 2 && /^login=./ { l = 1 }
+              END { exit !(NR == 2 && r && l) }' "$f.new"
+            sudo mv -f -- "$f.new" "$f"
+          )
           ```
 
-          and again when either secret changes. systemd hands it to the run
-          alone, as a credential; the user's own processes cannot read it.
-          A host without the file makes no backup, and its unit fails and
-          says so.
+          and again when either secret changes. It writes the file only when
+          both items gave a password, each on its own line; a locked vault,
+          an item rbw cannot get or one without a password leaves the old
+          file as it was and fails.
+
+          systemd loads the file as a credential for the run, and runs the
+          backup under a UID of its own (DynamicUser=) that reads the home
+          through CAP_DAC_READ_SEARCH; the login user's processes, agents
+          among them, cannot read the file or the credential. Before each
+          run a step as root refuses the file unless it is root's and mode
+          600. A host without the file makes no backup, and its unit fails
+          at each timer and says so.
+
+          On muninn's container shape (hosts/server/oci.nix) only /home
+          outlives an image swap, so the default under /var/lib is gone with
+          every new image. There, set a path in a directory of root's beside
+          the home, as sshd's host key is (/home/.muninn-ssh), for example
+          `/home/.ravnix/backup-secrets`, and not in the home, which the
+          user owns.
 
           This is a deliberate exception to "secrets come from the password
           manager at runtime through rbw", the same as the Nix builder's key

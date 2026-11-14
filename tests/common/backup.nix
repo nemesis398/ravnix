@@ -28,13 +28,24 @@
 #
 # With ravnix.backup.nas.secrets = "file" (the root-only file, for a host
 # that backs up unattended): on NixOS a system unit and timer that run the
-# backup as the user and hand it the file through LoadCredential, assert the
-# file's path, and no user unit, no rbw and no secret anywhere in the unit
-# or the script; home-manager alone refuses the choice. The same script,
-# run against the same rest-server with $CREDENTIALS_DIRECTORY as systemd
-# sets it, makes a snapshot and asks rbw nothing; without the credential,
-# with it unreadable, or without one of its two lines, it fails with one
-# line.
+# backup under a UID of its own (DynamicUser), never the login user's,
+# reading the home through CAP_DAC_READ_SEARCH alone, with restic's cache in
+# its CacheDirectory; the file reaches it through LoadCredential, its path
+# is asserted, and a root step refuses it unless it is root's, mode 600;
+# no user unit, no rbw and no secret anywhere in the unit or the script;
+# home-manager alone refuses the choice. The same script, run against the
+# same rest-server with $CREDENTIALS_DIRECTORY and $CACHE_DIRECTORY as
+# systemd sets them, as a process that does not own the home's files: with
+# only CAP_DAC_READ_SEARCH it backs up a file its owner cannot read (mode
+# 200), with its mode and owner, and without the capability it cannot; it
+# asks rbw nothing, and without the credential, with it unreadable, or
+# without one of its two lines, it fails with one line. The root step
+# passes a root-owned file of mode 600 and refuses another owner or mode
+# with one line. The setup command that the option's description and the
+# compose file's README show (the same text in both) writes a file of mode
+# 600 that the root step passes; a locked vault, an item rbw cannot get
+# and one without a password leave the old file as it was, nothing beside
+# it, and fail.
 {
   self,
   inputs,
@@ -84,7 +95,7 @@ let
       # and every call is logged without its secret.
       echo "rbw $*" >>"$FAKE_RBW_LOG"
       case "$1" in
-        unlocked) [ ! -e "$FAKE_RBW_LOCKED" ] ;;
+        unlocked | unlock) [ ! -e "$FAKE_RBW_LOCKED" ] ;;
         get)
           case "$*" in
             "get -- Restic - huginn login") cat "$FAKE_RBW_LOGIN" ;;
@@ -126,9 +137,9 @@ let
   # The host as NixOS builds it, with the secrets in the root-only file.
   hostModules = import ../flake/helpers/host-modules.nix { inherit lib; };
   user = (import ../../templates/default/me.nix).ravnix.user.username;
-  nixosWith =
+  nixosEval =
     value:
-    (inputs.nixpkgs.lib.nixosSystem {
+    inputs.nixpkgs.lib.nixosSystem {
       inherit system;
       modules = hostModules ++ [
         self.nixosModules.common
@@ -139,7 +150,28 @@ let
           ravnix.backup.nas = lib.mkForce value;
         }
       ];
-    }).config;
+    };
+  nixosWith = value: (nixosEval value).config;
+  # The command that writes the root-only file, as ravnix.backup.nas.secretsFile
+  # documents it, and as step 5 of the compose file's README shows it, indented
+  # into its list.
+  setupDoc =
+    ((nixosEval nas).options.ravnix.backup.nas.type.nestedTypes.elemType.getSubOptions [ ])
+    .secretsFile.description;
+  setupCommand =
+    let
+      parts = lib.splitString "```sh\n" setupDoc;
+    in
+    if lib.length parts < 2 then "" else lib.head (lib.splitString "\n```" (lib.elemAt parts 1));
+  readmeCommand = lib.concatMapStringsSep "\n" (line: if line == "" then "" else "   " + line) (
+    lib.splitString "\n" setupCommand
+  );
+  setupScript = pkgs.writeText "setup.sh" setupCommand;
+  # sudo, for the setup command: the build user is the only user there is.
+  fakeSudo = pkgs.writeShellScriptBin "sudo" ''
+    if [ "$1" = -v ]; then exit 0; fi
+    exec "$@"
+  '';
   secretsFile = "/var/lib/ravnix/backup-secrets";
   fileOs = nixosWith (nas // { secrets = "file"; });
   rbwOs = nixosWith nas;
@@ -449,7 +481,19 @@ let
     ) "with the file the user unit or timer is still there"
     ++ lib.optional (lib.any (p: (p.name or "") == "ravnix-backup") fileHome.home.packages) "with the file ravnix-backup is on the user's PATH, where it cannot read the file"
     ++ lib.optionals (fileUnit != null) (
-      lib.optional (fileUnit.serviceConfig.User or null != user) "the system unit does not run as ${user}"
+      lib.optional (fileUnit.serviceConfig.User or null == user) "the system unit runs as the login user ${user}, who could read the credential"
+      ++ lib.optional (!(fileUnit.serviceConfig.DynamicUser or false)) "the system unit does not run under a UID of its own"
+      ++ lib.optional (
+        fileUnit.serviceConfig.AmbientCapabilities or null != [ "CAP_DAC_READ_SEARCH" ]
+      ) "the system unit's ambient capabilities are not CAP_DAC_READ_SEARCH alone"
+      ++ lib.optional (
+        fileUnit.serviceConfig.CapabilityBoundingSet or null != [ "CAP_DAC_READ_SEARCH" ]
+      ) "the system unit's bounding set is not CAP_DAC_READ_SEARCH alone"
+      ++ lib.optional (fileUnit.serviceConfig.CacheDirectory or null != "ravnix-backup") "restic's cache is not the unit's CacheDirectory"
+      ++ lib.optional (
+        !lib.hasPrefix "+" (toString (fileUnit.serviceConfig.ExecStartPre or ""))
+        || !lib.hasSuffix " ${secretsFile}" (toString (fileUnit.serviceConfig.ExecStartPre or ""))
+      ) "no root step checks the owner and mode of ${secretsFile}"
       ++ lib.optional (
         fileUnit.serviceConfig.LoadCredential or null != [ "ravnix-backup:${secretsFile}" ]
       ) "the system unit does not load ${secretsFile} as the credential ravnix-backup: ${builtins.toJSON (fileUnit.serviceConfig.LoadCredential or null)}"
@@ -461,6 +505,10 @@ let
       ++ lib.optional (fileUnit.serviceConfig.RestartPreventExitStatus or null != "3") "the system unit retries restic's exit 3"
       ++ lib.optional (lib.hasInfix "PASSWORD" (envOf fileUnit)) "the system unit's environment names a password"
     )
+    ++ lib.optional (setupCommand == "") "ravnix.backup.nas.secretsFile shows no setup command"
+    ++ lib.optional (
+      !lib.hasInfix readmeCommand (builtins.readFile ../../deploy/compose/restic/README.md)
+    ) "the compose file's README does not show the setup command of ravnix.backup.nas.secretsFile"
     ++ lib.optionals (fileTimer != null) (
       lib.optional (fileTimer.timerConfig.OnCalendar or null != "daily") "the system timer is not daily"
       ++ lib.optional (!(fileTimer.timerConfig.Persistent or false)) "the system timer does not make up a missed run"
@@ -476,6 +524,7 @@ pkgs.runCommand "common-backup"
       pkgs.jq
       pkgs.curl
       pkgs.yq-go
+      pkgs.util-linux
     ];
   }
   (
@@ -586,14 +635,35 @@ pkgs.runCommand "common-backup"
         # The root-only file, as systemd hands it over: $CREDENTIALS_DIRECTORY
         # with the credential ravnix-backup in it.
         fileScript=${fileScript}
+        fileCheck=${lib.removeSuffix " ${secretsFile}" (lib.removePrefix "+" (toString (fileUnit.serviceConfig.ExecStartPre or "")))}
         [ -x "$fileScript" ] || fail "the system unit's ExecStart is not a program: $fileScript"
         if grep -q rbw "$fileScript"; then fail "the file's script runs rbw"; fi
         rbw_calls=$(wc -l <"$FAKE_RBW_LOG")
         creds=${build}/credentials
         mkdir -p "$creds"
         printf 'repository=repository-secret\nlogin=login-secret\n' >"$creds/ravnix-backup"
-        CREDENTIALS_DIRECTORY=$creds "$fileScript" || fail "the backup from the file failed: $(cat ${build}/server.log)"
-        [ "$(local_repo snapshots --json | jq length)" = 3 ] || fail "the backup from the file made no snapshot"
+        # The unit's own UID owns none of the home: here a process that is
+        # root in a user namespace, with every capability dropped but the
+        # one the unit keeps, and a file the owner cannot read either (mode
+        # 200: restic's JSON leaves out a mode of 0).
+        echo locked >${home}/doc/locked
+        chmod 200 ${home}/doc/locked
+        only() { # CAPS, then the command
+          caps=$1
+          shift
+          unshare -r setpriv --inh-caps=-all$caps --ambient-caps=-all$caps --bounding-set=-all$caps -- "$@"
+        }
+        status=0
+        only "" env CREDENTIALS_DIRECTORY="$creds" CACHE_DIRECTORY=${build}/cache-none "$fileScript" 2>${build}/nocap.log || status=$?
+        [ "$status" = 3 ] || fail "without CAP_DAC_READ_SEARCH the run exited $status, not 3 (a file it could not read): $(cat ${build}/nocap.log)"
+        only ",+dac_read_search" env CREDENTIALS_DIRECTORY="$creds" CACHE_DIRECTORY=${build}/cache-file "$fileScript" ||
+          fail "the backup from the file, with CAP_DAC_READ_SEARCH alone, failed: $(cat ${build}/server.log)"
+        [ "$(local_repo snapshots --json | jq length)" = 4 ] || fail "the backup from the file made no snapshot"
+        [ "$(local_repo dump latest ${home}/doc/locked)" = locked ] || fail "the file of mode 200 is not in the snapshot"
+        meta=$(local_repo ls --json latest ${home}/doc/locked | jq -c 'select(.path == "${home}/doc/locked") | [.mode, .uid]')
+        [ "$meta" = "[$((8#200)),$(only "" stat -c %u ${home}/doc/locked)]" ] || fail "the file's mode and owner are not kept: $meta"
+        [ -n "$(ls -A ${build}/cache-file)" ] || fail "restic's cache is not in CACHE_DIRECTORY"
+        chmod 600 ${home}/doc/locked
         [ "$(wc -l <"$FAKE_RBW_LOG")" = "$rbw_calls" ] || fail "the backup from the file asked rbw"
         one_line_failure() { # WHAT, then the command
           what=$1
@@ -612,8 +682,62 @@ pkgs.runCommand "common-backup"
         one_line_failure "a credential without the login" env CREDENTIALS_DIRECTORY="$creds" "$fileScript"
         printf 'login=login-secret\n' >"$creds/ravnix-backup"
         one_line_failure "a credential without the repository password" env CREDENTIALS_DIRECTORY="$creds" "$fileScript"
-        [ "$(local_repo snapshots --json | jq length)" = 3 ] || fail "a failed run from the file made a snapshot"
+        [ "$(local_repo snapshots --json | jq length)" = 4 ] || fail "a failed run from the file made a snapshot"
+
+        # The root step: root's file, mode 600, and nothing else.
+        [ -x "$fileCheck" ] || fail "the root step is not a program: $fileCheck"
+        secrets=${build}/secrets-file
+        printf 'repository=x\nlogin=y\n' >"$secrets"
+        chmod 600 "$secrets"
+        only "" "$fileCheck" "$secrets" || fail "the root step refuses a file of root's with mode 600"
+        for case in "owner:600:" "root:644:only"; do
+          IFS=: read -r who mode wrap <<<"$case"
+          chmod "$mode" "$secrets"
+          status=0
+          if [ -n "$wrap" ]; then
+            only "" "$fileCheck" "$secrets" 2>${build}/check.log || status=$?
+          else
+            "$fileCheck" "$secrets" 2>${build}/check.log || status=$?
+          fi
+          [ "$status" = 1 ] || fail "the root step passes a file of $who with mode $mode (exit $status)"
+          [ "$(wc -l <${build}/check.log)" = 1 ] && grep -q "$secrets" ${build}/check.log ||
+            fail "the root step's refusal is not one line naming the file: $(cat ${build}/check.log)"
+        done
         [ "$(wc -l <"$FAKE_RBW_LOG")" = "$rbw_calls" ] || fail "a failed run from the file fell back to rbw"
+
+        # The setup command, as documented, with the default path moved into
+        # the build directory and the template's item names: it writes the
+        # file, mode 600, that the run and the root step take; a locked
+        # vault, an item rbw cannot get or one without a password leave the
+        # file as it was and nothing beside it, and the command fails.
+        setup=${build}/setup
+        sed -e "s|/var/lib/ravnix|$setup/ravnix|g" \
+          -e 's|<passwordItem>|${nas.passwordItem}|' -e 's|<loginItem>|${nas.loginItem}|' \
+          ${setupScript} >${build}/setup.sh
+        grep -q "$setup/ravnix/backup-secrets" ${build}/setup.sh || fail "the setup command does not write ${secretsFile}"
+        run_setup() {
+          PATH=${fakeSudo}/bin:${fakeRbw}/bin:$PATH FAKE_RBW_LOG=${build}/setup-rbw.log bash ${build}/setup.sh 2>${build}/setup.log
+        }
+        printf 'repository-secret\n' >${build}/login
+        FAKE_RBW_LOGIN=${build}/login FAKE_RBW_LOCKED=${build}/no-lock run_setup ||
+          fail "the setup command failed: $(cat ${build}/setup.log)"
+        written=$setup/ravnix/backup-secrets
+        [ "$(stat -c %a "$written")" = 600 ] || fail "the setup command wrote mode $(stat -c %a "$written"), not 600"
+        [ "$(stat -c %a "$setup/ravnix")" = 700 ] || fail "the setup command's directory is not mode 700"
+        [ "$(cat "$written")" = "$(printf 'repository=repository-secret\nlogin=repository-secret')" ] ||
+          fail "the setup command wrote something else than the two lines: $(od -c "$written" | head -5)"
+        only "" "$fileCheck" "$written" || fail "the root step refuses what the setup command wrote"
+        printf 'old\n' >"$written"
+        for case in locked:${build}/login:${build}/lock missing:${build}/no-login:${build}/no-lock empty:${build}/empty:${build}/no-lock; do
+          IFS=: read -r what login lock <<<"$case"
+          : >${build}/empty
+          touch ${build}/lock
+          status=0
+          FAKE_RBW_LOGIN=$login FAKE_RBW_LOCKED=$lock run_setup || status=$?
+          [ "$status" != 0 ] || fail "the setup command succeeds with a $what login"
+          [ "$(cat "$written")" = old ] || fail "the setup command replaced the file with a $what login"
+          [ "$(ls -A "$setup/ravnix")" = backup-secrets ] || fail "the setup command left $(ls -A "$setup/ravnix") with a $what login"
+        done
 
         kill "$server"
         touch $out

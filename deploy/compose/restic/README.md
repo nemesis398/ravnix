@@ -62,20 +62,41 @@ does not exist yet: the deploy (Step 5) and the two jobs on the NAS (Step 6).
 5. **The root-only file, on each host with `secrets = "file"`** (muninn).
    The two secrets are in a file only root can read, written once from the
    password manager, without a secret in a command line, the environment
-   or the shell's history:
+   or the shell's history. The command writes the file only when both
+   items gave a password, each on its own line; a locked vault, an item
+   rbw cannot get or one without a password leave the old file as it was:
 
    ```sh
-   sudo install -d -m 700 /var/lib/ravnix
-   { printf 'repository='; rbw get -- "<passwordItem>"
-     printf 'login='; rbw get -- "<loginItem>"; } |
-     sudo install -m 600 /dev/stdin /var/lib/ravnix/backup-secrets
+   rbw unlock && sudo -v && (
+     set -euo pipefail
+     f=/var/lib/ravnix/backup-secrets
+     sudo install -d -m 700 -- "$(dirname -- "$f")"
+     trap 'sudo rm -f -- "$f.new"' EXIT
+     { printf 'repository='; rbw get -- "<passwordItem>"
+       printf 'login='; rbw get -- "<loginItem>"; } |
+       sudo install -m 600 /dev/stdin "$f.new"
+     sudo awk 'NR == 1 && /^repository=./ { r = 1 }
+       NR == 2 && /^login=./ { l = 1 }
+       END { exit !(NR == 2 && r && l) }' "$f.new"
+     sudo mv -f -- "$f.new" "$f"
+   )
    ```
 
    This is a deliberate exception to secrets from rbw at runtime, the same
    as the Nix builder's key (`ravnix.nixBuilder.sshKey`): the backup runs
    unattended while rbw is locked, so the secrets have to be on disk. The
-   system unit `ravnix-backup` hands the file to the run alone, as a
-   systemd credential; `ravnix.backup.nas.secretsFile` has the rest.
+   system unit `ravnix-backup` refuses the file unless it is root's and
+   mode 600, loads it as a systemd credential, and runs the backup under a
+   UID of its own (`DynamicUser=`) that reads the home through
+   `CAP_DAC_READ_SEARCH` alone, so the login user's processes, agents
+   among them, cannot read the file or the credential.
+
+   On muninn's container shape only `/home` outlives an image swap, and
+   the default `/var/lib/ravnix/backup-secrets` is gone with every new
+   image: set `secretsFile` in a directory of root's beside the home, as
+   sshd's host key is (`/home/.muninn-ssh`), for example
+   `/home/.ravnix/backup-secrets`, and run the command with that path in
+   `f`. `ravnix.backup.nas.secretsFile` has the rest.
 6. **Verify**, from each host, and record the output in the private flake:
    - `systemctl --user start ravnix-backup` (with rbw) or `sudo systemctl
      start ravnix-backup` (with the file), then `restic snapshots` on the

@@ -70,6 +70,11 @@ let
           exit 1
         fi
         unset repository
+        # The unit's CacheDirectory=, as systemd names it; its UID has no
+        # home of its own.
+        if [ -n "''${CACHE_DIRECTORY:-}" ]; then
+          export RESTIC_CACHE_DIR=$CACHE_DIRECTORY
+        fi
       ''
     else
       ''
