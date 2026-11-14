@@ -532,11 +532,12 @@ bindsym --locked XF86AudioLowerVolume exec $volume_helper --limit "$volume_limit
 bindsym --locked XF86AudioMute        exec pactl set-sink-mute   @DEFAULT_SINK@   toggle && $volume_helper
 bindsym --locked XF86AudioMicMute     exec pactl set-source-mute @DEFAULT_SOURCE@ toggle
 
-# Brightness (external DDC monitor: brightnessctl only acts if a backlight exists)
-set $brightness_osd command -v notify-send >/dev/null && VALUE=$(brightnessctl --percentage get) && \
-    notify-send -e -h string:x-canonical-private-synchronous:brightness -h "int:value:$VALUE" -t 800 "Brightness: ${VALUE}%"
-bindsym XF86MonBrightnessDown exec brightnessctl -q set 5%-  && $brightness_osd
-bindsym XF86MonBrightnessUp   exec brightnessctl -q set +5%  && $brightness_osd
+# Brightness — sway-brightness steps by 5 % and by 1 % at or below 5 %, and
+# shows the value it read back (external DDC monitor: it does nothing without a
+# backlight). nixpkgs' brightnessctl is 0.5.1 and has no --percentage, which is
+# why the keys do not call it themselves.
+bindsym XF86MonBrightnessDown exec sway-brightness down
+bindsym XF86MonBrightnessUp   exec sway-brightness up
 
 # Media transport (playerctl) — Play/Stop allowed while locked
 bindsym --locked XF86AudioPlay exec playerctl play-pause
@@ -607,8 +608,8 @@ mode "game" {
     bindsym --locked XF86AudioLowerVolume exec $volume_helper --limit "$volume_limit" --decrease "$volume_step"
     bindsym --locked XF86AudioMute        exec pactl set-sink-mute   @DEFAULT_SINK@   toggle && $volume_helper
     bindsym --locked XF86AudioMicMute     exec pactl set-source-mute @DEFAULT_SOURCE@ toggle
-    bindsym XF86MonBrightnessDown exec brightnessctl -q set 5%-  && $brightness_osd
-    bindsym XF86MonBrightnessUp   exec brightnessctl -q set +5%  && $brightness_osd
+    bindsym XF86MonBrightnessDown exec sway-brightness down
+    bindsym XF86MonBrightnessUp   exec sway-brightness up
     bindsym --locked XF86AudioPlay exec playerctl play-pause
     bindsym --locked XF86AudioStop exec playerctl stop
     bindsym XF86AudioNext  exec playerctl next

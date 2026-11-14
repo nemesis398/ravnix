@@ -97,7 +97,6 @@ let
     grimshot = "grimshot";
     pactl = "pulseaudio";
     playerctl = "playerctl";
-    brightnessctl = "brightnessctl";
     bluetoothctl = "bluez";
     netbird = "netbird-client";
     loginctl = "systemd";

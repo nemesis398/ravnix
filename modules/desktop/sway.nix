@@ -115,6 +115,11 @@ let
         coreutils
         swayPackage
       ] { };
+      sway-brightness = bash "sway-brightness" [
+        brightnessctl
+        libnotify
+        coreutils
+      ] { };
       sway-clipboard = bash "sway-clipboard" [
         cliphist
         fuzzel

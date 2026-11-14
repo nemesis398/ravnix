@@ -40,6 +40,7 @@ real thing, and the tests set them:
 | `SYSFS` | `waybar-gpu`, `-gputemp`, `-powerdraw` | `/sys`, for the DRM, hwmon and PCI driver reads |
 | `MAGIC_CMD` | `waybar-peripherals` | `magic-trackpad-battery` |
 | `PACTL`, `NOTIFY_SEND` | `sway-volume` | `pactl`, `notify-send` |
+| `BRIGHTNESSCTL`, `NOTIFY_SEND` | `sway-brightness` | `brightnessctl`, `notify-send` |
 | `BUSCTL` | `sway-wait-sni` | `busctl` |
 | `WAYBAR_MATCH`, `SWAYLOCK_MATCH` | `waybar-launch`, `waybar-clock`, `keep-awake` | the command-line patterns (`^waybar( \|$)`, `^swaylock( \|$)`) that find Waybar and swaylock |
 

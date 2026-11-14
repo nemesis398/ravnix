@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# sway-brightness — step the backlight and show the result in a notification.
+# The brightness keys call it (modules/desktop/sway/config), so does the radial
+# menu.
+#
+#   sway-brightness up | down
+#
+# The steps are in percent and fine at the bottom, where the eye needs them:
+#   up    0, 1, 2, 3, 4, 5, then 10, 15 ... 100
+#   down  100, 95 ... 10, 5, then 4, 3, 2, 1, 0
+# A value between two steps goes to the next step in the direction of the key
+# (7 % up is 10 %, 7 % down is 5 %, never 2 %). A press always moves, even on a
+# backlight with only a few levels.
+#
+# nixpkgs' brightnessctl is 0.5.1 and has no --percentage: the script reads the
+# raw value (get) and the maximum (max) and does the arithmetic itself. The
+# percentage it shows is read back after the change, so the notification says
+# what the panel does, not what was asked for. The notification replaces the
+# one before it (the synchronous hint) and carries the value as a progress bar,
+# as sway-volume's does.
+set -uo pipefail
+
+# Overridable, so that the steps can be tested without a backlight
+# (tests/desktop/helpers/script-tests.sh).
+BRIGHTNESSCTL=${BRIGHTNESSCTL:-brightnessctl}
+NOTIFY_SEND=${NOTIFY_SEND:-notify-send}
+
+case ${1:-}:$# in
+  up:1|down:1) dir=$1 ;;
+  *) echo "usage: sway-brightness up|down" >&2; exit 2 ;;
+esac
+
+# A number is digits and nothing else: the value goes into arithmetic, where
+# bash would run a command hidden in an index (x[$(cmd)]).
+read_number() { # read_number ARG...: what brightnessctl ARG... prints, if a number
+  local out
+  out=$("$BRIGHTNESSCTL" "$@" 2>/dev/null) || return 1
+  case $out in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  echo "$out"
+}
+
+fail() {
+  echo "sway-brightness: $1" >&2
+  exit 1
+}
+
+max=$(read_number max) || fail "cannot read the maximum brightness"
+[ "$max" -gt 0 ] || fail "the maximum brightness is 0"
+raw=$(read_number get) || fail "cannot read the brightness"
+[ "$raw" -le "$max" ] || raw=$max
+
+# The percentage the raw value reads as, rounded to the nearest.
+percent_of() { echo $(( ($1 * 200 + max) / (2 * max) )); }
+
+now=$(percent_of "$raw")
+if [ "$dir" = up ]; then
+  if [ "$now" -lt 5 ]; then target=$(( now + 1 )); else target=$(( (now / 5 + 1) * 5 )); fi
+  [ "$target" -le 100 ] || target=100
+else
+  if [ "$now" -le 5 ]; then target=$(( now - 1 )); else target=$(( ((now - 1) / 5) * 5 )); fi
+  [ "$target" -ge 0 ] || target=0
+fi
+
+# The raw value nearest to the target. A backlight with few levels may map two
+# percentages to one raw value: then the press moves by one level instead.
+new=$(( (target * max * 2 + 100) / 200 ))
+if [ "$dir" = up ]; then
+  [ "$new" -gt "$raw" ] || new=$(( raw + 1 ))
+  [ "$new" -le "$max" ] || new=$max
+else
+  [ "$new" -lt "$raw" ] || new=$(( raw - 1 ))
+  [ "$new" -ge 0 ] || new=0
+fi
+
+if [ "$new" -ne "$raw" ]; then
+  "$BRIGHTNESSCTL" -q set "$new" 2>/dev/null || fail "cannot set the brightness"
+fi
+
+after=$(read_number get) || fail "cannot read the brightness after the change"
+[ "$after" -le "$max" ] || after=$max
+value=$(percent_of "$after")
+
+"$NOTIFY_SEND" --app-name sway --expire-time 800 \
+  --hint string:x-canonical-private-synchronous:brightness \
+  --hint "int:value:$value" --transient "Brightness: ${value}%" 2>/dev/null || true

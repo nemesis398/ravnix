@@ -472,6 +472,116 @@ PACTL=$stubs/pactl NOTIFY_SEND=$stubs/notify-send "$vol" --increase 5 >/dev/null
 rm -f "$pa/garbage"
 ok "sway-volume"
 
+# ── sway-brightness ──────────────────────────────────────────────────────────
+# nixpkgs' brightnessctl is 0.5.1: no --percentage. The script reads get and max
+# and does its own arithmetic, so the stand-in answers only what 0.5.1 answers.
+bright=$(script sway-brightness)
+bl=$work/bl
+mkdir -p "$bl"
+cat >"$stubs/brightnessctl" <<STUB
+#!/bin/sh
+[ -f "$bl/broken" ] && exit 1
+printf '%s\n' "\$*" >>"$bl/calls"
+case "\$*" in
+  get) cat "$bl/raw" ;;
+  max) cat "$bl/max" ;;
+  "-q set "[0-9]*) echo "\$3" >"$bl/raw" ;;
+  *) echo "brightnessctl: unsupported in 0.5.1: \$*" >&2; exit 2 ;;
+esac
+STUB
+chmod +x "$stubs/brightnessctl"
+pct_of() { echo $(( ($1 * 200 + $2) / (2 * $2) )); } # round(raw * 100 / max)
+bpress() { # bpress MAX RAW up|down: runs the key, leaves the raw value in $bl/raw
+  printf '%s\n' "$1" >"$bl/max"
+  printf '%s\n' "$2" >"$bl/raw"
+  : >"$bl/calls"
+  : >"$bl/notifications"
+  BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=$bl/notify "$bright" "$3" >/dev/null 2>&1
+}
+cat >"$bl/notify" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$bl/notifications"
+STUB
+chmod +x "$bl/notify"
+# walk MAX START DIRECTION: the percentages, one per press, until it stops moving.
+walk() {
+  local max=$1 raw=$2 dir=$3 seq="" prev
+  printf '%s\n' "$max" >"$bl/max"
+  printf '%s\n' "$raw" >"$bl/raw"
+  for _ in $(seq 1 60); do
+    prev=$(cat "$bl/raw")
+    BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=$bl/notify "$bright" "$dir" >/dev/null 2>&1
+    [ "$(cat "$bl/raw")" = "$prev" ] && break
+    seq="$seq $(pct_of "$(cat "$bl/raw")" "$max")"
+  done
+  echo "${seq# }"
+}
+up_expect="1 2 3 4 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100"
+down_expect="95 90 85 80 75 70 65 60 55 50 45 40 35 30 25 20 15 10 5 4 3 2 1 0"
+for max in 100 255 400 19200; do
+  [ "$(walk "$max" 0 up)" = "$up_expect" ] || bad "sway-brightness up from 0 (max $max): $(walk "$max" 0 up)"
+  [ "$(walk "$max" "$max" down)" = "$down_expect" ] || bad "sway-brightness down from 100% (max $max): $(walk "$max" "$max" down)"
+done
+# Between the steps: a value off the grid snaps to it and never skips below 5.
+bpress 255 18 down   # 7 %
+[ "$(pct_of "$(cat "$bl/raw")" 255)" = 5 ] || bad "sway-brightness down from 7% reads $(pct_of "$(cat "$bl/raw")" 255)%, not 5%"
+bpress 255 18 up
+[ "$(pct_of "$(cat "$bl/raw")" 255)" = 10 ] || bad "sway-brightness up from 7% reads $(pct_of "$(cat "$bl/raw")" 255)%, not 10%"
+bpress 255 31 down   # 12 %
+[ "$(pct_of "$(cat "$bl/raw")" 255)" = 10 ] || bad "sway-brightness down from 12% reads $(pct_of "$(cat "$bl/raw")" 255)%, not 10%"
+bpress 255 255 up
+[ "$(cat "$bl/raw")" = 255 ] || bad "sway-brightness goes above 100%: $(cat "$bl/raw")"
+bpress 255 0 down
+[ "$(cat "$bl/raw")" = 0 ] || bad "sway-brightness goes below 0: $(cat "$bl/raw")"
+# The value shown is the value that was set (read back, not assumed).
+bpress 255 0 up
+grep -qF 'Brightness: 1%' "$bl/notifications" || bad "up from 0 shows: $(cat "$bl/notifications")"
+grep -q 'int:value:1 ' "$bl/notifications" || bad "up from 0 does not carry the value: $(cat "$bl/notifications")"
+grep -q 'synchronous:brightness' "$bl/notifications" || bad "the brightness notification does not replace the one before"
+bpress 255 255 down
+grep -qF 'Brightness: 95%' "$bl/notifications" || bad "down from 100 shows: $(cat "$bl/notifications")"
+grep -q 'int:value:95 ' "$bl/notifications" || bad "down from 100 does not carry the value: $(cat "$bl/notifications")"
+# Coarse hardware: every press still moves, never past the ends, and the key
+# works on a backlight with a handful of levels.
+for max in 7 20 50; do
+  seq=$(walk "$max" 0 up)
+  [ -n "$seq" ] && [ "$(cat "$bl/raw")" = "$max" ] || bad "sway-brightness up (max $max) does not reach the top: $seq, raw $(cat "$bl/raw")"
+  seq=$(walk "$max" "$max" down)
+  [ -n "$seq" ] && [ "$(cat "$bl/raw")" = 0 ] || bad "sway-brightness down (max $max) does not reach 0: $seq, raw $(cat "$bl/raw")"
+done
+bpress 1 0 up
+[ "$(cat "$bl/raw")" = 1 ] || bad "sway-brightness cannot light a backlight with one level"
+# It uses nothing but get, max and an absolute set.
+bpress 255 100 up
+if grep -Eq -- '--percentage|-P|-m|%' "$bl/calls"; then bad "sway-brightness calls brightnessctl with an option 0.5.1 lacks: $(cat "$bl/calls")"; fi
+# A dead or odd backlight tool: nothing set, nothing shown, status 1.
+for broken in dead zero garbage; do
+  rm -f "$bl/broken"
+  printf '255\n' >"$bl/max"; printf '100\n' >"$bl/raw"; : >"$bl/calls"; : >"$bl/notifications"
+  case $broken in
+    dead) : >"$bl/broken" ;;
+    zero) printf '0\n' >"$bl/max" ;;
+    garbage) printf 'n/a\n' >"$bl/raw" ;;
+  esac
+  BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=$bl/notify "$bright" up >/dev/null 2>&1
+  [ $? = 1 ] || bad "sway-brightness ($broken) does not exit 1"
+  [ ! -s "$bl/notifications" ] || bad "sway-brightness ($broken) shows something: $(cat "$bl/notifications")"
+  ! grep -q 'set' "$bl/calls" 2>/dev/null || bad "sway-brightness ($broken) sets a value"
+done
+rm -f "$bl/broken"
+BRIGHTNESSCTL=/nonexistent NOTIFY_SEND=$bl/notify "$bright" up >/dev/null 2>&1
+[ $? = 1 ] || bad "sway-brightness without brightnessctl does not exit 1"
+for args in "" "sideways" "up down" "5%+"; do
+  # shellcheck disable=SC2086
+  BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=$bl/notify "$bright" $args >/dev/null 2>&1
+  [ $? = 2 ] || bad "sway-brightness '$args' is not refused with status 2"
+done
+# Without a notification daemon the brightness still changes.
+printf '255\n' >"$bl/max"; printf '100\n' >"$bl/raw"
+BRIGHTNESSCTL=$stubs/brightnessctl NOTIFY_SEND=/nonexistent "$bright" up >/dev/null 2>&1
+[ "$(pct_of "$(cat "$bl/raw")" 255)" = 40 ] || bad "sway-brightness does not change the brightness when the notification fails"
+ok "sway-brightness"
+
 # ── sway-wait-sni ────────────────────────────────────────────────────────────
 sni=$(script sway-wait-sni)
 printf '#!/bin/sh\nexit 0\n' >"$stubs/busctl"

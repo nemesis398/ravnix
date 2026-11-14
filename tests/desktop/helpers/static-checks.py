@@ -164,6 +164,15 @@ def main():
         for line in (sway + laptop).splitlines():
             if "sway-radial" in line and not line.lstrip().startswith("#"):
                 fail(label(f"the Sway config needs sway-radial at runtime: {line.strip()}"))
+        # The Fn row. Brightness goes through sway-brightness (nixpkgs' brightnessctl
+        # 0.5.1 has no --percentage, so the old inline notification never showed),
+        # in the main config and again in the game mode, which repeats it.
+        code = re.sub(r"^\s*#.*$", "", sway, flags=re.M)
+        expect("brightnessctl" not in code, label("sway/config calls brightnessctl itself: the brightness keys go through sway-brightness"))
+        expect("--percentage" not in code, label("sway/config uses brightnessctl --percentage, which nixpkgs' 0.5.1 lacks"))
+        for key, direction in (("XF86MonBrightnessDown", "down"), ("XF86MonBrightnessUp", "up")):
+            binds = re.findall(rf"^\s*bindsym {key}\s+exec sway-brightness {direction}$", code, re.M)
+            expect(len(binds) == 2, label(f"{key} is not bound to `sway-brightness {direction}` in both the main config and the game mode ({len(binds)} found)"))
         # swaynag: themed from the roles.
         expect(f"background={roles[variant]['canvas'].lstrip('#')}" in swaynag, label("swaynag/config is not Base"))
         expect(f"border={accent_hex}" in swaynag, label("swaynag/config has no accent frame"))

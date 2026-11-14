@@ -308,12 +308,12 @@ icon  = "\U000f0379"
   [[items.items]]
   dir   = "n"
   label = "Bright +"
-  exec  = "brightnessctl -q set +5%"
+  exec  = "sway-brightness up"
 
   [[items.items]]
   dir   = "nw"
   label = "Bright -"
-  exec  = "brightnessctl -q set 5%-"
+  exec  = "sway-brightness down"
 
   [[items.items]]
   dir   = "sw"
