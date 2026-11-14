@@ -180,14 +180,19 @@ Record what ssh makes of each host before the switch, with `ssh -G HOST > HOST.b
 
 With `ravnix.security.u2f.enable = true` in your `me.nix`, the laptop asks your security key first at the login screen, the lock screen, sudo, su, polkit and a console login (`modules/desktop/u2f.nix`). A tap logs you in, and the password keeps working. Without the key, the password prompt comes at once. With the key plugged in and not touched, it comes when the key gives up waiting.
 
-The key does nothing until it is enrolled. Turn the option on and switch, which installs `pamu2fcfg`. Then enroll once, as yourself and not as root, with the key plugged in. Touch it when it blinks. A key with a FIDO2 PIN asks for it here, once:
+sudo asks on your screen before it waits for the key. A small popup names the command, the user and where the sudo came from: a terminal on the laptop, the server's laptop-access link, or a program without a terminal. Choose Allow, and the key blinks for the touch. Deny, Esc, or 30 seconds without an answer skip the tap, and sudo asks for the password as before. A sudo without a terminal, such as one sent over the link, then fails. Nothing pops up while the screen is locked, while no key is plugged in, or before you have a mapping.
+
+The key does nothing until it has a mapping in `~/.config/Yubico/u2f_keys`. The mapping is bound to the origin `pam://ravnix`, not to a host name, so one made with the same `-o` and `-i` on any machine works here as it is: copy it in. Only a mapping made with pamu2fcfg's default origin, `pam://` and the host name, has to be made again. To make one, run `pamu2fcfg` as yourself and not as root, on any machine with the key plugged in, and touch the key when it blinks. On the laptop, `pamu2fcfg` comes with the option. A key with a FIDO2 PIN asks for it here, once:
 
 ```sh
 mkdir -p ~/.config/Yubico
 pamu2fcfg -o pam://ravnix -i pam://ravnix > ~/.config/Yubico/u2f_keys
+chmod 600 ~/.config/Yubico/u2f_keys
 ```
 
-Until that file exists, every prompt asks for the password as before. If you set `ravnix.security.u2f.origin` to another value, use that value after `-o` and `-i`. A mapping from another machine was made for that machine's host name and does not work here, so enroll again. Test the tap with `sudo -k; sudo true` in a terminal before you lock the screen, and keep a second terminal with a root shell open until it works.
+The file must be yours and writable by you alone. pam_u2f refuses a mapping that another user owns, but it only warns about one that others may write, and whoever can write the file can add a key of their own.
+
+Until that file exists, every prompt asks for the password as before. If you set `ravnix.security.u2f.origin` to another value, use that value after `-o` and `-i`. Test the tap with `sudo -k; sudo true` in a terminal before you lock the screen, and keep a second terminal with a root shell open until it works.
 
 The login keyring opens by itself after a tap only if it has no password. A tap hands the keyring no password, so a keyring with one asks for it the first time an application wants a secret.
 

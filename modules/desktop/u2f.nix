@@ -74,10 +74,18 @@
 # THE ORIGIN is fixed (pam://ravnix unless the user picks another), and the
 # appid with it: pamu2fcfg binds a credential to its origin, which defaults to
 # pam:// and the host name, so a hostname-bound mapping breaks on a new or
-# renamed machine. Enroll with the same value:
+# renamed machine. With the fixed value, a mapping made anywhere with the same
+# -o and -i works on every machine with this origin; copy it to
+# ~/.config/Yubico/u2f_keys. Enroll once, on any machine:
 #
 #   mkdir -p ~/.config/Yubico
 #   pamu2fcfg -o pam://ravnix -i pam://ravnix > ~/.config/Yubico/u2f_keys
+#   chmod 600 ~/.config/Yubico/u2f_keys
+#
+# The chmod matters: pam_u2f 1.4.0 refuses a mapping owned by someone else,
+# but only warns in the journal about one that others may write, and whoever
+# can write it can add a key of their own. NixOS's home is 700, which covers
+# it as long as it stays so.
 #
 # WHAT IT COSTS. With the key plugged in, every prompt waits for the touch
 # first, until the key gives up (its own timeout: pam_u2f and libfido2 set

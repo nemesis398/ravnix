@@ -35,16 +35,24 @@ in
         count as a wrong FIDO2 PIN, and eight of those block FIDO2 on the key
         for good.
 
-        Turn it on and switch, which installs pamu2fcfg, then enroll once, as
-        the user and on the laptop with the key plugged in, touching it when
-        it blinks (a key with a FIDO2 PIN asks for it here, once):
+        The key needs a mapping in ~/.config/Yubico/u2f_keys. One made with
+        the same origin works on every machine, so a mapping made elsewhere
+        with `-o pam://ravnix -i pam://ravnix` is copied in as it is; only one
+        made with pamu2fcfg's default origin (`pam://` and the host name)
+        must be made again. To make one, as the user, with the key plugged in,
+        touching it when it blinks (a key with a FIDO2 PIN asks for it here,
+        once); the option installs pamu2fcfg on the laptop:
 
             mkdir -p ~/.config/Yubico
             pamu2fcfg -o pam://ravnix -i pam://ravnix > ~/.config/Yubico/u2f_keys
+            chmod 600 ~/.config/Yubico/u2f_keys
 
-        With another `origin`, put that value after `-o` and `-i`. Until the
-        file exists, pam_u2f fails without a prompt and the password is asked
-        for as before. Off on the server, which never has the key.
+        The chmod matters: pam_u2f refuses a mapping that someone else owns,
+        but only warns about one that others may write, and whoever can write
+        it can add a key of their own. With another `origin`, put that value
+        after `-o` and `-i`. Until the file exists, pam_u2f fails without a
+        prompt and the password is asked for as before. Off on the server,
+        which never has the key.
       '';
     };
 
