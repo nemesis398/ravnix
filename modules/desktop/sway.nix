@@ -229,7 +229,11 @@ let
       obsidian-open-daily = helpers.python {
         name = "obsidian-open-daily";
         src = bin + "/obsidian-open-daily";
-        tokens.vault = helpers.pyString vault;
+        tokens = {
+          vault = helpers.pyString vault;
+          # The CLI client; the package's bin/obsidian is the Electron launcher.
+          cli = helpers.pyString (lib.getExe' pkgs.obsidian "obsidian-cli");
+        };
         flakeIgnore = pyIgnore;
       };
       sway-session-layout = helpers.python {

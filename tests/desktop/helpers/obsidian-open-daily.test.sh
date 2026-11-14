@@ -10,6 +10,7 @@ set +e
 set -u
 script=${script:?}
 scriptNoVault=${scriptNoVault:?}
+scriptDefaultCli=${scriptDefaultCli:?}
 fail=0
 bad() { echo "FAIL: $*" >&2; fail=1; }
 ok() { echo "ok: $*"; }
@@ -18,7 +19,7 @@ work=$PWD/work
 mkdir -p "$work"
 # The build sandbox throws everything away; a run outside it must not leave
 # the vault behind.
-trap 'rm -rf /tmp/ood' EXIT
+trap 'rm -rf /tmp/ood /tmp/ood-cli' EXIT
 vault="/tmp/ood/My Notes"
 daily="Daily"
 state=""
@@ -95,6 +96,18 @@ has out "newest daily : $newest" || bad "--print does not name the newest daily 
 has out "active vault : My Notes" || bad "--print does not name the active vault: $(cat "$state/out")"
 [ "$(launched)" = 0 ] && [ "$(opened)" = 0 ] || bad "--print started or opened something"
 ok "--print"
+
+# ── the default CLI is the one the script was built with ─────────────────────
+# (Not OBSIDIAN_CLI: the stand-in is put where the build says the CLI is.)
+reset; mkvault; vault_lines="My Notes"
+cp "$work/cli" /tmp/ood-cli
+state=$work/defaultcli
+mkdir -p "$state"
+printf 'My Notes\n' >"$state/vault"
+STATE=$state GTK_LAUNCH=$work/gtk-launch OBSIDIAN_OPEN_DAILY_WAIT=2 OBSIDIAN_OPEN_DAILY_POLL=0.05 \
+  env -u OBSIDIAN_CLI "$scriptDefaultCli" >"$state/out" 2>"$state/err"
+[ "$(opened)" = 1 ] && has cli.log "open path=$newest" || bad "the CLI the script was built with is not the default: $(cat "$state/cli.log" 2>/dev/null) $(cat "$state/err")"
+ok "the default CLI is the built-in one"
 
 # ── Obsidian up on the vault: the newest note is opened, nothing is started ──
 reset; mkvault; vault_lines="My Notes"

@@ -22,11 +22,14 @@
 let
   helpers = import ../../modules/desktop/sway/lib.nix { inherit lib pkgs; };
   build =
-    vault:
+    vault: cli:
     helpers.python {
       name = "obsidian-open-daily";
       src = ../../modules/desktop/sway/bin/obsidian-open-daily;
-      tokens.vault = helpers.pyString vault;
+      tokens = {
+        vault = helpers.pyString vault;
+        cli = helpers.pyString cli;
+      };
       flakeIgnore = [
         "E501"
         "W503"
@@ -57,6 +60,7 @@ let
     lib.concatStringsSep "\n" (
       lib.filter (l: lib.hasPrefix "exec " l && lib.hasInfix "sway-session-layout" l) (lib.splitString "\n" (layoutOf host))
     );
+  installedScript = host: lib.findFirst (p: p.name == "obsidian-open-daily") (throw "obsidian-open-daily is not installed") host.config.environment.systemPackages;
   installed = host: map lib.getName host.config.environment.systemPackages;
   refuses = host: lib.any (a: !a.assertion && lib.hasInfix "ravnix.link.vault" a.message) host.config.assertions;
   asserts = [
@@ -95,10 +99,22 @@ pkgs.runCommand "desktop-obsidian-open-daily"
       pkgs.coreutils
     ];
     # The sandbox's /tmp is private; the test makes the vault there.
-    script = "${build "/tmp/ood/My Notes"}/bin/obsidian-open-daily";
-    scriptNoVault = "${build ""}/bin/obsidian-open-daily";
+    script = "${build "/tmp/ood/My Notes" "obsidian-cli"}/bin/obsidian-open-daily";
+    scriptNoVault = "${build "" "obsidian-cli"}/bin/obsidian-open-daily";
+    # Built with a default CLI that the test provides, to see the default used.
+    scriptDefaultCli = "${build "/tmp/ood/My Notes" "/tmp/ood-cli"}/bin/obsidian-open-daily";
+    # The script a host installs: its default CLI is the CLI client of the
+    # Obsidian package (bin/obsidian is the Electron launcher, which would start
+    # a whole second Obsidian at every poll).
+    installedScript = "${installedScript withVault}/bin/obsidian-open-daily";
+    expectedCli = lib.getExe' withVault.pkgs.obsidian "obsidian-cli";
     testScript = ./helpers/obsidian-open-daily.test.sh;
   }
   ''
+    grep -qF "CLI = os.environ.get(\"OBSIDIAN_CLI\", \"$expectedCli\")" "$installedScript" || {
+      echo "the installed obsidian-open-daily does not default to $expectedCli:" >&2
+      grep -n 'OBSIDIAN_CLI' "$installedScript" >&2
+      exit 1
+    }
     bash "$testScript" > $out
   ''

@@ -7,10 +7,13 @@ up on ONE named vault, showing where the notes were left off.
 CARRIED OVER from Fedora's script, as it was (rule 4 of AGENTS.md: it stays
 Python until its port). What ravnix changed: the vault is ravnix.link.vault,
 filled in when the host is built, and an empty one means no vault:
-Obsidian is started plainly and nothing is opened. The Obsidian CLI and
-gtk-launch are found on the PATH, and the desktop id is the one the system
-installs. OBSIDIAN_CLI, GTK_LAUNCH, OBSIDIAN_OPEN_DAILY_WAIT and
-OBSIDIAN_OPEN_DAILY_POLL replace them in the tests.
+Obsidian is started plainly and nothing is opened. The Obsidian CLI is the
+obsidian-cli client of the Obsidian package, by its store path, filled in when
+the host is built (the package's bin/obsidian is the Electron launcher, which
+would start a whole second Obsidian at every call). gtk-launch is found on
+the PATH, and the desktop id is the one the system installs. OBSIDIAN_CLI,
+GTK_LAUNCH, OBSIDIAN_OPEN_DAILY_WAIT and OBSIDIAN_OPEN_DAILY_POLL replace them
+in the tests.
 
 WHY IT DOES NOT USE obsidian://open, WHICH WOULD BE THE OBVIOUS WAY. Obsidian
 1.13 will not act on a URI unsupervised: it puts up a modal, "Run action from
@@ -72,7 +75,9 @@ from urllib.parse import quote
 VAULT_PATH = @vault@
 VAULT = Path(VAULT_PATH) if VAULT_PATH else None
 DESKTOP_ID = "md.obsidian.Obsidian"
-CLI = os.environ.get("OBSIDIAN_CLI", "obsidian")
+# Also filled in by the build (a Python string literal): the obsidian-cli of
+# the Obsidian package.
+CLI = os.environ.get("OBSIDIAN_CLI", @cli@)
 GTK_LAUNCH = os.environ.get("GTK_LAUNCH", "gtk-launch")
 
 

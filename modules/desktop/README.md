@@ -46,7 +46,7 @@ real thing, and the tests set them:
 | `SWAYMSG`, `PGREP`, `PKILL`, `NOTIFY_SEND` | `sway-mirror` | `swaymsg`, `pgrep`, `pkill`, `notify-send` |
 | `RFKILL`, `NOTIFY_SEND` | `sway-airplane` | `rfkill`, `notify-send` |
 | `BUSCTL` | `sway-wait-sni` | `busctl` |
-| `OBSIDIAN_CLI`, `GTK_LAUNCH`, `OBSIDIAN_OPEN_DAILY_WAIT`, `OBSIDIAN_OPEN_DAILY_POLL` | `obsidian-open-daily` | `obsidian`, `gtk-launch`, the 30 s wait for Obsidian and its 0.5 s poll |
+| `OBSIDIAN_CLI`, `GTK_LAUNCH`, `OBSIDIAN_OPEN_DAILY_WAIT`, `OBSIDIAN_OPEN_DAILY_POLL` | `obsidian-open-daily` | the Obsidian package's `obsidian-cli` (its store path), `gtk-launch`, the 30 s wait for Obsidian and its 0.5 s poll |
 | `WAYBAR_MATCH`, `SWAYLOCK_MATCH` | `waybar-launch`, `waybar-clock`, `keep-awake` | the command-line patterns (`^waybar( \|$)`, `^swaylock( \|$)`) that find Waybar and swaylock |
 
 The last row is why the script tests cannot hit the developer's own bar or lock
