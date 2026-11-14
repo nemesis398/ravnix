@@ -118,8 +118,8 @@ what separates {{user.name}}'s convention from the way generated text uses them.
 ##### Empfehlung         internal, none
 ```
 
-The exception is a document that already runs a legend, the way a study guide
-may use `🚌` `🖥️` `🇩🇪` as consistent markers. Follow the convention already in
+The exception is a document that already runs a legend, the way a reference
+note may mark its rows with the same few emoji throughout. Follow the convention already in
 the file instead of stripping it. The checker recognises this: an emoji that
 repeats, or that also labels a heading, is reported as a legend and left alone.
 
@@ -127,9 +127,9 @@ repeats, or that also labels a heading, is reported as a legend and left alone.
 
 In English, **Title Case for the note's name and its `#` heading, sentence
 case for every heading inside it.** Proper nouns keep their capitals either
-way, which is why `## ☁️ Tier 2: restic to a Hetzner Storage Box` is already
-correct: `restic` is lowercase because that is the tool's name, and Hetzner
-sells a product actually called Storage Box.
+way, which is why `## ☁️ Tier 2: restic to B2 Cloud Storage` is already
+correct: `restic` is lowercase because that is the tool's name, and Backblaze
+sells a product actually called B2 Cloud Storage.
 
 ```
 Backup Plan.md                          filename, Title Case

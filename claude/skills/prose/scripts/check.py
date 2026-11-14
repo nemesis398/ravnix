@@ -18,7 +18,9 @@ Usage
     check.py --json                  machine-readable findings
     check.py --strict                warnings count as failures too
 
-Exit status is 1 when anything fatal was found, else 0.
+Exit status is 1 when anything fatal was found, 2 when the check could not
+run (a file missing, or LanguageTool Premium not set up: it names the skill
+value to set rather than falling back to the free tier), else 0.
 """
 
 from __future__ import annotations
@@ -42,35 +44,27 @@ import skill_values as sv  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Editable lists. These are meant to be tuned over time.
-# The user's dictionary, ~/.config/prose/dictionary.txt (one word per line),
-# is merged into IGNORE_WORDS at runtime.
+# Merged into IGNORE_WORDS at runtime: the user's dictionary,
+# ~/.config/prose/dictionary.txt (one word per line), and the skill value
+# `prose.ignoreWords`, a list of the words of the user's own world.
 # ---------------------------------------------------------------------------
 
 IGNORE_WORDS = {
-    # A common stack and its surroundings.
-    "Proxmox", "Coolify", "netcup", "UniFi", "Ubiquiti", "OPNsense", "pfSense",
-    "Nextcloud", "Fedora", "Sway", "waybar", "kanshi", "fuzzel", "dunst",
-    "swaylock", "foot", "Ghostty", "Catppuccin", "Wayland", "Hyprland",
-    "Umami", "Plausible", "Matomo", "Rybbit", "GoatCounter", "PostHog",
-    "GlitchTip", "Bugsink", "AppSignal", "GoAccess", "ClickHouse", "Postgres",
-    "PostgreSQL", "Valkey", "Restic", "Borg", "WireGuard", "Tailscale",
-    "Netbird", "Pi-hole", "AdGuard", "Grafana", "Prometheus", "Checkmk",
-    "Uptime", "Kuma", "Ansible", "Terraform", "Docker", "Kubernetes",
-    "Obsidian", "Excalidraw", "Anki", "FSRS",
-    "Ausbildungsnachweis", "Lernfeld", "Lernfelder", "Projektarbeit",
-    "Berufsschule", "IHK", "AkA", "TDDDG", "DSGVO", "BBiG", "FIAusbV",
-    "Wireshark", "tcpdump", "Samba", "LibreOffice", "systemd", "hunspell",
-    "LanguageTool", "OpenCode", "Claude", "Anthropic", "Opus", "Sonnet",
-    "Stow", "SELinux", "GRUB", "Plymouth", "SDDM", "NVIDIA", "Lenovo",
-    "IdeaPad", "Boson", "ExSim", "Geerling", "Messer", "netzwerk",
+    # The tools of the desktop and the toolchain that any ravnix user meets.
+    "Sway", "waybar", "kanshi", "fuzzel", "dunst", "swaylock", "Ghostty",
+    "Catppuccin", "Wayland", "systemd", "hunspell", "LanguageTool",
+    "Claude", "Anthropic", "Opus", "Sonnet", "NVIDIA", "Obsidian",
+    "Excalidraw", "Docker", "Kubernetes", "Postgres", "PostgreSQL",
+    "WireGuard", "Grafana", "Prometheus", "Ansible", "Terraform",
+    "Wireshark", "tcpdump", "SELinux", "Restic", "Borg",
     # Deliberately lowercase tool names. The casing filter is
     # case-insensitive, so listing them here also stops LanguageTool
     # "correcting" restic to Restic and borg to Borg.
-    "restic", "borg", "nginx", "systemd", "vzdump", "rbw", "pass",
+    "restic", "borg", "nginx", "rbw", "pass",
     # Product names whose capitalisation is the vendor's, not a mistake.
-    "Storage Box", "Proxmox Backup Server", "Hetzner", "Vaultwarden",
-    "Bitwarden", "Forgejo", "Stirling", "NetBird", "LanguageTool",
+    "Bitwarden", "NetBird", "Netbird",
 }
+IGNORE_KEY = "prose.ignoreWords"
 
 # Phrases that mark machine-shaped prose. Kept short and high-precision:
 # every entry here should be something a careful writer would rephrase.
@@ -161,7 +155,7 @@ LT_AD_PREFIXES = ("LT_RECOMMENDATION",)
 
 # The QuillBot-derived premium rules declare issueType=grammar or misspelling,
 # but in practice they are rephrasing suggestions: on a real note they wanted
-# `restic` capitalised, Hetzner's actual product name "Storage Box"
+# `restic` capitalised, a vendor's actual product name "Cloud Storage"
 # lowercased, and a statement turned into a question. Left at error severity
 # they would force wrong edits, because this skill says to fix every error.
 # They are worth reading, so they stay, demoted to warnings.
@@ -655,11 +649,11 @@ def check_deterministic(source: str, masked: Masked, blocks: list[Block],
                 and s.orig_text.startswith(("```", "~~~")) for s in masked.segments)
 
     # The legend exemption below applies to body text, and headings used to be
-    # judged without it. But the FiSi guide tags headings the same way it tags
-    # rows, with a trailing 🚌 for commute and 🖥️ for desk, and `00 Guide Home`
-    # states that legend outright. Every one of those headings was reported as an
-    # emoji in the wrong place, and obeying that would have destroyed the marker
-    # column the guide is scanned by.
+    # judged without it. But a note can tag its headings the same way it tags
+    # its rows, with a trailing emoji per kind, and state that legend outright.
+    # Every one of those headings was reported as an emoji in the wrong place,
+    # and obeying that would have destroyed the marker column the note is
+    # scanned by.
     #
     # The test is the same one the body rule uses, and for the same reason: an
     # emoji that occurs once is decoration, and one that recurs is a marker. It
@@ -704,7 +698,7 @@ def check_deterministic(source: str, masked: Masked, blocks: list[Block],
             in_heading[i] = True
     # An emoji used once in running text is decoration. The same emoji used
     # repeatedly, or one that also labels a heading, is a deliberate marker:
-    # the FiSi guide's 🚌 🖥️ 🇩🇪 legend is the obvious case. Repeating an
+    # a note's legend of kinds is the obvious case. Repeating an
     # identical warning twenty times would bury the findings that matter, so
     # systematic markers get one informational line and are left alone.
     body_emoji: dict[str, list[int]] = {}
@@ -836,18 +830,21 @@ def check_deterministic(source: str, masked: Masked, blocks: list[Block],
 # The user's own list of accepted words, a word per line, `#` comments. On a
 # ravnix host ravnix-dict keeps it (ravnix.dictionary.paths.prose). The list
 # beside the skill ships with it and is read only when the user has none; it
-# holds no one's words.
+# holds no one's words. The skill value `prose.ignoreWords` adds to either.
 BUNDLED_DICT = Path(__file__).resolve().parent.parent / "dictionary.txt"
 CLOUD_PREMIUM = "https://api.languagetoolplus.com"
 CLOUD_FREE = "https://api.languagetool.org"
 MAX_CHUNK = 18000        # under the free-tier ceiling, safe on either plan
 
-# The Premium key is the password of a Bitwarden item, its account the item's
-# username, read with rbw. The skill value `prose.languagetool.item` names
-# the item, by name or id. No file holds the key: not either repository and
-# not the disk. A key in the environment (LANGUAGETOOL_API_KEY, which
-# ravnix.shell.secretEnv can put there from the same vault) wins.
+# The Premium key is the password of a Bitwarden item, read with rbw; the
+# skill value `prose.languagetool.item` names the item, by name or id, and
+# `prose.languagetool.username` is the account. No file holds either: not
+# either repository and not the disk. The environment (LANGUAGETOOL_API_KEY
+# and LANGUAGETOOL_USERNAME, which ravnix.shell.secretEnv can fill from the
+# same vault) wins. Without them the check stops and names what to set; it
+# never drops to the free tier on its own.
 ITEM_KEY = "prose.languagetool.item"
+USERNAME_KEY = "prose.languagetool.username"
 
 
 def user_dictionary() -> Path:
@@ -890,9 +887,6 @@ def from_bitwarden(allow_unlock: bool = False) -> tuple[dict, str]:
         return {}, f"rbw: {detail[:80]}"
     lines = out.splitlines()
     creds = {"LANGUAGETOOL_API_KEY": lines[0].strip()} if lines else {}
-    for line in lines[1:]:
-        if line.lower().startswith("username:"):
-            creds["LANGUAGETOOL_USERNAME"] = line.split(":", 1)[1].strip()
     return creds, f"from the Bitwarden item named by {ITEM_KEY}"
 
 
@@ -904,6 +898,10 @@ def load_credentials(allow_unlock: bool = False) -> tuple[dict, list[str]]:
     found, note = from_bitwarden(allow_unlock)
     trail.append(f"bitwarden: {note}")
     creds.update({k: v for k, v in found.items() if v})
+    user = sv.get(USERNAME_KEY)
+    if user:
+        creds["LANGUAGETOOL_USERNAME"] = user
+        trail.append(f"account: from {USERNAME_KEY}")
 
     env_hits = []
     for key in ("LANGUAGETOOL_USERNAME", "LANGUAGETOOL_API_KEY",
@@ -917,8 +915,42 @@ def load_credentials(allow_unlock: bool = False) -> tuple[dict, list[str]]:
     return {k: v for k, v in creds.items() if v}, trail
 
 
+def premium_problems(creds: dict, trail: list[str] | None = None) -> list[str]:
+    """What keeps LanguageTool Premium from running, each as a line to show.
+
+    Nothing with a self-hosted server, or with the key and the account in
+    hand. Otherwise the skill values to set, or, with both set, why the key
+    did not come (a locked vault, no rbw).
+    """
+    if creds.get("LANGUAGETOOL_SERVER"):
+        return []
+    missing = []
+    if not creds.get("LANGUAGETOOL_API_KEY") and not sv.get(ITEM_KEY):
+        missing.append(ITEM_KEY)
+    if not creds.get("LANGUAGETOOL_USERNAME"):
+        missing.append(USERNAME_KEY)
+    if missing:
+        return [str(sv.Missing(k)) for k in missing]
+    if not creds.get("LANGUAGETOOL_API_KEY"):
+        why = next((t.split(": ", 1)[1] for t in (trail or []) if t.startswith("bitwarden: ")),
+                   "the key could not be read")
+        return [f"no LanguageTool Premium key: {why}"]
+    return []
+
+
+def extra_words() -> set[str]:
+    """The skill value prose.ignoreWords: strings only, trimmed, blanks out."""
+    try:
+        value = sv.get(IGNORE_KEY, list)
+    except LookupError:
+        return set()
+    if not isinstance(value, list):
+        return set()
+    return {w.strip() for w in value if isinstance(w, str) and w.strip()}
+
+
 def load_dictionary() -> set[str]:
-    words = set(IGNORE_WORDS)
+    words = set(IGNORE_WORDS) | extra_words()
     for path in dictionary_files():
         try:
             text = path.read_text(encoding="utf-8")
@@ -1253,14 +1285,16 @@ def report(path: str, findings: list[Finding], backend_note: str) -> tuple[int, 
 # ---------------------------------------------------------------------------
 
 def check_text(source: str, lang: str, use_lt: bool, picky: bool,
-               allow_unlock: bool = False) -> tuple[list[Finding], str]:
+               allow_unlock: bool = False,
+               creds: dict | None = None) -> tuple[list[Finding], str]:
     masked = mask_markdown(source)
     blocks = language_blocks(masked, lang)
     starts = line_index(source)
     findings = check_deterministic(source, masked, blocks, starts)
     note = ""
     if use_lt:
-        creds, _trail = load_credentials(allow_unlock)
+        if creds is None:
+            creds, _trail = load_credentials(allow_unlock)
         dictionary = load_dictionary()
         lt_findings, label, note = run_languagetool(
             masked, blocks, starts, resolve_backends(creds), dictionary, picky)
@@ -1309,6 +1343,12 @@ def main() -> int:
         print(f"  personal dict : {mine} "
               f"({'found' if mine.is_file() else 'not present, the shipped list instead'})")
         print()
+        problems = premium_problems(creds, trail)
+        if problems:
+            print(paint("Not set up", "bold"))
+            for line in problems:
+                print(f"  {line}")
+            return 2
         for backend in resolve_backends(creds):
             ok, detail = probe(backend)
             mark = paint("PASS", "note") if ok else paint("FAIL", "error")
@@ -1329,11 +1369,22 @@ def main() -> int:
         ap.print_help()
         return 2
 
+    creds = None
+    if not args.no_lt:
+        creds, trail = load_credentials(args.unlock)
+        problems = premium_problems(creds, trail)
+        if problems:
+            for line in problems:
+                print(f"prose: {line}", file=sys.stderr)
+            print("prose: LanguageTool did not run; --no-lt runs the other checks alone",
+                  file=sys.stderr)
+            return 2
+
     payload = []
     total_err = total_warn = 0
     for name, text in sources:
         findings, note = check_text(text, args.lang, not args.no_lt, args.picky,
-                                    args.unlock)
+                                    args.unlock, creds)
         if args.as_json:
             payload.append({"file": name, "note": note,
                             "findings": [f.as_dict() for f in findings]})

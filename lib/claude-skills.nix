@@ -45,6 +45,11 @@ let
     ai-memory = {
       "vault.root" = "string";
     };
+    # Premium or say so: check.py never drops to the free tier on its own.
+    prose = {
+      "prose.languagetool.item" = "string";
+      "prose.languagetool.username" = "string";
+    };
   };
 
   isSet =

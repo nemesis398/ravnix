@@ -76,8 +76,8 @@ assuming them the other way produces confidently wrong output.
 - Flagging each dash past the budget. The budget is a document property, so the
   cutoff position is arbitrary and the report is noise. It is one finding that
   names the densest paragraphs.
-- Repeating an identical emoji warning per occurrence. On the FiSi guide that
-  produced 22 warnings for a deliberate legend and buried everything else.
+- Repeating an identical emoji warning per occurrence. On a note with an emoji
+  legend that produced 22 warnings for the legend and buried everything else.
 
 ## Closed 2026-07-27
 
@@ -85,7 +85,7 @@ assuming them the other way produces confidently wrong output.
 `api.languagetoolplus.com` with no support request, despite LanguageTool's own
 docs implying otherwise. It lives in Bitwarden as `LanguageTool - API token` and
 reaches the checker through `~/.config/ai-secrets.env`, the loader that already
-carries the Coolify and Hostinger tokens.
+carries API tokens.
 
 **Premium needed three filters before it was usable.** More findings turned out
 not to mean better findings:
@@ -93,7 +93,7 @@ not to mean better findings:
 - `LT_RECOMMENDATION_*` are adverts, not errors, and are dropped.
 - `QB_NEW_*` declare `issueType=grammar` but are rephrasing suggestions. On one
   real note they arrived as 23 errors, including capitalising `restic` and
-  lowercasing Hetzner's product name "Storage Box". Demoted to warnings, which
+  lowercasing a vendor's product name "Cloud Storage". Demoted to warnings, which
   took that note to 0 errors and 15 warnings.
 - Suggestion-class rules read a markdown table row as prose and would corrupt
   it, so they are dropped on table rows.
@@ -118,7 +118,7 @@ headings inside, which is ordinary editorial practice. Both English runs
 followed it correctly. The apparent disagreement was an H1 compared against an
 H2, which is the convention working rather than failing.
 
-The initial claim was drawn from FiSi *note titles* rather than from headings
+The initial claim was drawn from *note titles* rather than from headings
 inside documents, which is why it pointed the wrong way.
 
 It is now stated in SKILL.md so the behaviour is instructed rather than

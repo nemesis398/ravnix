@@ -45,7 +45,9 @@ sentence. A hook whose key is missing stays quiet.
 | `handoff.workspaces` | object | `handoff` | the Plane board layout: workspaces, their projects and the directories each project is the default for |
 | `plane.mcpUrl` | string, a URL | `handoff` | Plane's MCP gateway; `PLANE_MCP_URL` wins over it |
 | `prose.languageRule` | string, Markdown | `prose` | which language a text is written in, and when to address the reader as `Sie` |
-| `prose.languagetool.item` | string | `prose` | the Bitwarden item of a LanguageTool Premium account (key in its password, account in its username), read with rbw; without it the checker uses the free tier |
+| `prose.languagetool.item` | string | `prose` | the Bitwarden item whose password is the API key of a LanguageTool Premium account, read with rbw |
+| `prose.languagetool.username` | string | `prose` | that account, as it logs in at languagetool.org; the same value as `ravnix.dictionary.languagetool.username` |
+| `prose.ignoreWords` | list of strings | `prose` | words of the user's own world the checker accepts besides its short list of tool names: a trade, a course, a provider |
 | `laptop.model` | string | `laptop` | the laptop's model and GPUs, as the description should match them |
 | `laptop.checkout` | string, an absolute path | `laptop` | the ravnix checkout the laptop is built from (`ravnix.dev.checkout`) |
 | `laptop.privateFlake` | string, an absolute path | `laptop` | the private flake |
@@ -69,9 +71,20 @@ handoff.workspaces = {
 Two values are no skill value. The Plane token is the environment's
 `PLANE_API_TOKEN`, which `ravnix.shell.secretEnv` reads from Bitwarden when
 Claude Code starts. The prose skill's accepted words are the user's list,
-`~/.config/prose/dictionary.txt`, which ravnix-dict keeps
-(`ravnix.dictionary.paths.prose`); the `dictionary.txt` beside the skill holds
-no words and is read only when that file does not exist.
+`~/.config/prose/dictionary.txt`, which ravnix-dict keeps in step with the
+user's dictionary (`ravnix.dictionary.paths.prose`). ravnix-dict lands
+before these skills, so the path is the one it writes. The
+`dictionary.txt` beside the skill holds no words and is read only when that
+file does not exist.
+
+`prose` runs LanguageTool Premium or says why not. Without
+`prose.languagetool.item` and `prose.languagetool.username` (or
+`LANGUAGETOOL_API_KEY` and `LANGUAGETOOL_USERNAME` in the environment, or a
+self-hosted `LANGUAGETOOL_SERVER`) its checker exits 2 naming the values,
+and with them set but the key out of reach (a locked vault) it exits 2
+saying so; it never drops to the free tier on its own. `--no-lt` runs the
+other checks alone. A placeholder left in either value, such as
+`alice@example.org`, warns at build like any other.
 
 `vault.commitVia` and `vault.repositoryHere` are set by ravnix itself, by the
 host's shape (`modules/glue/vault.nix`). The vault skills commit with
@@ -149,8 +162,13 @@ wired, a skill replaced and one left out.
   Fedora laptop, is `laptop`, rewritten for huginn: NixOS, built from two
   flakes, nothing configured by hand.
 - `prose` reads its LanguageTool key from rbw alone (and the environment),
-  never from a file: the keyring and the plaintext credentials file are gone,
-  and with them `--store-key`.
+  never from a file, and its account from `prose.languagetool.username`: the
+  keyring and the plaintext credentials file
+  (`~/.config/languagetool/credentials`) are retired on purpose, and with
+  them `--store-key`. A missing value stops the check instead of falling
+  back to the free tier.
+- `prose`'s list of accepted words is cut to tool names that any user meets;
+  the rest is the user's, in `prose.ignoreWords` or the user's dictionary.
 - `journal` and the handoff advisor count `vault-commit` as a commit, and
   every script also counts when run by the store path of its python3, as the
   rendered skills run them.

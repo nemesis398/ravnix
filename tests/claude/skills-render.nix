@@ -44,6 +44,8 @@ let
     prose = {
       languageRule = "- Alice's own notes are **English** by default.";
       languagetool.item = "LanguageTool";
+      languagetool.username = "alice@example.org";
+      ignoreWords = [ "Zettelkasten" ];
     };
     laptop = {
       model = "Example Book 14, one GPU";
@@ -211,6 +213,8 @@ let
         prose = [
           "user.name"
           "prose.languageRule"
+          "prose.languagetool.item"
+          "prose.languagetool.username"
         ];
         simplify-changes = [ "user.name" ];
       };
@@ -220,6 +224,22 @@ let
       ok =
         lib.elem "handoff.workspaces" (render (full // { handoff.workspaces = { }; })).passthru.missing.handoff
         && lib.elem "plane.mcpUrl" (render (full // { plane.mcpUrl = [ "x" ]; })).passthru.missing.handoff;
+    }
+    {
+      name = "prose without the LanguageTool account names it, and nothing else";
+      ok =
+        (render (lib.recursiveUpdate full { prose.languagetool.username = ""; })).passthru.missing.prose
+        == [ "prose.languagetool.username" ];
+    }
+    {
+      name = "an account left at a documentation placeholder warns like any value";
+      ok =
+        let
+          eval = import ../options/helpers/eval.nix { inherit lib self; };
+          # The template gives every option a value, as the walk reads them all.
+          warned = (eval [ ../../templates/default/me.nix { ravnix.claude.skillValues = full; } ]).config.warnings;
+        in
+        lib.any (w: lib.hasPrefix "ravnix.claude.skillValues.prose.languagetool.username is " w) warned;
     }
     {
       name = "a value goes in once: a placeholder inside it stays literal";

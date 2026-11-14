@@ -15,8 +15,9 @@ working whatever the account allows on a given day.
    rules only, so the premium rules are not available this way.
 2. **Premium cloud**, if `LANGUAGETOOL_USERNAME` and `LANGUAGETOOL_API_KEY` are
    both set. `https://api.languagetoolplus.com`.
-3. **Free cloud**, always available. `https://api.languagetool.org`, no
-   account.
+3. **Free cloud**, `https://api.languagetool.org`, no account. Only behind
+   one of the two above: the checker never starts on it. Without a server
+   and without the Premium values it exits 2 and names the values to set.
 4. **hunspell**, if nothing above answers. English spelling only, and the
    output says so rather than implying a grammar check happened.
 
@@ -25,8 +26,9 @@ working whatever the account allows on a given day.
 ## Credentials
 
 The API key is a secret and is never kept in a file: not in either
-repository of ravnix and not on the disk. Two sources, reported by
-`--selftest`, the environment first:
+repository of ravnix and not on the disk. The account is the skill value
+`prose.languagetool.username`. Two sources, reported by `--selftest`, the
+environment first:
 
 1. **Environment variables.** `LANGUAGETOOL_API_KEY` and
    `LANGUAGETOOL_USERNAME`, for a shell that already holds them; on a ravnix
@@ -34,11 +36,13 @@ repository of ravnix and not on the disk. Two sources, reported by
    from the same vault. `LANGUAGETOOL_SERVER` names a self-hosted server.
 2. **Bitwarden via `rbw`**, the item that the skill value
    `prose.languagetool.item` names (by name or id): the key in its password
-   field, the account in its username field. It probes `rbw unlocked` first
-   and skips itself when the vault is locked, so an unattended run never
-   blocks on a pinentry prompt. `--unlock` allows the prompt when wanted.
-   Without the value the checker says to set it and goes on with the free
-   tier.
+   field. It probes `rbw unlocked` first and stops when the vault is
+   locked, so an unattended run never blocks on a pinentry prompt; the
+   check then exits 2 saying so. `--unlock` allows the prompt when wanted.
+
+Without the item or the account the check exits 2 with one line per value,
+"set `prose.languagetool.item` in your ravnix skill values", and so does
+`--selftest`. `--no-lt` runs the other checks without LanguageTool.
 
 The key must never go into the notes vault or any other synced tree, because
 those sync to other devices.
@@ -49,7 +53,7 @@ private-use key. **In practice the key from the account settings authenticates
 against `api.languagetoolplus.com` directly**, verified 2026-07-27: the probe
 comes back without a `premiumHint`, which is the field that actually proves
 premium rules ran. No support request was needed. If that ever changes the
-chain simply falls through to the free tier.
+probe shows it: `--selftest` reports "free rules only".
 
 ## Limits
 
@@ -104,8 +108,8 @@ errors is how a checker loses its credibility.
 **`QB_NEW_*` is demoted to a warning.** These QuillBot-derived premium rules
 declare `issueType=grammar` or `misspelling`, so at face value they arrive as
 errors, and this skill says to fix every error. On one real note that would
-have forced 23 wrong edits: capitalising `restic`, lowercasing Hetzner's actual
-product name "Storage Box", and turning a statement into a question. They are
+have forced 23 wrong edits: capitalising `restic`, lowercasing a vendor's actual
+product name "Cloud Storage", and turning a statement into a question. They are
 still worth reading, so they stay, as warnings. After the demotion that same
 note reports 0 errors and 15 warnings.
 
