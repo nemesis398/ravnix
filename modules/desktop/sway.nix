@@ -478,6 +478,21 @@ in
     # so it is installed with it: gtk-qt.nix sets both, for the accent of
     # ravnix.theme.
 
+    # The XDG autostart (Handy, the Nextcloud client, any /etc/xdg/autostart
+    # entry). systemd's generator makes a user unit of each entry and hangs it
+    # on xdg-desktop-autostart.target, which refuses a manual start
+    # (RefuseManualStart=yes: "may be requested by dependency only"), so the
+    # Sway config's `systemctl --user start xdg-desktop-autostart.target` was
+    # refused at every login and nothing ever started. This target wants it,
+    # and the config starts this one, once the tray is up (sway-wait-sni): the
+    # applets that carry a tray icon lose it when they start first.
+    systemd.user.targets.ravnix-autostart = {
+      description = "The XDG autostart entries, once the tray is up";
+      wants = [ "xdg-desktop-autostart.target" ];
+      after = [ "graphical-session.target" ];
+      partOf = [ "graphical-session.target" ];
+    };
+
     # sway-game-mode holds Sway in mode "game" while a game has focus, so the
     # mouse's side buttons and the gesture keys reach the game. A unit of the
     # session: it starts with sway-session.target, which NixOS's programs.sway
@@ -552,8 +567,7 @@ in
 
           # The environment of the systemd user units (environment.d), so the
           # tray apps the XDG autostart starts see what the session sees.
-          # The session's SSH agent is rbw's (modules/common/rbw.nix); the
-          # Bitwarden desktop app's agent still listens on its own socket.
+          # The session's SSH agent is rbw's (modules/common/rbw.nix).
           systemd.user.sessionVariables = {
             # GTK 4 on Sway sends keys through the text-input protocol, which
             # does no Compose handling; the built-in "simple" context does.

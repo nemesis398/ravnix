@@ -30,7 +30,8 @@ Handy).
   PCI address of the 780M and never by `renderD128` or `card1`. Not needed as
   far as known; Task 3.7 measures it.
 - The autostart entry (`/etc/xdg/autostart/handy.desktop`) runs only if the
-  Sway session starts `xdg-desktop-autostart.target` (Task 3.2a), and the tray
+  Sway session starts `ravnix-autostart.target`, which wants
+  `xdg-desktop-autostart.target` (that one refuses a manual start), and the tray
   has to be ready by then, as on Fedora.
 - This entry is the only autostart of Handy. Handy's own switch
   (`autostart_enabled`) must stay off: it writes

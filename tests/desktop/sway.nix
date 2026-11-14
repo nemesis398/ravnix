@@ -734,6 +734,9 @@ let
     ++
       lib.optional (mauve.config.programs.sway.extraOptions != [ ])
         "a host without the nvidia driver starts Sway with ${toString mauve.config.programs.sway.extraOptions}"
+    ++ lib.optional (
+      (mauve.config.systemd.user.targets.ravnix-autostart.wants or [ ]) != [ "xdg-desktop-autostart.target" ]
+    ) "ravnix-autostart.target does not want xdg-desktop-autostart.target, which systemd refuses to start by hand"
     ++ lib.optional (!mauve.config.programs.sway.enable) "programs.sway is not enabled"
     ++ lib.optional (!mauve.config.services.greetd.enable) "greetd is not enabled"
     ++ lib.optional (!(homeOf mauve).services.dunst.enable) "dunst is not enabled"

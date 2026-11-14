@@ -4,7 +4,7 @@
 # the XDG autostart entries that carry a tray icon (the Nextcloud and Bitwarden
 # clients) lose their icon when they start first, so the sway config runs
 #
-#   sway-wait-sni && systemctl --user start xdg-desktop-autostart.target
+#   sway-wait-sni && systemctl --user start ravnix-autostart.target
 #
 # Exits 0 as soon as the watcher exists, and 1 after TIMEOUT seconds (default
 # 30). The caller's `&&` then skips the autostart: a session whose bar never

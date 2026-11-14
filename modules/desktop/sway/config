@@ -701,8 +701,9 @@ exec @polkitAgent@
 exec xdg-user-dirs-update
 
 # Once a StatusNotifier tray host (waybar) is up, run the XDG autostart entries —
-# this is what brings up the tray applets.
-exec sway-wait-sni && systemctl --user start xdg-desktop-autostart.target
+# this is what brings up the tray applets. ravnix-autostart.target (sway.nix)
+# wants xdg-desktop-autostart.target, which systemd refuses to start by hand.
+exec sway-wait-sni && systemctl --user start ravnix-autostart.target
 
 # Waybar — exec_always so a sway reload relaunches it cleanly. Mode-aware
 # (full | focus | none); toggle with $mod+Ctrl+space. Started before the SNI-gated

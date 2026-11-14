@@ -162,6 +162,32 @@ wait_for("swayidle", lambda: machine.execute(f"pgrep -u {USER} -x swayidle")[0] 
 wait_for("the policy kit agent", lambda: machine.execute(f"pgrep -u {USER} -f lxqt-policykit-agent")[0] == 0)
 wait_for("sway-session.target", lambda: as_user("systemctl --user is-active sway-session.target", check=False)[0] == 0)
 
+# The XDG autostart: Sway starts ravnix-autostart.target once the tray host is
+# up (sway-wait-sni), which wants xdg-desktop-autostart.target (systemd refuses
+# a manual start of that one: RefuseManualStart=yes), and systemd's generator
+# makes a user unit of every entry in /etc/xdg/autostart. Handy's entry is the
+# one the dictation keys need (ravnix-dict restarts it as
+# app-handy@autostart.service). The generator skips an entry without a word
+# when its TryExec is not on the PATH of the user manager, so the unit has to
+# exist, and it has to run the launcher by its store path.
+wait_for(
+    "the XDG autostart to be started",
+    lambda: as_user("systemctl --user is-active ravnix-autostart.target xdg-desktop-autostart.target", check=False)[0] == 0,
+    90,
+)
+rc, handy_unit = as_user("systemctl --user cat app-handy@autostart.service", check=False)
+manager_path = as_user("systemctl --user show-environment | sed -n 's/^PATH=//p'", check=False)[1].strip()
+assert rc == 0, (
+    "the session did not generate app-handy@autostart.service from /etc/xdg/autostart/handy.desktop;"
+    f" the user manager's PATH is {manager_path!r}, and the generator needs TryExec=handy-launch on it"
+)
+assert "handy-launch --start-hidden" in handy_unit, f"app-handy@autostart.service does not run handy-launch --start-hidden: {handy_unit}"
+# The target pulled the entry in: the unit was started at least once (it may
+# have ended or failed in a VM without a GPU, which the check at the end of this
+# file catches), so it has an invocation.
+handy_invocation = as_user("systemctl --user show -p InvocationID --value app-handy@autostart.service").strip()
+assert handy_invocation, "app-handy@autostart.service was never started by the autostart target"
+
 # The commands that energy, the keys and the bar call by name resolve for a
 # process Sway starts (swaymsg exec runs them with Sway's own environment).
 swaymsg("exec", "command -v keep-awake waybar-launch waybar-mode ghostty-float sway-volume gtk-launch > /tmp/session-path.txt 2>&1")

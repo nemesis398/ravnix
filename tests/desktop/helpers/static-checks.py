@@ -164,6 +164,14 @@ def main():
         for line in (sway + laptop).splitlines():
             if "sway-radial" in line and not line.lstrip().startswith("#"):
                 fail(label(f"the Sway config needs sway-radial at runtime: {line.strip()}"))
+        # The XDG autostart. xdg-desktop-autostart.target refuses a manual start
+        # (RefuseManualStart=yes: "may be requested by dependency only"), so
+        # `systemctl --user start xdg-desktop-autostart.target` did nothing and
+        # no autostart entry (Handy, the Nextcloud client) ever started. The
+        # session starts ravnix-autostart.target, which wants it.
+        autostart = re.sub(r"^\s*#.*$", "", sway, flags=re.M)
+        expect(re.search(r"^exec sway-wait-sni && systemctl --user start ravnix-autostart\.target$", autostart, re.M), label("the XDG autostart is not started with `sway-wait-sni && systemctl --user start ravnix-autostart.target`"))
+        expect(not re.search(r"systemctl\s+--user\s+(start|restart)\s+xdg-desktop-autostart\.target", autostart), label("sway/config starts xdg-desktop-autostart.target by hand, which systemd refuses"))
         # The Fn row. Brightness goes through sway-brightness (nixpkgs' brightnessctl
         # 0.5.1 has no --percentage, so the old inline notification never showed),
         # in the main config and again in the game mode, which repeats it.
