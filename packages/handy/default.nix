@@ -18,6 +18,14 @@
 #     overlay as a half-transparent ghost. Handy's own flake leaves the
 #     variable out for the same reason, and so does Fedora's vendor RPM.
 #
+# And the interface is in the theme of the system (theme.nix): the build
+# appends a block of CSS made from ravnix.theme to Handy's theme.css, sets the
+# four radius tokens of App.css to 0, makes the overlay's surface opaque and
+# the primary button's text the background color. The CSS is the frontend, so
+# it is embedded in the program, and a change of accent rebuilds Handy. With
+# the default accent the block is the same text and the build the same
+# derivation.
+#
 # Everything else is nixpkgs' recipe as it is: the wrapper with the updater
 # off, the ALSA plugin directory, the Vulkan build of transcribe-cpp, the
 # patched tray library, and the tests. A bump changes the version and the
@@ -30,8 +38,36 @@
 {
   lib,
   fetchFromGitHub,
+  writeText,
   handy,
+  # { palette, roles, font } of config.ravnix.theme; the desktop module passes the
+  # host's. Null is the theme module's own default (Mocha, the Mauve accent).
+  theme ? null,
 }:
+let
+  css = import ./theme.nix {
+    inherit lib;
+    theme = if theme == null then import ../../lib/default-theme.nix { inherit lib; } else theme;
+  };
+  themeCss = writeText "handy-theme.css" css.css;
+  overlayCss = writeText "handy-overlay-theme.css" css.overlayCss;
+
+  # Run in the unpacked source, by postPatch and by tests/desktop/handy-theme.nix.
+  # Every substitution fails when its text is not found, so a newer Handy that
+  # moved one stops the build instead of going unthemed. The radius tokens are
+  # Tailwind's in App.css's @theme; the button text is the primary variant's.
+  themePatch = ''
+    cat ${themeCss} >> src/styles/theme.css
+    cat ${overlayCss} >> src/overlay/RecordingOverlay.css
+    substituteInPlace src/App.css \
+      --replace-fail '--radius-panel: 16px;' '--radius-panel: 0;' \
+      --replace-fail '--radius-card: 12px;' '--radius-card: 0;' \
+      --replace-fail '--radius-control: 10px;' '--radius-control: 0;' \
+      --replace-fail '--radius-chip: 6px;' '--radius-chip: 0;'
+    substituteInPlace src/components/ui/Button.tsx \
+      --replace-fail '"text-white bg-background-ui' '"text-background bg-background-ui'
+  '';
+in
 lib.throwIf (lib.versionAtLeast handy.version "0.10.0")
   "packages/handy: nixpkgs has Handy ${handy.version} now; drop packages/handy and let handy-launch take nixpkgs' handy again"
   handy.overrideAttrs
@@ -45,6 +81,11 @@ lib.throwIf (lib.versionAtLeast handy.version "0.10.0")
         tag = "v${finalAttrs.version}";
         hash = "sha256-PnL2le8URBs4I3pv9DKh+JLDII20xtDkJEUJghLToXQ=";
       };
+
+      # Handy in the theme of the system. The frontend's node_modules
+      # (passthru.frontendDeps) is fetched from the same source and is not
+      # touched by this.
+      postPatch = prev.postPatch + themePatch;
 
       # buildRustPackage reads the hash and the source from finalAttrs, so the
       # vendor directory follows these two.
@@ -70,6 +111,7 @@ lib.throwIf (lib.versionAtLeast handy.version "0.10.0")
           (builtins.replaceStrings [ line ] [ "" ] prev.preFixup);
 
       passthru = prev.passthru // {
+        inherit themeCss overlayCss themePatch;
         # The frontend's node_modules is fetched with a hash of its own; its
         # source and version are finalAttrs' already. nixpkgs keeps one hash per
         # system; this is x86_64-linux's only, the one system ravnix builds

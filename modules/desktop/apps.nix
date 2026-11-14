@@ -103,7 +103,19 @@
 #   Packet Tracer     a Qt application with its own look (and its own Qt).
 #   Bazecor           Electron, light/dark/system only. The keyboard's LEDs are
 #                     the part that can follow the palette (dygma-catppuccin-leds).
-#   Handy             a WebKit interface of its own, with a tray icon.
+#   Handy             in the theme (packages/handy/theme.nix): the palette is
+#                     the roles (the accent included) in both of Handy's
+#                     palettes, so its own light/dark setting changes nothing,
+#                     and every corner is square. What stays Handy's: motion
+#                     (the 160-460 ms fades and pops, the spinner, the
+#                     mascot's wave and the overlay's morph), the shadows of
+#                     menus, tooltips and dialogs, alpha tints that Tailwind
+#                     builds from a color (hover:bg-logo-primary/10), the
+#                     mascot and wordmark (illustration: they take the accent
+#                     as their fill but keep their shapes), the tray icon
+#                     (Linux "Colored", pink), the CJK glyphs from Handy's
+#                     bundled subset font (the Latin font is the theme's),
+#                     and the onboarding's demo laptop and wallpaper.
 #   Nextcloud client  Qt: the widgets follow the qt6ct palette, but the tray and
 #                     status icons are Nextcloud's own colors and the dialogs
 #                     use its blue; it offers no setting for either.
@@ -125,8 +137,8 @@
 #                     own Network, Performance and Profiler canvases, so an
 #                     opaque value would hide the data beneath.
 # Themed by catppuccin/nix in the accent: yazi, mpv. Generated from the roles:
-# MangoHud, the Helium theme, Helium's DevTools, wiremix (./wiremix.nix). bluetui uses the
-# terminal's palette.
+# MangoHud, the Helium theme, Helium's DevTools, Handy's CSS, wiremix (./wiremix.nix).
+# bluetui uses the terminal's palette.
 {
   config,
   lib,
@@ -275,7 +287,9 @@ in
       inherit devtoolsFrontend;
     })
     pkgs.ravnix.ghostty-float
-    pkgs.ravnix.handy-launch
+    # Handy in the theme: its CSS is made from the host's roles and accent
+    # (packages/handy/theme.nix), so another accent builds Handy again.
+    (pkgs.ravnix.handy-launch.override { theme = { inherit (theme) palette roles font; }; })
     pkgs.ravnix.handy-ptt
     # The wtype of nixpkgs is 0.5, which has the fix for characters dropped in
     # long takes (tests/desktop/wtype.nix); handy-launch puts it first on PATH.

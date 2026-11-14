@@ -30,9 +30,12 @@
   wtype,
   # The packages of ravnix: handy is one (0.10.0, where nixpkgs has 0.9.8).
   ravnix,
+  # { palette, roles, font } of config.ravnix.theme, for Handy's interface
+  # (packages/handy). Null takes ravnix.handy as it is, in the default theme.
+  theme ? null,
 }:
 let
-  inherit (ravnix) handy;
+  handy = if theme == null then ravnix.handy else ravnix.handy.override { inherit theme; };
   launcher = writeShellApplication {
     name = "handy-launch";
     runtimeInputs = [ wtype ];
@@ -80,6 +83,8 @@ symlinkJoin {
     mkdir -p $out/share
     ln -s ${handy}/share/icons $out/share/icons
   '';
+  # The Handy this launches, for tests/desktop/handy-theme.nix.
+  passthru = { inherit handy; };
   meta = {
     description = "Handy, pinned to the iGPU, with its menu and autostart entries";
     mainProgram = "handy-launch";

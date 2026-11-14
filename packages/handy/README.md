@@ -39,6 +39,39 @@ install; turning it off makes Handy delete its own entry at the next start.
   `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` there. Evaluation fails if nixpkgs'
   recipe stops setting the variable the way the override expects.
 
+## The theme
+
+The interface is in the theme of the system (`theme.nix`, docs/style.md). The
+build appends a block of CSS, made from `ravnix.theme`, to Handy's
+`src/styles/theme.css`, where every color of the app lives as a
+`--light-color-*` / `--dark-color-*` pair that the overlay imports as well:
+
+- Both palettes get the Mocha roles, so Handy's own `theme` setting (system,
+  light, dark) and the GTK preference change nothing: it is pinned dark, and
+  the setting stays in the UI without effect. Text is Text, the background
+  Base, the brand color and the primary action the accent, errors Red,
+  warnings Peach, success Green.
+- Secondary text, edges and hover fills, which Handy mixes from a mid grey
+  into transparency, are solid roles.
+- Every radius is 0: the four tokens of `App.css`, Tailwind's radius scale,
+  and a `border-radius: 0 !important` for the literal ones. The overlay's
+  surface is opaque, and the primary button's text is the background color
+  instead of white.
+- The font is the theme's, in Tailwind's default family and Handy's stacks.
+
+The CSS is the frontend, which is embedded in the program, so another accent
+rebuilds Handy (about half an hour); with the default accent it is the same
+derivation as `self.packages.handy`. `modules/desktop/apps.nix` passes the
+host's theme through `handy-launch`. Every substitution fails the build when
+its text is gone, so a bump that moves one stops instead of going unthemed.
+`tests/desktop/handy-theme.nix` runs the patch on a copy of the source and
+reads the result; it does not compile anything.
+
+What stays Handy's, and why, is the Handy entry in the exception list of
+`modules/desktop/apps.nix`: motion, shadows, Tailwind's alpha tints, the
+mascot and wordmark, the tray icon, the CJK subset font and the onboarding
+demo.
+
 ## What it costs
 
 No binary cache has this Handy, so the first build, and the check
