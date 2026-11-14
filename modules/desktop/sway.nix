@@ -510,6 +510,7 @@ in
     '';
 
     # The tools the config, the bar and the scripts call, on every user's PATH.
+    # slurp and grimshot are slurp.nix's, in the style's colors.
     environment.systemPackages =
       lib.attrValues scripts
       ++ [ gtkLaunch ]
@@ -518,8 +519,6 @@ in
         kanshi
         playerctl
         libnotify
-        slurp
-        sway-contrib.grimshot
         swaybg
         wl-clipboard
         wl-mirror
