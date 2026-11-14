@@ -166,7 +166,11 @@ names, and refuses to start, naming the problem, when:
   `/volume1/docker/restic/state/copied/HOST`, beside the job's secrets and
   outside what the rest-server serves, with the Internxt id of every
   snapshot the job has copied there. Every Internxt snapshot of
-  `restic snapshots --host HOST` must be in it.
+  `restic snapshots --host HOST` must be in it, or have as its `original`
+  the id of a snapshot that is still in `/data/HOST`. The second is a copy
+  of the host's own that a run made and did not get to record, because it
+  stopped between the copy and the ledger write; without it, one such stop
+  would refuse the host for good. The next run's ledger write records it.
 
   Why a ledger. Internxt keeps snapshots the NAS has already let go (12
   monthlies and 2 yearlies against the NAS's 6 and 0), so after about half
@@ -176,10 +180,15 @@ names, and refuses to start, naming the problem, when:
   the NAS would not, but it would miss exactly the snapshots that matter:
   another machine's, or an older setup's, from before that date, and it
   hangs on snapshot times that each host's clock sets. The ledger is exact.
-  Its cost is state: the job writes it after each copy (the ids of the
-  Internxt snapshots whose `original` is a snapshot of `/data/HOST`), to a
-  new file renamed over the old one, and may drop the ids Internxt has
-  forgotten. A lost ledger makes every snapshot look foreign, so the job
+  Its cost is state. The job writes it right after each copy, before
+  anything is pruned, as exactly this set: the old ledger, plus this run's
+  copies (the ids of the Internxt snapshots whose `original` is a snapshot
+  of `/data/HOST`), minus the ids that `restic snapshots --host HOST` on
+  Internxt no longer lists, because the Internxt prune has forgotten them.
+  Nothing else enters it, and nothing else leaves it: an id that Internxt
+  still lists stays, after the NAS has let its original go. It goes to a
+  new file that is renamed over the old one, so a stop leaves the old
+  ledger or the new one and never half of one. A lost ledger makes every snapshot look foreign, so the job
   refuses, loudly, until it is rebuilt the way the first run below makes
   it.
 
@@ -191,7 +200,8 @@ is configured with:
    HOST`. restic copies only the snapshots the destination lacks. Copying
    before the NAS prunes means a snapshot that Internxt keeps longer (12
    monthlies against the NAS's 6) has reached Internxt before the NAS lets
-   it go, even after days in which the copy failed.
+   it go, even after days in which the copy failed. Then the ledger write
+   (above), and only after it a prune.
 2. **Prune the NAS.** `restic -r /data/HOST forget --prune --retry-lock 30m
    $(ravnix-retention flags --target nas --host HOST)`. The flags carry
    `--host HOST --group-by host`; a wrong retention file gives no flags and
