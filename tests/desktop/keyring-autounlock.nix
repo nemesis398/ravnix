@@ -22,9 +22,10 @@
 #            encrypted keyring and the credential made by the setup command:
 #            the keyring is unlocked before Helium starts, without a prompt;
 #            no credential and a wrong one leave it locked with one line;
-#            then `ravnix-keyring-unlock setup` with a stand-in rbw changes
-#            the keyring's password to the item's, and the next tap login
-#            unlocks it with the credential the setup made.
+#            then `ravnix-keyring-unlock setup` with a stand-in rbw refuses
+#            an item that holds the login password (the real unix_chkpwd),
+#            changes the keyring's password to the item's otherwise, and the
+#            next tap login unlocks it with the credential the setup made.
 {
   self,
   inputs,
@@ -373,8 +374,10 @@ let
       '';
 
   gpuAddress = "0000:00:10.0";
-  # The item the VM's setup reads, from a stand-in for rbw.
+  # The item the VM's setup reads, from a stand-in for rbw, and the user's
+  # login password, which the real unix_chkpwd checks the item against.
   vmItem = "GNOME Keyring - login (vm)";
+  vmLoginPassword = "Login Pferd 31";
   vm = pkgs.testers.runNixOSTest {
     name = "desktop-keyring-autounlock";
     # As in tests/desktop/sway.nix: the overlay and the unfree names of the
@@ -397,6 +400,7 @@ let
         warnings = lib.mkForce [ ];
         system.stateVersion = "26.05";
         ravnix.desktop.keyring.autoUnlock.rbwItem = lib.mkForce vmItem;
+        users.users.${user}.password = vmLoginPassword;
 
         # A login that gives PAM no password: greetd's initial session logs
         # the user in without authenticating, as a YubiKey tap leaves PAM
@@ -438,6 +442,7 @@ let
       SECRET = "cookie-key-0123456789"
       ITEM = "${vmItem}"
       NEW_PASSWORD = "Neues Pferd ü 7 Batterie"
+      LOGIN_PASSWORD = "${vmLoginPassword}"
     ''
     + builtins.readFile ./helpers/keyring-vm-test.py;
   };

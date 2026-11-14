@@ -176,7 +176,10 @@ check "no login keyring: none is created with the credential's password" \
 # `ravnix-keyring-unlock setup` with stand-ins for rbw (the item's password
 # is NEW), systemd-ask-password (it prints the file typed, and fails without
 # one, as when nobody types) and systemd-creds (a marker before the
-# password: the sandbox has no host key), on PATH before the real ones.
+# password: the sandbox has no host key), on PATH before the real ones, and
+# for unix_chkpwd (the sandbox has no setuid wrapper and no shadow file; it
+# takes the password and a NUL, as Linux-PAM's does, and NEW is no login
+# password). The VM stage runs the real ones.
 # What matters here is the daemon: ChangeWithMasterPassword checks the old
 # password also on an unlocked keyring, where an unlock takes any.
 NEW='Neues Pferd ü 7 Batterie'
@@ -207,6 +210,13 @@ decrypt) tail -c +6 "\$4" ;;
 *) exit 2 ;;
 esac
 EOF
+cat >"$fake/unix_chkpwd" <<EOF
+#!$(command -v bash)
+echo "unix_chkpwd \$*" >>"\$FAKE_LOG"
+[[ \$# == 2 && \$2 == nonull ]] || exit 4
+[[ \$(od -An -c | tr -d ' \n') == *'\\0' ]] || exit 4
+exit 7
+EOF
 chmod +x "$fake"/*
 
 # setup_in HOME DAEMON TYPED|-: the daemon as PAM starts it, then the setup,
@@ -218,7 +228,7 @@ setup_in() {
 	[[ $typed == - ]] || printf '%s' "$typed" >"$h/typed"
 	in_session "$h" "export FAKE_LOG=$h/fake.log FAKE_TYPED=$h/typed ITEM='$ITEM'; $daemon"'
 		set +e
-		PATH='"$fake"':$PATH "$TOOL" setup --item "$ITEM" </dev/null >"'"$h"'/setup.out" 2>&1
+		RAVNIX_KEYRING_UNIX_CHKPWD='"$fake"'/unix_chkpwd PATH='"$fake"':$PATH "$TOOL" setup --item "$ITEM" </dev/null >"'"$h"'/setup.out" 2>&1
 		echo "rc=$?"
 		echo "locked=$(busctl --address="$DBUS_SESSION_BUS_ADDRESS" get-property org.freedesktop.secrets \
 			/org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked 2>&1 || true)"
@@ -275,14 +285,30 @@ for login in tap password; do
 		test "$(cat "$(credential_of "$h")")" = "fake:$NEW"
 done
 
-# A wrong current password, on an unlocked keyring: nothing changes.
-h=$(home setup-wrong)
-cp "$keyring" "$h/home/.local/share/keyrings/login.keyring"
-setup_in "$h" "$pam_password" "Pferd but not the one"
-check "setup with a wrong current password: exit 1, it says so, nothing changed" \
-	bash -c "test '$(field "$h" rc)' = 1 && grep -q 'does not open the login keyring; nothing changed' '$h/setup.out'"
-check "setup with a wrong current password: the keyring file and the credential are as they were" \
-	bash -c "test \"\$(sha256sum <'$h/home/.local/share/keyrings/login.keyring')\" = '$fixture_hash' && test ! -e '$(credential_of "$h")'"
+# A wrong current password, on an unlocked keyring (a password login) and
+# on a locked one (a tap): nothing changes.
+for state in password tap; do
+	h=$(home "setup-wrong-$state")
+	cp "$keyring" "$h/home/.local/share/keyrings/login.keyring"
+	daemon=$pam_password
+	want=false
+	if [[ $state == tap ]]; then
+		daemon=$pam_tap
+		want=true
+	fi
+	setup_in "$h" "$daemon" "Pferd but not the one"
+	check "setup with a wrong current password after a $state login: exit 1, it says so, nothing changed" \
+		bash -c "test '$(field "$h" rc)' = 1 && grep -q 'does not open the login keyring; nothing changed' '$h/setup.out'"
+	check "setup with a wrong current password after a $state login: the keyring file and the credential are as they were" \
+		bash -c "test \"\$(sha256sum <'$h/home/.local/share/keyrings/login.keyring')\" = '$fixture_hash' && test ! -e '$(credential_of "$h")'"
+	check "setup with a wrong current password after a $state login: the keyring is as the login left it" \
+		test "$(field "$h" locked)" = "b $want"
+	opens_with "$h" "$PASSWORD" >/dev/null
+	check "setup with a wrong current password after a $state login: the old password still opens it" \
+		grep -q 'unlocked the login keyring' "$h/try.out"
+done
+check "setup: unix_chkpwd got the user's name and nonull" \
+	grep -q '^unix_chkpwd [^ ]* nonull$' "$root/setup-tap/fake.log"
 
 # No login keyring: the setup makes none.
 h=$(home setup-nokeyring)

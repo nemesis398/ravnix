@@ -208,7 +208,8 @@ in
         `~/.config/credstore.encrypted/ravnix-keyring-login`, and checks that
         the keyring opens with what the credential holds. Nothing is copied
         or pasted, and no password stands on a command line. A wrong current
-        password changes nothing. If the setup stops halfway, run it again:
+        password changes nothing, and an item that holds your login password
+        is refused (pam_unix's `unix_chkpwd` checks it). If the setup stops halfway, run it again:
         when the keyring has the item's password already, it asks for
         nothing and only stores the credential. `--item NAME` names another
         item.

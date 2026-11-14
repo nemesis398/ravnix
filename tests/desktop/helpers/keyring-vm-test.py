@@ -1,6 +1,6 @@
 # The VM half of desktop-keyring-autounlock. tests/desktop/keyring-autounlock.nix
-# puts USER, KEYRING_PASSWORD, SECRET, ITEM and NEW_PASSWORD in front of
-# this file.
+# puts USER, KEYRING_PASSWORD, SECRET, ITEM, NEW_PASSWORD and LOGIN_PASSWORD
+# in front of this file.
 #
 # greetd's initial_session logs the user in without any authentication, so
 # PAM's auth stack never sees a password: pam_gnome_keyring starts the
@@ -210,14 +210,15 @@ machine.fail(f"journalctl -b --no-pager | grep -qF -- {shlex.quote(KEYRING_PASSW
 # ── the one command: ravnix-keyring-unlock setup ──────────────────────────────
 # In the session that is still open, with the keyring locked and a wrong
 # credential in place: the setup from the user's PATH, which knows the item
-# of rbwItem (ITEM), reads its password (NEW_PASSWORD) from a stand-in for
-# rbw, asks for the keyring's current one (KEYRING_PASSWORD) with the real
-# systemd-ask-password in a terminal of script(1), and stores the credential
-# with the real systemd-creds.
+# of rbwItem (ITEM), reads its password from a stand-in for rbw, which
+# prints /run/fake-rbw/item, checks it against the login password with the
+# real unix_chkpwd, asks for the keyring's current one (KEYRING_PASSWORD)
+# with the real systemd-ask-password in a terminal of script(1), and stores
+# the credential with the real systemd-creds.
 FAKE_RBW = f"""#!/bin/sh
 case "$1" in
 unlocked) exit 0 ;;
-get) [ "$2" = -- ] && [ "$3" = {shlex.quote(ITEM)} ] || exit 1; printf '%s\\n' {shlex.quote(NEW_PASSWORD)} ;;
+get) [ "$2" = -- ] && [ "$3" = {shlex.quote(ITEM)} ] || exit 1; cat /run/fake-rbw/item; echo ;;
 *) exit 2 ;;
 esac
 """
@@ -247,7 +248,7 @@ def run_setup(typed):
         status, _ = machine.execute(f"({feed}) | {command}")
     out = machine.succeed("cat /tmp/setup.out")
     print(f"setup said: {out}")
-    for password in (KEYRING_PASSWORD, NEW_PASSWORD):
+    for password in (KEYRING_PASSWORD, NEW_PASSWORD, LOGIN_PASSWORD):
         assert password not in out, "the setup printed a password"
     return status, out
 
@@ -277,7 +278,26 @@ def offline_unlock(password):
     ).strip()
 
 
+def item(password):
+    machine.succeed(f"printf %s {shlex.quote(password)} > /run/fake-rbw/item")
+
+
 machine.succeed(f"su - {USER} -c 'command -v ravnix-keyring-unlock'")
+
+# The item holds the login password: refused before anything changes,
+# without a question (nothing is typed), the wrong credential left as it is.
+item(LOGIN_PASSWORD)
+before = machine.succeed(f"sha256sum {cred}")
+status, out = run_setup(None)
+assert status == 1, f"the setup with the login password did not fail: {out}"
+last = out.strip().splitlines()[-1]
+assert "holds your login password" in last and "nothing changed" in last, f"the setup said: {out}"
+assert machine.succeed(f"sha256sum {cred}") == before, "the credential changed"
+assert locked() == "b true", "the refused setup unlocked the keyring"
+for password in (KEYRING_PASSWORD, NEW_PASSWORD, LOGIN_PASSWORD):
+    machine.fail(f"journalctl -b --no-pager | grep -qF -- {shlex.quote(password)}")
+
+item(NEW_PASSWORD)
 status, out = run_setup(KEYRING_PASSWORD)
 assert status == 0, f"the setup failed: {out}"
 last = out.strip().splitlines()[-1]
@@ -288,6 +308,12 @@ assert decrypted() == NEW_PASSWORD, "the credential does not hold the item's pas
 machine.succeed(f"test $(stat -c %a {cred}) = 600")
 machine.succeed(f"test $(stat -c %a $(dirname {cred})) = 700")
 machine.fail(f"grep -qF {shlex.quote(NEW_PASSWORD)} {cred}")
+# The check of the item against the login password is one failed password
+# check in the journal, which locks nothing: the login password still works.
+print(machine.execute("journalctl -b --no-pager | grep -i 'password check failed'")[1])
+machine.succeed(
+    f"printf '%s\\0' {shlex.quote(LOGIN_PASSWORD)} | su - {USER} -c '/run/wrappers/bin/unix_chkpwd {USER} nonull'"
+)
 for password in (KEYRING_PASSWORD, NEW_PASSWORD):
     machine.fail(f"journalctl -b --no-pager | grep -qF -- {shlex.quote(password)}")
 logout()
