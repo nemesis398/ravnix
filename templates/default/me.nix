@@ -336,6 +336,12 @@
       # describes. Null when you have none.
       userstylesUrl = "https://git.example.org/alice/catppuccin-userstyles";
 
+      # The official Catppuccin userstyles as one Stylus import file, preset to
+      # Mocha and your accent: a store path, such as a fetchurl of the
+      # release's import.json with your own hash (the option's example shows
+      # one). Null keeps the manual step of the bookmark.
+      userstylesImport = null;
+
       # bitwarden-menu (`bwm`), a keyboard menu to your vault in fuzzel, and the
       # way to make new items (the Bitwarden desktop app is not installed, and
       # rbw's add gets HTTP 422 from Vaultwarden). Off unless you turn it on; then it needs the three

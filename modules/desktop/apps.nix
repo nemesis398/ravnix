@@ -51,7 +51,7 @@
 # checks both against nixpkgs, and the .deb that the Fedora laptop holds has
 # this hash). A newer Packet Tracer needs a newer nixpkgs, which knows its hash.
 #
-# --- Userstyles: one manual step ---------------------------------------------
+# --- Userstyles: one step in Stylus -------------------------------------------
 # The web sites are themed by Catppuccin userstyles in Stylus (docs/style.md).
 # The policy below installs Stylus into Helium. The styles cannot be declared:
 # Stylus keeps them in the browser's own storage, offers no managed-storage
@@ -59,13 +59,16 @@
 # it data), and its only inputs are an import file, a sync service or an
 # install click on a *.user.css address. So after the first start:
 #
-#   1. Open the bookmarks "ravnix > Catppuccin userstyles" and follow the
-#      usage page: download the import.json of all userstyles, and import it in
-#      Stylus, Manage, Backup, Import.
+#   1. With ravnix.apps.userstylesImport set (the official import.json, as a
+#      file in the store), ~/.local/share/ravnix/stylus-import.json is that
+#      file with every flavor at Mocha and the accent of ravnix.theme.accent
+#      (lib/stylus-import.nix). Import it in Stylus, Manage, Backup, Import:
+#      one step, and no style's settings need opening. Without the option, open
+#      the bookmarks "ravnix > Catppuccin userstyles", follow the usage page,
+#      download the import.json of all userstyles, import it the same way, and
+#      then set Mocha and the accent in each style's settings.
 #   2. Open "ravnix > Your userstyles" (ravnix.apps.userstylesUrl in me.nix)
 #      and click the install link of each style.
-#   3. In Stylus, Manage, each style's settings hold the flavor and the
-#      accent: Mocha and the accent of ravnix.theme.accent.
 #
 # The browser's frame needs no step: Helium loads its theme at every start
 # (packages/helium-theme, `themeExtension`).
@@ -200,6 +203,14 @@ let
     set -eu
     (umask 077 && ${pkgs.coreutils}/bin/mkdir -p "$1/NativeMessagingHosts")
   '';
+
+  # The Catppuccin userstyles as one Stylus import file, Mocha and the host's
+  # accent preset (lib/stylus-import.nix). Evaluated only when the user hands
+  # over the official import.json (ravnix.apps.userstylesImport).
+  stylusImport = pkgs.callPackage ../../lib/stylus-import.nix { } {
+    src = apps.userstylesImport;
+    accent = theme.accent;
+  };
 
   # Helium's frame in the theme (packages/helium-theme): an unpacked Chromium
   # theme in the roles and the accent, which the wrapper of the Helium on the
@@ -489,6 +500,10 @@ in
 
       # Helium opens web pages, PDFs and images; mpv opens video. A MIME type
       # without an entry here is opened by the first application that claims it.
+      xdg.dataFile."ravnix/stylus-import.json" = lib.mkIf (apps.userstylesImport != null) {
+        source = stylusImport;
+      };
+
       xdg.mimeApps = {
         enable = true;
         defaultApplications =

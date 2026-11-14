@@ -75,6 +75,28 @@ in
       '';
     };
 
+    userstylesImport = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = lib.literalExpression ''
+        pkgs.fetchurl {
+          url = "https://github.com/catppuccin/userstyles/releases/download/all-userstyles-export/import.json";
+          hash = "sha256-...";
+        }
+      '';
+      description = ''
+        The `import.json` of the official Catppuccin userstyles (the release
+        asset of github.com/catppuccin/userstyles), as a file in the Nix store.
+        ravnix presets it to Mocha and your accent
+        (`lib/stylus-import.nix`) and puts the result at
+        `~/.local/share/ravnix/stylus-import.json`, so Stylus takes all styles
+        in one step: Manage, Backup, Import. ravnix pins no copy of the file:
+        a `fetchurl` with your own hash does, and a new release is a new hash.
+        Null leaves the manual step of the bookmark (the header of
+        `modules/desktop/apps.nix`).
+      '';
+    };
+
     bitwardenMenu = mkOption {
       description = ''
         bitwarden-menu (`bwm`), a keyboard-driven menu to your Bitwarden or
