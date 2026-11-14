@@ -22,6 +22,37 @@
 # looks for root's mapping in /root and, without one, asks for root's password
 # as before; sudo authenticates the user who runs it.
 #
+# SUDO ASKS ON THE SCREEN FIRST. sudo runs without a terminal too: a program
+# of the user's, or a command the server sends over the laptop-access link
+# (modules/glue/laptop-access.nix), which runs any command as the user. There
+# the cue goes to the caller's standard error, nobody at the laptop sees it,
+# and the key's blink looks like the blink of a git push: one touch out of
+# habit and the command is root. So sudo's auth stack has one line before
+# pam_u2f, pam_exec of ravnix-tap-ask (tools/ravnix-tap-ask), as root:
+#
+#   auth [success=ignore default=1] pam_exec.so quiet quiet_log seteuid ravnix-tap-ask
+#
+# When the user has a mapping and a FIDO key is plugged in, the tool shows a
+# fuzzel popup in the user's Sway session on the laptop, run as the user
+# through setpriv, never as root: the command line, the user, and where the
+# sudo came from (a terminal here, the server's ssh link, a program without a
+# terminal). Allow (exit 0) goes on to pam_u2f, and the key blinks. Deny, Esc,
+# no answer in 30 s, an Allow sooner than a second (typed through), a locked
+# screen, no session, or any failure exits non-zero, which jumps over the one
+# pam_u2f line: the rest of the stack runs as before, so a terminal sudo asks
+# for the password, and a sudo without a terminal fails because it cannot ask.
+# A jump changes no result of the stack, so a failure of the tool can only
+# skip the tap, never grant anything. Only sudo: polkit has a dialog of its
+# own, and swaylock and tuigreet are the laptop's own screen.
+#
+# The popup is consent, not a wall. A program that already runs as the user
+# on the laptop, the laptop-access link included, can answer the popup itself
+# (Sway lets any client type, as wtype does) and can start sudo so that it
+# looks like it came from elsewhere. What it cannot do is touch the key: the
+# popup makes sure that the touch it asks for names the command it allows.
+# Taking arbitrary commands from the link (a forced command) is what would
+# close that, and is the link's to decide (tools/ravnix-tap-ask/README.md).
+#
 # THE LINE. `sufficient`: a tap is enough, and a failure (no key, a key that is
 # not enrolled, no ~/.config/Yubico/u2f_keys, no touch in time) is ignored and
 # the next module, the password, decides. `cue`: pam_u2f shows "Please touch
@@ -69,6 +100,7 @@
 }:
 let
   cfg = config.ravnix.security.u2f;
+  sudo = config.security.pam.services.sudo;
 in
 {
   config = lib.mkIf cfg.enable {
@@ -99,5 +131,23 @@ in
     # local program's, the very case sudo's popup is for; a wider
     # listenAddresses would make it a remote one. The password still works.
     security.pam.services.cups.u2f.enable = lib.mkIf config.services.printing.enable false;
+
+    # sudo asks on the screen first (SUDO ASKS ON THE SCREEN FIRST, above).
+    # The order is relative to pam_u2f's, as NixOS advises, so that the jump
+    # of one line skips exactly that one.
+    security.pam.services.sudo.rules.auth.ravnix-tap-ask = lib.mkIf sudo.u2f.enable {
+      order = sudo.rules.auth.u2f.order - 10;
+      control = "[success=ignore default=1]";
+      modulePath = "${config.security.pam.package}/lib/security/pam_exec.so";
+      # quiet: a denial prints no "failed: exit code 1" to the caller;
+      # quiet_log: nor to the journal, at every sudo without the key;
+      # seteuid: the tool runs as root, so that the user cannot trace it.
+      args = [
+        "quiet"
+        "quiet_log"
+        "seteuid"
+        "${pkgs.ravnix.ravnix-tap-ask}/bin/ravnix-tap-ask"
+      ];
+    };
   };
 }

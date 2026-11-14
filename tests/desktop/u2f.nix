@@ -25,10 +25,18 @@
 #     today, but a later KbdInteractiveAuthentication would);
 #   - nor does cups's: its web interface asks PAM from an HTTP request, where
 #     no one at the laptop sees what a blink is for;
+#   - sudo alone asks ravnix-tap-ask first: the line right before its pam_u2f
+#     is pam_exec of the tool, `[success=ignore default=1]`, quiet and as root
+#     (seteuid), so only the tool's exit 0 (Allow in the popup on the laptop's
+#     screen) reaches pam_u2f, and any other result skips that one line; no
+#     other service has the line;
 #   - with the option off, no PAM file names pam_u2f and pamu2fcfg is not
 #     installed; the server shape stays the same with the option on;
 #   - an origin that would break the PAM line (white space, a bracket, a `#`,
 #     which starts a comment, or empty) is refused by the option's type.
+#
+# tools/ravnix-tap-ask's own tests check what the tool decides: Deny, no
+# answer, a locked screen and no session skip pam_u2f, and the origin it names.
 #
 # A VM cannot touch a key, so the tap itself is tested by hand on the laptop.
 {
@@ -95,6 +103,8 @@ let
     );
   authOf = c: service: lib.filter (lib.hasPrefix "auth ") (linesOf c service);
   isU2f = lib.hasInfix "/pam_u2f.so";
+  isGate = l: lib.hasInfix "/bin/ravnix-tap-ask" l;
+  gateLine = "auth \\[success=ignore default=1] [^ ]+/lib/security/pam_exec\\.so quiet quiet_log seteuid [^ ]+/bin/ravnix-tap-ask *";
   isUnix = l: builtins.match ".*/pam_unix\\.so( .*)?" l != null;
   indexOf =
     pred: list:
@@ -179,6 +189,26 @@ let
       linesOf c "login"
     )) "${name}: login's session does not start the keyring";
 
+  # sudo's gate: one line, right before pam_u2f, exactly as above.
+  gate =
+    name: c:
+    let
+      auth = authOf c "sudo";
+      gates = lib.filter isGate auth;
+      u2fAt = indexOf isU2f auth;
+    in
+    if gates == [ ] then
+      [ "${name}: sudo has no ravnix-tap-ask line" ]
+    else
+      check (lib.length gates == 1) "${name}: sudo has ${toString (lib.length gates)} ravnix-tap-ask lines"
+      ++ check (builtins.match gateLine (lib.head gates) != null) "${name}: sudo's ravnix-tap-ask line is not ${gateLine}: ${lib.head gates}"
+      ++ check (
+        u2fAt != null && u2fAt > 0 && isGate (lib.elemAt auth (u2fAt - 1))
+      ) "${name}: sudo's ravnix-tap-ask line is not right before pam_u2f: ${lib.concatStringsSep " | " auth}"
+      ++ lib.concatMap (
+        s: check (!lib.any isGate (linesOf c s)) "${name}: ${s} has a ravnix-tap-ask line"
+      ) (lib.filter (s: s != "sudo") (lib.attrNames c.security.pam.services));
+
   pamU2fIn = c: lib.filter (p: lib.getName p == "pam_u2f") c.environment.systemPackages;
 
   anyU2f =
@@ -221,6 +251,8 @@ let
     ++ check (!lib.any isU2f (linesOf laptopOn "sshd")) "laptop: sshd's stack has pam_u2f"
     ++ check (laptopOn.security.pam.services ? cups) "laptop: no cups, so the cups case reads nothing"
     ++ check (!lib.any isU2f (linesOf laptopOn "cups")) "laptop: cups's stack has pam_u2f"
+    ++ gate "laptop" laptopOn
+    ++ gate "another origin" otherOrigin
     ++ lib.concatMap (carries "another origin" otherOrigin "pam://example") services
     ++ anyU2f "laptop with the option off" laptopOff
     ++ greetdFirst "laptop with the option off" laptopOff
@@ -242,7 +274,7 @@ in
 pkgs.runCommand "desktop-u2f" { } ''
   ${
     if failures == [ ] then
-      "echo 'a tap or the password at greetd, swaylock, sudo, su, polkit and login' > $out"
+      "echo 'a tap or the password at greetd, swaylock, sudo (after Allow), su, polkit and login' > $out"
     else
       ''
         cat >&2 <<'EOT'

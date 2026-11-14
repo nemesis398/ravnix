@@ -23,7 +23,11 @@ in
       description = ''
         Whether a tap on a FIDO security key (a YubiKey) can stand in for the
         password on the laptop: at the login screen (greetd and tuigreet),
-        swaylock, sudo, su, polkit and a console login. pam_u2f asks first,
+        swaylock, sudo, su, polkit and a console login (not over ssh, not in
+        CUPS's web interface). sudo first shows a popup on the laptop's own
+        screen that names the command, the user and where the sudo came from,
+        and waits for the key only after Allow (tools/ravnix-tap-ask).
+        pam_u2f asks first,
         as `sufficient`, and shows "Please touch the FIDO authenticator."; a
         tap logs in, and without the key, or when the key is not touched in
         time, the password prompt follows and the password works as before.
