@@ -7,9 +7,11 @@
 # Claude Code its browser tools, a headless Helium, on both hosts.
 # ./dictionary.nix puts ravnix-dict on the PATH, with the user's dictionary,
 # and ./dictionary-watch.nix syncs it with the tools when a list changes.
+# ./backup.nix backs the home up to the NAS, where ravnix.backup.nas is set.
 #
 # It reads ravnix.user, ravnix.secrets, ravnix.services, ravnix.dev,
-# ravnix.shell, ravnix.editor, ravnix.dictionary and ravnix.theme, so
+# ravnix.shell, ravnix.editor, ravnix.dictionary, ravnix.backup and
+# ravnix.theme, so
 # homeModules.options and homeModules.theme must be imported beside it.
 # nixosModules.common does all three, and gives home-manager the user's
 # values; use homeModules.common by itself only outside a ravnix host.
@@ -28,6 +30,7 @@
     ./chrome-devtools-mcp.nix
     ./dictionary.nix
     ./dictionary-watch.nix
+    ./backup.nix
   ];
 
   # Outside a host, home-manager is told who it is working for once, here.

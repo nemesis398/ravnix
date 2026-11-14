@@ -84,6 +84,122 @@ let
     # a file it refuses would only fail later, in the prune job.
     map (key: "${key} is not a key of the file") (lib.remove "targets" (lib.attrNames toml))
     ++ table "targets" (toml.targets or { }) checkTargets;
+
+  # A path in the home: `~`, `~/a/b`, or an absolute path, without a
+  # trailing slash, and without empty, `.` or `..` components.
+  homePath =
+    types.addCheck (types.strMatching "(~|~/[^[:cntrl:]]*[^/[:cntrl:]]|/[^[:cntrl:]]*[^/[:cntrl:]])") (
+      p:
+      let
+        parts = lib.splitString "/" p;
+      in
+      !lib.any (c: c == "." || c == "..") parts && !lib.elem "" (lib.tail parts)
+    )
+    // {
+      description = "path: `~`, `~/a/b` or `/a/b`, without a trailing slash, `//`, `.` or `..`";
+    };
+
+  # A restic exclude pattern. `!` is restic's way back in, and the module
+  # writes it from `keep`, where it can put the pattern in the order restic
+  # needs; written here it is too easy to get wrong (backup.nix says how).
+  excludePattern = types.strMatching "[^![:cntrl:]][^[:cntrl:]]*" // {
+    description = "restic exclude pattern, not starting with `!` (use keep)";
+  };
+
+  nas = types.submodule {
+    options = {
+      repository = mkOption {
+        # No user or password in the URL: it would be in the store, which
+        # every user of the host can read. The login comes from loginItem.
+        type = types.strMatching "rest:https?://[^/@[:space:]]+(/[^@[:space:]]*)?" // {
+          description = "restic REST URL, rest:http(s)://host[:port]/path/, without a login in it";
+        };
+        example = "rest:http://192.0.2.10:8000/huginn/";
+        description = ''
+          The host's repository on the NAS's rest-server, over the LAN
+          (or NetBird's route to it). With the server's `--private-repos`,
+          the first path segment is the login's user name.
+        '';
+      };
+
+      host = mkOption {
+        type = types.strMatching "[A-Za-z0-9][A-Za-z0-9_-]{0,62}" // {
+          description = "host name: letters, digits, - and _, at most 63";
+        };
+        example = "huginn";
+        description = ''
+          The host name the snapshots carry (restic's `--host`), whatever
+          the machine is called at the moment. The NAS's prune jobs and
+          the retention file's `[targets.<target>.hosts.<host>]` know the
+          host by it.
+        '';
+      };
+
+      passwordItem = mkOption {
+        type = types.strMatching "[^\n]+";
+        example = "Restic - huginn repository";
+        description = ''
+          The Bitwarden item whose password is the repository's password.
+          restic asks rbw for it (`--password-command`) at each run; it is in
+          no file, no unit and no environment.
+        '';
+      };
+
+      loginItem = mkOption {
+        type = types.strMatching "[^\n]+";
+        example = "Restic - huginn rest-server login";
+        description = ''
+          The Bitwarden item whose user name and password are the host's
+          login at the rest-server (its `.htpasswd`). rbw reads it at each
+          run, and restic gets it in the environment of its own process.
+        '';
+      };
+
+      paths = mkOption {
+        type = types.nonEmptyListOf homePath;
+        default = [ "~" ];
+        description = ''
+          What is backed up. A path under one of `exclude` is not a way back
+          in: restic would back up the bare directory and nothing in it.
+          Use `keep` for that.
+        '';
+      };
+
+      exclude = mkOption {
+        type = types.listOf excludePattern;
+        default = [ ];
+        example = [
+          "~/Nextcloud"
+          "~/Git"
+          "*.iso"
+        ];
+        description = ''
+          What is left out, as restic exclude patterns; a leading `~` is the
+          home. `~/.cache` and every directory with a CACHEDIR.TAG are left
+          out always. Leave out what another copy holds already: a synced
+          folder, the repositories a forge has.
+        '';
+      };
+
+      keep = mkOption {
+        type = types.listOf homePath;
+        default = [ ];
+        example = [ "~/Nextcloud/notes" ];
+        description = ''
+          Paths inside an entry of `exclude` that are backed up all the
+          same, with everything below them. Each must lie inside an
+          `exclude` entry that is a plain path, without `*`, `?` or `[`.
+        '';
+      };
+
+      onCalendar = mkOption {
+        type = types.nonEmptyStr;
+        default = "daily";
+        example = "*-*-* 02:00";
+        description = "When the backup runs, as systemd's OnCalendar. A missed run is made up after boot, and a failed one is tried again after 30 minutes.";
+      };
+    };
+  };
 in
 {
   options.ravnix.backup.retentionFile = mkOption {
@@ -99,6 +215,18 @@ in
       `yearly`, and optional `[targets.<target>.hosts.<host>]` tables for a
       host that keeps a different number. Whatever falls outside it is
       pruned. Give it as a Nix path (`./backups.toml`), not a string.
+    '';
+  };
+
+  options.ravnix.backup.nas = mkOption {
+    type = types.nullOr nas;
+    default = null;
+    description = ''
+      This host's backup to the NAS: restic, as the user, to the NAS's
+      rest-server, which takes new snapshots and refuses to delete any
+      (`--append-only`). Pruning is the NAS's job, by the retention file;
+      the NAS also copies every host's snapshots to Internxt, so no host
+      needs that credential. null: the host makes no backup.
     '';
   };
 

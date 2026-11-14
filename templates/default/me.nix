@@ -506,6 +506,30 @@
     # How many backups each target keeps; see the comments in the file.
     backup.retentionFile = ./backups.toml;
 
+    # This host's backup to the NAS's rest-server (deploy/compose/restic),
+    # or null for none. Per host, so set it in each host's own module, never
+    # here: two hosts with one host name would prune each other's
+    # snapshots. For the laptop, for example:
+    #   backup.nas = {
+    #     # The host's repository; its first path segment is the login's
+    #     # user name at the rest-server.
+    #     repository = "rest:http://192.0.2.30:8000/huginn/";
+    #     # The name the snapshots carry, and the retention file's
+    #     # [targets.<target>.hosts.<host>] knows.
+    #     host = "huginn";
+    #     # Bitwarden items: the repository password, and the login (user
+    #     # name and password) at the rest-server.
+    #     passwordItem = "Restic - huginn repository";
+    #     loginItem = "Restic - huginn rest-server login";
+    #     # The home, minus ~/.cache and CACHEDIR.TAG directories (always),
+    #     # minus what another copy holds, plus a folder taken back.
+    #     paths = [ "~" ];
+    #     exclude = [ "~/Nextcloud" "~/Git" ];
+    #     keep = [ "~/Nextcloud/notes" ];
+    #     onCalendar = "daily";
+    #   };
+    backup.nas = null;
+
     # Your dictionary, as an absolute path to it in your checkout of this
     # flake: the tools add words to it at runtime, and every tool with a word
     # list gets them without a rebuild. Leave it out on a host that should

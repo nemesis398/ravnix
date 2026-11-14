@@ -86,8 +86,10 @@ Kept as Fedora has them, for the port to Odin (Phase 13):
   `OnBattery`. On a laptop whose charger is not ADP0 the watcher never sees
   an unplug. (On this IdeaPad it is ADP0.)
 - `idle-suspend` waits for `borg-backup.service`, the Fedora unit's name. A
-  backup unit of another name does not hold the suspend back; check it when
-  the backup module lands.
+  backup unit of another name does not hold the suspend back. ravnix's own,
+  `ravnix-backup` (modules/common/backup.nix), runs restic by the name
+  `restic` from its PATH, so the `^restic ` check holds the suspend while it
+  runs; the wait for its preparation (rbw, before restic starts) does not.
 - Switching the profile needs an active session (tuned-ppd's polkit rule):
   `energy menu` from an `su` shell or a user unit is refused with
   `Unauthorized`, and the menu exits 1. From the Sway session it works.
