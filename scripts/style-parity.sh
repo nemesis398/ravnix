@@ -5,6 +5,7 @@
 #
 # Usage: style-parity.sh --stow DIR --built NAME=DIR [--built NAME=DIR]...
 #                        --config FILE [--show-allowed]
+#                        [--path-dir DIR]...
 #
 #   --stow DIR      the stow tree: DIR/PACKAGE/PATH, as in a dotfiles repository
 #   --built NAME=DIR  a tree of generated files, called NAME in the config
@@ -15,20 +16,42 @@
 # The config is a text file of tab separated lines; blank lines and lines that
 # start with # are skipped.
 #
-#   compare FORMAT STOWPATH NAME:BUILTPATH
-#       Compare DIR/STOWPATH with the file BUILTPATH below the tree NAME.
+#   compare FORMAT STOWPATH NAME:BUILTPATH[+NAME:BUILTPATH]...
+#       Compare DIR/STOWPATH with the file BUILTPATH below the tree NAME. With
+#       several built files (a program that reads a theme file and a config
+#       file) their normalised lines are joined and sorted; a file name with
+#       a "+" in it cannot be named.
 #   allow GLOB TEXT [REASON]
 #       Allow one difference in every compared file whose STOWPATH matches the
 #       glob. TEXT is one line of the diff as printed: "-line" for a line only
-#       the stow source has, "+line" for one only the built file has, or
-#       "!missing" for a built file that does not exist.
+#       the stow source has, "+line" for one only the built file has,
+#       "!missing" for a built file that does not exist, or
+#       "!not-on-path NAME" (see binsub). Every occurrence of the line in that
+#       file is allowed, not one. For "!builtonly" (see builtonly) the glob
+#       matches NAME:PATH of the built file instead.
 #   sub GLOB FROM TO
-#       Replace FROM by TO in the stow source before the diff (the accent
-#       injection and the templated values: the stow source says what Fedora
-#       had, the built file what the options say).
+#       Replace FROM by TO in a copy of the stow source before it is
+#       normalised and sorted, so that a rewritten line finds its place. Use
+#       it for what is the same thing in another spelling (the stow source
+#       says what Fedora had, the built file what the options say).
+#   binsub GLOB FROM TO
+#       A sub for FROM a directory that held commands (Fedora's ~/.local/bin/)
+#       and TO the empty string: the word after each FROM is a command name,
+#       and every such name must exist in one of the --path-dir directories
+#       (the built system's PATH). A name that does not is the diff line
+#       "!not-on-path NAME". This closes the hole a bare sub leaves open: a
+#       command that nothing installs would compare equal to itself.
+#   builtonly NAME:DIR
+#       List every file below DIR of the tree NAME that no compare line names
+#       (a file the port generates that Fedora never had) as "BUILT ONLY
+#       NAME:PATH", and count it as a remaining difference unless an allow
+#       entry with the TEXT "!builtonly" matches it.
 #
-# The allow list is exact. An allow or sub entry that never matched anything
-# is reported as STALE and fails the run, so a row cannot outlive its
+# Another option: --path-dir DIR (repeatable) names a directory of the built
+# system's PATH, for binsub.
+#
+# The allow list is exact. An allow, sub or binsub entry that never matched
+# anything is reported as STALE and fails the run, so a row cannot outlive its
 # difference. The config holds the personal values (a stow tree is the
 # author's, and so are the templated values), which is why it lives in the
 # private flake and not in this repository.
@@ -40,7 +63,8 @@
 #             dunst, swaylock, btop); sorted
 #   yaml      nested keys by indentation (lazygit, eza); sorted
 #   css       one line per declaration with its selector path (GTK CSS), in
-#             order, because the cascade is
+#             order, because the cascade is; the @define-color lines first and
+#             sorted, because a definition's place does not matter
 #   jsonc     JSON with comments and trailing commas: one line per leaf with
 #             its path; sorted by path (arrays keep their index)
 #   lines     the code lines, in order (Lua, anything else)
@@ -62,7 +86,10 @@
 # data. Its tests are scripts/tests/style-parity.test.sh. Known limits:
 # normalisation is line and token based, not a parser: a CSS string holding a
 # brace or a semicolon, a TOML key in quotes, a YAML flow mapping or a JSON
-# comment marker inside a TOML string are not understood.
+# comment marker inside a TOML string are not understood. In kv the boolean
+# words true, yes and on equal 1 and false, no and off equal 0, for any key. An
+# array of tables ([[items]]) is flattened into one bag of key=value lines, so
+# a label paired with the wrong command in the other table compares clean.
 
 set -uo pipefail
 
@@ -73,7 +100,7 @@ die() {
 
 usage() {
 	cat <<'EOF'
-usage: style-parity.sh --stow DIR --built NAME=DIR [--built NAME=DIR]... --config FILE [--show-allowed]
+usage: style-parity.sh --stow DIR --built NAME=DIR [--built NAME=DIR]... --config FILE [--path-dir DIR]... [--show-allowed]
 EOF
 }
 
@@ -82,6 +109,7 @@ config=""
 show_allowed=0
 declare -A roots=()
 have_built=0
+path_dirs=()
 
 while (($# > 0)); do
 	case "$1" in
@@ -100,6 +128,11 @@ while (($# > 0)); do
 		[[ "$2" == ?*=?* ]] || die "--built needs NAME=DIR, got '$2'"
 		roots["${2%%=*}"]="${2#*=}"
 		have_built=1
+		shift 2
+		;;
+	--path-dir)
+		(($# >= 2)) || die "--path-dir needs a directory"
+		path_dirs+=("$2")
 		shift 2
 		;;
 	--show-allowed)
@@ -126,7 +159,7 @@ fi
 for name in "${!roots[@]}"; do
 	[[ -d "${roots[$name]}" ]] || die "the built tree '$name' ('${roots[$name]}') is not a directory"
 done
-for tool in awk diff jq mktemp mv rm sort; do
+for tool in awk cp diff find jq mktemp mv rm sort; do
 	command -v "$tool" >/dev/null 2>&1 || die "needs '$tool' on the PATH"
 done
 
@@ -176,6 +209,8 @@ norm_kv() {
 		gsub(/"""/, "", v)
 		v = unquote(trim(v))
 		if (barehex(v)) v = tolower(v)
+		if (v == "false" || v == "no" || v == "off") v = "0"
+		else if (v == "true" || v == "yes" || v == "on") v = "1"
 		print lowhex((sect == "" ? "" : sect ".") key "=" v)
 		have = 0
 	}
@@ -246,7 +281,9 @@ norm_css() {
 			for (i = 2; i <= d; i++) path = path " > " stack[i]
 			b = path " :: " b
 		}
-		print lowhex(b)
+		b = lowhex(b)
+		if (d == 0 && b ~ /^@define-color /) dc[++ndc] = b
+		else other[++nother] = b
 	}
 	{ t = t $0 "\n" }
 	END {
@@ -264,6 +301,13 @@ norm_css() {
 			else buf = buf c
 		}
 		emit(buf)
+		for (i = 2; i <= ndc; i++) {
+			v = dc[i]
+			for (j = i - 1; j >= 1 && dc[j] > v; j--) dc[j + 1] = dc[j]
+			dc[j + 1] = v
+		}
+		for (i = 1; i <= ndc; i++) print dc[i]
+		for (i = 1; i <= nother; i++) print other[i]
 	}' "$1"
 }
 
@@ -378,6 +422,18 @@ valid_format() {
 # ── the config ──────────────────────────────────────────────────────────────
 
 fields=()
+# Splits $1 at "+" into plus.
+plus=()
+split_plus() {
+	local s="$1"
+	plus=()
+	while :; do
+		plus+=("${s%%+*}")
+		[[ "$s" == *+* ]] || break
+		s="${s#*+}"
+	done
+}
+
 # Splits $1 at tabs into fields, keeping empty ones.
 split_tabs() {
 	local s="$1"
@@ -389,9 +445,10 @@ split_tabs() {
 	done
 }
 
-c_fmt=() c_stow=() c_root=() c_built=()
+c_fmt=() c_stow=() c_built=()
 a_glob=() a_text=() a_reason=()
-s_glob=() s_from=() s_to=()
+s_glob=() s_from=() s_to=() s_bin=()
+b_spec=()
 
 lineno=0
 while IFS= read -r line || [[ -n "$line" ]]; do
@@ -403,27 +460,42 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 	compare)
 		((${#fields[@]} == 4)) || die "$config line $lineno: compare needs FORMAT, STOWPATH and NAME:BUILTPATH"
 		valid_format "${fields[1]}" || die "$config line $lineno: unknown format '${fields[1]}'"
-		[[ "${fields[3]}" == ?*:?* ]] || die "$config line $lineno: the built side must be NAME:BUILTPATH"
-		[[ -v roots["${fields[3]%%:*}"] ]] || die "$config line $lineno: no --built tree called '${fields[3]%%:*}'"
+		split_plus "${fields[3]}"
+		for part in "${plus[@]}"; do
+			[[ "$part" == ?*:?* ]] || die "$config line $lineno: the built side must be NAME:BUILTPATH[+NAME:BUILTPATH]..."
+			[[ -v roots["${part%%:*}"] ]] || die "$config line $lineno: no --built tree called '${part%%:*}'"
+		done
 		c_fmt+=("${fields[1]}")
 		c_stow+=("${fields[2]}")
-		c_root+=("${fields[3]%%:*}")
-		c_built+=("${fields[3]#*:}")
+		c_built+=("${fields[3]}")
+		;;
+	builtonly)
+		((${#fields[@]} == 2)) || die "$config line $lineno: builtonly needs NAME:DIR"
+		[[ "${fields[1]}" == ?*:?* && -v roots["${fields[1]%%:*}"] ]] ||
+			die "$config line $lineno: builtonly needs NAME:DIR with a --built tree called NAME"
+		b_spec+=("${fields[1]}")
 		;;
 	allow)
 		((${#fields[@]} >= 3 && ${#fields[@]} <= 4)) || die "$config line $lineno: allow needs GLOB, TEXT and an optional REASON"
-		[[ "${fields[2]}" == "-"* || "${fields[2]}" == "+"* || "${fields[2]}" == "!missing" ]] ||
-			die "$config line $lineno: allow TEXT starts with - or +, or is !missing"
+		[[ "${fields[2]}" == "-"* || "${fields[2]}" == "+"* || "${fields[2]}" == "!missing" ||
+			"${fields[2]}" == "!builtonly" || "${fields[2]}" == "!not-on-path "?* ]] ||
+			die "$config line $lineno: allow TEXT starts with - or +, or is !missing, !builtonly or !not-on-path NAME"
 		a_glob+=("${fields[1]}")
 		a_text+=("${fields[2]}")
 		a_reason+=("${fields[3]:-}")
 		;;
-	sub)
-		((${#fields[@]} == 4)) || die "$config line $lineno: sub needs GLOB, FROM and TO"
-		[[ -n "${fields[2]}" ]] || die "$config line $lineno: sub FROM is empty"
+	sub | binsub)
+		((${#fields[@]} == 4)) || die "$config line $lineno: ${fields[0]} needs GLOB, FROM and TO"
+		[[ -n "${fields[2]}" ]] || die "$config line $lineno: ${fields[0]} FROM is empty"
 		s_glob+=("${fields[1]}")
 		s_from+=("${fields[2]}")
 		s_to+=("${fields[3]}")
+		if [[ "${fields[0]}" == binsub ]]; then
+			s_bin+=(1)
+			((${#path_dirs[@]} > 0)) || die "$config line $lineno: binsub needs at least one --path-dir"
+		else
+			s_bin+=(0)
+		fi
 		;;
 	*) die "$config line $lineno: unknown directive '${fields[0]}'" ;;
 	esac
@@ -443,16 +515,18 @@ done
 
 # ── the run ─────────────────────────────────────────────────────────────────
 
-declare -A a_used=() s_used=()
+declare -A a_used=() s_used=() compared=()
 n_files=0 n_ok=0 n_diff=0 n_remaining=0 n_allowed=0
 : >"$work/used"
 
 for i in "${!c_fmt[@]}"; do
 	fmt="${c_fmt[$i]}"
 	spath="${c_stow[$i]}"
-	bfile="${roots[${c_root[$i]}]}/${c_built[$i]}"
-	where="${c_root[$i]}:${c_built[$i]}"
+	where="${c_built[$i]}"
 	n_files=$((n_files + 1))
+	split_plus "$where"
+	parts=("${plus[@]}")
+	for part in "${parts[@]}"; do compared["$part"]=1; done
 
 	# Allow entries that apply to this file, as "index<TAB>text" lines.
 	: >"$work/sel"
@@ -460,6 +534,7 @@ for i in "${!c_fmt[@]}"; do
 	for j in "${!a_glob[@]}"; do
 		# shellcheck disable=SC2053 # the glob is the point
 		[[ "$spath" == ${a_glob[$j]} ]] || continue
+		[[ "${a_text[$j]}" == "!builtonly" ]] && continue
 		a_used[$j]="${a_used[$j]:-0}"
 		if [[ "${a_text[$j]}" == "!missing" ]]; then
 			missing_allowed="$j"
@@ -468,7 +543,11 @@ for i in "${!c_fmt[@]}"; do
 		fi
 	done
 
-	if [[ ! -f "$bfile" ]]; then
+	absent=0
+	for part in "${parts[@]}"; do
+		[[ -f "${roots[${part%%:*}]}/${part#*:}" ]] || absent=1
+	done
+	if ((absent == 1)); then
 		if [[ -n "$missing_allowed" ]]; then
 			a_used[$missing_allowed]=$((a_used[$missing_allowed] + 1))
 			n_allowed=$((n_allowed + 1))
@@ -481,30 +560,57 @@ for i in "${!c_fmt[@]}"; do
 		continue
 	fi
 
-	normalize "$fmt" "$stow/$spath" >"$work/a" 2>"$work/err" ||
-		die "cannot read the stow source '$spath' as $fmt"
-	normalize "$fmt" "$bfile" >"$work/b" 2>"$work/err" ||
-		die "cannot read the built file '$where' as $fmt"
-
+	# The subs rewrite a copy of the raw stow file, before the normaliser
+	# sorts it: a rewritten line must find its place in the sort order.
+	cp -- "$stow/$spath" "$work/raw"
+	: >"$work/names"
 	for k in "${!s_glob[@]}"; do
 		# shellcheck disable=SC2053 # the glob is the point
 		[[ "$spath" == ${s_glob[$k]} ]] || continue
 		s_used[$k]="${s_used[$k]:-0}"
-		PF="${s_from[$k]}" PT="${s_to[$k]}" awk -v cf="$work/subcount" '
+		PF="${s_from[$k]}" PT="${s_to[$k]}" awk -v cf="$work/subcount" -v nf="$work/names" -v bin="${s_bin[$k]}" '
 			BEGIN { f = ENVIRON["PF"]; t = ENVIRON["PT"]; n = 0 }
 			{
 				out = ""; s = $0
-				while ((p = index(s, f)) > 0) { out = out substr(s, 1, p - 1) t; s = substr(s, p + length(f)); n++ }
+				while ((p = index(s, f)) > 0) {
+					out = out substr(s, 1, p - 1) t; s = substr(s, p + length(f)); n++
+					if (bin == 1 && match(s, /^[A-Za-z0-9._+@-]+/)) print substr(s, 1, RLENGTH) >> nf
+				}
 				print out s
 			}
-			END { print n > cf }' "$work/a" >"$work/a2" || die "cannot apply the sub entry for '${s_glob[$k]}'"
-		mv -- "$work/a2" "$work/a"
+			END { print n > cf }' "$work/raw" >"$work/raw2" || die "cannot apply the sub entry for '${s_glob[$k]}'"
+		mv -- "$work/raw2" "$work/raw"
 		s_used[$k]=$((s_used[$k] + $(<"$work/subcount")))
 	done
+
+	normalize "$fmt" "$work/raw" >"$work/a" 2>"$work/err" ||
+		die "cannot read the stow source '$spath' as $fmt"
+	: >"$work/b"
+	for part in "${parts[@]}"; do
+		normalize "$fmt" "${roots[${part%%:*}]}/${part#*:}" >>"$work/b" 2>"$work/err" ||
+			die "cannot read the built file '$part' as $fmt"
+	done
+	((${#parts[@]} > 1)) && LC_ALL=C sort -o "$work/b" "$work/b"
 
 	diff --unchanged-line-format= --old-line-format='-%L' --new-line-format='+%L' "$work/a" "$work/b" >"$work/d"
 	rc=$?
 	((rc <= 1)) || die "diff failed on '$spath'"
+
+	# Every command name a binsub made bare must be on the PATH of the built
+	# system; the names that are not become lines of the diff.
+	if [[ -s "$work/names" ]]; then
+		declare -A seen_name=()
+		while IFS= read -r name; do
+			[[ -n "${seen_name[$name]:-}" ]] && continue
+			seen_name[$name]=1
+			found=0
+			for dir in "${path_dirs[@]}"; do
+				[[ -e "$dir/$name" ]] && found=1
+			done
+			((found == 1)) || printf '!not-on-path %s\n' "$name" >>"$work/d"
+		done <"$work/names"
+		unset seen_name
+	fi
 
 	: >"$work/rem"
 	: >"$work/alw"
@@ -549,6 +655,32 @@ for i in "${!c_fmt[@]}"; do
 	fi
 done
 
+# Files that exist only on the built side: nothing above compares them.
+n_builtonly=0
+for spec in "${b_spec[@]}"; do
+	base="${roots[${spec%%:*}]}/${spec#*:}"
+	[[ -d "$base" ]] || die "the builtonly directory '$spec' is not a directory"
+	while IFS= read -r -d '' f; do
+		key="${spec%%:*}:${f#"${roots[${spec%%:*}]}"/}"
+		[[ -n "${compared[$key]:-}" ]] && continue
+		allowed_by=""
+		for j in "${!a_glob[@]}"; do
+			[[ "${a_text[$j]}" == "!builtonly" ]] || continue
+			# shellcheck disable=SC2053 # the glob is the point
+			[[ "$key" == ${a_glob[$j]} ]] && { allowed_by="$j"; break; }
+		done
+		if [[ -n "$allowed_by" ]]; then
+			a_used[$allowed_by]=$((${a_used[$allowed_by]:-0} + 1))
+			n_allowed=$((n_allowed + 1))
+			((show_allowed == 1)) && echo "allowed built only $key  (${a_reason[$allowed_by]})"
+		else
+			n_builtonly=$((n_builtonly + 1))
+			n_remaining=$((n_remaining + 1))
+			echo "BUILT ONLY $key"
+		fi
+	done < <(find -L "$base" -type f -print0 | LC_ALL=C sort -z)
+done
+
 # Which allow entries were used.
 while IFS= read -r id; do
 	[[ -n "$id" ]] && a_used[$id]=$((${a_used[$id]:-0} + 1))
@@ -568,7 +700,7 @@ for k in "${!s_glob[@]}"; do
 	fi
 done
 
-echo "style-parity: $n_files compared, $n_ok identical, $n_diff with remaining differences ($n_remaining lines), $n_allowed allowed, $stale stale"
+echo "style-parity: $n_files compared, $n_ok identical, $n_diff with remaining differences, $n_builtonly built only, $n_remaining remaining lines in all, $n_allowed allowed, $stale stale"
 if ((n_remaining == 0 && stale == 0)); then
 	echo "style-parity: no remaining differences"
 	exit 0

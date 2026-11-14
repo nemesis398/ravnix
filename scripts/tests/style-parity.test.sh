@@ -631,7 +631,7 @@ test_a_missing_tool_is_named_before_any_work() {
 	cfg compare jsonc a.jsonc home:a.jsonc
 	local d="$scratch/nojq" t
 	mkdir -p "$d"
-	for t in bash awk sed sort diff mktemp rm cat dirname tr head wc; do
+	for t in bash awk sed sort diff mktemp rm cat dirname tr head wc cp find mv; do
 		ln -s "$(command -v "$t")" "$d/$t"
 	done
 	capture env PATH="$d" "$BASH" "$script" --stow "$stow" --built home="$home" --config "$conf"
@@ -667,6 +667,136 @@ word=Facade
 '
 	put "$home" m 'load=cdd6f4,fab387,f38ba8
 word=Facade
+'
+	cfg compare kv m home:m
+	parity
+	expect_status 0
+}
+
+test_a_sub_that_moves_a_line_in_the_sort_order_still_compares_equal() {
+	setup
+	put "$stow" t.toml '[s]
+exec=/x/bin/zz
+exec=ab
+'
+	put "$home" t.toml '[s]
+exec=ab
+exec=zz
+'
+	cfg compare kv t.toml home:t.toml
+	cfg sub 't.toml' '/x/bin/' ''
+	parity
+	expect_status 0
+}
+
+test_binsub_names_must_resolve_on_the_path() {
+	setup
+	local bindir="$scratch/pathbin"
+	mkdir -p "$bindir"
+	: >"$bindir/tool"
+	put "$stow" t.ini 'run=/x/bin/tool
+other=/x/bin/gone
+'
+	put "$home" t.ini 'run=tool
+other=gone
+'
+	cfg compare kv t.ini home:t.ini
+	cfg binsub 't.ini' '/x/bin/' ''
+	parity --path-dir "$bindir"
+	expect_status 1
+	expect_remaining "!not-on-path gone"
+	expect_no_out "!not-on-path tool"
+	cfg allow 't.ini' '!not-on-path gone' 'not ported yet'
+	parity --path-dir "$bindir"
+	expect_status 0
+	: >"$bindir/gone"
+	parity --path-dir "$bindir"
+	expect_status 1
+	expect_out "STALE"
+}
+
+test_binsub_without_a_path_dir_is_an_error() {
+	setup
+	put "$stow" t.ini 'run=/x/bin/tool
+'
+	put "$home" t.ini 'run=tool
+'
+	cfg compare kv t.ini home:t.ini
+	cfg binsub 't.ini' '/x/bin/' ''
+	parity
+	expect_status 2
+	expect_said "--path-dir"
+}
+
+test_a_file_that_exists_only_on_the_built_side_is_reported() {
+	setup
+	put "$stow" d/a.lua 'x
+'
+	put "$home" d/a.lua 'x
+'
+	put "$home" d/extra.lua 'y
+'
+	put "$home" d/sub/deep.lua 'z
+'
+	cfg compare lines d/a.lua home:d/a.lua
+	cfg builtonly home:d
+	parity
+	expect_status 1
+	expect_out "BUILT ONLY home:d/extra.lua"
+	expect_out "BUILT ONLY home:d/sub/deep.lua"
+	expect_no_out "BUILT ONLY home:d/a.lua"
+	cfg allow 'home:d/extra.lua' '!builtonly' 'machinery'
+	cfg allow 'home:d/sub/*' '!builtonly' 'machinery'
+	parity
+	expect_status 0
+	cfg allow 'home:d/none.lua' '!builtonly' 'gone'
+	parity
+	expect_status 1
+	expect_out "STALE"
+}
+
+test_a_built_side_of_several_files_is_their_union() {
+	setup
+	put "$stow" l.yml 'a: 1
+b: 2
+'
+	put "$home" one.yml 'a: 1
+'
+	put "$sysroot" two.yml 'b: 2
+'
+	cfg compare yaml l.yml home:one.yml+sys:two.yml
+	parity
+	expect_status 0
+	put "$sysroot" two.yml 'b: 3
+'
+	parity
+	expect_status 1
+	expect_remaining "-b=2"
+	expect_remaining "+b=3"
+}
+
+test_css_color_definitions_compare_without_regard_to_order() {
+	setup
+	put "$stow" s.css '@define-color b #222222;
+@define-color a #111111;
+x { color: @a; }
+'
+	put "$home" s.css '@define-color a #111111;
+@define-color b #222222;
+x { color: @a; }
+'
+	cfg compare css s.css home:s.css
+	parity
+	expect_status 0
+}
+
+test_kv_booleans_compare_by_value() {
+	setup
+	put "$stow" m 'legacy_layout=false
+wrap=yes
+'
+	put "$home" m 'legacy_layout=0
+wrap=1
 '
 	cfg compare kv m home:m
 	parity
@@ -717,6 +847,13 @@ tests=(
 	test_kv_bare_flags_are_keys_of_their_own
 	test_kv_bare_hex_lists_ignore_case
 	test_yaml_document_markers_are_ignored
+	test_a_sub_that_moves_a_line_in_the_sort_order_still_compares_equal
+	test_binsub_names_must_resolve_on_the_path
+	test_binsub_without_a_path_dir_is_an_error
+	test_a_file_that_exists_only_on_the_built_side_is_reported
+	test_a_built_side_of_several_files_is_their_union
+	test_css_color_definitions_compare_without_regard_to_order
+	test_kv_booleans_compare_by_value
 	test_sway_format_ignores_the_place_of_set_lines_only
 	test_yaml_nests_by_indent_and_ignores_order_and_comments
 	test_css_compares_declarations_per_selector_and_ignores_layout_and_comments
