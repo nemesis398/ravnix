@@ -38,7 +38,8 @@
 #       A sub for FROM a directory that held commands (Fedora's ~/.local/bin/)
 #       and TO the empty string: the word after each FROM is a command name,
 #       and every such name must exist in one of the --path-dir directories
-#       (the built system's PATH). A name that does not is the diff line
+#       (the built system's PATH); names in comment lines (shebangs
+#       included) are not checked. A name that does not is the diff line
 #       "!not-on-path NAME". This closes the hole a bare sub leaves open: a
 #       command that nothing installs would compare equal to itself.
 #   builtonly NAME:DIR
@@ -86,7 +87,9 @@
 # data. Its tests are scripts/tests/style-parity.test.sh. Known limits:
 # normalisation is line and token based, not a parser: a CSS string holding a
 # brace or a semicolon, a TOML key in quotes, a YAML flow mapping or a JSON
-# comment marker inside a TOML string are not understood. In kv the boolean
+# comment marker inside a TOML string are not understood. In kv the sections
+# "Desktop Entry" and "Desktop Action ..." (.desktop files) drop the localised
+# keys (Name[de]=) and a list's trailing ";". In kv the boolean
 # words true, yes and on equal 1 and false, no and off equal 0, for any key. An
 # array of tables ([[items]]) is flattened into one bag of key=value lines, so
 # a label paired with the wrong command in the other table compares clean.
@@ -211,6 +214,10 @@ norm_kv() {
 		if (barehex(v)) v = tolower(v)
 		if (v == "false" || v == "no" || v == "off") v = "0"
 		else if (v == "true" || v == "yes" || v == "on") v = "1"
+		if (sect ~ /^Desktop /) {
+			if (key ~ /\[[^]]*\]$/) { have = 0; return }
+			sub(/;$/, "", v)
+		}
 		print lowhex((sect == "" ? "" : sect ".") key "=" v)
 		have = 0
 	}
@@ -572,9 +579,10 @@ for i in "${!c_fmt[@]}"; do
 			BEGIN { f = ENVIRON["PF"]; t = ENVIRON["PT"]; n = 0 }
 			{
 				out = ""; s = $0
+				skip = ($0 ~ /^[ \t]*#/)
 				while ((p = index(s, f)) > 0) {
 					out = out substr(s, 1, p - 1) t; s = substr(s, p + length(f)); n++
-					if (bin == 1 && match(s, /^[A-Za-z0-9._+@-]+/)) print substr(s, 1, RLENGTH) >> nf
+					if (bin == 1 && !skip && match(s, /^[A-Za-z0-9._+@-]+/)) print substr(s, 1, RLENGTH) >> nf
 				}
 				print out s
 			}

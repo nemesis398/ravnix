@@ -715,6 +715,26 @@ other=gone
 	expect_out "STALE"
 }
 
+test_binsub_does_not_check_shebangs_and_comments() {
+	setup
+	local bindir="$scratch/pathbin"
+	mkdir -p "$bindir"
+	put "$stow" tool '#!/usr/bin/python3
+# see /x/bin/nothing
+print(1)
+'
+	put "$home" tool '#! /nix/store/aaa/bin/python3
+# see nothing
+print(1)
+'
+	cfg compare pyscript tool home:tool
+	cfg binsub 'tool' '/x/bin/' ''
+	cfg binsub 'tool' '/usr/bin/' ''
+	parity --path-dir "$bindir"
+	expect_status 0
+	expect_no_out "not-on-path"
+}
+
 test_binsub_without_a_path_dir_is_an_error() {
 	setup
 	put "$stow" t.ini 'run=/x/bin/tool
@@ -790,6 +810,29 @@ x { color: @a; }
 	expect_status 0
 }
 
+test_kv_desktop_entries_ignore_translations_and_the_trailing_semicolon() {
+	setup
+	put "$stow" a.desktop '[Desktop Entry]
+Name=Foo
+Name[de]=Fuu
+Categories=Network;WebBrowser;
+'
+	put "$home" a.desktop '[Desktop Entry]
+Name=Foo
+Categories=Network;WebBrowser
+'
+	cfg compare kv a.desktop home:a.desktop
+	parity
+	expect_status 0
+	put "$home" a.desktop '[Desktop Entry]
+Name=Bar
+Categories=Network;WebBrowser
+'
+	parity
+	expect_status 1
+	expect_remaining "-Desktop Entry.Name=Foo"
+}
+
 test_kv_booleans_compare_by_value() {
 	setup
 	put "$stow" m 'legacy_layout=false
@@ -849,10 +892,12 @@ tests=(
 	test_yaml_document_markers_are_ignored
 	test_a_sub_that_moves_a_line_in_the_sort_order_still_compares_equal
 	test_binsub_names_must_resolve_on_the_path
+	test_binsub_does_not_check_shebangs_and_comments
 	test_binsub_without_a_path_dir_is_an_error
 	test_a_file_that_exists_only_on_the_built_side_is_reported
 	test_a_built_side_of_several_files_is_their_union
 	test_css_color_definitions_compare_without_regard_to_order
+	test_kv_desktop_entries_ignore_translations_and_the_trailing_semicolon
 	test_kv_booleans_compare_by_value
 	test_sway_format_ignores_the_place_of_set_lines_only
 	test_yaml_nests_by_indent_and_ignores_order_and_comments
