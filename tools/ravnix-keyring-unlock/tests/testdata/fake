@@ -1,0 +1,75 @@
+#!/bin/sh
+# The programs the setup runs, in its tests: rbw, systemd-ask-password and
+# systemd-creds. Each is a symlink to this file in a test's bin directory,
+# beside the files that say what the program does in that test:
+#   rbw-locked     `rbw unlocked` exits 1, as with a locked vault
+#   item           what `rbw get -- NAME` prints; without it, get fails
+#   typed          what systemd-ask-password prints; without it, it fails,
+#                  as when nobody types (Ctrl-C, end of input, its timeout)
+#   encrypt-fails, decrypt-fails
+#                  systemd-creds fails
+#   decrypt-other  systemd-creds decrypts to another password
+# The stand-in for systemd-creds "encrypts" with ROT13 behind a "fake:"
+# marker, which is enough to tell the plain password from what was stored.
+# Every run appends a line to the directory's log: the program's name and
+# its arguments, each in brackets. Each program also writes its environment
+# to env.NAME, and systemd-creds encrypt its input to encrypt.in, so that a
+# test sees where the passwords went. A script that is only read (the
+# files) has no ETXTBSY race with a thread that forks while a test writes it.
+d=${0%/*}
+n=${0##*/}
+{
+	printf '%s' "$n"
+	for a in "$@"; do printf ' [%s]' "$a"; done
+	printf '\n'
+} >>"$d/log"
+env >"$d/env.$n"
+case $n in
+rbw)
+	case ${1-} in
+	unlocked)
+		if [ -f "$d/rbw-locked" ]; then
+			echo "rbw: the agent is locked" >&2
+			exit 1
+		fi
+		;;
+	get)
+		if [ ! -f "$d/item" ]; then
+			echo "rbw: couldn't find entry" >&2
+			exit 1
+		fi
+		cat "$d/item"
+		;;
+	*) exit 2 ;;
+	esac
+	;;
+systemd-ask-password)
+	[ -f "$d/typed" ] || exit 1
+	cat "$d/typed"
+	;;
+systemd-creds)
+	case ${2-} in
+	encrypt)
+		if [ -f "$d/encrypt-fails" ]; then
+			echo "Failed to encrypt the credential" >&2
+			exit 1
+		fi
+		cat >"$d/encrypt.in"
+		printf 'fake:'
+		tr 'A-Za-z' 'N-ZA-Mn-za-m' <"$d/encrypt.in"
+		;;
+	decrypt)
+		if [ -f "$d/decrypt-fails" ]; then
+			echo "Failed to decrypt the credential" >&2
+			exit 1
+		fi
+		if [ -f "$d/decrypt-other" ]; then
+			printf 'something else'
+			exit 0
+		fi
+		tail -c +6 "$4" | tr 'A-Za-z' 'N-ZA-Mn-za-m'
+		;;
+	*) exit 2 ;;
+	esac
+	;;
+esac

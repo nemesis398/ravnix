@@ -17,3 +17,12 @@ forbids_core_dumps_and_ptrace :: proc(t: ^testing.T) {
 	// A second call changes nothing and still succeeds.
 	testing.expect_value(t, kr.forbid_core_dumps(), "")
 }
+
+@(test)
+limits_core_dumps_to_nothing :: proc(t: ^testing.T) {
+	testing.expect_value(t, kr.forbid_core_dumps(), "")
+	limit: linux.RLimit
+	testing.expect_value(t, linux.getrlimit(.CORE, &limit), linux.Errno.NONE)
+	testing.expect_value(t, limit.cur, 0)
+	testing.expect_value(t, limit.max, 0)
+}

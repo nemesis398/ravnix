@@ -4,8 +4,8 @@ Unlocks the login keyring of the gnome-keyring daemon that is already
 running, with the password from a systemd credential, when the keyring is
 locked. It runs once per graphical session, as the user service
 `ravnix-keyring-unlock` (`modules/desktop/keyring.nix`), for
-`ravnix.desktop.keyring.autoUnlock`, whose description has the one-time
-setup.
+`ravnix.desktop.keyring.autoUnlock`. Its one-time setup is a command of
+the same tool, `ravnix-keyring-unlock setup` (below).
 
 The reason is the YubiKey tap at the greeter: it gives PAM no password, so
 pam_gnome_keyring starts the daemon with the login keyring locked, and Helium,
@@ -17,6 +17,7 @@ has a line break, and then loses every item.
 
 ```sh
 ravnix-keyring-unlock [--credential FILE] [--bus ADDRESS]
+ravnix-keyring-unlock setup [--item NAME] [--bus ADDRESS]
 ```
 
 - `--credential FILE`: the password. The default is
@@ -76,6 +77,76 @@ crash writes no core dump with the password in it, and no other process of
 the user can ptrace it or read its `/proc/PID/mem`. The unit also sets
 `LimitCORE=0`. It exits 1 if the kernel refuses.
 
+## The setup
+
+`ravnix-keyring-unlock setup`, run once in a terminal of the graphical
+session, gives the login keyring a password of its own and stores it for the
+unlock. Nothing is copied or pasted:
+
+1. It checks the credential's path,
+   `~/.config/credstore.encrypted/ravnix-keyring-login`: a symbolic link
+   at the file or its directory, a directory where the file should be, a
+   file where the directory should be, or a directory of another user stops
+   it before anything runs.
+2. It reads the new password from the Bitwarden item that
+   `ravnix.desktop.keyring.autoUnlock.rbwItem` names (the module's wrapper
+   puts it in `RAVNIX_KEYRING_RBW_ITEM`; `--item NAME` wins), with
+   `rbw get -- NAME`, on rbw's standard output. First it asks `rbw unlocked`:
+   on a locked vault, `rbw get` would make the agent ask for the master
+   password, so the setup stops instead and says to run `rbw unlock` (or
+   `ai-unlock`). The password is rbw's line without its newline. It must not
+   be empty, hold a NUL byte, be longer than 8192 bytes, or end in a line
+   break, which the unlock would take off the credential. The item is made
+   beforehand with Bitwarden's generator, in bwm or the web vault: `rbw add`
+   gets HTTP 422 from Vaultwarden.
+3. It connects to the session bus and asks the daemon whether the keyring
+   already has that password, with gnome-keyring's
+   `ChangeWithMasterPassword` from the password to itself. That call checks
+   the old password in both states of the collection and changes nothing
+   when it is wrong. `UnlockWithMasterPassword` is no such check: on an
+   unlocked collection gnome-keyring 50 answers every password with success
+   (the tests' stand-in does the same, and the check
+   `desktop-keyring-autounlock` shows it on the real daemon).
+4. When the keyring does not have it, it asks once for the current
+   password, with `systemd-ask-password -n` on the terminal (masked; it gives
+   up after 300 s), and changes it with `ChangeWithMasterPassword`, in a
+   `plain` session. A wrong password is `org.gnome.keyring.Error.Denied`,
+   which changes nothing; the setup says so and stops. So does a typed
+   password that is the item's own. With no login keyring at all it stops:
+   it never makes one.
+5. It encrypts the password with
+   `systemd-creds --user encrypt --name=ravnix-keyring-login - -`, the
+   password on standard input and the credential on standard output, and
+   writes the file itself: the directory is made or made 0700, the file is
+   written as a temporary file beside it (0600, `O_EXCL`, `O_NOFOLLOW`),
+   synced, and renamed over the old one, so the unlock finds the old file or
+   the new one and never a part.
+6. It decrypts the file again (`systemd-creds --user decrypt`), checks that
+   it holds the item's password and that the keyring takes it (the change to
+   itself again), and unlocks the keyring with it when it is locked. Only
+   then does it report success.
+
+The keyring comes first and the credential second, and step 3 makes a run
+that died between them repairable: the keyring has the item's password
+then, so the next run asks for nothing and only writes the credential again.
+A failure after step 4 says so. Every refusal before step 4 changes nothing,
+and its line ends with "nothing changed".
+
+The passwords travel through pipes only: never in an argument or the
+environment of a program, never in a line. Every buffer that held one is
+overwritten with zeros, the `ChangeWithMasterPassword` message included.
+The setup makes itself undumpable as the unlock does, and sets its core
+limit to 0, which `LimitCORE=0` does for the service; rbw,
+systemd-ask-password and systemd-creds inherit the limit. It runs the three
+programs from `PATH`, from absolute directories only.
+
+| Exit | Line |
+| --- | --- |
+| 0 | the keyring's password is now the item's, and the credential holds it |
+| 0 | the keyring had the item's password already; the credential holds it again |
+| 1 | the reason, and whether anything changed |
+| 2 | bad usage |
+
 ## Output and exit status
 
 One line on standard error. When standard error is the journal (it is the
@@ -122,6 +193,24 @@ in the build sandbox, started as pam_gnome_keyring starts it after a tap and
 after a password, and in a VM with greetd, the systemd credential and the
 login layout.
 
+The setup's tests (`tests/setup_test.odin`) run it against the same
+stand-in bus, which also answers `ChangeWithMasterPassword` as gnome-keyring
+50 does (it checks the old password whether the collection is locked or not,
+while an unlock of an unlocked collection takes any), and against stand-ins
+for rbw, systemd-ask-password and systemd-creds (`tests/testdata/fake`),
+which record their arguments, their environment and their input. They cover
+a locked and an unlocked keyring, a run after one that died between the
+keyring and the credential, a wrong and the same current password, nobody
+typing, a locked vault, no rbw, an item that is empty, only a newline, holds
+a NUL, ends in a line break, is one byte too long or 200 KiB, the longest
+password there is, a symbolic link at the file or the directory, a
+directory or a file in the wrong place, systemd-creds failing to encrypt
+or decrypt or decrypting to something else, no login keyring, another error
+of the daemon, a bus that hangs up, a directory that is not private, four
+writers of the credential at once, and the lookup on `PATH`. Every one
+checks that no password reached an argument, an environment, a line or the
+file in the clear.
+
 The bench (`ravnix-keyring-unlock-bench`) counts the run of every login
 without a credential: the tool finds no file, says so and exits, without a
 bus. A run that unlocks needs a bus and a daemon, which the bench has not.
@@ -144,5 +233,17 @@ bus. A run that unlocks needs a bus and a daemon, which the bench has not.
   machine ID or the host key changed), the unit fails before the tool runs,
   with systemd's message, and the keyring stays locked; the setup command
   makes a new credential.
+- The setup writes the credential to `~/.config/credstore.encrypted/`,
+  whatever `XDG_CONFIG_HOME` the terminal has. The user manager looks in its
+  own `$XDG_CONFIG_HOME/credstore.encrypted/`, which is `~/.config` unless
+  something gives the user manager another one.
+- A setup killed between the temporary file and the rename leaves
+  `.ravnix-keyring-login.PID.TID.tmp` in the directory, which holds only
+  the encrypted credential. The unlock does not read it, and nothing
+  removes it.
+- systemd-ask-password masks what is typed. When the input comes faster
+  than the prompt, as from a pipe into `script`, the terminal can still echo
+  it before systemd-ask-password turns echo off; the VM test types it that
+  way and does not look at the terminal's output for that reason.
 - The plain session is not closed: gnome-keyring drops a client's sessions
   when its connection closes, which is the next thing the tool does.

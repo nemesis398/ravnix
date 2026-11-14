@@ -18,6 +18,9 @@
 // It prints one line, on standard error, with the journal's priority
 // prefix when standard error is the journal. It never prompts, and the
 // password is never in its arguments, its environment or its output.
+//
+// `ravnix-keyring-unlock setup` is the one-time setup that makes the
+// credential (setup.odin), run by hand in a terminal of the session.
 package ravnix_keyring_unlock
 
 import "core:fmt"
@@ -111,6 +114,20 @@ Credential_Status :: enum u8 {
 	Failed,
 }
 
+// password_problem says what keeps data from being a login password, or
+// "": empty, longer than MAX_PASSWORD, or with a NUL byte.
+password_problem :: proc(data: []u8) -> string {
+	switch {
+	case len(data) > MAX_PASSWORD:
+		return fmt.tprintf("is longer than a login password can be (%d bytes)", MAX_PASSWORD)
+	case len(data) == 0:
+		return "is empty"
+	case strings.index_byte(string(data), 0) >= 0:
+		return "holds a NUL byte, which no login password has"
+	}
+	return ""
+}
+
 // read_credential reads the password from path. "" or a file that is not
 // there is Missing. The password is the file's bytes without one trailing
 // newline; it must not be empty, hold a NUL or be longer than
@@ -150,13 +167,10 @@ read_credential :: proc(path: string, allocator := context.allocator) -> (passwo
 		data = data[:n - 1]
 	}
 	fail := ""
-	switch {
-	case n == len(buf) || len(data) > MAX_PASSWORD:
-		fail = fmt.tprintf("the credential %s is longer than a login password can be (%d bytes)", path, MAX_PASSWORD)
-	case len(data) == 0:
-		fail = fmt.tprintf("the credential %s is empty", path)
-	case strings.index_byte(string(data), 0) >= 0:
-		fail = fmt.tprintf("the credential %s holds a NUL byte, which no login password has", path)
+	if n == len(buf) {
+		fail = fmt.tprintf("the credential %s %s", path, password_problem(buf))
+	} else if problem := password_problem(data); problem != "" {
+		fail = fmt.tprintf("the credential %s %s", path, problem)
 	}
 	if fail != "" {
 		wipe(buf)
@@ -283,13 +297,21 @@ send_password :: proc(c: ^Conn, session: string, password: []u8) -> (denied: boo
 }
 
 // unlock does steps 2 to 4 on a connection that has logged in.
-unlock :: proc(c: ^Conn, password: []u8) -> Result {
-	hello, hwhy := call(c, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "Hello", "", nil)
-	if hwhy != "" {
-		return {.Failed, hwhy}
+// hello is the first call on a bus connection.
+hello :: proc(c: ^Conn) -> string {
+	reply, why := call(c, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "Hello", "", nil)
+	if why != "" {
+		return why
 	}
-	if hello.type == .Error {
-		return {.Failed, fmt.tprintf("the bus refused Hello: %s", error_text(hello))}
+	if reply.type == .Error {
+		return fmt.tprintf("the bus refused Hello: %s", error_text(reply))
+	}
+	return ""
+}
+
+unlock :: proc(c: ^Conn, password: []u8) -> Result {
+	if why := hello(c); why != "" {
+		return {.Failed, why}
 	}
 	locked, no_keyring, why := is_locked(c)
 	switch {
@@ -338,21 +360,32 @@ run :: proc(credential, address: string, timeout: time.Duration, uid: u32) -> Re
 		wipe(password)
 		delete(password)
 	}
+	c: Conn
+	if why := connect(&c, address, timeout, uid); why != "" {
+		return {.Failed, why}
+	}
+	defer conn_close(&c)
+	return unlock(&c, password)
+}
+
+// connect opens c to the bus at address and logs in as uid. On a failure c
+// is closed already.
+connect :: proc(c: ^Conn, address: string, timeout: time.Duration, uid: u32) -> string {
+	c.fd = -1
 	path, awhy := socket_path(address, context.temp_allocator)
 	if awhy != "" {
-		return {.Failed, awhy}
+		return awhy
 	}
 	fd, dwhy := dial(path)
 	if dwhy != "" {
-		return {.Failed, dwhy}
+		return dwhy
 	}
-	c: Conn
-	conn_init(&c, fd, timeout)
-	defer conn_close(&c)
-	if w := authenticate(&c, uid); w != "" {
-		return {.Failed, w}
+	conn_init(c, fd, timeout)
+	if w := authenticate(c, uid); w != "" {
+		conn_close(c)
+		return w
 	}
-	return unlock(&c, password)
+	return ""
 }
 
 PR_SET_DUMPABLE :: 4
@@ -366,12 +399,20 @@ forbid_core_dumps :: proc() -> string {
 	if ret < 0 {
 		return fmt.tprintf("cannot forbid core dumps: %s", errno_text(linux.Errno(-ret)))
 	}
+	// What LimitCORE=0 gives the service, for a run from a terminal too
+	// (the setup): a kernel with suid_dumpable 2 still dumps an undumpable
+	// process, and the programs the setup starts inherit the limit.
+	none := linux.RLimit{}
+	if e := linux.setrlimit(.CORE, &none); e != .NONE {
+		return fmt.tprintf("cannot forbid core dumps: %s", errno_text(e))
+	}
 	return ""
 }
 
 // ── the command ──────────────────────────────────────────────────────────────
 
 USAGE :: `usage: ravnix-keyring-unlock [--credential FILE] [--bus ADDRESS]
+       ravnix-keyring-unlock setup [--item NAME] [--bus ADDRESS]
 
 Unlocks the login keyring of the running gnome-keyring daemon with the
 password in a systemd credential, when it is locked. It never prompts.
@@ -382,7 +423,18 @@ password in a systemd credential, when it is locked. It never prompts.
 
 Exit status: 0 unlocked, or nothing to do (no credential, already unlocked,
 no login keyring, or a wrong password, which it warns about); 1 it could
-not unlock; 2 bad usage. It prints one line on standard error.`
+not unlock; 2 bad usage. It prints one line on standard error.
+
+setup, once, in a terminal of the session: gives the login keyring the
+password of a Bitwarden item, read through rbw (the vault must be
+unlocked), after asking once for its current password, and stores it as
+~/.config/credstore.encrypted/` + CREDENTIAL_NAME + ` for the unlock. Run
+again, it only stores the credential when the keyring has that password.
+
+  --item NAME        the Bitwarden item (default: $RAVNIX_KEYRING_RBW_ITEM,
+                     which ravnix.desktop.keyring.autoUnlock.rbwItem sets)
+
+Exit status: 0 set up; 1 it could not, with the reason; 2 bad usage.`
 
 // Env is what the command reads from its environment.
 Env :: struct {
@@ -390,6 +442,19 @@ Env :: struct {
 	bus_address:           string,
 	runtime_dir:           string,
 	journal_stream:        string,
+	// Only for setup.
+	home:                  string,
+	path:                  string,
+	rbw_item:              string,
+	// The programs setup runs, as paths. Only the tests set them; empty is
+	// the program of that name on path.
+	programs:              Programs,
+}
+
+Programs :: struct {
+	rbw:          string,
+	ask_password: string,
+	creds:        string,
 }
 
 // journal_prefix reports whether fd is the journal stream that
@@ -420,6 +485,9 @@ usage_error :: proc(stderr: ^os.File, text: string) -> int {
 // cli is the command for the arguments after the program's name; it prints
 // to stderr and returns the exit status.
 cli :: proc(args: []string, env: Env, stderr: ^os.File) -> int {
+	if len(args) > 0 && args[0] == "setup" {
+		return cli_setup(args[1:], env, os.stdin, stderr)
+	}
 	credential, bus := "", ""
 	has_credential, has_bus := false, false
 	for i := 0; i < len(args); i += 1 {
@@ -462,6 +530,71 @@ cli :: proc(args: []string, env: Env, stderr: ^os.File) -> int {
 	return exit_code(r.outcome)
 }
 
+// program is the path of a program setup runs: the test's, or the one on
+// PATH, or "" when there is none.
+program :: proc(given, name, path: string) -> string {
+	if given != "" {
+		return given
+	}
+	found, _ := find_program(name, path)
+	return found
+}
+
+// cli_setup is the setup command, for the arguments after "setup". It reads
+// the current password from tty.
+cli_setup :: proc(args: []string, env: Env, tty, stderr: ^os.File) -> int {
+	item, bus := env.rbw_item, ""
+	has_item, has_bus := false, false
+	for i := 0; i < len(args); i += 1 {
+		switch args[i] {
+		case "-h", "--help":
+			fmt.fprintln(stderr, USAGE)
+			return 0
+		case "--item", "--bus":
+			if i + 1 >= len(args) {
+				return usage_error(stderr, fmt.tprintf("setup: %s needs a value", args[i]))
+			}
+			seen := &has_item if args[i] == "--item" else &has_bus
+			if seen^ {
+				return usage_error(stderr, fmt.tprintf("setup: %s given twice", args[i]))
+			}
+			seen^ = true
+			if args[i] == "--item" {
+				item = args[i + 1]
+			} else {
+				bus = args[i + 1]
+			}
+			i += 1
+		case:
+			return usage_error(stderr, fmt.tprintf("setup: unknown argument %q", printable(args[i])))
+		}
+	}
+	if !has_bus {
+		bus = default_address(env.bus_address, env.runtime_dir, context.temp_allocator)
+	}
+	r: Setup_Result
+	if env.home == "" || !strings.has_prefix(env.home, "/") {
+		r = {.Failed, "HOME is not set to a directory, and the credential goes into ~/.config/credstore.encrypted; nothing changed"}
+	} else {
+		r = setup(
+			Setup {
+				item = item,
+				bus = bus,
+				credential = setup_credential_path(env.home),
+				rbw = program(env.programs.rbw, "rbw", env.path),
+				ask_password = program(env.programs.ask_password, "systemd-ask-password", env.path),
+				creds = program(env.programs.creds, "systemd-creds", env.path),
+				tty = tty,
+				messages = stderr,
+				timeout = SETUP_TIMEOUT,
+				uid = u32(linux.getuid()),
+			},
+		)
+	}
+	fmt.fprintln(stderr, setup_line(r))
+	return setup_exit_code(r.outcome)
+}
+
 main :: proc() {
 	arena: virtual.Arena
 	if virtual.arena_init_growing(&arena) != nil {
@@ -478,6 +611,12 @@ main :: proc() {
 		bus_address           = os.get_env("DBUS_SESSION_BUS_ADDRESS", context.allocator),
 		runtime_dir           = os.get_env("XDG_RUNTIME_DIR", context.allocator),
 		journal_stream        = os.get_env("JOURNAL_STREAM", context.allocator),
+	}
+	// Read only for setup, so that the run of every login reads no more.
+	if len(os.args) > 1 && os.args[1] == "setup" {
+		env.home = os.get_env("HOME", context.allocator)
+		env.path = os.get_env("PATH", context.allocator)
+		env.rbw_item = os.get_env("RAVNIX_KEYRING_RBW_ITEM", context.allocator)
 	}
 	code := cli(os.args[1:], env, os.stderr)
 	virtual.arena_destroy(&arena)

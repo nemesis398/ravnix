@@ -49,10 +49,13 @@ Behavior :: struct {
 	no_keyring:   bool,
 	// Nobody owns org.freedesktop.secrets and nothing can be started.
 	no_service:   bool,
-	// The keyring's password; another one is Denied.
+	// The keyring's password; another one is Denied. ChangeWithMasterPassword
+	// changes it (Fake.current).
 	password:     string,
 	// An error the unlock answers with, whatever the password.
 	unlock_error: string,
+	// An error ChangeWithMasterPassword answers with, whatever the passwords.
+	change_error: string,
 	// The replies are big-endian.
 	big_endian:   bool,
 	// A signal and a reply to another call come before every reply.
@@ -87,6 +90,12 @@ Fake :: struct {
 	session:     string,
 	content:     string,
 	passwords:   [dynamic]string,
+	// The keyring's password now, and every ChangeWithMasterPassword as
+	// {original, new}, accepted or not.
+	current:     string,
+	changes:     [dynamic][2]string,
+	// The keyring's state when the connection ended.
+	was_locked:  bool,
 }
 
 SESSION_PATH :: "/org/freedesktop/secrets/session/s7"
@@ -101,6 +110,8 @@ fake_start :: proc(t: ^testing.T, b: Behavior) -> ^Fake {
 	f.calls = make([dynamic]string, f.a)
 	f.destination = make([dynamic]string, f.a)
 	f.passwords = make([dynamic]string, f.a)
+	f.changes = make([dynamic][2]string, f.a)
+	f.current = strings.clone(b.password, f.a)
 	f.dir = strings.clone(scratch(t), f.a)
 	f.socket = strings.concatenate({f.dir, "/bus"}, f.a)
 	f.address = strings.concatenate({"unix:path=", f.socket, ",guid=00112233445566778899aabbccddeeff"}, f.a)
@@ -214,6 +225,7 @@ serve_connection :: proc(f: ^Fake, c: ^kr.Conn) {
 		return
 	}
 	locked := b.locked
+	defer f.was_locked = locked
 	for {
 		m, w := kr.read_message(c)
 		if w != "" {
@@ -299,10 +311,52 @@ serve_connection :: proc(f: ^Fake, c: ^kr.Conn) {
 			switch {
 			case b.unlock_error != "":
 				error_reply(f, c, m, b.unlock_error, "it went wrong")
-			case string(pw) != b.password || f.session != SESSION_PATH:
+			case f.session != SESSION_PATH:
+				error_reply(f, c, m, "org.freedesktop.Secret.Error.NoSession", "No such session")
+			// As gnome-keyring 50 does: an unlocked collection takes any
+			// password, so this call is no check of the password then.
+			case !locked:
+				reply_to(f, c, m, kr.Message{type = .Method_Return})
+			case string(pw) != f.current:
 				error_reply(f, c, m, "org.gnome.keyring.Error.Denied", "The password was incorrect.")
 			case:
 				locked = b.stays_locked
+				reply_to(f, c, m, kr.Message{type = .Method_Return})
+			}
+		case "ChangeWithMasterPassword":
+			// As gnome-keyring 50 does: the original password is checked
+			// whether the collection is locked or not, the collection stays
+			// as locked as it was, and a refused change changes nothing.
+			if m.signature != "o(oayays)(oayays)" {
+				error_reply(f, c, m, "org.freedesktop.DBus.Error.InvalidArgs", "bad signature")
+				continue
+			}
+			collection := kr.get_string(&r)
+			secrets: [2]string
+			sessions: [2]string
+			for i in 0 ..< 2 {
+				kr.get_align(&r, 8)
+				sessions[i] = kr.get_string(&r)
+				kr.get_bytes(&r)
+				secrets[i] = strings.clone(string(kr.get_bytes(&r)), f.a)
+				kr.get_string(&r)
+			}
+			if r.bad {
+				error_reply(f, c, m, "org.freedesktop.DBus.Error.InvalidArgs", "bad secret")
+				continue
+			}
+			append(&f.changes, secrets)
+			switch {
+			case b.change_error != "":
+				error_reply(f, c, m, b.change_error, "it went wrong")
+			case collection != kr.LOGIN_COLLECTION:
+				error_reply(f, c, m, "org.freedesktop.Secret.Error.NoSuchObject", "No such collection")
+			case sessions[0] != SESSION_PATH || sessions[1] != SESSION_PATH:
+				error_reply(f, c, m, "org.freedesktop.Secret.Error.NoSession", "No such session")
+			case secrets[0] != f.current:
+				error_reply(f, c, m, "org.gnome.keyring.Error.Denied", "The password was invalid")
+			case:
+				f.current = secrets[1]
 				reply_to(f, c, m, kr.Message{type = .Method_Return})
 			}
 		case:

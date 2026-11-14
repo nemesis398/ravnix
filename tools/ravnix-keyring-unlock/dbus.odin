@@ -585,6 +585,12 @@ conn_init :: proc(c: ^Conn, fd: linux.Fd, timeout: time.Duration) {
 	c.deadline = time.tick_add(time.tick_now(), timeout)
 }
 
+// conn_rearm gives the connection its whole timeout again, from now: the
+// setup waits for a person between its calls.
+conn_rearm :: proc(c: ^Conn) {
+	c.deadline = time.tick_add(time.tick_now(), c.timeout)
+}
+
 conn_close :: proc(c: ^Conn) {
 	if c.fd >= 0 {
 		linux.close(c.fd)
