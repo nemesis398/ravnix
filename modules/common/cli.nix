@@ -1,5 +1,8 @@
 # The command-line tools both hosts have, configured as on the Fedora laptop,
-# in Catppuccin Mocha with the accent where the catppuccin/nix port has one.
+# in Catppuccin Mocha with the accent where the catppuccin/nix port has one
+# (bat, eza). Where a port has no accent or draws a state hue as decoration,
+# the colors are written from the roles instead: fzf and lazygit here, btop in
+# ./btop.nix, Claude Code in ./claude-theme.nix.
 # What the design spec drops stays out: httpie, tmux, procs, dust, hyperfine
 # and the like stay one `nix shell` away.
 #
@@ -41,7 +44,6 @@ in
   catppuccin = {
     bat.enable = true;
     eza.enable = true;
-    lazygit.enable = true;
   };
 
   programs = {
@@ -123,6 +125,31 @@ in
       enableBashIntegration = false;
       settings = {
         gui = {
+          # Fedora's look, from the roles. It is written into lazygit's own
+          # config.yml, so it holds without the shell's environment: the
+          # catppuccin/nix port reached lazygit only through LG_CONFIG_FILE,
+          # and put Subtext0 on the inactive border and Blue and Yellow, which
+          # are state hues, on the options line and the search.
+          theme = {
+            activeBorderColor = [
+              roles.accent
+              "bold"
+            ];
+            inactiveBorderColor = [ roles.line ];
+            searchingActiveBorderColor = [
+              roles.accent
+              "bold"
+            ];
+            optionsTextColor = [ roles.text ];
+            selectedLineBgColor = [ roles.selected ];
+            inactiveViewSelectedLineBgColor = [ roles.wash ];
+            cherryPickedCommitBgColor = [ palette.teal ];
+            cherryPickedCommitFgColor = [ roles.canvas ];
+            markedBaseCommitBgColor = [ palette.yellow ];
+            markedBaseCommitFgColor = [ roles.canvas ];
+            unstagedChangesColor = [ palette.red ];
+            defaultFgColor = [ roles.text ];
+          };
           nerdFontsVersion = "3";
           border = "single";
           language = "auto";

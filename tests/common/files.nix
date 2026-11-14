@@ -278,11 +278,13 @@ let
     (lib.optional (
       base.programs.bat.config.theme != "Catppuccin Mocha"
     ) "bat's theme is not Catppuccin Mocha")
+    # lazygit's theme is in its own config.yml from the roles, not the port
+    # through LG_CONFIG_FILE (tests/theme/lazygit.nix has the rest).
     (lib.optional (
-      !lib.hasInfix "/mocha/mauve.yml" base.home.sessionVariables.LG_CONFIG_FILE
-    ) "lazygit's theme is not the mauve port")
+      lib.head base.programs.lazygit.settings.gui.theme.activeBorderColor != base.ravnix.theme.roles.accent
+    ) "lazygit's focused border is not the accent")
     (lib.optional (
-      !lib.hasInfix "/mocha/teal.yml" teal.home.sessionVariables.LG_CONFIG_FILE
+      lib.head teal.programs.lazygit.settings.gui.theme.activeBorderColor != teal.ravnix.theme.roles.accent
     ) "lazygit's theme does not follow the accent")
     # The TUIs draw the single light line, not the rounded one.
     (lib.optional (

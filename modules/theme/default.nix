@@ -12,7 +12,7 @@
 #
 #   catppuccin/nix is switched on with the flavor and the accent of the
 #   options, but with autoEnable off: a module that wants a port for its
-#   program (bat, btop, lazygit, eza, Neovim) turns that one on, and a port
+#   program (bat, eza, Neovim) turns that one on, and a port
 #   that does not follow the style spec never changes a program by accident.
 #
 # Setting the same key as a module here is a conflict on purpose: a program
