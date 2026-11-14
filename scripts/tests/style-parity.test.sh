@@ -353,6 +353,27 @@ test_an_allow_entry_matches_by_glob_on_the_stow_path() {
 	expect_status 0
 }
 
+test_allow_entries_of_an_earlier_file_count_as_used_after_later_files() {
+	setup
+	put "$stow" a.ini 'k=1
+'
+	put "$home" a.ini 'k=2
+'
+	put "$stow" b.ini 'm=1
+'
+	put "$home" b.ini 'm=2
+'
+	cfg compare kv a.ini home:a.ini
+	cfg compare kv b.ini home:b.ini
+	cfg allow 'a.ini' '-k=1'
+	cfg allow 'a.ini' '+k=2'
+	cfg allow 'b.ini' '-m=1'
+	cfg allow 'b.ini' '+m=2'
+	parity
+	expect_status 0
+	expect_no_out "STALE"
+}
+
 test_a_stale_allow_entry_fails_and_is_named() {
 	setup
 	put "$stow" a.ini 'k=1
@@ -635,6 +656,19 @@ font=Mono
 	expect_remaining "-show-failed-attempts="
 }
 
+test_kv_bare_hex_lists_ignore_case() {
+	setup
+	put "$stow" m 'load=CDD6F4,FAB387,F38BA8
+word=Facade
+'
+	put "$home" m 'load=cdd6f4,fab387,f38ba8
+word=Facade
+'
+	cfg compare kv m home:m
+	parity
+	expect_status 0
+}
+
 test_yaml_document_markers_are_ignored() {
 	setup
 	put "$stow" l.yml 'a: 1
@@ -677,6 +711,7 @@ tests=(
 	test_kv_toml_multiline_format_joins_continuations
 	test_kv_repeated_keys_count_as_a_set
 	test_kv_bare_flags_are_keys_of_their_own
+	test_kv_bare_hex_lists_ignore_case
 	test_yaml_document_markers_are_ignored
 	test_sway_format_ignores_the_place_of_set_lines_only
 	test_yaml_nests_by_indent_and_ignores_order_and_comments
@@ -690,6 +725,7 @@ tests=(
 	test_allowed_lines_are_removed_and_counted
 	test_only_the_listed_side_is_allowed
 	test_an_allow_entry_matches_by_glob_on_the_stow_path
+	test_allow_entries_of_an_earlier_file_count_as_used_after_later_files
 	test_a_stale_allow_entry_fails_and_is_named
 	test_an_allow_entry_for_a_file_nobody_compares_is_stale
 	test_sub_rewrites_the_stow_side_before_the_diff

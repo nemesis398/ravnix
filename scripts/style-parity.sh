@@ -164,12 +164,18 @@ norm_kv() {
 		n = gsub(/"""/, "", t)
 		return (v ~ /\\$/) || (n % 2 == 1)
 	}
+	function barehex(v,   n, parts, i) {
+		n = split(v, parts, ",")
+		for (i = 1; i <= n; i++)
+			if (parts[i] !~ /^[0-9A-Fa-f]+$/ || (length(parts[i]) != 6 && length(parts[i]) != 8)) return 0
+		return 1
+	}
 	function flush(   v) {
 		if (!have) return
 		v = val
 		gsub(/"""/, "", v)
 		v = unquote(trim(v))
-		if (v ~ /^[0-9A-Fa-f]+$/ && (length(v) == 6 || length(v) == 8)) v = tolower(v)
+		if (barehex(v)) v = tolower(v)
 		print lowhex((sect == "" ? "" : sect ".") key "=" v)
 		have = 0
 	}
@@ -513,7 +519,7 @@ for i in "${!c_fmt[@]}"; do
 			if ($0 in ids) {
 				print ids[$0] "\t" $0 > alw
 				n = split(ids[$0], parts, " ")
-				for (q = 1; q <= n; q++) print parts[q] > used
+				for (q = 1; q <= n; q++) print parts[q] >> used
 			} else print $0 > rem
 		}' "$work/sel" "$work/d"
 	[[ -e "$work/rem" ]] || : >"$work/rem"
