@@ -53,8 +53,8 @@
 #     the ring is clear: it covers the whole output and has nothing drawn on it
 #     outside the ring, or the ring would hide the screen. That is the absence
 #     of a surface, not a translucent one (the program's stylesheet says
-#     `background-color: transparent` for it). scripts/check-style.sh does not
-#     read Python, so the gate does not see either of the two.
+#     `background-color: transparent` for it). The style check (tools/check-style)
+#     does not read Python, so the gate does not see either of the two.
 { config, lib, ... }:
 let
   chosen = config.ravnix.desktop.radial.menu;

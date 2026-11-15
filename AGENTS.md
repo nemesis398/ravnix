@@ -154,6 +154,6 @@ reasons. When something new needs styling, walk this list in order:
 Never write a hex color outside `modules/theme/`. Read the color from the
 theme module's roles (`config.ravnix.theme.roles`, and `palette` for the state
 hues), so the user's accent reaches it. The gate's style check,
-`scripts/check-style.sh`, fails on a hex color outside the theme module, a
+`tools/check-style`, fails on a hex color outside the theme module, a
 radius other than 0, anything translucent except the inside of the lock ring,
 and a transition or animation.

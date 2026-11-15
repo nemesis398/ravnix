@@ -38,7 +38,7 @@
 # Python they were carried over in. The colors are the deck's own and cannot
 # come from the theme module without rewriting the generators, which stay as
 # they are until their port (AGENTS.md, rule 4). The decks live in Anki, not in
-# the desktop, and scripts/check-style.sh does not judge packages/.
+# the desktop, and the style check (tools/check-style) does not judge packages/.
 {
   config,
   lib,
