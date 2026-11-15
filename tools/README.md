@@ -189,9 +189,9 @@ KCachegrind are in the measurement's output.
 
 Only a rise fails. A count more than 2 % below the baseline passes, and the
 build log says to record it, but that log appears once: the result is
-cached, and the baseline keeps its slack until a person records the new
-count. A later rise back up to the old baseline then passes. There is no
-ratchet that fails on a gain.
+cached, and the baseline keeps its slack until the new count is recorded
+with the command below. A later rise back up to the old baseline then
+passes. There is no ratchet that fails on a gain.
 
 Neither the measurement nor the check is built on a remote builder or taken
 from a cache, since the check of glibc's state holds for the machine it ran
@@ -199,8 +199,9 @@ on.
 
 ### Recording a baseline
 
-A baseline changes only by this command, run by a person, never by the
-check itself. It measures without comparing and writes the file to commit:
+A baseline changes only through this command, never by hand and never by
+the check itself; an agent may run it. It measures without comparing and
+writes the file to commit:
 
 ```sh
 nix build .#checks.x86_64-linux.NAME-bench.measure
@@ -210,7 +211,7 @@ rm result
 
 `DIR` is the tool's directory, `_template` for the template. Commit the new
 baseline with the change that moved it, and say in the body why the count
-rose. A missing, empty or malformed `baseline.json` fails the bench check
+moved. A missing, empty or malformed `baseline.json` fails the bench check
 with this command in its message; the measurement still runs, so a new tool
 records its first baseline the same way.
 
