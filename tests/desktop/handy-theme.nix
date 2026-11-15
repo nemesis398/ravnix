@@ -66,7 +66,7 @@ let
       cd src-copy
       ${handy.themePatch}
       mkdir $out
-      cp src/styles/theme.css src/App.css src/overlay/RecordingOverlay.css src/components/ui/Button.tsx $out/
+      cp src/styles/theme.css src/App.css src/overlay/RecordingOverlay.css src/components/ui/Button.tsx src/components/ui/Tooltip.tsx $out/
       # The block the patch appended to theme.css, and to the overlay's file.
       { diff ${handy.src}/src/styles/theme.css src/styles/theme.css || true; } | sed -n 's/^> //p' > $out/theme-block.css
       { diff ${handy.src}/src/overlay/RecordingOverlay.css src/overlay/RecordingOverlay.css || true; } | sed -n 's/^> //p' > $out/overlay-block.css
@@ -153,6 +153,13 @@ pkgs.runCommand "desktop-handy-theme"
     has ${mauveSrc}/Button.tsx 'text-background bg-background-ui'
     hasnt ${mauveSrc}/Button.tsx 'text-white bg-background-ui'
 
+    # The tooltip floats: Base with a 1 px accent frame and Text text, and no
+    # arrow (a frame would cut across a rotated square).
+    has ${mauveSrc}/Tooltip.tsx 'bg-background border border-logo-primary px-[11px]'
+    has ${mauveSrc}/Tooltip.tsx 'text-text shadow'
+    ! grep -q 'bg-plum' ${mauveSrc}/Tooltip.tsx || fail "the tooltip is still plum"
+    has ${mauveSrc}/Tooltip.tsx 'rotate-45 hidden'
+
     # The accent follows: teal changes the brand color and the primary action,
     # and nothing else in the block.
     has ${tealSrc}/theme-block.css '--dark-color-logo-primary: ${rgb tealRoles.accent};'
@@ -162,14 +169,26 @@ pkgs.runCommand "desktop-handy-theme"
          <(sed 's/${rgb roles.accent}/ACCENT/g' "$block") >/dev/null \
       || fail "teal changes something besides the accent in the block"
 
-    # A source that has changed under the patch stops the build: Button.tsx
-    # without the text the patch replaces, and a theme.css without the file.
-    cp -r ${(handyOf mauve).src} drift
-    chmod -R u+w drift
-    sed -i 's/text-white bg-background-ui/text-black bg-background-ui/' drift/src/components/ui/Button.tsx
-    rc=0
-    ( cd drift && ${(handyOf mauve).themePatch} ) >drift.log 2>&1 || rc=$?
-    [ "$rc" != 0 ] || fail "the patch passed on a Button.tsx that lacks the text it replaces"
+    # A source that has changed under the patch stops the build, whichever
+    # substitution lost its text: the patch runs in a copy whose one line was
+    # changed, under set -e as a build phase is, and has to fail. (A plain
+    # `||` after the subshell would switch set -e off inside it.)
+    drift() { # drift NAME FILE SED-EXPRESSION
+      rm -rf drift
+      cp -r ${(handyOf mauve).src} drift
+      chmod -R u+w drift
+      sed -i "$3" "drift/$2"
+      cmp -s "drift/$2" "${(handyOf mauve).src}/$2" && { fail "drift $1: the edit changed nothing"; return; }
+      set +e
+      ( set -e; cd drift; ${(handyOf mauve).themePatch} ) >drift.log 2>&1
+      rc=$?
+      set -e
+      [ "$rc" != 0 ] || fail "the patch passed on a source that lost its text: $1"
+    }
+    drift "the primary button" src/components/ui/Button.tsx 's/text-white bg-background-ui/text-black bg-background-ui/'
+    drift "the tooltip panel" src/components/ui/Tooltip.tsx 's/rounded-\[9px\] bg-plum/rounded-[8px] bg-plum/'
+    drift "the tooltip text" src/components/ui/Tooltip.tsx 's/text-background shadow/text-white shadow/'
+    drift "the tooltip arrow" src/components/ui/Tooltip.tsx 's/rotate-45 rounded-\[1.5px\] bg-plum/rotate-45 bg-plum/'
 
     [ "$failed" = 0 ] || exit 1
     touch $out

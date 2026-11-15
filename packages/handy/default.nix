@@ -55,7 +55,9 @@ let
   # Run in the unpacked source, by postPatch and by tests/desktop/handy-theme.nix.
   # Every substitution fails when its text is not found, so a newer Handy that
   # moved one stops the build instead of going unthemed. The radius tokens are
-  # Tailwind's in App.css's @theme; the button text is the primary variant's.
+  # Tailwind's in App.css's @theme; the button text is the primary variant's;
+  # the tooltip floats, so it is Base with a 1 px accent frame and no arrow
+  # (docs/style.md rules 1 and 2), where Handy draws it as a Text-colored block.
   themePatch = ''
     cat ${themeCss} >> src/styles/theme.css
     cat ${overlayCss} >> src/overlay/RecordingOverlay.css
@@ -66,6 +68,10 @@ let
       --replace-fail '--radius-chip: 6px;' '--radius-chip: 0;'
     substituteInPlace src/components/ui/Button.tsx \
       --replace-fail '"text-white bg-background-ui' '"text-background bg-background-ui'
+    substituteInPlace src/components/ui/Tooltip.tsx \
+      --replace-fail 'rounded-[9px] bg-plum px-[11px]' 'bg-background border border-logo-primary px-[11px]' \
+      --replace-fail 'text-background shadow' 'text-text shadow' \
+      --replace-fail 'rotate-45 rounded-[1.5px] bg-plum' 'rotate-45 hidden'
   '';
 in
 lib.throwIf (lib.versionAtLeast handy.version "0.10.0")

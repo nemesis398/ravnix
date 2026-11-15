@@ -56,7 +56,8 @@ build appends a block of CSS, made from `ravnix.theme`, to Handy's
 - Every radius is 0: the four tokens of `App.css`, Tailwind's radius scale,
   and a `border-radius: 0 !important` for the literal ones. The overlay's
   surface is opaque, and the primary button's text is the background color
-  instead of white.
+  instead of white. The tooltip, which floats, is Base with a 1 px accent frame
+  and Text text, without its arrow, where Handy draws a Text-colored block.
 - The font is the theme's, in Tailwind's default family and Handy's stacks.
 
 The CSS is the frontend, which is embedded in the program, so another accent
