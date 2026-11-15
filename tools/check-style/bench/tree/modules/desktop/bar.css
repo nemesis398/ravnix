@@ -1,0 +1,46 @@
+/* The bar: flat, square, opaque (docs/style.md). */
+* {
+  border: none;
+  border-radius: 0;
+  font-family: "JetBrainsMono Nerd Font";
+  font-size: 14px;
+  min-height: 0;
+}
+
+window#waybar {
+  background: @mantle;
+  color: @text;
+}
+
+#workspaces button {
+  padding: 0 8px;
+  background: inherit;
+  border-bottom: 2px solid @mantle;
+}
+
+#workspaces button.focused {
+  background: @accent;
+  color: @crust;
+}
+
+#workspaces button:hover {
+  background: @surface0;
+  border-bottom: 2px solid @accent;
+}
+
+#clock, #battery, #cpu, #memory, #network, #pulseaudio, #custom-powerdraw {
+  padding: 0 10px;
+  min-width: 60px;
+  color: @text;
+}
+
+#battery.warning { color: @peach; }
+#battery.critical { color: @red; }
+#network.disconnected { color: @red; }
+
+/* An issue number is no color: see #290879 and PR #216321. */
+tooltip {
+  background: @base;
+  border: 1px solid @surface0;
+  border-radius: 0;
+}

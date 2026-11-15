@@ -183,6 +183,13 @@ Findings that are not fixed, so nobody mistakes them for covered.
 
 ### `check-style.sh`
 
+The fast gate runs this script, straight from the checkout. Its port to Odin,
+`tools/check-style` (the package `check-style`), exists beside it and passes
+the same cases (`tests/bin/check-style.nix` runs this script's shell test on
+it); the Nix checks that judge generated files use the port. The script goes
+when the fast gate can run the program (`tools/check-style/README.md`, "Why the
+script is still here").
+
 What it judges, and where:
 
 - It judges styling sources by type and place: `*.nix`, CSS, `*.ini`,
