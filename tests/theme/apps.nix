@@ -10,6 +10,7 @@
   inputs,
   pkgs,
   lib,
+  system,
   ...
 }:
 let
@@ -399,7 +400,7 @@ pkgs.runCommand "theme-apps"
     cp ${
       pkgs.writeText "kdeglobals" mauve.xdg.configFile."kdeglobals".text
     } gen/modules/theme/kdeglobals
-    (cd gen && bash ${self}/scripts/check-style.sh .) || status=1
+    (cd gen && ${lib.getExe self.packages.${system}.check-style} .) || status=1
 
     [ "$status" = 0 ]
     touch $out

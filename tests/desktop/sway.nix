@@ -11,7 +11,7 @@
 #            build), every color in every file is one of the palette and the
 #            accent's follows the option, the rows of the style spec's table
 #            that belong to this module hold, the generated files pass
-#            check-style.sh, and the helper scripts behave on the inputs a
+#            check-style, and the helper scripts behave on the inputs a
 #            laptop gives them and on the ones it does not.
 #   widths   GTK lays out every Waybar module with the generated stylesheet and
 #            the font of the system, in a headless Sway: a module's width must
@@ -427,17 +427,13 @@ let
     pkgs.runCommand "desktop-sway-style"
       {
         nativeBuildInputs = [
-          pkgs.bash
-          pkgs.ripgrep
           pkgs.coreutils
+          self.packages.${system}.check-style
         ];
       }
       ''
         root=$PWD/tree
-        mkdir -p $root/scripts $root/docs $root/modules/theme/gen
-        cp ${../../scripts/check-style.sh} $root/scripts/check-style.sh
-        cp ${../../docs/mermaid-theme.json} $root/docs/mermaid-theme.json
-        chmod +x $root/scripts/check-style.sh
+        mkdir -p $root/modules/theme/gen
         g=$root/modules/theme/gen
         cp ${source mauve "sway/config"} $g/sway-config
         cp ${source mauve "sway/config.d/50-laptop.conf"} $g/50-laptop.conf
@@ -451,9 +447,9 @@ let
         cp ${source mauve "fuzzel/fuzzel.ini"} $g/fuzzel.ini
         cp ${source mauve "dunst/dunstrc"} $g/dunstrc
         cd $root
-        bash scripts/check-style.sh modules | tee $out
+        check-style modules | tee $out
         test "''${PIPESTATUS[0]}" = 0
-        echo "check-style.sh found nothing in the generated files" | tee -a $out
+        echo "check-style found nothing in the generated files" | tee -a $out
       '';
 
   # ── the scripts ─────────────────────────────────────────────────────────────

@@ -84,7 +84,7 @@ pkgs.runCommand "desktop-helium-devtools-stylesheet"
       grep -qF -- "--default-font-family: '${font}', monospace !important;" "$f" || fail "$name: the font is not ${font}"
       mkdir -p "style-$name"
       cp "$f" "style-$name/devtools.css"
-      hits=$(cd "style-$name" && bash ${self}/scripts/check-style.sh . 2>/dev/null || true)
+      hits=$(cd "style-$name" && ${lib.getExe self.packages.${system}.check-style} . 2>/dev/null || true)
       printf '%s\n' "$hits" | sed 's/^/  style: /'
       [ "$(printf '%s\n' "$hits" | grep -c ':opacity$')" = 3 ] || fail "$name: the style check does not find exactly the three translucent tokens"
       if printf '%s\n' "$hits" | grep -v ':opacity$' | grep -q .; then fail "$name: the style check finds more than translucency"; fi
