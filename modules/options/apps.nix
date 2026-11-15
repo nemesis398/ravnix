@@ -91,7 +91,13 @@ in
         (`lib/stylus-import.nix`) and puts the result at
         `~/.local/share/ravnix/stylus-import.json`, so Stylus takes all styles
         in one step: Manage, Backup, Import. ravnix pins no copy of the file:
-        a `fetchurl` with your own hash does, and a new release is a new hash.
+        a `fetchurl` with your own hash does. Upstream replaces the asset in
+        place under the same release tag (`all-userstyles-export`), so the
+        address never changes while the content does: a hash that held
+        yesterday fails on a fresh machine or after a garbage collection, once
+        the export has been redone. Keep your own copy of the file (in your
+        private flake, `./import.json`) if you need the build to stay
+        reproducible, and fetch a new one when you want newer styles.
         Null leaves the manual step of the bookmark (the header of
         `modules/desktop/apps.nix`).
       '';
