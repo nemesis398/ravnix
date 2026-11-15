@@ -83,19 +83,40 @@ Config :: struct {
 	wait_step:   time.Duration,
 }
 
-// The seams: a caller without root may point the three programs at other
-// paths, for the tests. Under sudo or as the boot unit the process is root,
-// so the variables are ignored and the fixed paths hold, whatever the
+// The seams: a caller without privilege may point the three programs at
+// other paths, for the tests. Under sudo or as the boot unit the process is
+// root, so the variables are ignored and the fixed paths hold, whatever the
 // environment says; sudo's env_reset would drop them anyway, but the helper
 // does not rely on it. A process with any effective capability counts as
-// root here too.
+// privileged too, and so does one whose real and effective uid or gid
+// differ: a setuid or setgid exec to a user other than root would otherwise
+// let the caller aim the helper's write at whatever that uid or gid may
+// write. The ids are compared rather than the auxiliary vector's AT_SECURE,
+// which says the same for setuid and setgid (and file capabilities, which
+// capget already sees): a plain comparison is one the tests can feed.
 SEAM_ATTR :: "CHARGE_MODE_ATTR"
 SEAM_STATE :: "CHARGE_MODE_STATE"
 SEAM_HELPER :: "CHARGE_MODE_HELPER"
 SEAM_NOTIFY_SEND :: "CHARGE_MODE_NOTIFY_SEND"
 
-seams_allowed :: proc(uid, euid: int, capabilities: u64) -> bool {
-	return uid != 0 && euid != 0 && capabilities == 0
+// Who the process is, for seams_allowed.
+Credentials :: struct {
+	uid, euid, gid, egid: int,
+	capabilities:         u64,
+}
+
+current_credentials :: proc() -> Credentials {
+	return {
+		uid = int(linux.getuid()),
+		euid = int(linux.geteuid()),
+		gid = int(linux.getgid()),
+		egid = int(linux.getegid()),
+		capabilities = effective_capabilities(),
+	}
+}
+
+seams_allowed :: proc(c: Credentials) -> bool {
+	return c.uid != 0 && c.euid != 0 && c.capabilities == 0 && c.uid == c.euid && c.gid == c.egid
 }
 
 // effective_capabilities is the process's effective capability set, or
@@ -129,7 +150,7 @@ system_config :: proc(allocator := context.allocator) -> Config {
 		wait_tries = 20,
 		wait_step  = 500 * time.Millisecond,
 	}
-	if seams_allowed(int(linux.getuid()), cfg.euid, effective_capabilities()) {
+	if seams_allowed(current_credentials()) {
 		seam :: proc(name: string, into: ^string, allocator: runtime.Allocator) {
 			if v, ok := os.lookup_env(name, allocator); ok && v != "" {
 				into^ = v
@@ -143,7 +164,7 @@ system_config :: proc(allocator := context.allocator) -> Config {
 	// the name.
 	when ROLE == "user" {
 		cfg.notify_send = NOTIFY_SEND
-		if seams_allowed(int(linux.getuid()), cfg.euid, effective_capabilities()) {
+		if seams_allowed(current_credentials()) {
 			if v, ok := os.lookup_env(SEAM_NOTIFY_SEND, allocator); ok && v != "" {
 				cfg.notify_send = v
 			}

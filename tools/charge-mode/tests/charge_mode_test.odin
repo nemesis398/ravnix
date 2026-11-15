@@ -271,13 +271,43 @@ reading_refuses_what_is_no_small_file :: proc(t: ^testing.T) {
 
 @(test)
 only_a_caller_without_root_moves_the_paths :: proc(t: ^testing.T) {
-	testing.expect(t, cm.seams_allowed(1000, 1000, 0))
-	testing.expect(t, !cm.seams_allowed(0, 0, 0))
-	testing.expect(t, !cm.seams_allowed(1000, 0, 0))
-	testing.expect(t, !cm.seams_allowed(0, 1000, 0))
+	user :: cm.Credentials{uid = 1000, euid = 1000, gid = 100, egid = 100}
+	testing.expect(t, cm.seams_allowed(user))
+	root := user
+	root.uid, root.euid = 0, 0
+	testing.expect(t, !cm.seams_allowed(root))
+	c := user
+	c.euid = 0
+	testing.expect(t, !cm.seams_allowed(c))
+	c = user
+	c.uid = 0
+	testing.expect(t, !cm.seams_allowed(c))
 	// A capability is privilege too, whatever the uid.
-	testing.expect(t, !cm.seams_allowed(1000, 1000, 1 << 1))
-	testing.expect(t, !cm.seams_allowed(1000, 1000, max(u64)))
+	c = user
+	c.capabilities = 1 << 1
+	testing.expect(t, !cm.seams_allowed(c))
+	c.capabilities = max(u64)
+	testing.expect(t, !cm.seams_allowed(c))
+	// So is a setuid or setgid exec to anyone else: the caller would aim the
+	// helper's write at what that uid or gid may write.
+	c = user
+	c.euid = 1001
+	testing.expect(t, !cm.seams_allowed(c))
+	c = user
+	c.uid = 1001
+	testing.expect(t, !cm.seams_allowed(c))
+	c = user
+	c.egid = 101
+	testing.expect(t, !cm.seams_allowed(c))
+	c = user
+	c.gid = 101
+	testing.expect(t, !cm.seams_allowed(c))
+	// gid 0 alone is no root, as long as it is the caller's own.
+	c = user
+	c.gid, c.egid = 0, 0
+	testing.expect(t, cm.seams_allowed(c))
+	// The process's own credentials: the tests run without privilege.
+	testing.expect(t, cm.seams_allowed(cm.current_credentials()))
 }
 
 @(test)

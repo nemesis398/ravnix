@@ -71,9 +71,10 @@ command and the restore have that path built in.
 The tests point the programs at a fake battery and state through
 `CHARGE_MODE_ATTR`, `CHARGE_MODE_STATE`, `CHARGE_MODE_HELPER` and (for
 `charge-mode`) `CHARGE_MODE_NOTIFY_SEND`. A program honours them only when
-neither its real nor its effective uid is 0 and it holds no effective
-capability: under sudo, and as the boot unit, the fixed paths hold whatever
-the environment says. The VM test `hardware-power` checks that as root,
+neither its real nor its effective uid is 0, its real and effective uid and
+gid are the same (no setuid or setgid exec, to root or anyone else), and it
+holds no effective capability: under sudo, and as the boot unit, the fixed
+paths hold whatever the environment says. The VM test `hardware-power` checks that as root,
 directly and through sudo.
 
 ## Changes from the Bash scripts
