@@ -243,7 +243,8 @@ runs_machine_facts_by_its_path_without_sudo_and_with_nothing_of_the_session :: p
 	if len(r.exec.argv) == 1 {
 		testing.expect_value(t, r.exec.argv[0], cfg.facts)
 	}
-	want := []string{"PATH=/run/current-system/sw/bin", "HOME=/home/alice", "USER=alice", "LOGNAME=alice", "MACHINE_FACTS_NO_SUDO=1"}
+	// No sudo, and nothing that may wake the dGPU: the server may ask often.
+	want := []string{"PATH=/run/current-system/sw/bin", "HOME=/home/alice", "USER=alice", "LOGNAME=alice", "MACHINE_FACTS_NO_SUDO=1", "MACHINE_FACTS_NO_DGPU_WAKE=1"}
 	testing.expectf(t, len(r.exec.env) == len(want), "env %v", r.exec.env)
 	for kv, i in want {
 		if i < len(r.exec.env) {
@@ -259,7 +260,7 @@ runs_machine_facts_by_its_path_without_sudo_and_with_nothing_of_the_session :: p
 	// Without a home or a user it leaves them out, rather than set them empty.
 	cfg.home, cfg.user = "", ""
 	r = gate.decide(cfg, context.allocator)
-	testing.expect_value(t, len(r.exec.env), 2)
+	testing.expect_value(t, len(r.exec.env), 3)
 }
 
 @(test)

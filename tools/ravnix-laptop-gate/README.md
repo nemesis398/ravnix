@@ -19,7 +19,7 @@ needs an argument.
 | Call | Answers | How |
 | --- | --- | --- |
 | `ping` | `huginn is up` | itself |
-| `facts` | the `machine-facts` block | runs `machine-facts` by its store path, with `MACHINE_FACTS_NO_SUDO=1` |
+| `facts` | the `machine-facts` block, without the Sway config check | runs `machine-facts` by its store path, with `MACHINE_FACTS_NO_SUDO=1` and `MACHINE_FACTS_NO_DGPU_WAKE=1` |
 | `battery` | status, charge (%), `power_now` (uW), `energy_now`, `energy_full`, `energy_full_design` (uWh), `cycle_count` of each battery | reads `/sys/class/power_supply` itself |
 | `charge-mode` | the active mode of `charge_types` (the one in brackets) | reads it itself. It never runs `charge-mode`, whose other modes write. |
 | `power` | the NVIDIA GPU's `power/runtime_status` and `power_state`, and `energy_uj` of each RAPL zone | reads sysfs itself, never the GPU's configuration space, which would wake it |
@@ -43,6 +43,12 @@ from the session:
 - `HOME`, `USER` and `LOGNAME`.
 - `MACHINE_FACTS_NO_SUDO=1`, which keeps the boot row from trying `sudo -n`
   (`packages/machine-facts/README.md`).
+- `MACHINE_FACTS_NO_DGPU_WAKE=1`, which leaves out the one row that may
+  wake the dGPU from runtime suspend: the Sway config check (`sway -C`
+  starts a renderer, which looks at every GPU). The server may ask often,
+  and a woken dGPU costs battery and spoils the state `power` reports.
+  Every other row reads sysfs, procfs or a module file, and `lspci` and
+  `nvidia-smi` are not run.
 
 The PATH is not what keeps `facts` from root. `run0` and `systemd-run`
 need no setuid bit and are on it, and with
@@ -156,7 +162,8 @@ built without its absolute path; 64 bad usage.
   a byte outside printable ASCII, also for 120 kB of newlines and escapes.
 - The client address, and what is no address.
 - `facts` gets the exact environment: no `/run/wrappers`, no `SSH_*`
-  variable, no empty `HOME`.
+  variable, no empty `HOME`, and both of machine-facts' modes, no sudo and
+  no dGPU wake.
 - A refusal sends exactly one datagram to a real `/dev/log` socket in the
   fixture; an answer sends none.
 - A refusal still holds with no journal, and with a `/dev/log` that is a

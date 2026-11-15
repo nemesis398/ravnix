@@ -863,6 +863,9 @@ let
           assert b"(needs root; sudo is not asked in this mode)" in out, out
           env = huginn.succeed("cat /tmp/gate-facts.env").splitlines()
           assert "MACHINE_FACTS_NO_SUDO=1" in env and "PATH=/run/current-system/sw/bin" in env, env
+          # Nothing that may wake the dGPU: the Sway check is left out.
+          assert "MACHINE_FACTS_NO_DGPU_WAKE=1" in env, env
+          assert b"- Sway config validates: (not checked: sway -C starts a renderer, which may wake the dGPU)" in out, out
           assert "USER=" + USER in env and "HOME=" + HOME in env, env
           assert not [kv for kv in env if kv.startswith("SSH_") or "/run/wrappers" in kv], env
           # No sudo ran on huginn.

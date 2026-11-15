@@ -225,7 +225,7 @@ decide :: proc(cfg: Config, allocator: runtime.Allocator) -> (r: Result) {
 			r.stderr = "ravnix-laptop-gate: facts is not available: built without the store path of machine-facts\n"
 			return
 		}
-		env := make([dynamic]string, 0, 5, allocator)
+		env := make([dynamic]string, 0, 6, allocator)
 		append(&env, strings.concatenate({"PATH=", cfg.path}, allocator))
 		if cfg.home != "" {
 			append(&env, strings.concatenate({"HOME=", cfg.home}, allocator))
@@ -235,6 +235,9 @@ decide :: proc(cfg: Config, allocator: runtime.Allocator) -> (r: Result) {
 			append(&env, strings.concatenate({"LOGNAME=", cfg.user}, allocator))
 		}
 		append(&env, "MACHINE_FACTS_NO_SUDO=1")
+		// The server may ask often, and a dGPU woken from runtime suspend
+		// costs battery: machine-facts leaves out what may wake it.
+		append(&env, "MACHINE_FACTS_NO_DGPU_WAKE=1")
 		argv := make([]string, 1, allocator)
 		argv[0] = cfg.facts
 		r.exec = Exec {
