@@ -536,9 +536,10 @@ the_current_directory_follows_pwd_when_pwd_names_it :: proc(t: ^testing.T) {
 	testing.expect_value(t, got, here)
 }
 
-// The memory of a run is that of its file list, its hits and its longest line,
-// not of the size of the files: a file of a million lines is read in a few
-// kilobytes.
+// What a line allocates is freed after the line, so the per-line arena holds
+// what one line needed, not what the lines of the file add up to. The test
+// reads the peak of that arena (a seam in Config); a run that forgets to empty
+// it after each line holds the whole file's worth, megabytes, and fails.
 @(test)
 the_memory_does_not_grow_with_the_size_of_a_file :: proc(t: ^testing.T) {
 	f := enter(t)
@@ -548,11 +549,11 @@ the_memory_does_not_grow_with_the_size_of_a_file :: proc(t: ^testing.T) {
 		strings.write_string(&b, line)
 	}
 	put(t, f, "big.css", strings.to_string(b))
-	before := f.arena.total_used
-	status, out, _ := check(f, ".")
+	stats: cs.Stats
+	status, out, _ := check_stats(f, f.tree, &stats, ".")
 	testing.expect_value(t, status, 0)
 	testing.expect_value(t, out, "")
-	used := f.arena.total_used - before
-	// The file is 10 MB; a line, the lists and the buffers are far below one.
-	testing.expectf(t, used < 1_000_000, "a run over a %d byte file took %d bytes", strings.builder_len(b), used)
+	testing.expectf(t, stats.line_arena_peak > 0, "the seam reported nothing")
+	// The file is 10 MB and its lines are 85 bytes.
+	testing.expectf(t, stats.line_arena_peak < 100_000, "a %d byte file made the line arena hold %d bytes", strings.builder_len(b), stats.line_arena_peak)
 }

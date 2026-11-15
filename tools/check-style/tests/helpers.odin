@@ -116,11 +116,16 @@ check :: proc(f: ^Fixture, args: ..string) -> (status: int, out, err: string) {
 }
 
 check_in :: proc(f: ^Fixture, cwd: string, args: ..string) -> (status: int, out, err: string) {
+	return check_stats(f, cwd, nil, ..args)
+}
+
+// check_stats is check_in that also fills stats, when it is not nil.
+check_stats :: proc(f: ^Fixture, cwd: string, stats: ^cs.Stats, args: ..string) -> (status: int, out, err: string) {
 	context.allocator = virtual.arena_allocator(&f.arena)
 	context.temp_allocator = context.allocator
 	o := strings.builder_make()
 	e := strings.builder_make()
-	status = cs.run(args, cs.Config{cwd = cwd, theme = f.theme}, strings.to_writer(&o), strings.to_writer(&e))
+	status = cs.run(args, cs.Config{cwd = cwd, theme = f.theme, stats = stats}, strings.to_writer(&o), strings.to_writer(&e))
 	return status, strings.to_string(o), strings.to_string(e)
 }
 

@@ -111,6 +111,16 @@ Config :: struct {
 	theme: string,
 	// The longest line a file may have, in bytes; 0 is LINE_LIMIT.
 	line_limit: int,
+	// Where a run reports what it measured about itself, or nil. The tests
+	// read it; the program does not.
+	stats: ^Stats,
+}
+
+// What a run measured about itself.
+Stats :: struct {
+	// The most the per-line arena held at once, over all lines: what one
+	// line needed, not what the files add up to.
+	line_arena_peak: uint,
 }
 
 // run judges the paths and prints the hits to out and the verdict to err.
@@ -251,6 +261,9 @@ judge_file :: proc(file: File, cfg: Config, theme: ^Theme, hits: ^[dynamic]Hit) 
 			context.allocator = virtual.arena_allocator(&line_arena)
 			context.temp_allocator = context.allocator
 			fatal = judge_line(&j, line)
+			if cfg.stats != nil {
+				cfg.stats.line_arena_peak = max(cfg.stats.line_arena_peak, line_arena.total_used)
+			}
 			virtual.arena_free_all(&line_arena)
 		}
 		if fatal != "" {

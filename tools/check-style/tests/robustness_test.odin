@@ -4,6 +4,8 @@
 // and directories, a file that changes under the walk.
 package check_style_tests
 
+import "core:fmt"
+import "core:mem/virtual"
 import "core:strings"
 import cs ".."
 import "core:sys/linux"
@@ -249,18 +251,37 @@ an_entry_of_unknown_type_is_looked_at_and_a_missing_one_is_an_error :: proc(t: ^
 	testing.expect_value(t, errno, linux.Errno.NONE)
 }
 
-// A tree of many files is judged in the time of their number, not of its
-// square: the list of files found keeps a set of the paths it holds.
+// A tree of many files is found with one lookup per file, not a scan of the
+// files already found: 100 000 paths, none a repeat, go through classify in
+// well under a second with a set (about 5 * 10^9 string compares with the
+// scan, tens of seconds), and a repeat of a path is still dropped.
 @(test)
-a_tree_of_many_files_is_found_without_a_scan_per_file :: proc(t: ^testing.T) {
+a_file_set_looks_a_path_up_instead_of_scanning :: proc(t: ^testing.T) {
 	f := enter(t)
-	for i in 0 ..< 4000 {
+	context.allocator = virtual.arena_allocator(&f.arena)
+	set: cs.File_Set
+	started := time.tick_now()
+	for i in 0 ..< 100_000 {
+		path := fmt.aprintf("modules/d%d/f%d.conf", i % 40, i)
+		cs.classify(path, path, &set)
+	}
+	took := time.duration_seconds(time.tick_since(started))
+	testing.expect_value(t, len(set.list), 100_000)
+	// Repeats are dropped.
+	cs.classify("modules/d0/f0.conf", "modules/d0/f0.conf", &set)
+	testing.expect_value(t, len(set.list), 100_000)
+	testing.expectf(t, took < 3, "100000 paths took %v seconds", took)
+}
+
+// Many files in a real tree, given twice, are judged once and in order.
+@(test)
+a_tree_of_many_files_given_twice_is_judged_once :: proc(t: ^testing.T) {
+	f := enter(t)
+	for i in 0 ..< 600 {
 		put(t, f, strings.concatenate({"modules/d", itoa(i % 40), "/f", itoa(i), ".conf"}, context.temp_allocator), "x\n")
 	}
 	put(t, f, "modules/d3/bad.conf", "transition: x\n")
-	started := time.tick_now()
 	status, out, _ := check(f, ".", "modules", "modules/d3")
 	testing.expect_value(t, status, 1)
 	testing.expect_value(t, out, "modules/d3/bad.conf:1:motion\n")
-	testing.expectf(t, time.duration_seconds(time.tick_since(started)) < 5, "4000 files took too long")
 }
