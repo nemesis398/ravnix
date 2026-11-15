@@ -107,18 +107,30 @@
 #   Handy             in the theme (packages/handy/theme.nix): the palette is
 #                     the roles (the accent included) in both of Handy's
 #                     palettes, so its own light/dark setting changes nothing,
-#                     and every corner is square. What stays Handy's: motion
-#                     (the 160-460 ms fades and pops, the spinner, the
-#                     mascot's wave and the overlay's morph), the shadows of
-#                     menus, tooltips and dialogs, alpha tints that Tailwind
-#                     builds from a color (hover:bg-logo-primary/10, and the
-#                     dialog scrim, bg-black/50, which is Crust at half
-#                     alpha), the mascot and wordmark (illustration: they
-#                     take the accent as their fill but keep their shapes),
-#                     the tray icon
-#                     (Linux "Colored", pink), the CJK glyphs from Handy's
-#                     bundled subset font (the Latin font is the theme's),
-#                     and the onboarding's demo laptop and wallpaper.
+#                     and every corner is square. The log surface is Mantle,
+#                     the scrollbar thumb a solid role, the tooltip Base with
+#                     an accent frame. What stays Handy's:
+#                     - motion: the 160-460 ms fades and pops, the spinner,
+#                       the mascot's wave, the overlay's morph and the
+#                       arming pulse of its waveform;
+#                     - the shadows of menus, tooltips and dialogs;
+#                     - alpha, which Tailwind or Handy builds from a color:
+#                       hover:bg-logo-primary/10, the dialog scrim (bg-black/50,
+#                       Crust at half alpha), the tooltip's second line
+#                       (opacity-75), the overlay's arming states (opacity .35
+#                       and .45), the fade of the live text into the overlay's
+#                       top edge (a mask-image gradient from transparent) and
+#                       the audio player's track (an inline gradient of grey
+#                       at 20 % alpha);
+#                     - the status washes (moss, warning and error each mixed
+#                       12-14 % into the background): opaque, but not palette
+#                       colors, a state tint behind a state color;
+#                     - the mascot and wordmark (illustration: they take the
+#                       accent as their fill but keep their shapes), the tray
+#                       icon (Linux "Colored", pink), the CJK glyphs from
+#                       Handy's bundled subset font (the Latin font is the
+#                       theme's), and the onboarding's demo laptop and
+#                       wallpaper.
 #   Nextcloud client  Qt: the widgets follow the qt6ct palette, but the tray and
 #                     status icons are Nextcloud's own colors and the dialogs
 #                     use its blue; it offers no setting for either.
