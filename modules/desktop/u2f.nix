@@ -27,27 +27,29 @@
 # program: its key runs only the gate's read-only calls, modules/glue/
 # laptop-access.nix.) There the cue goes to the caller's standard error,
 # nobody at the laptop sees it, and the key's blink looks like the blink of
-# a git push: one touch out of habit and the command is root. So sudo's auth stack has one line before
-# pam_u2f, pam_exec of ravnix-tap-ask (tools/ravnix-tap-ask), as root:
+# a git push: one touch out of habit and the command is root. So sudo's
+# auth stack has one line before pam_u2f, pam_exec of ravnix-tap-ask
+# (tools/ravnix-tap-ask), as root:
 #
 #   auth [success=ignore default=1] pam_exec.so quiet quiet_log seteuid ravnix-tap-ask
 #
-# A sudo over ssh, which on the laptop is the server's link, is refused at
-# once: no popup, no tap, one line in the journal. The tool tells it by the
-# login session logind put sudo in, which the caller cannot change from
-# inside it, then by an sshd ancestor and SSH_CONNECTION. For a local sudo,
-# when the user has a mapping and a FIDO key is plugged in, the tool shows a
-# fuzzel popup on the socket the session's own Sway listens on, run as the
-# user through setpriv, never as root: the command line (a longer one than
-# fits gets no popup), the user, and a terminal or the program that ran it.
-# Allow (exit 0) goes on to pam_u2f, and the key blinks. Deny, Esc, no answer
-# in 30 s, an Allow sooner than a second (typed through), a locked screen, no
-# session, or any failure exits non-zero, which jumps over the one pam_u2f
-# line: the rest of the stack runs as before, so a terminal sudo asks for the
-# password, and a sudo without a terminal fails because it cannot ask. A jump
-# changes no result of the stack, so a failure of the tool can only skip the
-# tap, never grant anything. Only sudo has the line: swaylock and tuigreet
-# are the laptop's own screen, and polkit is below.
+# A sudo over ssh is refused at once: no popup, no tap, one line in the
+# journal. On the laptop that ssh is the server's link, whose gate already
+# runs no sudo, so this is a tripwire for the case the gate rules out. The
+# tool tells it by the login session logind put sudo in, which the caller
+# cannot change from inside it, then by an sshd ancestor and SSH_CONNECTION.
+# For a local sudo, when the user has a mapping and a FIDO key is plugged in,
+# the tool shows a fuzzel popup on the socket the session's own Sway listens
+# on, run as the user through setpriv, never as root: the command line (a
+# longer one than fits gets no popup), the user, and a terminal or the program
+# that ran it. Allow (exit 0) goes on to pam_u2f, and the key blinks. Deny,
+# Esc, no answer in 30 s, an Allow sooner than a second (typed through), a
+# locked screen, no session, or any failure exits non-zero, which jumps over
+# the one pam_u2f line: the rest of the stack runs as before, so a terminal
+# sudo asks for the password, and a sudo without a terminal fails because it
+# cannot ask. A jump changes no result of the stack, so a failure of the tool
+# can only skip the tap, never grant anything. Only sudo has the line:
+# swaylock and tuigreet are the laptop's own screen, and polkit is below.
 #
 # POLKIT has no popup of ours. pkexec over the link would otherwise get one:
 # with a terminal (script), pkexec runs its own text agent, polkit-1's stack
