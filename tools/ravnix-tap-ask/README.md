@@ -2,19 +2,19 @@
 
 Asks on the laptop's own screen before sudo waits for a tap on the security
 key. With `ravnix.security.u2f.enable`, a tap stands in for the password
-(`modules/desktop/u2f.nix`). sudo also runs without a terminal: a program of
-the user's, or a command that the server sends over the laptop-access link,
-which runs any command as the user. There pam_u2f's "Please touch the FIDO
-authenticator." goes to the caller and nobody at the laptop sees it, and the
-key's blink looks like that of a git push. This tool refuses the tap
+(`modules/desktop/u2f.nix`). sudo also runs without a terminal, from a
+program of the user's. There pam_u2f's "Please touch the FIDO
+authenticator." goes to the caller and nobody at the laptop sees it, and
+the key's blink looks like that of a git push. This tool refuses the tap
 outright for a sudo over ssh, and puts a popup in front of it for a local
 one, so that a touch answers a question the laptop's screen has asked.
 
 What it is: consent against a mistaken touch. What it is not: a defense
-against a hostile link. The link runs any command as the user, and a
-program that runs as the user can get around every check here (see
-"Findings not fixed"); it cannot touch the key. The real fix is an
-allowlist forced command on the link's key, a separate task.
+against a hostile program of the user's, which can get around every check
+here (see "Findings not fixed"); it cannot touch the key. The defense
+against a hostile link is the allowlist forced command on the link's key,
+`tools/ravnix-laptop-gate`: the link runs only its read-only calls, and
+never sudo.
 
 ```sh
 ravnix-tap-ask [--dry-run] [--root DIR] [--parent PID] [--user NAME] [--tty TTY]
@@ -204,9 +204,10 @@ the run reads every file a real one reads and stops before the popup.
 
 ## Findings not fixed
 
-- **Consent, not a wall.** A program that runs as the user on the laptop,
-  and so any command over the laptop-access link, can get around every
-  check here. It can leave the ssh session, having its own systemd or Sway
+- **Consent, not a wall.** A program that runs as the user on the laptop
+  can get around every check here. The laptop-access link is no longer such
+  a program: its key runs the gate (`tools/ravnix-laptop-gate`), which
+  starts no shell and no sudo. It can leave the ssh session, having its own systemd or Sway
   start sudo (`systemd-run --user --pty`, `swaymsg exec`), and that sudo is
   a local one, with a terminal or without. It can answer the popup itself,
   since Sway lets any client type through its virtual-keyboard protocol, as
@@ -214,10 +215,9 @@ the run reads every file a real one reads and stops before the popup.
   for the session's, but a process that can do all this can also make the
   session's Sway start it. What it cannot do is touch the key. Against a
   mistaken touch the popup holds: it names what the touch is for, before the
-  key blinks. Against a hostile link it does not. What closes that is an
-  allowlist forced command on the laptop-access key, so that the link runs
-  only the commands it is for (`modules/glue/laptop-access.nix`), a separate
-  task.
+  key blinks. Against a hostile link it does not; what closes that is the
+  gate on the laptop-access key (`modules/glue/laptop-access.nix`), which
+  runs only the calls it is for.
 - **Any FIDO key brings the popup**, not only the one the mapping names:
   telling them apart takes an assertion against the key, which is pam_u2f's
   work. After Allow, a key that is not enrolled fails at once, and the

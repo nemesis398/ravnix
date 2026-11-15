@@ -403,8 +403,8 @@ origin_of :: proc(cfg: Config, allocator: runtime.Allocator) -> (o: Origin) {
 //
 // Leaving the ssh session is possible: a process of the user can have its
 // own systemd or Sway start sudo (systemd-run --user, swaymsg exec), and
-// that sudo is a local one. Only a forced command on the link's key closes
-// that (README.md).
+// that sudo is a local one. The forced command on the link's key,
+// tools/ravnix-laptop-gate, closes that: it starts no shell (README.md).
 remote_of :: proc(cfg: Config, allocator: runtime.Allocator) -> (r: Remote) {
 	context.allocator = allocator
 	client, from_env := ssh_client(cfg, cfg.parent)
