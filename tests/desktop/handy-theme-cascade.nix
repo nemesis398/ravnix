@@ -12,6 +12,8 @@
 #   - the log surface and both scrollbar thumb colors are the solid roles
 #     (they were mixes with black and transparency, and followed the setting);
 #   - the scrollbar thumb is square (a pseudo-element `*` does not match);
+#   - Tailwind's white and black, which the switch knob, the radio mark and
+#     the dialog scrim read, are Text and Crust;
 #   - the overlay's surface is the background color, whatever the setting.
 {
   self,
@@ -22,7 +24,7 @@
 }:
 let
   handy = self.packages.${system}.handy;
-  inherit (import ../../lib/default-theme.nix { inherit lib; }) roles;
+  inherit (import ../../lib/default-theme.nix { inherit lib; }) roles palette;
 
   # "#rrggbb" as the string a browser serializes a computed color to.
   rgb =
@@ -39,6 +41,8 @@ let
     logSurface = rgb roles.dock;
     thumb = rgb roles.line;
     thumbHover = rgb roles.placeholder;
+    white = rgb roles.text;
+    black = rgb palette.crust;
     thumbRadius = "0px";
     overlaySurface = rgb roles.canvas;
   };
@@ -58,6 +62,8 @@ let
       logSurface: prop("--color-log-surface"),
       thumb: prop("--scrollbar-thumb"),
       thumbHover: prop("--scrollbar-thumb-hover"),
+      white: prop("--color-white"),
+      black: prop("--color-black"),
       thumbRadius: getComputedStyle(document.getElementById("t"), "::-webkit-scrollbar-thumb").borderRadius,
       overlaySurface: prop("--s-surface"),
     };

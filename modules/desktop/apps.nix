@@ -111,9 +111,11 @@
 #                     (the 160-460 ms fades and pops, the spinner, the
 #                     mascot's wave and the overlay's morph), the shadows of
 #                     menus, tooltips and dialogs, alpha tints that Tailwind
-#                     builds from a color (hover:bg-logo-primary/10), the
-#                     mascot and wordmark (illustration: they take the accent
-#                     as their fill but keep their shapes), the tray icon
+#                     builds from a color (hover:bg-logo-primary/10, and the
+#                     dialog scrim, bg-black/50, which is Crust at half
+#                     alpha), the mascot and wordmark (illustration: they
+#                     take the accent as their fill but keep their shapes),
+#                     the tray icon
 #                     (Linux "Colored", pink), the CJK glyphs from Handy's
 #                     bundled subset font (the Latin font is the theme's),
 #                     and the onboarding's demo laptop and wallpaper.

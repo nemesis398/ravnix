@@ -14,6 +14,8 @@
 #     the setting stays in the UI and has no visible effect.
 #   - text is Text, background Base, the brand color and the primary action the
 #     accent; error is Red, warning Peach, success Green (the state hues).
+#   - The pure white and black of Tailwind's palette, which the switch knob, the
+#     radio mark and the dialog scrim read, are Text and Crust.
 #   - Handy mixes its mid grey into transparency for secondary text, edges and
 #     hover fills; those tokens become solid roles instead (opaque, docs/
 #     style.md).
@@ -89,6 +91,11 @@ in
       --color-wash: ${rgb roles.wash};
       --color-plum-pick: ${rgb roles.accent};
       --color-plum-faint: ${rgb roles.wash};
+
+      /* Tailwind's white and black: the switch knob and its checked edge, the
+         radio mark and the dialog scrim read them, and App.css sets neither. */
+      --color-white: ${rgb roles.text};
+      --color-black: ${rgb palette.crust};
 
       /* App.css comes after this block and sets these again, by the media
          query and by data-theme, so a plain declaration here would lose. */

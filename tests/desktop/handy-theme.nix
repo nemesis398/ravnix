@@ -124,6 +124,8 @@ pkgs.runCommand "desktop-handy-theme"
     # transparency.
     has "$block" '--color-ink-2: ${rgb roles.secondary};'
     has "$block" '--color-line-strong: ${rgb roles.line};'
+    has "$block" '--color-white: ${rgb roles.text};'
+    has "$block" '--color-black: ${rgb palette.crust};'
     has "$block" '--color-line: ${rgb roles.wash};'
     has "$block" '--color-wash: ${rgb roles.wash};'
 
