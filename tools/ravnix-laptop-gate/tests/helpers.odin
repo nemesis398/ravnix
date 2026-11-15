@@ -60,7 +60,8 @@ can_deny :: proc() -> bool {
 }
 
 // The laptop of the tests: an IdeaPad's battery and AC, an NVIDIA dGPU
-// beside an AMD iGPU, and two RAPL zones, one of them root's alone.
+// beside an AMD iGPU, and a RAPL package zone, root's alone, with a
+// subzone.
 laptop :: proc(t: ^testing.T, f: ^Fixture) {
 	ps :: "sys/class/power_supply/"
 	write(t, f, ps + "AC/type", "Mains\n")
@@ -92,11 +93,13 @@ laptop :: proc(t: ^testing.T, f: ^Fixture) {
 	pc :: "sys/class/powercap/"
 	// The control type, which is no zone.
 	write(t, f, pc + "intel-rapl/enabled", "1\n")
+	// The package zone is root's alone, as the kernel makes it on NixOS
+	// (CVE-2020-8694). Its subzone is a reading the gate leaves out.
 	write(t, f, pc + "intel-rapl:0/name", "package-0\n")
 	write(t, f, pc + "intel-rapl:0/energy_uj", "123456789\n")
+	unreadable(t, f, pc + "intel-rapl:0/energy_uj")
 	write(t, f, pc + "intel-rapl:0:0/name", "core\n")
 	write(t, f, pc + "intel-rapl:0:0/energy_uj", "4242\n")
-	unreadable(t, f, pc + "intel-rapl:0:0/energy_uj")
 }
 
 // listen_log binds the root's dev/log, as journald does.

@@ -146,20 +146,32 @@ charge_mode_says_when_no_battery_has_one :: proc(t: ^testing.T) {
 
 LAPTOP_POWER :: `dGPU 0000:01:00.0 runtime_status suspended
 dGPU 0000:01:00.0 power_state D3cold
-RAPL intel-rapl:0 package-0 energy_uj 123456789
+BAT0 power_now 9512000 uW
 `
 
 @(test)
-power_reads_the_dgpu_and_rapl :: proc(t: ^testing.T) {
+power_reads_the_dgpu_the_battery_s_draw_and_says_the_cpu_package_needs_root :: proc(t: ^testing.T) {
 	f: Fixture
 	fixture(t, &f)
 	defer done(&f)
 	context.allocator = virtual.arena_allocator(&f.arena)
 	laptop(t, &f)
 	out := gate.power(f.root, context.allocator)
-	// The zone that is root's alone is said to be, not read with more rights.
-	want := strings.concatenate({LAPTOP_POWER, "RAPL intel-rapl:0:0 core energy_uj needs root\n" if can_deny() else "RAPL intel-rapl:0:0 core energy_uj 4242\n"})
+	// The CPU package's counter is root's alone: said to be, never read
+	// with more rights. Its subzone (core) is no reading of the gate's.
+	want := strings.concatenate({LAPTOP_POWER, "RAPL intel-rapl:0 package-0 energy_uj needs root\n" if can_deny() else "RAPL intel-rapl:0 package-0 energy_uj 123456789\n"})
 	testing.expect_value(t, out, want)
+	// Where the kernel lets the user read it, it is the reading.
+	write(t, &f, "sys/class/powercap/intel-rapl:1/name", "package-1\n")
+	write(t, &f, "sys/class/powercap/intel-rapl:1/energy_uj", "777\n")
+	out = gate.power(f.root, context.allocator)
+	testing.expectf(t, strings.has_suffix(out, "RAPL intel-rapl:1 package-1 energy_uj 777\n"), "%s", out)
+	testing.expectf(t, !strings.contains(out, "core"), "%s", out)
+	// And power runs nothing: no helper, no sudo, nothing in the gate's place.
+	cfg := laptop_config(&f, "power")
+	r := gate.decide(cfg, context.allocator)
+	testing.expect_value(t, r.exec.path, "")
+	testing.expect_value(t, r.status, 0)
 }
 
 @(test)
@@ -168,12 +180,17 @@ power_says_when_there_is_no_dgpu_and_no_rapl :: proc(t: ^testing.T) {
 	fixture(t, &f)
 	defer done(&f)
 	context.allocator = virtual.arena_allocator(&f.arena)
-	testing.expect_value(t, gate.power(f.root, context.allocator), "dGPU none\nRAPL none\n")
-	// An AMD GPU alone, and the control type of powercap without a zone.
+	testing.expect_value(t, gate.power(f.root, context.allocator), "dGPU none\nbattery none\nRAPL none\n")
+	// An AMD GPU alone, the control type of powercap and a zone that is no
+	// package, and a mouse's battery.
 	write(t, &f, "sys/bus/pci/devices/0000:05:00.0/vendor", "0x1002\n")
 	write(t, &f, "sys/bus/pci/devices/0000:05:00.0/class", "0x030000\n")
 	write(t, &f, "sys/class/powercap/intel-rapl/enabled", "1\n")
-	testing.expect_value(t, gate.power(f.root, context.allocator), "dGPU none\nRAPL none\n")
+	write(t, &f, "sys/class/powercap/intel-rapl:0:0/name", "core\n")
+	write(t, &f, "sys/class/powercap/intel-rapl:0:0/energy_uj", "4242\n")
+	write(t, &f, "sys/class/power_supply/hidpp_battery_0/type", "Battery\n")
+	write(t, &f, "sys/class/power_supply/hidpp_battery_0/scope", "Device\n")
+	testing.expect_value(t, gate.power(f.root, context.allocator), "dGPU none\nbattery none\nRAPL none\n")
 }
 
 @(test)
@@ -187,7 +204,12 @@ power_says_what_it_cannot_read :: proc(t: ^testing.T) {
 	// power directory.
 	write(t, &f, pci + "vendor", "0x10de\n")
 	write(t, &f, pci + "class", "0x030200\n")
+	write(t, &f, "sys/class/powercap/intel-rapl:0/name", "package-0\n")
 	write(t, &f, "sys/class/powercap/intel-rapl:0/energy_uj", "12x\n")
+	// A battery without power_now, and one whose reading is no number.
+	write(t, &f, "sys/class/power_supply/BAT0/type", "Battery\n")
+	write(t, &f, "sys/class/power_supply/BAT1/type", "Battery\n")
+	write(t, &f, "sys/class/power_supply/BAT1/power_now", "fast\n")
 	out := gate.power(f.root, context.allocator)
-	testing.expect_value(t, out, "dGPU 0000:01:00.0 runtime_status absent\ndGPU 0000:01:00.0 power_state absent\nRAPL intel-rapl:0 absent energy_uj unreadable\n")
+	testing.expect_value(t, out, "dGPU 0000:01:00.0 runtime_status absent\ndGPU 0000:01:00.0 power_state absent\nBAT0 power_now absent\nBAT1 power_now unreadable\nRAPL intel-rapl:0 package-0 energy_uj unreadable\n")
 }

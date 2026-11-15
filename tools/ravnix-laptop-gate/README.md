@@ -22,7 +22,7 @@ needs an argument.
 | `facts` | the `machine-facts` block, without the Sway config check | runs `machine-facts` by its store path, with `MACHINE_FACTS_NO_SUDO=1` and `MACHINE_FACTS_NO_DGPU_WAKE=1` |
 | `battery` | status, charge (%), `power_now` (uW), `energy_now`, `energy_full`, `energy_full_design` (uWh), `cycle_count` of each battery | reads `/sys/class/power_supply` itself |
 | `charge-mode` | the active mode of `charge_types` (the one in brackets) | reads it itself. It never runs `charge-mode`, whose other modes write. |
-| `power` | the NVIDIA GPU's `power/runtime_status` and `power_state`, and `energy_uj` of each RAPL zone | reads sysfs itself, never the GPU's configuration space, which would wake it |
+| `power` | the NVIDIA GPU's `power/runtime_status` and `power_state`; the battery's draw (`power_now`, uW); and the CPU package's power counter (`energy_uj` of each RAPL package zone), which says `needs root` on NixOS | reads sysfs itself, never the GPU's configuration space, which would wake it |
 
 The sysfs answers are one line per reading, `WHAT FIELD VALUE`. VALUE is
 the reading, with its unit, or the reason there is none: `absent`, `needs
@@ -32,7 +32,7 @@ or holding a control character). A battery means one of the laptop's own:
 type `Battery`, but not scope `Device`, which is a mouse's or a headset's
 battery, and whose name carries the device's Bluetooth address. With
 nothing to report, the answer says so: `no battery`, `no battery with
-charge_types`, `dGPU none`, `RAPL none`.
+charge_types`, `dGPU none`, `battery none`, `RAPL none`.
 
 `facts` runs `machine-facts` with an environment of its own and nothing
 from the session:
@@ -176,7 +176,9 @@ built without its absolute path; 64 bad usage.
 - The sysfs readings, against a fixture laptop: two batteries, AC, USB and
   a device's battery; malformed, oversized, empty, negative and root-only
   readings; `charge_types` with every bracket shape; a dGPU beside an AMD
-  iGPU and its audio function; RAPL zones, one of them root's alone.
+  iGPU and its audio function; the battery's draw; a RAPL package zone
+  that is root's alone, one that is readable, and a subzone, which is
+  left out; and that `power` runs nothing in the gate's place.
 
 `ravnix-laptop-gate-bench` answers `battery` from `bench/root`, a laptop's
 supplies.
@@ -193,12 +195,13 @@ the gate as sshd's forced command. It covers:
 
 ## Findings not fixed
 
-- **RAPL is root's on NixOS.** Since the Platypus fix (CVE-2020-8694) the
-  kernel makes `energy_uj` mode 0400, so on huginn `power` says `needs
-  root` for each zone and never escalates. The Fedora laptop had the files
-  world-readable (seen 2026-11-15), so the readings differ between the two
-  systems. A udev rule that opens them to the user would make them
-  readable. That is a choice for the hardware module, not for the gate.
+- **The CPU package's power needs root, and stays so.** Since the Platypus
+  fix (CVE-2020-8694) the kernel makes `energy_uj` mode 0400, so on huginn
+  `power` says `RAPL intel-rapl:0 package-0 energy_uj needs root`. It
+  never asks for more rights, and no udev rule opens the file (decided
+  2026-11-15). `power` reports the dGPU's state and the battery's draw.
+  The Fedora laptop had the files world-readable (seen 2026-11-15); where
+  the user can read the counter, `power` prints it.
 - **The gate trusts `machine-facts`.** That script runs `sway -C`, `swaymsg
   -t get_outputs`, `nmcli`, `resolvectl` and more as the user, with fixed
   arguments and nothing from the server. A bug in one of them can still be

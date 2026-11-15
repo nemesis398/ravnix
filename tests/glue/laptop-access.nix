@@ -852,9 +852,10 @@ let
           rc, out, err, ms = laptop("charge-mode")
           assert (rc, out, err) == (0, b"no battery with charge_types\n", b""), (rc, out, err)
           rc, out, err, ms = laptop("power")
-          assert rc == 0 and err == b"" and out.startswith(b"dGPU none\n") and b"RAPL " in out, (rc, out, err)
-          for l in out.decode().splitlines():
-              assert l == "dGPU none" or l == "RAPL none" or (l.startswith("RAPL ") and " energy_uj " in l), out
+          assert rc == 0 and err == b"" and out.startswith(b"dGPU none\nbattery none\n"), (rc, out, err)
+          # QEMU may show a RAPL package zone; it is root's, as on huginn.
+          for l in out.decode().splitlines()[2:]:
+              assert l == "RAPL none" or (l.startswith("RAPL ") and l.endswith(" energy_uj needs root")), out
 
       with subtest("facts runs machine-facts without sudo and without the session's environment"):
           rc, out, err, ms = laptop("facts")

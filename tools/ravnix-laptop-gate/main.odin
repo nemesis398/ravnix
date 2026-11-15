@@ -27,7 +27,8 @@ each by its name alone, with no argument:
   facts         machine-facts, without sudo
   battery       charge, power, energy and cycles of each battery
   charge-mode   the active charge mode, read and never set
-  power         the dGPU's runtime power state, and RAPL's energy counters
+  power         the dGPU's runtime power state, the battery's draw, and the
+                CPU package's power counter (needs root on NixOS)
 
 Anything else is refused with exit status 77, the reason on stderr, and one
 line in the journal (journalctl -t ravnix-laptop-gate).

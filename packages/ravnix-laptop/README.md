@@ -23,7 +23,7 @@ Each call is its name alone, with no argument:
 | `facts` | the `machine-facts` block, made without sudo |
 | `battery` | status, charge, power, energy (now, full, design) and cycles of each of the laptop's batteries |
 | `charge-mode` | the active charge mode, read and never set |
-| `power` | the dGPU's runtime power state, and the RAPL energy counters (root's alone on NixOS, so they say `needs root`) |
+| `power` | the dGPU's runtime power state and the battery's draw (`power_now`); the CPU package's power counter is root's alone on NixOS, so it says `needs root` |
 
 Anything else is refused on the laptop with exit status **77**, the gate's
 reason on stderr, and one line in huginn's journal (`journalctl -t

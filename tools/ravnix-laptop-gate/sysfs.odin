@@ -207,9 +207,11 @@ charge_mode :: proc(root: string, allocator: runtime.Allocator) -> string {
 NVIDIA :: "0x10de"
 
 // power: the NVIDIA GPU's runtime power state, read from sysfs and never
-// from its configuration space, which would wake it; and the energy counter
-// of each RAPL zone, which the kernel gives to root alone, so for the user
-// it says so.
+// from its configuration space, which would wake it; the draw of each of
+// the laptop's batteries (power_now); and the energy counter of the CPU
+// package (each RAPL package zone), which the kernel gives to root alone:
+// for the user it says `needs root`, and nothing here asks for more
+// rights.
 power :: proc(root: string, allocator: runtime.Allocator) -> string {
 	b := strings.builder_make(allocator)
 	pci := join(allocator, root, "sys/bus/pci/devices")
@@ -232,18 +234,29 @@ power :: proc(root: string, allocator: runtime.Allocator) -> string {
 		strings.write_string(&b, "dGPU none\n")
 	}
 
+	dir, names := batteries(root, allocator)
+	for name in names {
+		write_reading(&b, escape(name, allocator), "power_now", read_value(join(allocator, dir, name, "power_now"), allocator), "uW", true)
+	}
+	if len(names) == 0 {
+		strings.write_string(&b, "battery none\n")
+	}
+
 	powercap := join(allocator, root, "sys/class/powercap")
 	zones := 0
 	for zone in entries(powercap, allocator) {
-		// A zone is intel-rapl:0 or intel-rapl:0:0 (AMD's are named so as
-		// well); intel-rapl alone is the control type.
+		// A zone is intel-rapl:0 (AMD's are named so as well); intel-rapl
+		// alone is the control type, and intel-rapl:0:0 a subzone (core,
+		// uncore) of the package, which the gate does not report.
 		if !strings.contains_rune(zone, ':') {
 			continue
 		}
-		zones += 1
 		name := read_value(join(allocator, powercap, zone, "name"), allocator)
-		label := name.value if name.value != "" else name.trouble
-		what := strings.concatenate({"RAPL ", escape(zone, allocator), " ", label}, allocator)
+		if !strings.has_prefix(name.value, "package-") {
+			continue
+		}
+		zones += 1
+		what := strings.concatenate({"RAPL ", escape(zone, allocator), " ", name.value}, allocator)
 		write_reading(&b, what, "energy_uj", read_value(join(allocator, powercap, zone, "energy_uj"), allocator), numeric = true)
 	}
 	if zones == 0 {
