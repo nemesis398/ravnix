@@ -42,6 +42,29 @@ boot row from trying `sudo -n` (`packages/machine-facts/README.md`). The
 call goes through `execve`, with no shell. In `machine-facts` the server
 gets only the plain print mode, never `--write`, `--check` or `--diff`.
 
+## Before the gate runs
+
+sshd does not start the gate itself. It runs `command=` as `$SHELL -c
+'<gate>'`, and the account's shell is bash. Two things reach that bash
+before the gate does:
+
+- **The environment.** A non-interactive bash runs the file `$BASH_ENV`
+  names, command substitutions included, and the dynamic loader reads
+  `LD_PRELOAD`. A client could set either if sshd let it, through
+  `AcceptEnv`, or through `PermitUserEnvironment` with `~/.ssh/environment`
+  or a key's `environment=`. So `modules/glue/laptop-access.nix` refuses a
+  laptop whose sshd lets a client set any variable, or that has a
+  `ForceCommand`, a `Match` or an `Include` in `services.openssh.settings`
+  or `extraConfig`, which could change either. nixpkgs' defaults set none
+  of them, and the VM test reads `sshd -T` for it.
+- **The shell's startup files.** bash on NixOS is built with
+  `SSH_SOURCE_BASHRC`. Started by sshd, it reads `/etc/bashrc` and
+  `~/.bashrc` before the gate, on every call, a refused one included.
+  What they run comes from the laptop's own configuration
+  (home-manager's session variables, `modules/common/bash.nix`), not from
+  the server, which sends nothing but `SSH_ORIGINAL_COMMAND`. Still,
+  whatever they run, runs as the user on every call over the link.
+
 ## The refusal
 
 Every other command exits **77** (sysexits' EX_NOPERM). The gate writes

@@ -54,7 +54,13 @@
 # ssh session too, but they are tripwires, and the gate is the fix. A rebuild
 # of the laptop is not a call; it is done on the laptop. `restrict` stays
 # whole beside it: no forwarding of ports, sockets, agents or displays, no
-# terminal, no ~/.ssh/rc. No call needs any of them.
+# terminal, no ~/.ssh/rc. No call needs any of them. sshd starts the gate
+# as `bash -c`, so the module refuses a laptop whose sshd lets a client set
+# the environment of that bash (AcceptEnv, PermitUserEnvironment) or could
+# change the forced command (ForceCommand, Match, Include): BASH_ENV or
+# LD_PRELOAD would run before the gate. bash reads /etc/bashrc and
+# ~/.bashrc there too (NixOS builds it with SSH_SOURCE_BASHRC), from the
+# laptop's own configuration (tools/ravnix-laptop-gate/README.md).
 #
 # The server end is the command and nothing else: no daemon, no unit, no
 # port. It logs in with the key of its own that identityFile names, never
@@ -100,6 +106,40 @@ let
   # Loopback is trusted by default, and is no network the laptop roams on.
   trusted = lib.filter (name: name != interface && name != "lo") firewall.trustedInterfaces;
   ipAddress = builtins.match "([0-9]+[.]){3}[0-9]+|.*:.*" config.ravnix.server.netbirdAddress != null;
+
+  # What would let a client's environment reach the bash that runs the
+  # gate, or put another command in its place: AcceptEnv, a
+  # PermitUserEnvironment other than no, a ForceCommand, and a Match or an
+  # Include, which can set any of them, whether in services.openssh.settings
+  # (its keys are free-form, in any case) or in a line of extraConfig.
+  risky = [
+    "acceptenv"
+    "permituserenvironment"
+    "forcecommand"
+    "match"
+    "include"
+  ];
+  settingNames = lib.attrNames (
+    lib.filterAttrs (
+      name: value:
+      let
+        key = lib.toLower name;
+      in
+      lib.elem key risky
+      && !(key == "acceptenv" && (value == null || value == [ ]))
+      && !(key == "permituserenvironment" && (value == false || value == "no"))
+    ) sshd.settings
+  );
+  # The keyword of an sshd_config line: its first word, before a space, a
+  # tab or `=`.
+  keywordOf =
+    line:
+    let
+      words = lib.filter (w: w != "") (builtins.split "[ 	=]+" (lib.trim line));
+    in
+    if words == [ ] || !(builtins.isString (lib.head words)) then "" else lib.toLower (lib.head words);
+  extraLines = lib.filter (line: lib.elem (keywordOf line) risky) (lib.splitString "\n" sshd.extraConfig);
+  environmentReaches = settingNames ++ map lib.trim extraLines;
 
   laptop = cfg.side == "laptop" && cfg.publicKey != null;
   server = cfg.side == "server" && cfg.identityFile != null;
@@ -171,6 +211,10 @@ in
         {
           assertion = trusted == [ ];
           message = "ravnix.laptopAccess: networking.firewall.trustedInterfaces names ${lib.concatStringsSep ", " trusted}, which accepts everything, the ssh port included; only NetBird's interface may be trusted";
+        }
+        {
+          assertion = environmentReaches == [ ];
+          message = "ravnix.laptopAccess: the laptop's sshd lets a client set the environment of a session, or changes the forced command (${lib.concatStringsSep "; " environmentReaches}). sshd runs the server's gate as `bash -c`, and BASH_ENV or LD_PRELOAD from the client would run before it; leave AcceptEnv unset, PermitUserEnvironment no, and ForceCommand, Match and Include out of services.openssh.settings and extraConfig";
         }
         {
           assertion = ipAddress;

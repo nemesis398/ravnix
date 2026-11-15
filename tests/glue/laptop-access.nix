@@ -346,6 +346,83 @@ let
         }
       ]
     )) "port 2222, sshd's own, open on another interface builds"
+    # No client environment reaches the bash that runs the gate (sshd runs
+    # command= as `$SHELL -c`): not through AcceptEnv, not through
+    # PermitUserEnvironment, and no ForceCommand, Match or Include that could
+    # change either, in settings or in extraConfig.
+    ++ map (case: "a laptop whose sshd ${case.what} builds") (
+      lib.filter (case: !(mentions "environment" (failedOf (laptop ++ [ case.config ])))) [
+        {
+          what = "accepts BASH_ENV from the client";
+          config.services.openssh.settings.AcceptEnv = [ "BASH_ENV" ];
+        }
+        {
+          what = "accepts every variable from the client";
+          config.services.openssh.settings.AcceptEnv = [ "*" ];
+        }
+        {
+          what = "reads ~/.ssh/environment";
+          config.services.openssh.settings.PermitUserEnvironment = true;
+        }
+        {
+          what = "reads ~/.ssh/environment (yes as a string)";
+          config.services.openssh.settings.PermitUserEnvironment = "yes";
+        }
+        {
+          what = "takes the environment= option of a key for some variables";
+          config.services.openssh.settings.PermitUserEnvironment = "BASH_ENV,LD_*";
+        }
+        {
+          what = "forces a command of its own in settings";
+          config.services.openssh.settings.ForceCommand = "/bin/sh";
+        }
+        {
+          what = "accepts a variable in extraConfig";
+          config.services.openssh.extraConfig = "AcceptEnv LANG";
+        }
+        {
+          what = "accepts a variable in extraConfig, lowercase and with =";
+          config.services.openssh.extraConfig = "  acceptenv=*";
+        }
+        {
+          what = "reads ~/.ssh/environment by extraConfig";
+          config.services.openssh.extraConfig = "PermitUserEnvironment yes";
+        }
+        {
+          what = "forces a command of its own in extraConfig";
+          config.services.openssh.extraConfig = "ForceCommand /bin/sh";
+        }
+        {
+          what = "has a Match block";
+          config.services.openssh.extraConfig = "Match User other\n\tAcceptEnv *";
+        }
+        {
+          what = "includes another file";
+          config.services.openssh.extraConfig = "Include /etc/ssh/sshd_config.d/*.conf";
+        }
+      ]
+    )
+    # And what leaves the environment alone.
+    ++ map (case: "a laptop whose sshd ${case.what} is refused: ${toString (failedOf (laptop ++ [ case.config ]))}") (
+      lib.filter (case: failedOf (laptop ++ [ case.config ]) != [ ]) [
+        {
+          what = "accepts no variable (an empty list)";
+          config.services.openssh.settings.AcceptEnv = [ ];
+        }
+        {
+          what = "says PermitUserEnvironment no";
+          config.services.openssh.settings.PermitUserEnvironment = false;
+        }
+        {
+          what = "says PermitUserEnvironment \"no\"";
+          config.services.openssh.settings.PermitUserEnvironment = "no";
+        }
+        {
+          what = "has an unrelated line in extraConfig";
+          config.services.openssh.extraConfig = "ClientAliveInterval 10\n# AcceptEnv in a comment";
+        }
+      ]
+    )
     # The pin of the key is to an address.
     ++ expect (mentions "netbirdAddress" (
       failedOf (laptop ++ [ { ravnix.server.netbirdAddress = lib.mkForce "muninn.example.org"; } ])
@@ -716,6 +793,10 @@ let
           # The one key file the module writes, and the one account.
           assert "authorizedkeysfile /etc/ssh/authorized_keys.d/%u\n" in effective, effective
           assert "allowusers " + USER + "\n" in effective, effective
+          # No client environment reaches the bash that runs the gate.
+          assert "permituserenvironment no\n" in effective, effective
+          assert not [l for l in effective.splitlines() if l.startswith("acceptenv")], effective
+          assert not [l for l in effective.splitlines() if l.startswith("forcecommand") and l != "forcecommand none"], effective
 
       with subtest("the key is restricted and pinned to the server's NetBird address"):
           line = huginn.succeed("cat /etc/ssh/authorized_keys.d/" + USER).strip()
