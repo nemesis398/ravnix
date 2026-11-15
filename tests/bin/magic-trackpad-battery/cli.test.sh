@@ -56,8 +56,16 @@ mkdir -p "$SB/fake/sys/bus/hid/devices/0005:004C:0324.0001/hidraw/hidraw3" "$SB/
 ln -s "$SB/fake/sys/bus/hid/drivers/magicmouse" "$SB/fake/sys/bus/hid/devices/0005:004C:0324.0001/driver"
 printf '\x90\x00\x32' >"$SB/fake/dev/hidraw3"
 expect "a node that is no hidraw node is no answer" 0 "" -- --tsv --root "$SB/fake"
+# Root opens the node whatever its mode, and the case would then pass for the
+# other reason (the ioctl fails), so it runs only for a user who is refused.
+# The Odin test the_real_reader_gets_no_answer_where_there_is_no_hidraw holds
+# the open failure for every user.
 chmod 000 "$SB/fake/dev/hidraw3"
-expect "a node that cannot be opened is no answer" 0 "" -- --root "$SB/fake"
+if [[ $EUID == 0 ]]; then
+    printf '  - %s\n' "running as root: the case of a node that cannot be opened is not run"
+else
+    expect "a node that cannot be opened is no answer" 0 "" -- --root "$SB/fake"
+fi
 
 expect "an argument it does not know is ignored" 0 "" -- --bogus --root "$SB/empty"
 expect "--root without a value is a usage error" 2 "magic-trackpad-battery: --root needs a value

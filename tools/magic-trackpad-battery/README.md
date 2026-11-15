@@ -70,7 +70,9 @@ the tool exits quietly, as it does for any device it cannot open.
   characters, including a tab or a line break, become spaces (they split a
   `--tsv` field), and a label is cut at 256 bytes. An empty `HID_NAME` leaves
   the default label (the Python printed an empty one).
-- `--root DIR` and `--help` are new.
+- `--root DIR` and `--help` are new, and so is `-h`, which the Python ignored
+  (it printed the batteries) and which now prints the usage. `--root` with no
+  value exits 2 with a line on standard error; the Python always exited 0.
 - The files it reads are bounded: 4 KiB for a `model_name`, 64 KiB for a
   uevent, whose last line is dropped when the file went past that.
 - A `power_supply` or a `uevent` that is not what it should be (a file where
@@ -118,5 +120,8 @@ node.
   report on USB would be skipped.
 - The ioctl can wait for the device: over Bluetooth the kernel asks the pad
   and waits for the answer, once per node, and the tool sets no timeout of
-  its own. `waybar-peripherals` calls it in line, so a pad that does not
-  answer holds the module's poll until the kernel gives up.
+  its own. The bound is the kernel's, about 5 s per unanswered node (the
+  Bluetooth HID transport waits 5 s, a USB control message 5 s), the same as
+  with the Python. `waybar-peripherals` calls it in line, so a pad that does
+  not answer holds the module's poll that long; a `timeout` there is the
+  place to cap it.

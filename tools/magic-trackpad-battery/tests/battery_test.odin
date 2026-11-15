@@ -17,6 +17,9 @@ ioctl_number_is_the_one_linux_hidraw_gives :: proc(t: ^testing.T) {
 	// HIDIOCGINPUT(len) is _IOC(READ|WRITE, 'H', 0x0A, len); for a 3 byte
 	// report that is 0xC003480A, the number linux/hidraw.h gives.
 	testing.expect_value(t, tool.hidiocginput(3), 0xC003480A)
+	// read_hidraw sends the size of its buffer, which is that report.
+	testing.expect_value(t, tool.hidiocginput(size_of(tool.Report)), 0xC003480A)
+	testing.expect_value(t, tool.hidiocginput(tool.REPORT_LEN), 0xC003480A)
 	// The length goes into the size field.
 	testing.expect_value(t, tool.hidiocginput(64), 0xC040480A)
 }

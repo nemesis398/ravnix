@@ -73,9 +73,10 @@ read_hidraw :: proc(path: string, report: ^Report) -> int {
 	}
 	defer linux.close(fd)
 	for {
-		// A failed ioctl returns -errno, which as a uintptr is huge: int()
-		// brings the sign back.
-		ret := int(linux.ioctl(fd, hidiocginput(REPORT_LEN), uintptr(raw_data(report[:]))))
+		// The request carries the size of the buffer it is given, so the kernel
+		// can never write past it. A failed ioctl returns -errno, which as a
+		// uintptr is huge: int() brings the sign back.
+		ret := int(linux.ioctl(fd, hidiocginput(size_of(Report)), uintptr(raw_data(report[:]))))
 		if ret != -int(linux.Errno.EINTR) {
 			return ret
 		}
