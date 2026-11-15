@@ -205,19 +205,19 @@ the run reads every file a real one reads and stops before the popup.
 ## Findings not fixed
 
 - **Consent, not a wall.** A program that runs as the user on the laptop
-  can get around every check here. The laptop-access link is no longer such
-  a program: its key runs the gate (`tools/ravnix-laptop-gate`), which
-  starts no shell and no sudo. It can leave the ssh session, having its own systemd or Sway
-  start sudo (`systemd-run --user --pty`, `swaymsg exec`), and that sudo is
-  a local one, with a terminal or without. It can answer the popup itself,
-  since Sway lets any client type through its virtual-keyboard protocol, as
-  wtype does. It can start a Sway of its own; that one is no longer taken
-  for the session's, but a process that can do all this can also make the
-  session's Sway start it. What it cannot do is touch the key. Against a
-  mistaken touch the popup holds: it names what the touch is for, before the
-  key blinks. Against a hostile link it does not; what closes that is the
-  gate on the laptop-access key (`modules/glue/laptop-access.nix`), which
-  runs only the calls it is for.
+  can get around every check here. Such a program can leave the ssh
+  session, having its own systemd or Sway start sudo (`systemd-run --user
+  --pty`, `swaymsg exec`), and that sudo is a local one, with a terminal or
+  without. It can answer the popup itself, since Sway lets any client type
+  through its virtual-keyboard protocol, as wtype does. It can start a Sway
+  of its own; that one is no longer taken for the session's, but a process
+  that can do all this can also make the session's Sway start it. What it
+  cannot do is touch the key. Against a mistaken touch the popup holds: it
+  names what the touch is for, before the key blinks. Against a hostile
+  program it does not. The laptop-access link is no way to start one: its
+  key runs the gate (`tools/ravnix-laptop-gate`,
+  `modules/glue/laptop-access.nix`), which runs only the calls it is for and
+  no shell or program that the server can direct.
 - **Any FIDO key brings the popup**, not only the one the mapping names:
   telling them apart takes an assertion against the key, which is pam_u2f's
   work. After Allow, a key that is not enrolled fails at once, and the
