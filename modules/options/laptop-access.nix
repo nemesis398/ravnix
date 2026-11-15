@@ -1,4 +1,4 @@
-# How the server reaches the laptop over NetBird, to run a command there
+# How the server reaches the laptop over NetBird, to ask its gate there
 # (`ravnix-laptop`, modules/glue/laptop-access.nix): an ssh key of its own,
 # and the laptop's host key. The server's side of the key is a file on the
 # server and the laptop's side is its public half; neither is a secret that
@@ -13,9 +13,9 @@ let
   # comment. A key that needs hardware (sk-ssh-ed25519@openssh.com) is not one:
   # this key is for a command that runs unattended, and it never touches the
   # YubiKey. Nothing may precede the type: the module writes the options of
-  # the authorized_keys line itself (`restrict,from=...`), and an option such
-  # as `command=` in front of the key would be a second set, or a way to run
-  # something else.
+  # the authorized_keys line itself (`restrict,command=<the gate>,from=...`),
+  # and an option such as `command=` in front of the key would be a second
+  # set, or a way to run something else.
   publicKey =
     types.strMatching "(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+=*( [^\n]*)?"
     // {
@@ -49,8 +49,10 @@ in
         The public half of `identityFile` (the one line of its `.pub` file),
         which the laptop accepts for your account. It is accepted only from
         the server's NetBird address (`ravnix.server.netbirdAddress`), and
-        only for commands: no forwarding of ports, agents or displays. Null:
-        the laptop runs no sshd for it.
+        only for the calls of the laptop's gate (`ravnix-laptop-gate`: ping,
+        facts, battery, charge-mode, power; every other command is refused),
+        with no forwarding of ports, sockets, agents or displays. Null: the
+        laptop runs no sshd for it.
       '';
     };
 

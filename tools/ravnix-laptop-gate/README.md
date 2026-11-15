@@ -71,9 +71,12 @@ like an address. The gate checks in this order:
 5. **Arguments.** A call followed by anything, `ping extra` or `facts
    --write`.
 6. **Not an allowed call.** Everything else: `sh -c id`, `sudo -n true`,
-   `nixos-rebuild switch`, `PING`, and a subsystem such as `sftp` (sshd
-   runs the forced command for one and names it in
-   `SSH_ORIGINAL_COMMAND`).
+   `nixos-rebuild switch`, `PING`. A subsystem such as `sftp` is refused as
+   well. sshd runs the forced command for it, with the program the
+   subsystem is configured with in `SSH_ORIGINAL_COMMAND`. On NixOS that is
+   sftp-server's store path, longer than the bound. sshd gives the client
+   no stderr for a subsystem, so only the exit status and the journal line
+   show the refusal.
 
 The log quotes a refused command and escapes it: a backslash and a quote
 take a backslash, and every byte outside printable ASCII becomes `\xHH`.

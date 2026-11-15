@@ -12,9 +12,11 @@
 #   3. Two VMs: huginn with sshd and muninn with the command, joined by an
 #      interface named like NetBird's (wt0) that stands in for NetBird, and a
 #      second one (lan0) that plays the LAN or the WAN of the laptop.
-#      Port 22 is open on the first and shut on the second, the command runs
-#      on huginn with exactly the words it was given, and with huginn paused
-#      or shut down it gives up with exit 75 in under five seconds.
+#      Port 22 is open on the first and shut on the second; the key runs the
+#      gate (tools/ravnix-laptop-gate) and nothing else, which answers its
+#      calls end to end and refuses every other command, with one line in
+#      huginn's journal, and every forward; and with huginn paused or shut
+#      down the command gives up with exit 75 in under five seconds.
 #
 # The VMs import the module and the common module, not the desktop: they need
 # no Sway. The keys are the ones nixpkgs ships for its own tests
@@ -116,6 +118,8 @@ let
   };
 
   l = (host laptop).config;
+  # The forced command of the key, as the laptop's package set builds it.
+  gateOf = extra: "${(host extra).pkgs.ravnix.ravnix-laptop-gate}/bin/ravnix-laptop-gate";
   s = (host server).config;
   packageNames = c: map lib.getName c.environment.systemPackages;
   has = c: lib.elem "ravnix-laptop" (packageNames c);
@@ -168,10 +172,29 @@ let
     ++ expect (
       l.services.openssh.settings.AllowUsers == [ user.username ]
     ) "sshd lets in more than the one account: ${toString l.services.openssh.settings.AllowUsers}"
-    # The key: pinned to the server's NetBird address, with nothing it does not need.
+    # The key: pinned to the server's NetBird address, with nothing it does
+    # not need, and the gate as its one command.
     ++ expect (
-      authorized l == [ ''restrict,from="${muninnAddress}" ${me.ravnix.laptopAccess.publicKey}'' ]
-    ) "the authorized key is not pinned to the server's address and restricted: ${toString (authorized l)}"
+      authorized l == [
+        ''restrict,command="${gateOf laptop}",from="${muninnAddress}" ${me.ravnix.laptopAccess.publicKey}''
+      ]
+    ) "the authorized key is not restricted to the gate and pinned to the server's address: ${toString (authorized l)}"
+    # restrict stays whole: no forward is given back, of a port or a socket.
+    ++ expect (
+      !lib.any (
+        # The options are the line up to the key's type; none has a space.
+        line:
+        lib.any (opt: lib.hasInfix opt (lib.head (lib.splitString " " line))) [
+          "port-forwarding"
+          "permitopen"
+          "permitlisten"
+          "agent-forwarding"
+          "pty"
+          "user-rc"
+          "X11"
+        ]
+      ) (authorized l)
+    ) "the key gets back something restrict takes: ${toString (authorized l)}"
     # The interface is the one NetBird's client has.
     ++ expect (
       let
@@ -406,10 +429,36 @@ let
   withWrongHostKey = real { hostKey = wrongHostKey; };
   withoutHostKey = real { };
 
+  # The gate on huginn runs machine-facts through a stand-in. It records the
+  # environment the gate gives it. When /tmp/gate-facts.sleep names a number
+  # of seconds, it says `started` and sleeps that long, as `sleep N`, for the
+  # subtests that need a call to be running when the link breaks. Otherwise
+  # it runs the real machine-facts with what it was given. The rest of the
+  # gate is the package's own; only this one define differs.
+  machineFacts = self.packages.${system}.machine-facts;
+  factsStandIn = pkgs.writeShellScript "machine-facts-stand-in" ''
+    ${pkgs.coreutils}/bin/env > /tmp/gate-facts.env
+    if [ -s /tmp/gate-facts.sleep ]; then
+      echo started >&2
+      exec -a sleep ${pkgs.coreutils}/bin/sleep "$(${pkgs.coreutils}/bin/cat /tmp/gate-facts.sleep)"
+    fi
+    exec ${lib.getExe machineFacts} "$@"
+  '';
+  gate =
+    (import ../../tools/ravnix-laptop-gate/default.nix {
+      inherit (import ../../lib/odin.nix { inherit pkgs lib; }) buildOdinTool;
+      inherit pkgs lib;
+      machineFacts = "${factsStandIn}";
+    }).package;
+
   vm = pkgs.testers.runNixOSTest {
     name = "glue-laptop-access";
 
-    node.pkgs = lib.mkForce (pkgs.extend self.overlays.default);
+    node.pkgs = lib.mkForce (
+      (pkgs.extend self.overlays.default).extend (
+        _final: prev: { ravnix = prev.ravnix // { ravnix-laptop-gate = gate; }; }
+      )
+    );
 
     defaults =
       { ... }:
@@ -545,6 +594,8 @@ let
       HOST_KEY = "${hostKey}"
       WITHOUT_HOST_KEY = "${withoutHostKey}/bin/ravnix-laptop"
       WRONG_HOST_KEY = "${withWrongHostKey}/bin/ravnix-laptop"
+      GATE = "${gate}/bin/ravnix-laptop-gate"
+      ALLOWED = b"huginn answers only: ping, facts, battery, charge-mode, power\n"
 
 
       def put(machine, path, data):
@@ -583,6 +634,36 @@ let
 
       def words(ws):
           return " ".join(shlex.quote(w) for w in ws)
+
+
+      def gate_lines():
+          return huginn.succeed("journalctl -t ravnix-laptop-gate -o cat --no-pager -q").splitlines()
+
+
+      def logged_once(before):
+          """The one journal line of the gate since there were `before`."""
+          huginn.wait_until_succeeds(
+              "test $(journalctl -t ravnix-laptop-gate -o cat --no-pager -q | wc -l) -ge " + str(before + 1), timeout=15
+          )
+          lines = gate_lines()
+          assert len(lines) == before + 1, lines[before:]
+          return lines[-1]
+
+
+      def refused(args, **kw):
+          """Runs ravnix-laptop ARGS, which the gate must refuse with exit 77,
+          its reason on stderr and exactly one line in huginn's journal.
+          Returns that line."""
+          before = len(gate_lines())
+          rc, out, err, ms = laptop(args, **kw)
+          assert rc == 77 and out == b"", (args[:200], rc, out[:200], err[:400])
+          assert err.startswith(b"ravnix-laptop-gate: refused: ") and err.endswith(ALLOWED) and err.count(b"\n") == 1, (args[:200], err[:400])
+          return logged_once(before)
+
+
+      def slow_facts(seconds):
+          """Makes the next `facts` a call that runs for SECONDS."""
+          huginn.succeed("echo " + str(seconds) + " > /tmp/gate-facts.sleep; chmod 644 /tmp/gate-facts.sleep")
 
 
       start_all()
@@ -638,11 +719,11 @@ let
 
       with subtest("the key is restricted and pinned to the server's NetBird address"):
           line = huginn.succeed("cat /etc/ssh/authorized_keys.d/" + USER).strip()
-          assert line == 'restrict,from="' + MUNINN + '" ${identityPublicKey}', line
-          # From the address the key is pinned to, it logs in.
-          muninn.succeed(as_user(raw + " -b " + MUNINN + " " + USER + "@" + HUGINN + " true"))
+          assert line == 'restrict,command="' + GATE + '",from="' + MUNINN + '" ${identityPublicKey}', line
+          # From the address the key is pinned to, it logs in, and the gate answers.
+          assert muninn.succeed(as_user(raw + " -b " + MUNINN + " " + USER + "@" + HUGINN + " ping")) == "huginn is up\n"
           # From another address on the same network, it does not.
-          status, out = muninn.execute(as_user(raw + " -b " + STRANGER + " " + USER + "@" + HUGINN + " true 2>&1"))
+          status, out = muninn.execute(as_user(raw + " -b " + STRANGER + " " + USER + "@" + HUGINN + " ping 2>&1"))
           assert status != 0 and "Permission denied" in out, (status, out)
 
       with subtest("sshd takes no other key and no other account"):
@@ -665,44 +746,164 @@ let
           assert "User other from " + STRANGER + " not allowed because not listed in AllowUsers" in journal, journal
 
       with subtest("ravnix-laptop returns the output of a command run on huginn"):
-          rc, out, err, ms = laptop("hostname")
-          assert (rc, out, err) == (0, b"huginn\n", b""), (rc, out, err)
-          rc, out, err, ms = laptop("whoami")
-          assert (rc, out, err) == (0, (USER + "\n").encode(), b""), (rc, out, err)
-          print("a command took", ms, "ms")
+          # Each call of the gate, end to end. The VM has no battery, no
+          # NVIDIA GPU and no RAPL, and its answers say so.
+          rc, out, err, ms = laptop("ping")
+          assert (rc, out, err) == (0, b"huginn is up\n", b""), (rc, out, err)
+          print("a call took", ms, "ms")
+          rc, out, err, ms = laptop("battery")
+          assert (rc, out, err) == (0, b"no battery\n", b""), (rc, out, err)
+          rc, out, err, ms = laptop("charge-mode")
+          assert (rc, out, err) == (0, b"no battery with charge_types\n", b""), (rc, out, err)
+          rc, out, err, ms = laptop("power")
+          assert rc == 0 and err == b"" and out.startswith(b"dGPU none\n") and b"RAPL " in out, (rc, out, err)
+          for l in out.decode().splitlines():
+              assert l == "dGPU none" or l == "RAPL none" or (l.startswith("RAPL ") and " energy_uj " in l), out
+
+      with subtest("facts runs machine-facts without sudo and without the session's environment"):
+          rc, out, err, ms = laptop("facts")
+          assert rc == 0 and out.startswith(b"<!-- machine-facts:begin -->") and b"### Identity" in out, (rc, out[:400], err[:400])
+          # The VM has no EFI variables: the boot row would ask sudo, and says it did not.
+          assert b"(needs root; sudo is not asked in this mode)" in out, out
+          env = huginn.succeed("cat /tmp/gate-facts.env").splitlines()
+          assert "MACHINE_FACTS_NO_SUDO=1" in env and "PATH=/run/current-system/sw/bin" in env, env
+          assert "USER=" + USER in env and "HOME=" + HOME in env, env
+          assert not [kv for kv in env if kv.startswith("SSH_") or "/run/wrappers" in kv], env
+          # No sudo ran on huginn.
+          assert huginn.succeed("journalctl _COMM=sudo -o cat --no-pager -q | wc -l").strip() == "0"
 
       with subtest("every word arrives as one word, whatever is in it"):
+          # Through the gate no word reaches a shell: each one, alone or
+          # after a call, is refused with one line in the journal, which
+          # never holds a raw control character or the 50 kB word.
           ws = [
               "a b", "c;d", "$(touch /tmp/pwned)", "`touch /tmp/pwned`", '"quoted"', "it's", "back\\slash",
               "*", "~", "#x", "&", "|", ">out", "", "-n", "--", "two\nlines", "ä – ö", "  lead and trail  ",
               "!", "{a,b}", "$HOME", "%s", "; touch /tmp/pwned", "&& touch /tmp/pwned", "tab\there", "\\",
               "'", '"', "x" * 50000,
           ]
-          rc, out, err, ms = laptop("printf '%s\\0' " + words(ws))
-          assert rc == 0 and err == b"", (rc, err)
-          assert out.split(b"\0")[:-1] == [w.encode() for w in ws], out[:2000]
+          line = refused("printf '%s\\0' " + words(ws))
+          assert line.startswith("refused a command of ") and line.endswith(" from " + MUNINN + ": longer than 64 bytes"), line
+          for w in ws:
+              # After --, so that ravnix-laptop does not read -n as its own.
+              for args in ("-- " + words([w]), "ping " + words([w])):
+                  line = refused(args)
+                  assert len(line) <= 400 and all(0x20 <= ord(c) < 0x7f for c in line), line
+                  assert "x" * 100 not in line, line[:200]
+          # A word that ravnix-laptop quotes arrives quoted, and the gate
+          # logs it escaped.
+          assert refused(words(["c;d"])) == 'refused "c\\\\;d" from ' + MUNINN + ": a shell metacharacter", gate_lines()[-1]
           huginn.fail("test -e /tmp/pwned")
           muninn.fail("test -e /tmp/pwned")
 
       with subtest("the exit status, the two output streams and standard input are the command's"):
-          rc, out, err, ms = laptop("sh -c " + shlex.quote("echo out; echo err >&2; exit 7"))
-          assert (rc, out, err) == (7, b"out\n", b"err\n"), (rc, out, err)
-          rc, out, err, ms = laptop("cat", stdin=b"some\ndata\x00\xff\n")
-          assert (rc, out, err) == (0, b"some\ndata\x00\xff\n", b""), (rc, out, err)
-          rc, out, err, ms = laptop("sh -c 'exit 255'")
-          assert (rc, out, err) == (255, b"", b""), (rc, out, err)
-          rc, out, err, ms = laptop("no-such-command-on-huginn")
-          assert rc == 127 and b"not found" in err, (rc, err)
+          # The command is the gate: its answer on stdout and 0, or its
+          # refusal on stderr and 77, never what the server asked to run.
+          refused("sh -c " + shlex.quote("echo out; echo err >&2; exit 7"))
+          # A call reads no input, and is not disturbed by some.
+          rc, out, err, ms = laptop("ping", stdin=b"some\ndata\x00\xff\n")
+          assert (rc, out, err) == (0, b"huginn is up\n", b""), (rc, out, err)
+          refused("cat", stdin=b"some\ndata\n")
+          # A refusal is 77 and says so: not a silent 255, not a 127.
+          refused("sh -c 'exit 255'")
+          refused("no-such-command-on-huginn")
+
+      with subtest("the gate refuses every other command, with one line in huginn's journal"):
+          # What the allowlist is for: no shell, no sudo, no rebuild.
+          assert refused("sh -c id") == 'refused "sh -c id" from ' + MUNINN + ": not an allowed call"
+          assert refused("sudo -n true") == 'refused "sudo -n true" from ' + MUNINN + ": not an allowed call"
+          for args in ["pkexec id", "run0 id", "nixos-rebuild switch", "bash", "id", "PING", "/bin/sh"]:
+              assert refused(args).endswith(": not an allowed call"), args
+          # A call with an argument, even a harmless one.
+          assert refused("ping extra") == 'refused "ping extra" from ' + MUNINN + ": ping takes no arguments"
+          assert refused("facts --write").endswith(": facts takes no arguments")
+          assert refused("charge-mode set Fast").endswith(": charge-mode takes no arguments")
+          # Shell metacharacters, quoted by ravnix-laptop or not.
+          assert refused(shlex.quote("ping;id")).endswith(": a shell metacharacter")
+          assert refused(shlex.quote("$(id)")).endswith(": a shell metacharacter")
+          # A newline in a word, which ravnix-laptop quotes as $'...'.
+          assert refused(shlex.quote("ping\nid")).endswith(": a shell metacharacter")
+          # Over-long: by its size, never its text.
+          line = refused(shlex.quote("y" * 65))
+          assert line == "refused a command of 65 bytes from " + MUNINN + ": longer than 64 bytes", line
+          # With the key itself, past ravnix-laptop's quoting: no command at
+          # all (a shell), a subsystem, and a raw newline, which the log
+          # escapes. For a subsystem sshd puts the program it is configured
+          # with into SSH_ORIGINAL_COMMAND (here sftp-server's store path,
+          # longer than the bound), and keeps the gate's stderr from the
+          # client.
+          for args, what in [
+              ("-T " + USER + "@" + HUGINN, "refused an empty command from " + MUNINN + ": "),
+              ("-s " + USER + "@" + HUGINN + " sftp", "refused "),
+              (USER + "@" + HUGINN + " " + shlex.quote("ping\nid"), 'refused "ping\\x0aid" from ' + MUNINN + ": a control character"),
+          ]:
+              before = len(gate_lines())
+              status, out = muninn.execute(as_user(raw + " " + args + " </dev/null 2>&1"))
+              assert status == 77, (args, status, out)
+              if not args.startswith("-s"):
+                  assert "ravnix-laptop-gate: refused: " in out, (args, status, out)
+              line = logged_once(before)
+              assert line.startswith(what) and line.count(" from " + MUNINN + ": ") == 1, (args, line)
+          # No sudo ran, and nothing the commands would have made is there.
+          assert huginn.succeed("journalctl _COMM=sudo -o cat --no-pager -q | wc -l").strip() == "0"
+          huginn.fail("test -e /tmp/pwned")
+
+      with subtest("the key forwards nothing: no port, no socket, no -W"):
+          # restrict stays whole, so sshd refuses each before the gate runs.
+          fwd = "timeout 20 " + raw + " -N -o ExitOnForwardFailure=yes "
+          status, out = muninn.execute(as_user(fwd + "-R 127.0.0.1:2222:127.0.0.1:22 " + USER + "@" + HUGINN + " 2>&1"))
+          assert status == 255 and "remote port forwarding failed" in out, (status, out)
+          huginn.fail("nc -z -w 2 127.0.0.1 2222")
+          status, out = muninn.execute(as_user(fwd + "-R " + HOME + "/fwd.sock:/tmp/nothing.sock " + USER + "@" + HUGINN + " 2>&1"))
+          assert status == 255 and "forwarding failed" in out, (status, out)
+          huginn.fail("test -e " + HOME + "/fwd.sock")
+          # To a port on huginn (direct-tcpip): the control's web server on
+          # 8080 never answers through the link.
+          status, out = muninn.execute(as_user("printf 'GET / HTTP/1.0\\r\\n\\r\\n' | timeout 20 " + raw + " -W 127.0.0.1:8080 " + USER + "@" + HUGINN + " 2>&1"))
+          assert status != 0 and "HTTP/1.0 200" not in out and "stdio forwarding failed" in out, (status, out)
+          # To a socket on huginn (direct-streamlocal): one that listens, as
+          # the link's would, gets no connection.
+          huginn.succeed("systemd-run --uid=" + USER + " --unit target-sock --collect ${pkgs.python3}/bin/python3 -c " + shlex.quote(
+              "import socket, os\n"
+              "s = socket.socket(socket.AF_UNIX)\n"
+              "s.bind('" + HOME + "/target.sock')\n"
+              "s.listen(1)\n"
+              "c, _ = s.accept()\n"
+              "open('" + HOME + "/target.got', 'w').write('connected')\n"
+          ))
+          huginn.wait_until_succeeds("test -S " + HOME + "/target.sock")
+          # ssh says why a channel failed at INFO, which raw's LogLevel=ERROR hides.
+          loud = fwd.replace("-o LogLevel=ERROR", "-o LogLevel=INFO")
+          script = (
+              "rm -f " + HOME + "/l.sock\n"
+              + loud + "-L " + HOME + "/l.sock:" + HOME + "/target.sock " + USER + "@" + HUGINN + " 2>" + HOME + "/l.err &\n"
+              "for i in $(seq 100); do [ -S " + HOME + "/l.sock ] && break; sleep 0.1; done\n"
+              "echo hi | nc -U -N -w 3 " + HOME + "/l.sock\n"
+              "sleep 1; kill $! 2>/dev/null; wait\n"
+          )
+          put(muninn, "/tmp/l.sh", script.encode())
+          muninn.execute(as_user("bash /tmp/l.sh"))
+          said = muninn.succeed("cat " + HOME + "/l.err")
+          # sshd turns the channel down, and says why in huginn's journal.
+          assert "channel 1: open failed" in said, said
+          # The session's own sshd process runs in the session's scope, not in
+          # sshd.service, so its lines are found by their name.
+          journal = huginn.succeed("journalctl -t sshd-session -o cat --no-pager -q")
+          assert "refused streamlocal port forward: originator  port 0, target " + HOME + "/target.sock" in journal, journal[-2000:]
+          huginn.fail("test -e " + HOME + "/target.got")
+          huginn.succeed("systemctl stop target-sock.service || true")
 
       with subtest("runs at the same time answer separately"):
-          script = "for i in 1 2 3 4 5 6; do (ravnix-laptop sh -c \"echo run $i\" > " + HOME + "/par.$i 2>&1) & done; wait\n"
+          calls = {1: "ping", 2: "charge-mode", 3: "battery", 4: "ping", 5: "charge-mode", 6: "battery"}
+          answers = {"ping": "huginn is up\n", "charge-mode": "no battery with charge_types\n", "battery": "no battery\n"}
+          script = "".join("(ravnix-laptop " + c + " > " + HOME + "/par." + str(i) + " 2>&1) &\n" for i, c in calls.items()) + "wait\n"
           put(muninn, "/tmp/par.sh", script.encode())
           muninn.succeed(as_user("bash /tmp/par.sh"))
-          for i in range(1, 7):
-              assert muninn.succeed("cat " + HOME + "/par." + str(i)) == "run " + str(i) + "\n"
+          for i, c in calls.items():
+              assert muninn.succeed("cat " + HOME + "/par." + str(i)) == answers[c], (i, c)
 
       with subtest("a host key that is not huginn's is refused, and is not called a sleeping laptop"):
-          rc, out, err, ms = laptop("true", binary=WRONG_HOST_KEY, tag="wrong")
+          rc, out, err, ms = laptop("ping", binary=WRONG_HOST_KEY, tag="wrong")
           assert rc == 255 and out == b"", (rc, out, err)
           assert b"ssh to huginn failed" in err and b"offline or asleep" not in err, err
           assert b"Host key verification failed" in err or b"IDENTIFICATION HAS CHANGED" in err, err
@@ -711,13 +912,13 @@ let
           state = muninn.succeed(as_user("echo ''${XDG_STATE_HOME:-$HOME/.local/state}")).strip()
           known = state + "/ravnix-laptop/known_hosts"
           muninn.fail("test -e " + known)
-          rc, out, err, ms = laptop("hostname", binary=WITHOUT_HOST_KEY, tag="tofu")
-          assert (rc, out) == (0, b"huginn\n"), (rc, out, err)
+          rc, out, err, ms = laptop("ping", binary=WITHOUT_HOST_KEY, tag="tofu")
+          assert (rc, out) == (0, b"huginn is up\n"), (rc, out, err)
           assert muninn.succeed("cat " + known).startswith("huginn " + HOST_KEY.split()[0] + " " + HOST_KEY.split()[1]), muninn.succeed("cat " + known)
-          rc, out, err, ms = laptop("hostname", binary=WITHOUT_HOST_KEY, tag="tofu")
-          assert (rc, out) == (0, b"huginn\n"), (rc, out, err)
+          rc, out, err, ms = laptop("ping", binary=WITHOUT_HOST_KEY, tag="tofu")
+          assert (rc, out) == (0, b"huginn is up\n"), (rc, out, err)
           muninn.succeed("sed -i 's/PDkv8/PDkv9/' " + known)
-          rc, out, err, ms = laptop("hostname", binary=WITHOUT_HOST_KEY, tag="tofu")
+          rc, out, err, ms = laptop("ping", binary=WITHOUT_HOST_KEY, tag="tofu")
           assert rc == 255 and b"offline or asleep" not in err, (rc, err)
           assert b"Host key verification failed" in err or b"IDENTIFICATION HAS CHANGED" in err, err
           # Not in the user's own known_hosts.
@@ -725,13 +926,13 @@ let
 
       with subtest("with sshd stopped on huginn the command says so at once"):
           huginn.succeed("systemctl stop sshd.service")
-          rc, out, err, ms = laptop("true")
+          rc, out, err, ms = laptop("ping")
           assert rc == 75 and out == b"" and err == b"ravnix-laptop: huginn is offline or asleep\n", (rc, out, err)
           print("a refused connection took", ms, "ms")
           assert ms < 5000, ms
           huginn.succeed("systemctl start sshd.service")
           huginn.wait_for_unit("sshd.service")
-          rc, out, err, ms = laptop("true")
+          rc, out, err, ms = laptop("ping")
           assert rc == 0, (rc, err)
 
       with subtest("a laptop that stops answering during the handshake is given up on in under five seconds"):
@@ -758,14 +959,14 @@ let
               huginn.succeed("systemd-run --unit stall --collect ${pkgs.python3}/bin/python3 /tmp/stall.py " + mode)
               huginn.wait_until_succeeds("nc -z 127.0.0.1 22")
               # Bounded, so that a handshake nothing times out shows as a failure here.
-              rc, out, err, ms = laptop("true", binary="timeout 30 ravnix-laptop", tag="stall")
+              rc, out, err, ms = laptop("ping", binary="timeout 30 ravnix-laptop", tag="stall")
               print("a handshake that stalls (" + mode + ") took", ms, "ms; exit", rc)
               assert rc == 75 and err == b"ravnix-laptop: huginn is offline or asleep\n", (mode, rc, err)
               assert ms < 5000, (mode, ms)
               huginn.succeed("systemctl stop stall.service")
           huginn.succeed("systemctl start sshd.service")
           huginn.wait_for_unit("sshd.service")
-          rc, out, err, ms = laptop("true")
+          rc, out, err, ms = laptop("ping")
           assert rc == 0, (rc, err)
 
       with subtest("a session that the laptop closes in the middle of a command is a silent 255, ssh's own line among the command's"):
@@ -773,7 +974,8 @@ let
           # command cannot tell it from a command that exits 255, and the line
           # is in the command's stderr.
           base = HOME + "/gone"
-          script = "ravnix-laptop sh -c 'echo started >&2; sleep 121' >" + base + ".out 2>" + base + ".err </dev/null; echo $? >" + base + ".rc\n"
+          slow_facts(121)
+          script = "ravnix-laptop facts >" + base + ".out 2>" + base + ".err </dev/null; echo $? >" + base + ".rc\n"
           put(muninn, "/tmp/gone.sh", script.encode())
           muninn.succeed("setsid -f su - " + USER + " -c 'bash /tmp/gone.sh' >/dev/null 2>&1 </dev/null")
           huginn.wait_until_succeeds("pgrep -u " + USER + " -f '^sleep 121$'", timeout=60)
@@ -785,10 +987,12 @@ let
           assert muninn.succeed("cat " + base + ".rc").strip() == "255"
           assert closed == b"started\nConnection to " + HUGINN.encode() + b" closed by remote host.\r\n", closed
           huginn.succeed("pkill -u " + USER + " -f '^sleep 121$' || true")
+          huginn.succeed("rm -f /tmp/gate-facts.sleep")
 
       with subtest("a session that is reset in the middle of a command is a 75, after ssh's own line"):
           base = HOME + "/reset"
-          script = "ravnix-laptop sh -c 'echo started >&2; sleep 122' >" + base + ".out 2>" + base + ".err </dev/null; echo $? >" + base + ".rc\n"
+          slow_facts(122)
+          script = "ravnix-laptop facts >" + base + ".out 2>" + base + ".err </dev/null; echo $? >" + base + ".rc\n"
           put(muninn, "/tmp/reset.sh", script.encode())
           muninn.succeed("setsid -f su - " + USER + " -c 'bash /tmp/reset.sh' >/dev/null 2>&1 </dev/null")
           huginn.wait_until_succeeds("pgrep -u " + USER + " -f '^sleep 122$'", timeout=60)
@@ -804,12 +1008,14 @@ let
           assert reset == b"started\nRead from remote host " + HUGINN.encode() + b": Connection reset by peer\r\nravnix-laptop: huginn is offline or asleep\n", reset
           huginn.succeed("pkill -u " + USER + " -f 'sshd-session: .*@notty' || true")
           huginn.succeed("pkill -u " + USER + " -f '^sleep 122$' || true")
-          rc, out, err, ms = laptop("true")
+          huginn.succeed("rm -f /tmp/gate-facts.sleep")
+          rc, out, err, ms = laptop("ping")
           assert rc == 0, (rc, err)
 
       with subtest("a laptop that falls asleep in the middle of a command is given up on in seconds"):
           # A command that runs for two minutes, started in the background.
-          script = "ravnix-laptop sleep 120 >" + HOME + "/mid.out 2>" + HOME + "/mid.err </dev/null; rc=$?; date +%s%N >" + HOME + "/mid.end; echo $rc >" + HOME + "/mid.rc\n"
+          slow_facts(120)
+          script = "ravnix-laptop facts >" + HOME + "/mid.out 2>" + HOME + "/mid.err </dev/null; rc=$?; date +%s%N >" + HOME + "/mid.end; echo $rc >" + HOME + "/mid.rc\n"
           put(muninn, "/tmp/mid.sh", script.encode())
           muninn.succeed("setsid -f su - " + USER + " -c 'bash /tmp/mid.sh' >/dev/null 2>&1 </dev/null")
           # The command itself, and not another sleep of the user's.
@@ -828,7 +1034,7 @@ let
           assert gave_up < 5, gave_up
 
       with subtest("a laptop that is asleep is given up on in under five seconds"):
-          rc, out, err, ms = laptop("true")
+          rc, out, err, ms = laptop("ping")
           assert rc == 75 and out == b"" and err == b"ravnix-laptop: huginn is offline or asleep\n", (rc, out, err)
           print("a sleeping laptop took", ms, "ms")
           assert ms < 5000, ms
@@ -837,15 +1043,17 @@ let
           huginn.send_monitor_command("cont")
           huginn.wait_until_succeeds("true")
           huginn.succeed("pkill -x sleep || true")
-          muninn.wait_until_succeeds(as_user("ravnix-laptop true </dev/null"), timeout=90)
-          rc, out, err, ms = laptop("hostname")
-          assert (rc, out, err) == (0, b"huginn\n", b""), (rc, out, err)
+          huginn.succeed("rm -f /tmp/gate-facts.sleep")
+          muninn.wait_until_succeeds(as_user("ravnix-laptop ping </dev/null"), timeout=90)
+          rc, out, err, ms = laptop("ping")
+          assert (rc, out, err) == (0, b"huginn is up\n", b""), (rc, out, err)
 
       with subtest("a laptop that shuts down in the middle of a command closes the session: a silent 255, ssh's own line among the command's"):
           # A clean shutdown ends the session's processes while the network is
           # still up, so sshd closes the connection (no reset, no silence).
           base = HOME + "/down"
-          script = "ravnix-laptop sh -c 'echo started >&2; sleep 123' >" + base + ".out 2>" + base + ".err </dev/null; echo $? >" + base + ".rc\n"
+          slow_facts(123)
+          script = "ravnix-laptop facts >" + base + ".out 2>" + base + ".err </dev/null; echo $? >" + base + ".rc\n"
           put(muninn, "/tmp/down.sh", script.encode())
           muninn.succeed("setsid -f su - " + USER + " -c 'bash /tmp/down.sh' >/dev/null 2>&1 </dev/null")
           huginn.wait_until_succeeds("pgrep -u " + USER + " -f '^sleep 123$'", timeout=60)
@@ -857,7 +1065,7 @@ let
           assert down == b"started\nConnection to " + HUGINN.encode() + b" closed by remote host.\r\n", down
 
       with subtest("a laptop that is shut down is given up on in under five seconds"):
-          rc, out, err, ms = laptop("true")
+          rc, out, err, ms = laptop("ping")
           assert rc == 75 and out == b"" and err == b"ravnix-laptop: huginn is offline or asleep\n", (rc, out, err)
           print("a laptop that is off took", ms, "ms")
           assert ms < 5000, ms

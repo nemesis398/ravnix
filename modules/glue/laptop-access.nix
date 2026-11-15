@@ -1,7 +1,9 @@
-# The server reaches the laptop: `ravnix-laptop COMMAND` on muninn runs a
-# command on huginn over the NetBird mesh and returns its output (the command
-# is packages/ravnix-laptop; its values are ravnix.laptopAccess, in
-# modules/options/laptop-access.nix). One module for both ends, and
+# The server reaches the laptop: `ravnix-laptop CALL` on muninn asks huginn
+# over the NetBird mesh and returns its answer (the command is
+# packages/ravnix-laptop; its values are ravnix.laptopAccess, in
+# modules/options/laptop-access.nix). huginn answers a fixed list of
+# read-only calls and nothing else: ping, facts, battery, charge-mode and
+# power (below). One module for both ends, and
 # `ravnix.laptopAccess.side` says which end the host is; it follows
 # `ravnix.shape`, which nixosModules.laptop and nixosModules.server set, so no
 # host sets it. Other options would be a guess (a laptop may run the workbench
@@ -33,13 +35,26 @@
 # The key it accepts is the server's own, for this and nothing else: the
 # public half of ravnix.laptopAccess.identityFile. sshd on the laptop takes no
 # other: authorizedKeysInHomedir is off, so a key in ~/.ssh/authorized_keys
-# counts for nothing, and AllowUsers names the one account. The key works for
-# commands only (`restrict` takes away forwarding of ports, agents and
-# displays, and the terminal), and from the server's NetBird address only
-# (ravnix.server.netbirdAddress, which must be an IP address: sshd matches
-# `from=` against the address a connection comes from and does not resolve a
-# name): the same key from another address is refused. The account is the
-# user's, on both hosts.
+# counts for nothing, and AllowUsers names the one account. The key works
+# from the server's NetBird address only (ravnix.server.netbirdAddress, which
+# must be an IP address: sshd matches `from=` against the address a
+# connection comes from and does not resolve a name): the same key from
+# another address is refused. The account is the user's, on both hosts.
+#
+# What the key runs is the gate, tools/ravnix-laptop-gate, and nothing else:
+# `command=` makes it the key's forced command, so sshd runs it in place of
+# whatever the server asks for, a shell or a subsystem included, and hands it
+# the request in SSH_ORIGINAL_COMMAND. The gate answers ping, facts
+# (machine-facts, with sudo never asked), battery, charge-mode (read, never
+# set) and power, each by its name alone, and refuses every other command
+# with exit 77 and one line in the journal (`journalctl -t
+# ravnix-laptop-gate`). That is what keeps a hostile session on the server
+# from sudo, pkexec and run0, and so from the security key's tap: the tap
+# popup (tools/ravnix-tap-ask) and the polkit rule refuse a request from an
+# ssh session too, but they are tripwires, and the gate is the fix. A rebuild
+# of the laptop is not a call; it is done on the laptop. `restrict` stays
+# whole beside it: no forwarding of ports, sockets, agents or displays, no
+# terminal, no ~/.ssh/rc. No call needs any of them.
 #
 # The server end is the command and nothing else: no daemon, no unit, no
 # port. It logs in with the key of its own that identityFile names, never
@@ -130,8 +145,10 @@ in
         ${interface}.allowedTCPPorts = sshd.ports;
       };
 
+      # The gate's store path has no space or quote, so it needs no escaping
+      # inside command="...".
       users.users.${user}.openssh.authorizedKeys.keys = [
-        ''restrict,from="${config.ravnix.server.netbirdAddress}" ${cfg.publicKey}''
+        ''restrict,command="${pkgs.ravnix.ravnix-laptop-gate}/bin/ravnix-laptop-gate",from="${config.ravnix.server.netbirdAddress}" ${cfg.publicKey}''
       ];
 
       assertions = [

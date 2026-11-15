@@ -134,8 +134,10 @@
       proxmoxUpdate = null;
     };
 
-    # How the server reaches the laptop over NetBird to run a command there
-    # (`ravnix-laptop COMMAND`), with a key of its own. Make it on the
+    # How the server reaches the laptop over NetBird to ask it a few
+    # read-only calls (`ravnix-laptop ping`, `facts`, `battery`,
+    # `charge-mode`, `power`; the laptop's gate refuses everything else),
+    # with a key of its own. Make it on the
     # server with `ssh-keygen -t ed25519 -N "" -f <identityFile>`; neither
     # the YubiKey nor rbw's agent, which serves the vault's SSH keys, is
     # used. Each value can be null, which leaves that part out.

@@ -1,5 +1,7 @@
-# ravnix-laptop: run a command on huginn, the laptop, from muninn, the server,
-# over NetBird (`ravnix-laptop COMMAND [ARGUMENT...]`). Thin Bash glue over
+# ravnix-laptop: ask huginn, the laptop, from muninn, the server, over NetBird
+# (`ravnix-laptop CALL`); the laptop's gate, tools/ravnix-laptop-gate,
+# answers ping, facts, battery, charge-mode and power and refuses the rest
+# with exit 77. Thin Bash glue over
 # ssh, packaged with writeShellApplication, so shellcheck runs over it at
 # build time. The laptop's NetBird address, the account, the private key and
 # the laptop's host key are personal values: modules/glue/laptop-access.nix
@@ -42,7 +44,7 @@ writeShellApplication {
       ]
       (builtins.readFile ./ravnix-laptop.bash);
   meta = {
-    description = "Run a command on the laptop from the server over NetBird";
+    description = "Ask the laptop's gate from the server over NetBird";
     mainProgram = "ravnix-laptop";
   };
 }

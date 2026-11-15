@@ -1,8 +1,10 @@
 # ravnix-laptop
 
-`ravnix-laptop COMMAND [ARGUMENT...]` runs a command on huginn, the laptop,
-from muninn, the server, over the NetBird mesh, and prints what it printed.
-It is thin Bash glue over `ssh`, packaged with `writeShellApplication`, so
+`ravnix-laptop CALL` asks huginn, the laptop, from muninn, the server, over
+the NetBird mesh, and prints its answer. huginn runs no command of the
+server's: its sshd gives the server's key a forced command, the gate
+(`tools/ravnix-laptop-gate`), and only the gate's calls work (below). It is
+thin Bash glue over `ssh`, packaged with `writeShellApplication`, so
 shellcheck ran over it at build time. `modules/glue/laptop-access.nix` builds
 it with `ravnix.hosts.huginn.address`, `ravnix.user.username` and
 `ravnix.laptopAccess` (`identityFile`, `hostKey`); the same module sets up the
@@ -11,14 +13,40 @@ laptop's end. Which end a host is comes from its `ravnix.shape`, which
 with no shape (`modules/glue/shape.nix`), and this module does nothing for
 one. Built with none of the values it says which to set and exits 78.
 
+## What huginn answers
+
+Each call is its name alone, with no argument:
+
+| Call | Answer |
+| --- | --- |
+| `ping` | `huginn is up` |
+| `facts` | the `machine-facts` block, made without sudo |
+| `battery` | status, charge, power, energy (now, full, design) and cycles of each of the laptop's batteries |
+| `charge-mode` | the active charge mode, read and never set |
+| `power` | the dGPU's runtime power state, and the RAPL energy counters (root's alone on NixOS, so they say `needs root`) |
+
+Anything else is refused on the laptop with exit status **77**, the gate's
+reason on stderr, and one line in huginn's journal (`journalctl -t
+ravnix-laptop-gate`). That covers a shell, `sudo`, `pkexec`, `run0`,
+`nixos-rebuild`, a call with an argument, and any word with a shell
+metacharacter or a control character. The key also forwards nothing: no
+port, no socket, no agent. So the server cannot reach the laptop's sudo,
+and with it the security key's tap. Rebuilding huginn from muninn is not
+possible this way, on purpose: it is done on the laptop. The gate's README
+has the rest.
+
 ## What it promises
 
-- **Each word is one word.** The words are quoted for the remote shell with
+- **Each word is one word.** The words are quoted for the remote side with
   `printf %q` and sent as a single argument behind `--`, so a space, a `;`, a
   `$(...)`, a quote or a leading dash in an argument stays an argument, and
-  nothing in them can be read as an option of the local ssh.
-- **The exit status is the command's.** Standard input goes to the command,
-  its standard output and error come back apart.
+  nothing in them can be read as an option of the local ssh. On the laptop
+  no shell reads them: the gate gets them in `SSH_ORIGINAL_COMMAND` and
+  refuses whatever is not a call (a quoted word arrives with its backslash or
+  `$'...'`, which is a metacharacter).
+- **The exit status is the gate's.** It is 0 for an answer and 77 for a
+  refusal; its standard output and error come back apart. Standard input
+  goes to the gate, which reads none.
 - **A laptop that is asleep gives up in seconds.** `ConnectTimeout=3` bounds a
   laptop that does not answer, `ServerAliveInterval=2` with
   `ServerAliveCountMax=1` one that stops answering in the middle of a command
@@ -89,7 +117,7 @@ one. Built with none of the values it says which to set and exits 78.
 parts, built one at a time with `.wrappers`, `.vm` and `.failures`:
 
 - `tests/glue/helpers/ravnix-laptop.test.bash` runs the command against a
-  stand-in for ssh (`fake-ssh.sh`), which can also run the remote command
+  stand-in for ssh (`fake-ssh.sh`), which knows no gate, which can also run the remote command
   line in a local bash, as the remote shell would. It checks the options ssh
   gets; 29 words with every kind of quote and metacharacter; a 100 kB word;
   a command line beyond what exec takes; the exit statuses, the two output
@@ -101,13 +129,17 @@ parts, built one at a time with `.wrappers`, `.vm` and `.failures`:
   is not there, with an ssh that does not exist; no file left in `TMPDIR`, also after a TERM; sixteen runs at once.
 - the module, evaluated: see `modules/glue/laptop-access.nix`.
 - two VMs with a real sshd and a real ssh, in which an interface named `wt0`
-  stands in for NetBird and a second one for the laptop's LAN: the same
-  words, status and streams through the real thing, a pinned host key that is
+  stands in for NetBird and a second one for the laptop's LAN, and the key
+  runs the gate (with a stand-in in front of machine-facts that can make
+  `facts` take minutes): each call end to end, `sh -c id`, `sudo -n true`
+  and the rest refused with their line in huginn's journal, the same hostile
+  words refused and nothing of them run, an empty command and a subsystem,
+  forwards of a port and a socket and a `-W` refused, a pinned host key that is
   wrong, a remembered one that changed, the key refused from another address,
   a key in the account's own `~/.ssh/authorized_keys` and the key under another
   account refused, and huginn stopped, silent in the banner exchange and in the
   key exchange, its session closed, reset and ended by a shutdown in the
-  middle of a command, paused in the middle of a command, paused, and shut
+  middle of a call, paused in the middle of a call, paused, and shut
   down.
 
 ## What the laptop's end refuses, and cannot
@@ -143,20 +175,24 @@ accepted.
 - Four seconds of silence end a command, whether the laptop slept or the Wi-Fi
   dropped for four seconds: exit 75, and the command is not run again. Nothing
   here knows whether it had already done its work on the laptop.
-- The remote shell must be bash (the command line is quoted for it, with
-  `$'...'` where a word holds a control character). It is, for the account of
-  both hosts.
-- A command that needs the laptop's graphical session (`wl-copy`, `swaymsg`)
-  gets the environment sshd gives, which has no `WAYLAND_DISPLAY` or
-  `SWAYSOCK`. The forwarding of such requests is `ravnix-link`'s.
+- The quoting is bash's (`$'...'` where a word holds a control character),
+  from when a shell on the laptop read the line. The gate reads no shell
+  syntax and refuses every quoted word, so a call works only unquoted, as
+  its plain name.
+- No call reaches the laptop's graphical session through its environment:
+  `facts` gets the gate's (no `WAYLAND_DISPLAY` or `SWAYSOCK`) and finds
+  Sway's socket by its path. What the server sends to the session (links,
+  notifications) is `ravnix-link`'s, over the main connection that the
+  laptop opens.
 - A key type that differs from the one the laptop offers, pinned in `hostKey`
   (an ECDSA key for a laptop that has only an ed25519 one), is not a mismatch
   to ssh but "no matching host key type", and is reported as an ssh failure.
 - A TERM sent to `ravnix-laptop` alone ends the script and leaves its ssh
   running until the command ends; a TERM to the process group ends both.
 - The limit of 120000 bytes for the whole command line is below the 128 KiB
-  that Linux takes for one argument, with room for `bash -c`; a word beyond it
-  is refused, not split.
+  that Linux takes for one argument; a word beyond it is refused, not split.
+  The gate refuses anything above 64 bytes anyway; the limit here only
+  keeps a huge call from being sent.
 - OpenSSH 9.8 and later drop a source that fails to log in a few times
   (`PerSourcePenalties`, on by default) for some seconds to minutes. ssh then
   says "Connection closed by remote host" or "reset by peer", which is told

@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
-# ravnix-laptop: run a command on huginn, the laptop, from muninn, the server,
-# over the NetBird mesh, and return what it printed and how it ended.
+# ravnix-laptop: ask huginn, the laptop, from muninn, the server, over the
+# NetBird mesh, and return what it answered and how it ended.
 #
-#   ravnix-laptop [--] COMMAND [ARGUMENT...]
+#   ravnix-laptop [--] CALL
+#
+# huginn runs no command of the server's: its sshd gives this key a forced
+# command, the gate (tools/ravnix-laptop-gate), which answers ping, facts,
+# battery, charge-mode and power, each by its name alone, and refuses
+# everything else with exit status 77. The words are still sent as they are
+# given, quoted; the gate decides, not this script.
 #
 # Thin glue over ssh. Everything that decides how ssh behaves is set here, on
 # the command line, and none of it comes from the user's ssh configuration
 # (-F /dev/null), so the key is the command's own and no agent is asked.
 #
-# Exit status: the command's own; 64 for a wrong call; 70 when this machine
-# cannot even start ssh (no temporary file: EX_SOFTWARE, so that a failure
-# here is never taken for the remote command's own exit 1); 75 when the laptop
-# cannot be reached (asleep, off, away from the network, or sshd not running:
-# "huginn is offline or asleep", sysexits' EX_TEMPFAIL, try again later); 78
-# when it is not configured; and 255 when ssh failed for another reason, which
-# it says (a refused key, a host key that is not the laptop's). A command that
-# itself exits 255 is passed on as 255 without a word, which is told from an
+# Exit status: the gate's (0 answered, 77 refused); 64 for a wrong call; 70
+# when this machine cannot even start ssh (no temporary file: EX_SOFTWARE, so
+# that a failure here is never taken for the remote command's own exit 1); 75
+# when the laptop cannot be reached (asleep, off, away from the network, or
+# sshd not running: "huginn is offline or asleep", sysexits' EX_TEMPFAIL, try
+# again later); 78 when it is not configured; and 255 when ssh failed for
+# another reason, which it says (a refused key, a host key that is not the
+# laptop's). A remote end that exits 255 is passed on as 255 without a word, which is told from an
 # ssh that failed by the messages ssh wrote, kept apart from the command's own
 # output in a file of their own (ssh -E). A session that the laptop closes in
 # the middle of a command ends the same way: ssh says "Connection to ... closed
@@ -34,16 +40,25 @@ ssh=@sshCommand@
 
 usage() {
 	cat <<'EOF'
-usage: ravnix-laptop [--] COMMAND [ARGUMENT...]
+usage: ravnix-laptop [--] CALL
 
-Runs COMMAND on the laptop (huginn) over NetBird and prints what it prints.
-Each word is passed on as one word: spaces, quotes, ; and $ in an argument
-stay what they are. The exit status is the command's. Standard input goes to
-the command.
+Asks the laptop (huginn) over NetBird and prints its answer. huginn's sshd
+hands every call to its gate, which answers only these, each by its name
+alone, with no argument: ping, facts, battery, charge-mode, power.
+
+  ping          huginn is up
+  facts         machine-facts, without sudo
+  battery       charge, power, energy and cycles of each battery
+  charge-mode   the active charge mode, read and never set
+  power         the dGPU's runtime power state, and RAPL's energy counters
+
+Anything else, a shell and sudo among it, is refused there with exit status
+77, the reason on stderr, and one line in huginn's journal
+(journalctl -t ravnix-laptop-gate).
 
 Exit status 75 means the laptop is offline or asleep. Other statuses:
-64 wrong call, 70 no temporary file here, 78 not configured, 255 ssh failed
-(it says why).
+0 answered, 77 refused by the laptop, 64 wrong call, 70 no temporary file
+here, 78 not configured, 255 ssh failed (it says why).
 EOF
 }
 

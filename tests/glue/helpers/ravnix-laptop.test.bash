@@ -515,6 +515,20 @@ test_help_prints_the_usage_on_standard_output() {
 	expect_calls 0
 }
 
+test_the_usage_says_that_huginn_answers_only_its_allowlist() {
+	fresh
+	capture "$LAPTOP" --help
+	expect_status 0
+	# The calls, as the laptop's gate (tools/ravnix-laptop-gate) names them,
+	# and the status of a refusal; no word of running any command, or of
+	# rebuilding the laptop from here.
+	expect_out "ping, facts, battery, charge-mode, power"
+	expect_out "77"
+	expect_out "journalctl -t ravnix-laptop-gate"
+	expect_no_out "Runs COMMAND"
+	expect_no_out "rebuild"
+}
+
 test_a_lone_double_dash_is_no_command() {
 	fresh
 	capture "$LAPTOP" --
@@ -688,6 +702,7 @@ tests=(
 	test_a_log_of_a_successful_run_is_not_shown
 	test_no_arguments_print_the_usage
 	test_help_prints_the_usage_on_standard_output
+	test_the_usage_says_that_huginn_answers_only_its_allowlist
 	test_a_lone_double_dash_is_no_command
 	test_an_unknown_option_is_refused_not_passed_on
 	test_a_command_after_a_double_dash_runs
