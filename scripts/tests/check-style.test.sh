@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Tests for scripts/check-style.sh, the style check. Each test builds a
-# fixture tree in a temporary directory and runs the check on it. The colors
-# in the fixtures are Catppuccin Mocha values or made up; fixtures meant to
-# fail live only here, in the temporary directory, never in the tree the
-# check judges. Run it with:
+# Tests for the style check: scripts/check-style.sh, and the Odin program
+# tools/check-style that replaces it. Each test builds a fixture tree in a
+# temporary directory and runs the check on it. The colors in the fixtures are
+# Catppuccin Mocha values or made up; fixtures meant to fail live only here, in
+# the temporary directory, never in the tree the check judges. Run it with:
 #
 #   bash scripts/tests/check-style.test.sh
+#
+# It tests the script. CHECK_STYLE names the program to test instead (the
+# check bin-check-style runs it on the Odin build): the same cases, but the one
+# about a missing rg, which the program does not need, and so tests that it
+# runs with no tool on the PATH.
 #
 # It prints PASS or FAIL per test and exits non-zero if any test failed.
 
@@ -14,7 +19,7 @@
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 src="$(cd "$here/../.." && pwd)"
-check="$here/../check-style.sh"
+check="${CHECK_STYLE:-$here/../check-style.sh}"
 # shellcheck source=scripts/tests/lib.sh
 . "$here/lib.sh"
 
@@ -122,10 +127,20 @@ a_missing_rg_is_bad_usage() {
 	new_tree
 	local tools="$scratch/tools" tool
 	mkdir -p "$tools"
+	put a.css 'a { color: red; }\n'
+	if [[ -n "${CHECK_STYLE:-}" ]]; then
+		# The program searches the files itself: it needs no other program.
+		capture in_tree env PATH="$tools" "$check" .
+		expect_status 0
+		put modules/b.nix 'c = "#cba6f7";\n'
+		capture in_tree env PATH="$tools" "$check" .
+		expect_status 1
+		expect_out "modules/b.nix:1:hex-color"
+		return
+	fi
 	for tool in bash cat dirname env find sed sort tr awk; do
 		ln -sf "$(command -v "$tool")" "$tools/$tool"
 	done
-	put a.css 'a { color: red; }\n'
 	capture in_tree env PATH="$tools" "$check" .
 	expect_status 2
 	expect_err "rg not found"
