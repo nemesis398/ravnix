@@ -512,12 +512,14 @@ in
         startInBackground = true;
       };
 
-      # Helium opens web pages, PDFs and images; mpv opens video. A MIME type
-      # without an entry here is opened by the first application that claims it.
+      # The userstyles for Stylus, Mocha and the accent preset, to import in
+      # one step (the header, "Userstyles"). Only where the user gave the file.
       xdg.dataFile."ravnix/stylus-import.json" = lib.mkIf (apps.userstylesImport != null) {
         source = stylusImport;
       };
 
+      # Helium opens web pages, PDFs and images; mpv opens video. A MIME type
+      # without an entry here is opened by the first application that claims it.
       xdg.mimeApps = {
         enable = true;
         defaultApplications =
