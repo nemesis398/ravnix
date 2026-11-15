@@ -63,7 +63,8 @@ command and the restore have that path built in.
   its owner alone; the saved mode is absent or a regular file. Then it writes
   the mode to `charge_types` (opened without `O_CREAT`, with `O_NOFOLLOW`,
   one write) and saves it through a temporary file, `fsync` and a rename,
-  as 0644. It runs nothing.
+  as 0644, then syncs the directory, so the rename survives a power cut. It
+  runs nothing.
 - `charge-mode-restore` reads the saved mode (no symlink, at most 4096
   bytes, no NUL), waits up to 20 times half a second for `charge_types`, and
   execs the helper by its store path with the mode, unchecked.
@@ -135,7 +136,7 @@ the refusals, a late attribute and giving up; the user's command without
 helper, no sudo, sudo's words and their hints, the PATH lookup, the locale,
 and which processes count as the user's Waybar in a fake `/proc`.
 
-`tests/bin/charge-mode/charge-mode.test.sh` (the check `bin-charge-mode`, 60
+`tests/bin/charge-mode/charge-mode.test.sh` (the check `bin-charge-mode`, 61
 cases) runs the built programs, with sudo and notify-send as stubs: the
 cases of the Bash scripts' test, which passed against the Bash scripts and
 the Odin programs alike before the scripts were deleted, among them the
@@ -144,7 +145,8 @@ Waybar refresh against real processes named `.waybar-wrapped`, `waybar`,
 its argv, and 200 rounds of two helpers at once; then the helper's refusals
 of control characters, a huge mode, a symlinked or non-file or huge
 attribute, a symlinked or missing or others-writable state directory, a
-symlinked or directory saved mode; and the package: three different ELF
+symlinked or directory saved mode, the directory synced after the rename
+(under strace); and the package: three different ELF
 programs, the helper path built into the other two, no `sudo`,
 `notify-send` or `waybar` in the root programs, and both root programs
 working with an empty environment. The VM test `hardware-power` checks the

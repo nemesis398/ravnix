@@ -701,6 +701,31 @@ test_restore_passes_the_mode_on_unchecked() {
 	calls_are "apply Bogus"
 }
 
+# The rename is durable only once its directory is synced: a power cut right
+# after a `set` must not bring the old saved mode back. strace shows the
+# helper's calls: the directory's fd, the rename in it, then fsync on it.
+test_apply_syncs_the_state_dir_after_the_rename() {
+	if ! command -v strace >/dev/null 2>&1; then
+		echo "SKIP test_apply_syncs_the_state_dir_after_the_rename: no strace on the PATH" >&3
+		return 0
+	fi
+	firmware "Fast Standard [Long_Life]"
+	saved
+	local trace="$scratch/trace" dir fd
+	dir="$(dirname "$state")"
+	capture env CHARGE_MODE_ATTR="$attr" CHARGE_MODE_STATE="$state" \
+		strace -qq -o "$trace" -e trace=open,openat,renameat,renameat2,fsync "$PACKAGE/bin/charge-mode-apply" Fast
+	expect_status 0
+	content_is "$state" Fast
+	fd="$(sed -n "s|^open\(at\)\?(\(AT_FDCWD, \)\?\"$dir\", [^)]*O_DIRECTORY[^)]*) *= \([0-9]*\)$|\3|p" "$trace")"
+	[[ -n "$fd" ]] || { echo "  no open of $dir:"; sed 's/^/    /' "$trace"; return 1; }
+	sed -n "/^renameat2\?($fd, .*, $fd, \"charge-mode\".*) *= 0$/,\$p" "$trace" | grep -Eq "^fsync\($fd\) *= 0$" || {
+		echo "  no fsync($fd) after the rename in it:"
+		sed 's/^/    /' "$trace"
+		return 1
+	}
+}
+
 # The package as the Odin build makes it: three programs, not one under
 # three names; the helper the other two call is the package's own, by its
 # store path; the two that run as root carry none of the user's side (sudo,
@@ -1001,6 +1026,7 @@ tests=(
 	test_apply_refuses_a_missing_state_dir
 	test_apply_refuses_a_state_dir_others_can_write
 	test_apply_saves_the_mode_readable_by_all
+	test_apply_syncs_the_state_dir_after_the_rename
 	test_restore_refuses_a_symlinked_saved_mode
 	test_restore_refuses_a_huge_saved_mode
 	test_package_has_three_programs

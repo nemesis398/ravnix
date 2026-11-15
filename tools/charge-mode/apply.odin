@@ -225,5 +225,13 @@ save_state :: proc(dir: linux.Fd, state, base, mode: string, err: io.Writer) -> 
 		fmt.wprintfln(err, "charge-mode-apply: cannot save the mode in %s: %s", state, errno_text(failed))
 		return false
 	}
+	// The rename is durable only once the directory is synced: without it a
+	// power cut right after a `set` could bring the old saved mode back. The
+	// new mode is in place by now, so a failure here is reported and fails
+	// the run, but there is nothing to undo.
+	if serr := linux.fsync(dir); serr != .NONE {
+		fmt.wprintfln(err, "charge-mode-apply: saved the mode, but cannot sync %s: %s", state, errno_text(serr))
+		return false
+	}
 	return true
 }
