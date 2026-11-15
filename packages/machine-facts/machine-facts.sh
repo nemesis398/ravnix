@@ -27,6 +27,10 @@
 # Env:
 #   MACHINE_NOTE   the note --write, --check and --diff work on. There is no
 #                  default: ravnix sets it from ravnix.scripts.machineFacts.note.
+#   MACHINE_FACTS_NO_SUDO
+#                  1: never run sudo, not even `sudo -n`; the rows that need
+#                  root say so. The laptop's link gate (tools/ravnix-laptop-gate)
+#                  runs it this way for the server.
 #
 # `sudo -n` is used opportunistically for efibootmgr/blkid. Without it those
 # rows degrade to "(needs sudo)" rather than failing; the script never prompts.
@@ -43,7 +47,8 @@ VBEGIN='<!-- volatile:begin -->'
 VEND='<!-- volatile:end -->'
 
 have()  { command -v "$1" >/dev/null 2>&1; }
-s()     { sudo -n "$@" 2>/dev/null; }          # opportunistic sudo, never prompts
+no_sudo() { [[ ${MACHINE_FACTS_NO_SUDO:-} == 1 ]]; }
+s()     { no_sudo && return 1; sudo -n "$@" 2>/dev/null; }   # opportunistic sudo, never prompts
 # efibootmgr reads /sys/firmware/efi/efivars, which is world-readable here, so
 # try it UNPRIVILEGED first and only then fall back to sudo. Measured 2026-08-23:
 # the sudo-only path silently degraded the boot entries to a "(needs sudo)"
@@ -160,6 +165,8 @@ sec_boot() {
         efi | grep -E '^Boot[0-9A-F]{4}\*' | grep -F '\EFI\' \
           | sed -E 's/HD\([^)]*\)//; s/(\.efi).*/\1/I' | head -6
         echo "\`\`\`"
+    elif no_sudo; then
+        echo "- UEFI entries: (needs root; sudo is not asked in this mode)"
     else
         echo "- UEFI entries: (needs sudo: run \`sudo -n true\` first)"
     fi

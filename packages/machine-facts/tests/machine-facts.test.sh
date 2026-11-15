@@ -62,6 +62,22 @@ check "nothing of the Fedora system is claimed: no rpm, tuned, flatpak or stow r
     '[[ $out != *"tuned"* && $out != *"Flatpak"* && $out != *"Stow"* && $out != *"power-profiles-daemon"* ]]'
 check "a section that cannot read its source is empty, not an error: stderr is quiet about sudo" '[[ $err != *"sudo"* ]]'
 
+# A sudo that records each call. The sandbox has no EFI variables, so
+# efibootmgr fails unprivileged and the boot row falls back to sudo -n.
+mkdir -p "$SB/fakebin"
+printf '#!%s\necho "$*" >>%q\nexit 1\n' "$BASH_BIN" "$SB/sudo-calls" >"$SB/fakebin/sudo"
+chmod +x "$SB/fakebin/sudo"
+PATH="$SB/fakebin:$PATH" run --
+check "by default the boot row asks sudo -n (so the next case can see it not asked)" \
+    '[[ $rc == 0 && -s $SB/sudo-calls && $(<"$SB/sudo-calls") == "-n efibootmgr" ]]'
+rm -f "$SB/sudo-calls"
+PATH="$SB/fakebin:$PATH" run MACHINE_FACTS_NO_SUDO=1 --
+check "MACHINE_FACTS_NO_SUDO=1 never runs sudo, and the boot row says it was not asked" \
+    '[[ $rc == 0 && ! -e $SB/sudo-calls && $out == *"- UEFI entries: (needs root; sudo is not asked in this mode)"* && $out == *"### Identity"* ]]'
+PATH="$SB/fakebin:$PATH" run MACHINE_FACTS_NO_SUDO=1 -- --write
+check "MACHINE_FACTS_NO_SUDO=1 changes nothing of the modes: --write still needs its note" \
+    '[[ $rc == 2 && ! -e $SB/sudo-calls ]]'
+
 for mode in --write --check --diff; do
     run -- "$mode"
     check "$mode without MACHINE_NOTE says what to set, exits 2 and touches nothing" \

@@ -19,6 +19,15 @@ looked up on the `PATH`; the rest is in the package.
 With no note, `--write`, `--check` and `--diff` say what to set and exit 2;
 the plain run prints the block and needs none.
 
+## Without sudo
+
+The boot row falls back to `sudo -n efibootmgr` when `efibootmgr` alone
+cannot read the entries. With `MACHINE_FACTS_NO_SUDO=1` it never runs sudo,
+not even `sudo -n`, and the row says `(needs root; sudo is not asked in this
+mode)`. The laptop's link gate (`tools/ravnix-laptop-gate`) runs it so for
+the server's `ravnix-laptop facts`: nothing that comes over the link may
+reach sudo, whose tap is the security key's.
+
 ## Changes from the original
 
 NixOS replaces what Fedora asked of its own system:
@@ -62,5 +71,5 @@ or with only one, and degrades to an empty value where a source cannot be read.
 - The `modinfo` row (the driver version) is unverified on NixOS: the sandbox
   has no loaded modules to ask about. If it is empty on the laptop, the
   kernel's module path is not on the `modinfo` the package brings (`kmod`).
-- `efibootmgr` may need root; without `sudo -n` the UEFI row says so instead of
-  printing.
+- `efibootmgr` may need root; without `sudo -n` (or with
+  `MACHINE_FACTS_NO_SUDO=1`) the UEFI row says so instead of printing.
