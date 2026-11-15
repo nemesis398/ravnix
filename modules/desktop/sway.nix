@@ -243,11 +243,6 @@ let
         src = bin + "/sway-session-layout";
         flakeIgnore = pyIgnore;
       };
-      sway-game-mode = helpers.python {
-        name = "sway-game-mode";
-        src = bin + "/sway-game-mode";
-        flakeIgnore = pyIgnore;
-      };
     }
     // lib.optionalAttrs (!askEnabled) {
       # The command stays when the option is null: a radial menu of the user's
@@ -513,7 +508,11 @@ in
     # slurp and grimshot are slurp.nix's, in the style's colors.
     environment.systemPackages =
       lib.attrValues scripts
-      ++ [ gtkLaunch ]
+      ++ [
+        gtkLaunch
+        # The watcher below, on the PATH for a hand-run `sway-game-mode --leave`.
+        pkgs.ravnix.sway-game-mode
+      ]
       ++ (with pkgs; [
         cliphist
         kanshi
@@ -559,20 +558,21 @@ in
     # sway-game-mode holds Sway in mode "game" while a game has focus, so the
     # mouse's side buttons and the gesture keys reach the game. A unit of the
     # session: it starts with sway-session.target, which NixOS's programs.sway
-    # defines, and restarts when Sway's socket is not there yet.
+    # defines, and restarts when Sway's socket is not there yet. It speaks
+    # Sway's IPC itself (tools/sway-game-mode), so it runs no swaymsg and the
+    # unit has no PATH to give it.
     systemd.user.services.sway-game-mode = {
       description = ''Sway mode "game" while a game window has focus'';
       partOf = [ "graphical-session.target" ];
       after = [ "graphical-session.target" ];
       wantedBy = [ "sway-session.target" ];
-      path = [ swayPackage ];
       serviceConfig = {
         Type = "simple";
-        ExecStart = "${scripts.sway-game-mode}/bin/sway-game-mode";
-        # After a crash the script's own SIGTERM handler never ran: leave
+        ExecStart = "${pkgs.ravnix.sway-game-mode}/bin/sway-game-mode";
+        # After a crash the watcher's own SIGTERM handling never ran: leave
         # "game" here (mode default, cursor hiding back on), so the mouse
         # buttons are never stuck unbound without the watcher.
-        ExecStopPost = "${scripts.sway-game-mode}/bin/sway-game-mode --leave";
+        ExecStopPost = "${pkgs.ravnix.sway-game-mode}/bin/sway-game-mode --leave";
         Restart = "on-failure";
         RestartSec = 2;
       };
