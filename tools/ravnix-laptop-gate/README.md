@@ -35,12 +35,30 @@ nothing to report, the answer says so: `no battery`, `no battery with
 charge_types`, `dGPU none`, `RAPL none`.
 
 `facts` runs `machine-facts` with an environment of its own and nothing
-from the session: `PATH=/run/current-system/sw/bin`, without
-`/run/wrappers/bin`, where the setuid `sudo`, `pkexec` and `run0` are;
-`HOME`, `USER` and `LOGNAME`; and `MACHINE_FACTS_NO_SUDO=1`, which keeps the
-boot row from trying `sudo -n` (`packages/machine-facts/README.md`). The
-call goes through `execve`, with no shell. In `machine-facts` the server
-gets only the plain print mode, never `--write`, `--check` or `--diff`.
+from the session:
+
+- `PATH=/run/current-system/sw/bin`, without `/run/wrappers/bin`, where the
+  setuid `sudo` and `pkexec` are. The copies of both on this PATH do
+  nothing without their setuid bit.
+- `HOME`, `USER` and `LOGNAME`.
+- `MACHINE_FACTS_NO_SUDO=1`, which keeps the boot row from trying `sudo -n`
+  (`packages/machine-facts/README.md`).
+
+The PATH is not what keeps `facts` from root. `run0` and `systemd-run`
+need no setuid bit and are on it, and with
+`security.run0.sudo-shim.enable` the `sudo` there is `run0` itself. What
+holds:
+
+- `machine-facts`' own, fixed content calls none of them, and
+  `MACHINE_FACTS_NO_SUDO` covers its one `sudo -n`;
+- `sudo` and `pkexec` need the setuid wrappers;
+- polkit's rule (`modules/desktop/u2f.nix`) refuses a subject outside a
+  local session, which an ssh session is.
+
+An edit of `machine-facts` that runs any of them is an edit of the gate.
+The gate starts `machine-facts` through `execve`, with no shell of its
+own in between. The server gets only the plain print mode, never
+`--write`, `--check` or `--diff`.
 
 ## Before the gate runs
 

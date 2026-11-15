@@ -250,7 +250,8 @@ runs_machine_facts_by_its_path_without_sudo_and_with_nothing_of_the_session :: p
 		}
 	}
 	for kv in r.exec.env {
-		// Not the setuid wrappers, where sudo, pkexec and run0 are.
+		// Not the setuid wrappers, where sudo and pkexec are. (run0 needs
+		// none; machine-facts not calling it is what keeps it out.)
 		testing.expectf(t, !strings.contains(kv, "/run/wrappers"), "%s", kv)
 		testing.expectf(t, !strings.has_prefix(kv, "SSH_"), "%s", kv)
 	}

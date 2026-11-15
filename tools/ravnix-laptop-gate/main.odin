@@ -11,7 +11,10 @@ import "core:os"
 MACHINE_FACTS :: #config(MACHINE_FACTS, "machine-facts")
 
 // The PATH machine-facts runs with: the system's programs, and not
-// /run/wrappers/bin, where the setuid sudo, pkexec and run0 are.
+// /run/wrappers/bin, where the setuid sudo and pkexec are. run0 and
+// systemd-run need no setuid bit and are on this PATH; what keeps facts
+// from them is that machine-facts calls neither, and that polkit refuses
+// them from an ssh session (README.md).
 FACTS_PATH :: "/run/current-system/sw/bin"
 
 USAGE :: `usage: ravnix-laptop-gate [--root DIR] [--command TEXT]
