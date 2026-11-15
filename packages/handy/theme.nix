@@ -20,6 +20,10 @@
 #   - The font is the one family of the system (Tailwind's default family, which the page
 #     inherits, and Handy's own --font-ui, --font-display and --font-cjk-subset
 #     stacks; the overlay's --s-font).
+#   - App.css is imported before its own rules, so what it sets again after this
+#     block (color-scheme, the log surface, the scrollbar thumb, which it mixes
+#     into transparency) is taken with !important; `*` does not match the
+#     scrollbar thumb, so that gets a rule of its own.
 #   - Every radius is 0: Tailwind's scale, then every element.
 #
 # Colors are rgb(r g b), as in the DevTools stylesheet, so the CSS holds no hex.
@@ -72,7 +76,7 @@ in
 
     /* ravnix: Handy in the theme of the system (packages/handy/theme.nix). */
     :root {
-      color-scheme: dark;
+      color-scheme: dark !important;
 
       ${pairLines}
 
@@ -86,6 +90,12 @@ in
       --color-plum-pick: ${rgb roles.accent};
       --color-plum-faint: ${rgb roles.wash};
 
+      /* App.css comes after this block and sets these again, by the media
+         query and by data-theme, so a plain declaration here would lose. */
+      --color-log-surface: ${rgb roles.dock} !important;
+      --scrollbar-thumb: ${rgb roles.line} !important;
+      --scrollbar-thumb-hover: ${rgb roles.placeholder} !important;
+
       ${scale}
 
       --default-font-family: "${font}", monospace;
@@ -97,7 +107,8 @@ in
 
     *,
     *::before,
-    *::after {
+    *::after,
+    ::-webkit-scrollbar-thumb {
       border-radius: 0 !important;
     }
   '';
