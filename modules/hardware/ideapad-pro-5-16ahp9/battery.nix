@@ -25,7 +25,7 @@
 #
 # THE CHARGE MODE. This IdeaPad has no charge_control_end_threshold, only
 # BAT0/charge_types with three modes: Fast, Standard and Long_Life, which
-# parks the cell and refills it to 80 % (packages/charge-mode has the
+# parks the cell and refills it to 80 % (tools/charge-mode has the
 # measurements). The thresholds are the firmware's, not a setting. Waybar's
 # battery click and the energy menu set the mode with charge-mode, without a
 # password, through one sudo rule for one command: charge-mode-apply, which

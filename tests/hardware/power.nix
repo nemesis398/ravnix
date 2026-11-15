@@ -46,6 +46,7 @@ let
   ravnixPkgs = pkgs.extend self.overlays.default;
   helper = lib.getExe ravnixPkgs.ravnix.battery-emergency-poweroff;
   apply = "${ravnixPkgs.ravnix.charge-mode.apply}/bin/charge-mode-apply";
+  restore = "${ravnixPkgs.ravnix.charge-mode.restore}/bin/charge-mode-restore";
 
   # fuzzel --dmenu, as `energy menu` calls it: on the main menu it picks the
   # power profile row, in the profile list the row of ENERGY_PROFILE.
@@ -200,6 +201,24 @@ pkgs.testers.runNixOSTest {
         # refuses because there is no charge_types; nothing else runs.
         said = machine.fail(f"su -l {user} -c 'sudo -n ${apply} Long_Life 2>&1'")
         assert "charge-mode-apply: no /sys/class/power_supply/BAT0/charge_types" in said, said
+        # As root the programs ignore the seams that the tests point into a
+        # scratch directory (CHARGE_MODE_*): the fixed paths hold, whatever
+        # the environment says, run directly or through sudo.
+        machine.succeed(
+            "mkdir -p /tmp/fake/BAT0 /tmp/fake-state"
+            " && echo 'Fast Standard [Long_Life]' >/tmp/fake/BAT0/charge_types"
+        )
+        seams = "CHARGE_MODE_ATTR=/tmp/fake/BAT0/charge_types CHARGE_MODE_STATE=/tmp/fake-state/charge-mode"
+        said = machine.fail(f"{seams} ${apply} Fast 2>&1")
+        assert "charge-mode-apply: no /sys/class/power_supply/BAT0/charge_types" in said, said
+        said = machine.fail(f"su -l {user} -c '{seams} sudo -n ${apply} Fast 2>&1'")
+        assert "charge-mode-apply: no /sys/class/power_supply/BAT0/charge_types" in said, said
+        said = machine.succeed(f"{seams} CHARGE_MODE_HELPER=/run/current-system/sw/bin/false ${restore} 2>&1")
+        assert "charge-mode-restore: /sys/class/power_supply/BAT0/charge_types never appeared" in said, said
+        machine.succeed("grep -qxF 'Fast Standard [Long_Life]' /tmp/fake/BAT0/charge_types")
+        machine.succeed("test ! -e /tmp/fake-state/charge-mode")
+        saved = machine.succeed("cat /var/lib/charge-mode")
+        assert saved == "Long_Life\n", f"the saved mode is {saved!r}"
         machine.fail(f"su -l {user} -c 'sudo -n true'")
         machine.fail(f"su -l {user} -c 'sudo -n /run/current-system/sw/bin/bash -c true'")
         said = as_user("charge-mode 2>&1; charge-mode set Fast 2>&1")

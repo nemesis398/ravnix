@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016
-# Tests for charge-mode (packages/charge-mode), run by the check
+# Tests for charge-mode (tools/charge-mode), run by the check
 # bin-charge-mode: the user's command charge-mode, its root helper
 # charge-mode-apply, which the one-command sudo rule lets the user run, and
 # charge-mode-restore, which the boot unit runs.
 #
-# Each script runs as a copy whose fixed paths point into the scratch
-# directory: the battery's charge_types, the saved mode in /var/lib, and the
-# helper the other two call. The copy is the script with only those strings
-# replaced, and a test fails when one of them is still in it, so no case
-# touches the real battery or the real state file. sudo, notify-send, pkill
-# and sleep are stubs that log their calls; the sudo stub runs the helper as
-# the test's own user. The last tests check the package: each command is its
-# script, the two root scripts see only the store's tools, and the helper
-# both others call is the package's own.
+# Each program runs as the package built it, through a wrapper that points
+# its paths into the scratch directory: the battery's charge_types, the saved
+# mode in /var/lib and the helper the other two call (CHARGE_MODE_ATTR,
+# CHARGE_MODE_STATE, CHARGE_MODE_HELPER), and notify-send
+# (CHARGE_MODE_NOTIFY_SEND). The programs honour these only for a caller
+# without root, so no case touches the real battery or the real state file.
+# sudo and notify-send are stubs that log their calls; the sudo stub runs the
+# helper as the test's own user. The last tests check the package.
 #
-#   SOURCES=  packages/charge-mode, where the three scripts are
+# These are the cases of the Bash scripts' test, which ran each script as a
+# copy with those paths replaced; they passed against the Bash scripts and
+# the Odin programs alike before the scripts were deleted. Where the two
+# differ on purpose, a comment at the case says how (README.md has the list).
+#
 #   PACKAGE=  the built package
 #   TEST_LIB= scripts/tests/lib.sh
 
 # (SC2016 above: the stub bodies are written in single quotes on purpose.)
 # shellcheck source=scripts/tests/lib.sh
 source "${TEST_LIB:?TEST_LIB names scripts/tests/lib.sh}"
-: "${SOURCES:?SOURCES names packages/charge-mode}" "${PACKAGE:?PACKAGE names the built package}"
+: "${PACKAGE:?PACKAGE names the built package}"
 
 bin="$scratch/bin"
 calls="$scratch/calls"
@@ -44,35 +47,21 @@ write_script "$bin/sudo" \
 	'[ "$1" = -n ] && shift' \
 	'exec "$@"'
 write_script "$bin/notify-send" 'printf "notify-send %s\n" "$*" >>"$CALLS"'
+# The Bash script refreshed Waybar with pkill; the Odin one signals it
+# through /proc and pidfd_send_signal, so a pkill call is a fault, which the
+# stub would log. The case with real processes below checks whom it hits.
 write_script "$bin/pkill" 'printf "pkill %s\n" "$*" >>"$CALLS"'
-# sleep makes charge_types appear at its APPEAR_AT-th call, as ideapad_laptop
-# binding late at boot would.
-write_script "$bin/sleep" \
-	'n=$(($(cat "$SLEEPS" 2>/dev/null || echo 0) + 1)); echo "$n" >"$SLEEPS"' \
-	'if [ "$n" = "${APPEAR_AT:-}" ]; then mkdir -p "$(dirname "$ATTR")"; echo "Fast Standard [Long_Life]" >"$ATTR"; fi'
-# The call that makes Waybar redraw its battery module: by the process name,
-# the plain one or the one NixOS's wrapper gives it, of the user's own.
-refresh_bar="pkill -RTMIN+10 -u $EUID -x waybar|\\.waybar-wrapped"
 # A helper that only logs, for the cases about who calls it with what.
 write_script "$scratch/stub-apply" 'printf "apply %s\n" "$*" >>"$CALLS"'
 
-# copy SCRIPT DEST HELPER: SCRIPT with its fixed paths in the scratch
-# directory and HELPER where it names charge-mode-apply. The scratch paths
-# hold neither "/sys/" nor "/var/lib", so a path left real shows.
-copy() {
-	# The sandbox has no /usr/bin/env, so the copy starts with the bash that
-	# runs the tests.
-	sed -e "1s|^#!.*|#!$BASH|" \
-		-e "s|/sys/class/power_supply/BAT0|$sys/BAT0|g" \
-		-e "s|/var/lib/charge-mode|$state|g" \
-		-e "s|@apply@|$3|g" "$SOURCES/$1" >"$2"
-	chmod +x "$2"
-	# Comments may name the real paths; code must not.
-	if grep -Ev '^[[:space:]]*#' "$2" | grep -Eq '/sys/|/var/lib|@apply@'; then
-		echo "  the copy of $1 still names a real path or the placeholder:"
-		grep -Ev '^[[:space:]]*#' "$2" | grep -E '/sys/|/var/lib|@apply@'
-		return 1
-	fi
+# wrap NAME DEST HELPER: the package's NAME, with its paths in the scratch
+# directory, HELPER as the helper it calls, and the stub notify-send in place
+# of the package's own.
+wrap() {
+	write_script "$2" \
+		"export CHARGE_MODE_ATTR=${attr@Q} CHARGE_MODE_STATE=${state@Q} CHARGE_MODE_HELPER=${3@Q}" \
+		"export CHARGE_MODE_NOTIFY_SEND=${bin@Q}/notify-send" \
+		"exec ${PACKAGE@Q}/bin/$1 \"\$@\""
 }
 
 # firmware [TEXT]: charge_types as the kernel shows it; no argument, none.
@@ -88,6 +77,9 @@ firmware() {
 saved() {
 	rm -rf -- "$(dirname "$state")"
 	mkdir -p "$(dirname "$state")"
+	# The helper refuses a directory that others may write; the umask of
+	# whoever runs the tests must not decide.
+	chmod 755 "$(dirname "$state")"
 	(($# == 0)) || printf '%s\n' "$1" >"$state"
 }
 
@@ -98,9 +90,8 @@ run() {
 	local script="$1"
 	shift
 	: >"$calls"
-	rm -f -- "$scratch/sleeps"
 	capture env -u WAYLAND_DISPLAY -u DISPLAY DBUS_SESSION_BUS_ADDRESS="unix:path=$scratch/no-bus" \
-		PATH="$bin:$PATH" CALLS="$calls" SLEEPS="$scratch/sleeps" ATTR="$attr" \
+		PATH="$bin:$PATH" CALLS="$calls" \
 		"$BASH" "$script" "$@"
 }
 
@@ -132,10 +123,10 @@ content_is() {
 	}
 }
 
-user_stub() { copy charge-mode.sh "$cm" "$scratch/stub-apply"; }
+user_stub() { wrap charge-mode "$cm" "$scratch/stub-apply"; }
 user_real() {
-	copy charge-mode-apply.sh "$apply" unused
-	copy charge-mode.sh "$cm" "$apply"
+	wrap charge-mode-apply "$apply" unused
+	wrap charge-mode "$cm" "$apply"
 }
 
 # charge-mode: reading.
@@ -216,8 +207,7 @@ test_cycle_goes_long_life_standard_fast() {
 		run "$cm" cycle
 		expect_status 0
 		calls_are "sudo -n $scratch/stub-apply $to" "apply $to" \
-			"notify-send -a charge-mode Charge mode: $to $(describe "$to")" \
-			"$refresh_bar"
+			"notify-send -a charge-mode Charge mode: $to $(describe "$to")"
 		[[ "$out" == "$to" ]] || { echo "  printed '$out', not $to"; return 1; }
 	done
 }
@@ -236,8 +226,7 @@ test_set_calls_the_helper_with_the_mode() {
 	run "$cm" set Fast
 	expect_status 0
 	calls_are "sudo -n $scratch/stub-apply Fast" "apply Fast" \
-		"notify-send -a charge-mode Charge mode: Fast $(describe Fast)" \
-		"$refresh_bar"
+		"notify-send -a charge-mode Charge mode: Fast $(describe Fast)"
 }
 
 test_set_without_a_mode_lists_the_offer() {
@@ -254,8 +243,7 @@ test_set_leaves_validation_to_the_helper() {
 	firmware "Fast Standard [Long_Life]"
 	run "$cm" set Bogus
 	calls_are "sudo -n $scratch/stub-apply Bogus" "apply Bogus" \
-		"notify-send -a charge-mode Charge mode: Bogus " \
-		"$refresh_bar"
+		"notify-send -a charge-mode Charge mode: Bogus "
 }
 
 # A failing sudo: the message is the real cause, sudo's own words or the
@@ -317,7 +305,7 @@ test_a_mute_sudo_failure_says_so() {
 }
 
 test_a_missing_helper_fails_before_sudo() {
-	copy charge-mode.sh "$cm" "$scratch/no-such-helper"
+	wrap charge-mode "$cm" "$scratch/no-such-helper"
 	firmware "Fast Standard [Long_Life]"
 	run "$cm" set Standard
 	expect_status 1
@@ -379,7 +367,7 @@ test_no_notification_without_notify_send() {
 	run "$cm" set Fast
 	mv "$scratch/notify-send.away" "$bin/notify-send"
 	expect_status 0
-	calls_are "sudo -n $scratch/stub-apply Fast" "apply Fast" "$refresh_bar"
+	calls_are "sudo -n $scratch/stub-apply Fast" "apply Fast"
 }
 
 # charge-mode and the real helper together, as the sudo rule runs them.
@@ -490,7 +478,7 @@ test_the_refresh_reaches_a_wrapped_waybar_and_nothing_else() {
 # charge-mode-apply: the security boundary of the sudo rule. It writes only
 # a mode the kernel offers, to its two fixed paths.
 
-helper() { copy charge-mode-apply.sh "$apply" unused; }
+helper() { wrap charge-mode-apply "$apply" unused; }
 
 test_apply_writes_the_mode_and_saves_it() {
 	helper
@@ -569,14 +557,26 @@ test_apply_saves_nothing_when_the_write_fails() {
 	content_is "$state" Long_Life
 }
 
+# The Bash helper used its first argument and ignored the rest; the Odin
+# one takes one mode and refuses anything more, before it writes.
 test_apply_takes_only_its_first_argument() {
 	helper
 	firmware "Fast Standard [Long_Life]"
 	saved
 	run "$apply" Fast /tmp/elsewhere
-	expect_status 0
-	content_is "$state" Fast
 	[[ ! -e /tmp/elsewhere ]]
+	expect_status 2
+	expect_err "takes one mode"
+	content_is "$attr" "Fast Standard [Long_Life]"
+	[[ ! -e "$state" ]] || { echo "  saved $(cat "$state")"; return 1; }
+	local args
+	for args in "Fast Standard" "--save-only Fast Standard" "Fast --save-only" "--save-only --save-only Fast"; do
+		# shellcheck disable=SC2086
+		run "$apply" $args
+		expect_status 2
+		content_is "$attr" "Fast Standard [Long_Life]"
+		[[ ! -e "$state" ]] || { echo "  '$args' saved $(cat "$state")"; return 1; }
+	done
 }
 
 test_apply_huge_mode_is_refused() {
@@ -619,7 +619,7 @@ test_two_applies_at_once_leave_one_mode() {
 
 # charge-mode-restore: at boot, the saved mode through the helper.
 
-restorer() { copy charge-mode-restore.sh "$restore" "$scratch/stub-apply"; }
+restorer() { wrap charge-mode-restore "$restore" "$scratch/stub-apply"; }
 
 test_restore_applies_the_saved_mode() {
 	restorer
@@ -661,26 +661,36 @@ test_restore_with_an_unreadable_saved_mode_does_nothing() {
 	no_calls
 }
 
+# The Bash restore waited with sleep, which a stub counted; the Odin one
+# waits with nanosleep, so these cases wait in real time, and the attribute
+# appears from a job in the background.
 test_restore_waits_for_a_late_attribute() {
 	restorer
 	firmware
 	saved Long_Life
-	APPEAR_AT=3 run "$restore"
+	(
+		sleep 1.2
+		mkdir -p "$(dirname "$attr")"
+		echo "Fast Standard [Long_Life]" >"$attr"
+	) &
+	run "$restore"
+	wait
 	expect_status 0
 	calls_are "apply Long_Life"
-	content_is "$scratch/sleeps" 3
 }
 
 test_restore_gives_up_after_ten_seconds() {
 	restorer
 	firmware
 	saved Long_Life
+	local start=$EPOCHREALTIME took
 	run "$restore"
+	took=$(((${EPOCHREALTIME/./} - ${start/./}) / 1000))
 	expect_status 0
 	expect_err "never appeared"
 	no_calls
 	# 20 waits of half a second.
-	content_is "$scratch/sleeps" 20
+	((took >= 9500 && took < 20000)) || { echo "  gave up after $took ms, not 10 s"; return 1; }
 }
 
 test_restore_passes_the_mode_on_unchecked() {
@@ -691,57 +701,249 @@ test_restore_passes_the_mode_on_unchecked() {
 	calls_are "apply Bogus"
 }
 
-# The package: the three commands are these scripts, the helper both others
-# call is the package's own, and the two that run as root see the store's
-# tools only.
+# The package as the Odin build makes it: three programs, not one under
+# three names; the helper the other two call is the package's own, by its
+# store path; the two that run as root carry none of the user's side (sudo,
+# the notification, Waybar) and need nothing on PATH.
 
-# The body of a writeShellApplication script: what follows its PATH line,
-# between an empty line of its own on either side.
-body() { awk 'body; /^export PATH=/ { body = 1 }' "$1" | sed '1{/^$/d}; ${/^$/d}'; }
-
-test_package_commands_are_these_scripts() {
-	local name helper_path
-	helper_path="$(readlink -f "$PACKAGE/bin/charge-mode-apply")"
+test_package_has_three_programs() {
+	local name
 	for name in charge-mode charge-mode-apply charge-mode-restore; do
 		[[ -x "$PACKAGE/bin/$name" ]] || { echo "  no $name in the package"; return 1; }
-		diff <(tail -n +2 "$SOURCES/$name.sh" | sed "s|@apply@|$helper_path|g") <(body "$PACKAGE/bin/$name") || {
-			echo "  $name is not its script with the package's helper"
+		[[ "$(head -c 4 "$PACKAGE/bin/$name" | od -An -c | tr -d ' ')" == '177ELF' ]] || {
+			echo "  $name is no ELF program"
+			return 1
+		}
+	done
+	for name in charge-mode charge-mode-restore; do
+		if cmp -s "$PACKAGE/bin/$name" "$PACKAGE/bin/charge-mode-apply"; then
+			echo "  $name is the same program as charge-mode-apply"
+			return 1
+		fi
+	done
+}
+
+test_package_commands_call_the_packages_helper() {
+	local helper_path name
+	helper_path="$(readlink -f "$PACKAGE/bin/charge-mode-apply")"
+	[[ "$helper_path" == /nix/store/*/bin/charge-mode-apply ]] || { echo "  the helper is $helper_path"; return 1; }
+	for name in charge-mode charge-mode-restore; do
+		grep -aqF -- "$helper_path" "$(readlink -f "$PACKAGE/bin/$name")" || {
+			echo "  $name does not name $helper_path"
 			return 1
 		}
 	done
 }
 
-test_package_root_scripts_see_only_the_store() {
-	local name line
+test_package_root_programs_hold_none_of_the_users_side() {
+	local name word
 	for name in charge-mode-apply charge-mode-restore; do
-		line="$(grep -m1 '^export PATH=' "$PACKAGE/bin/$name")"
-		[[ "$line" != *'$PATH'* ]] || {
-			echo "  $name inherits the caller's PATH: $line"
-			return 1
-		}
+		for word in sudo notify-send waybar; do
+			! grep -aqF -- "$word" "$(readlink -f "$PACKAGE/bin/$name")" || {
+				echo "  $name holds '$word'"
+				return 1
+			}
+		done
 	done
 }
 
-test_package_user_command_keeps_the_callers_path() {
-	# sudo is the setuid wrapper on the caller's PATH, never a store copy.
-	local line
-	line="$(grep -m1 '^export PATH=' "$PACKAGE/bin/charge-mode")"
-	[[ "$line" == *':$PATH"' ]] || { echo "  $line"; return 1; }
-	! grep -q '/nix/store/[^/]*sudo' "$PACKAGE/bin/charge-mode"
+test_package_root_programs_need_no_path() {
+	firmware "Fast Standard [Long_Life]"
+	saved
+	capture env -i CHARGE_MODE_ATTR="$attr" CHARGE_MODE_STATE="$state" "$PACKAGE/bin/charge-mode-apply" Standard
+	expect_status 0
+	content_is "$attr" Standard
+	content_is "$state" Standard
+	# The restore, with no helper named, runs the package's own.
+	firmware "Fast Standard [Long_Life]"
+	saved Fast
+	capture env -i CHARGE_MODE_ATTR="$attr" CHARGE_MODE_STATE="$state" "$PACKAGE/bin/charge-mode-restore"
+	expect_status 0
+	content_is "$attr" Fast
+	content_is "$state" Fast
 }
 
-test_package_paths_hold_the_tools() {
-	local name line path tools
-	for name in charge-mode:"cat tr sed pkill notify-send" charge-mode-apply:"cat tr" charge-mode-restore:"cat sleep"; do
-		tools="${name#*:}"
-		line="$(grep -m1 '^export PATH=' "$PACKAGE/bin/${name%%:*}")"
-		path="${line#export PATH=\"}"
-		path="${path%\"}"
-		path="${path%:\$PATH}"
-		# shellcheck disable=SC2086
-		capture env -i PATH="$path" "$BASH" -c "command -v $tools"
-		expect_status 0
+# The helper's input and paths, beyond what the Bash one checked: it refuses
+# before it writes anything, so a refusal leaves the attribute and the saved
+# mode as they were.
+
+test_apply_refuses_control_characters_on_one_line() {
+	helper
+	firmware "Fast Standard [Long_Life]"
+	saved Long_Life
+	local mode
+	for mode in $'Fast\nStandard' $'Fast\n' $'Fa\tst' $'\e[31mFast' $'Fast\r'; do
+		run "$apply" "$mode"
+		expect_status 2
+		expect_err "is not offered by this firmware"
+		# The refusal is two lines, whatever the mode holds.
+		[[ "$(printf '%s\n' "$err" | wc -l)" == 2 ]] || { echo "  the refusal of '$mode' is: $err"; return 1; }
+		[[ "$err" != *$'\e'* && "$err" != *$'\r'* && "$err" != *$'\t'* ]] || { echo "  the refusal echoes a control character"; return 1; }
+		content_is "$attr" "Fast Standard [Long_Life]"
+		content_is "$state" Long_Life
 	done
+}
+
+test_apply_echoes_a_huge_mode_cut() {
+	helper
+	firmware "Fast Standard [Long_Life]"
+	saved Long_Life
+	run "$apply" "$(head -c 100000 /dev/zero | tr '\0' x)"
+	expect_status 2
+	((${#err} < 1000)) || { echo "  the refusal is ${#err} bytes long"; return 1; }
+	expect_err "100000 bytes"
+}
+
+test_apply_refuses_a_symlinked_attribute() {
+	helper
+	firmware
+	mkdir -p "$sys/BAT0" "$scratch/elsewhere"
+	echo "Fast Standard [Long_Life]" >"$scratch/elsewhere/charge_types"
+	ln -s "$scratch/elsewhere/charge_types" "$attr"
+	saved Long_Life
+	run "$apply" Fast
+	expect_status 1
+	expect_err "symlink"
+	content_is "$scratch/elsewhere/charge_types" "Fast Standard [Long_Life]"
+	content_is "$state" Long_Life
+}
+
+test_apply_refuses_an_attribute_that_is_no_file() {
+	helper
+	firmware
+	mkdir -p "$attr"
+	saved Long_Life
+	run "$apply" Fast
+	expect_status 1
+	content_is "$state" Long_Life
+}
+
+test_apply_refuses_a_huge_attribute() {
+	helper
+	firmware "Fast Standard [Long_Life] $(head -c 100000 /dev/zero | tr '\0' x)"
+	saved Long_Life
+	run "$apply" Fast
+	expect_status 1
+	expect_err "more than 4096 bytes"
+	content_is "$state" Long_Life
+}
+
+test_apply_refuses_a_symlinked_state_dir() {
+	helper
+	firmware "Fast Standard [Long_Life]"
+	rm -rf -- "$(dirname "$state")" "$scratch/real-state"
+	mkdir -p "$scratch/real-state"
+	ln -s "$scratch/real-state" "$(dirname "$state")"
+	run "$apply" Fast
+	expect_status 1
+	expect_err "symlink"
+	content_is "$attr" "Fast Standard [Long_Life]"
+	[[ -z "$(ls -A "$scratch/real-state")" ]] || { echo "  wrote into the link's target"; return 1; }
+	rm -f -- "$(dirname "$state")"
+}
+
+test_apply_refuses_a_symlinked_state_file() {
+	helper
+	firmware "Fast Standard [Long_Life]"
+	saved
+	echo keep >"$scratch/target"
+	ln -s "$scratch/target" "$state"
+	run "$apply" Fast
+	expect_status 1
+	expect_err "symlink"
+	content_is "$attr" "Fast Standard [Long_Life]"
+	content_is "$scratch/target" keep
+	[[ -L "$state" ]] || { echo "  the link was replaced"; return 1; }
+}
+
+test_apply_refuses_a_state_that_is_no_file() {
+	helper
+	firmware "Fast Standard [Long_Life]"
+	saved
+	mkdir -p "$state"
+	run "$apply" Fast
+	expect_status 1
+	content_is "$attr" "Fast Standard [Long_Life]"
+	[[ -d "$state" ]]
+}
+
+test_apply_refuses_a_missing_state_dir() {
+	# The Bash helper wrote the attribute and then failed to save it.
+	helper
+	firmware "Fast Standard [Long_Life]"
+	rm -rf -- "$(dirname "$state")"
+	run "$apply" Fast
+	expect_status 1
+	content_is "$attr" "Fast Standard [Long_Life]"
+}
+
+test_apply_refuses_a_state_dir_others_can_write() {
+	helper
+	firmware "Fast Standard [Long_Life]"
+	saved Long_Life
+	local m
+	for m in 775 757 1777; do
+		chmod "$m" "$(dirname "$state")"
+		run "$apply" Fast
+		chmod 755 "$(dirname "$state")"
+		expect_status 1
+		expect_err "writable"
+		content_is "$attr" "Fast Standard [Long_Life]"
+		content_is "$state" Long_Life
+	done
+}
+
+test_apply_saves_the_mode_readable_by_all() {
+	helper
+	firmware "Fast Standard [Long_Life]"
+	saved
+	(umask 077 && run "$apply" Standard && expect_status 0 && [[ "$(stat -c %a "$state")" == 644 ]]) || {
+		echo "  saved with mode $(stat -c %a "$state")"
+		return 1
+	}
+}
+
+test_restore_refuses_a_symlinked_saved_mode() {
+	restorer
+	firmware "Fast Standard [Long_Life]"
+	saved
+	echo Fast >"$scratch/target"
+	ln -s "$scratch/target" "$state"
+	run "$restore"
+	expect_status 1
+	expect_err "symlink"
+	no_calls
+}
+
+test_restore_refuses_a_huge_saved_mode() {
+	restorer
+	firmware "Fast Standard [Long_Life]"
+	saved "$(head -c 100000 /dev/zero | tr '\0' x)"
+	run "$restore"
+	expect_status 2
+	expect_err "more than 4096 bytes"
+	no_calls
+}
+
+test_restore_without_its_helper_fails() {
+	wrap charge-mode-restore "$restore" "$scratch/no-such-helper"
+	firmware "Fast Standard [Long_Life]"
+	saved Long_Life
+	run "$restore"
+	# The shell's status for a command that is not there.
+	expect_status 127
+	expect_err "$scratch/no-such-helper"
+}
+
+test_a_failing_notify_send_changes_nothing() {
+	user_stub
+	firmware "Fast Standard [Long_Life]"
+	mv "$bin/notify-send" "$scratch/notify-send.away"
+	write_script "$bin/notify-send" 'printf "notify-send %s\n" "$*" >>"$CALLS"' 'echo "no bus" >&2' 'exit 1'
+	run "$cm" set Fast
+	mv "$scratch/notify-send.away" "$bin/notify-send"
+	expect_status 0
+	[[ "$out" == Fast ]] || { echo "  printed '$out'"; return 1; }
 }
 
 tests=(
@@ -786,9 +988,24 @@ tests=(
 	test_restore_waits_for_a_late_attribute
 	test_restore_gives_up_after_ten_seconds
 	test_restore_passes_the_mode_on_unchecked
-	test_package_commands_are_these_scripts
-	test_package_root_scripts_see_only_the_store
-	test_package_user_command_keeps_the_callers_path
-	test_package_paths_hold_the_tools
+	test_a_failing_notify_send_changes_nothing
+	test_restore_without_its_helper_fails
+	test_apply_refuses_control_characters_on_one_line
+	test_apply_echoes_a_huge_mode_cut
+	test_apply_refuses_a_symlinked_attribute
+	test_apply_refuses_an_attribute_that_is_no_file
+	test_apply_refuses_a_huge_attribute
+	test_apply_refuses_a_symlinked_state_dir
+	test_apply_refuses_a_symlinked_state_file
+	test_apply_refuses_a_state_that_is_no_file
+	test_apply_refuses_a_missing_state_dir
+	test_apply_refuses_a_state_dir_others_can_write
+	test_apply_saves_the_mode_readable_by_all
+	test_restore_refuses_a_symlinked_saved_mode
+	test_restore_refuses_a_huge_saved_mode
+	test_package_has_three_programs
+	test_package_commands_call_the_packages_helper
+	test_package_root_programs_hold_none_of_the_users_side
+	test_package_root_programs_need_no_path
 )
 run_tests "${tests[@]}"
