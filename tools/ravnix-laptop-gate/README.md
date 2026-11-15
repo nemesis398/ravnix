@@ -3,7 +3,7 @@
 The forced command of the server's key on the laptop. muninn reaches huginn
 with a key of its own (`ravnix-laptop`, `modules/glue/laptop-access.nix`),
 and huginn's `authorized_keys` line gives that key
-`command="…/ravnix-laptop-gate",restrict,from="…"`. sshd then runs the gate
+`restrict,command="…/ravnix-laptop-gate",from="…"`. sshd then runs the gate
 instead of what the server asked for, and leaves the server's request in
 `SSH_ORIGINAL_COMMAND`. The gate answers a fixed list of read-only calls and
 refuses everything else. A shell, `sudo`, `pkexec`, `run0` and
