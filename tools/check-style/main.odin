@@ -124,7 +124,7 @@ run :: proc(args: []string, cfg: Config, out, err: io.Writer) -> int {
 			return usage(err)
 		}
 	}
-	files: [dynamic]File
+	files: File_Set
 	for arg in args {
 		if arg == "" {
 			fmt.wprintfln(err, "%s: : no such file or directory", PROGRAM)
@@ -165,7 +165,7 @@ run :: proc(args: []string, cfg: Config, out, err: io.Writer) -> int {
 	theme := Theme {
 		path = cfg.theme,
 	}
-	for file in files {
+	for file in files.list {
 		if message := judge_file(file, cfg, &theme, &hits); message != "" {
 			fmt.wprintfln(err, "%s: %s", PROGRAM, message)
 			return 2

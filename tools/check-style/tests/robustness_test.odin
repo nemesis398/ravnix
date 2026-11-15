@@ -5,6 +5,7 @@
 package check_style_tests
 
 import "core:strings"
+import cs ".."
 import "core:sys/linux"
 import "core:testing"
 import "core:time"
@@ -222,4 +223,44 @@ hits_are_sorted_by_file_and_line :: proc(t: ^testing.T) {
 	put(t, f, "modules/m.nix", "a = 1;\nb = \"#cba6f7\";\nradius = 3;\n")
 	put(t, f, "a.css", "a { opacity: 0.5; }\n\nb { border-radius: 2px; }\n")
 	expect_hits(t, f, "a.css:1:opacity", "a.css:3:radius", "modules/m.nix:2:hex-color", "modules/m.nix:3:radius", "z.css:1:radius")
+}
+
+// A directory entry whose type the file system does not give is looked at
+// with lstat, and an entry lstat cannot look at fails the walk, as find fails.
+@(test)
+an_entry_of_unknown_type_is_looked_at_and_a_missing_one_is_an_error :: proc(t: ^testing.T) {
+	f := enter(t)
+	put(t, f, "a.conf", "x\n")
+	dir := f.tree
+	file := strings.concatenate({dir, "/a.conf"}, context.temp_allocator)
+	missing := strings.concatenate({dir, "/gone"}, context.temp_allocator)
+
+	kind, errno := cs.entry_kind(dir, .UNKNOWN)
+	testing.expect_value(t, kind, linux.Dirent_Type.DIR)
+	testing.expect_value(t, errno, linux.Errno.NONE)
+	kind, errno = cs.entry_kind(file, .UNKNOWN)
+	testing.expect_value(t, kind, linux.Dirent_Type.REG)
+	testing.expect_value(t, errno, linux.Errno.NONE)
+	_, errno = cs.entry_kind(missing, .UNKNOWN)
+	testing.expect_value(t, errno, linux.Errno.ENOENT)
+	// A type that the directory gave is taken as it is, without a look.
+	kind, errno = cs.entry_kind(missing, .REG)
+	testing.expect_value(t, kind, linux.Dirent_Type.REG)
+	testing.expect_value(t, errno, linux.Errno.NONE)
+}
+
+// A tree of many files is judged in the time of their number, not of its
+// square: the list of files found keeps a set of the paths it holds.
+@(test)
+a_tree_of_many_files_is_found_without_a_scan_per_file :: proc(t: ^testing.T) {
+	f := enter(t)
+	for i in 0 ..< 4000 {
+		put(t, f, strings.concatenate({"modules/d", itoa(i % 40), "/f", itoa(i), ".conf"}, context.temp_allocator), "x\n")
+	}
+	put(t, f, "modules/d3/bad.conf", "transition: x\n")
+	started := time.tick_now()
+	status, out, _ := check(f, ".", "modules", "modules/d3")
+	testing.expect_value(t, status, 1)
+	testing.expect_value(t, out, "modules/d3/bad.conf:1:motion\n")
+	testing.expectf(t, time.duration_seconds(time.tick_since(started)) < 5, "4000 files took too long")
 }
