@@ -36,8 +36,10 @@ None.
 Each file is read in blocks and judged line by line, and what a line allocates
 is freed after the line, so the memory is that of the longest line and of the
 hits, not of the size of the files: a file of 8.5 MB and one of 34 MB, both of
-85-byte lines, take 2.3 MB at most (`tests/edge_test.odin` pins it). Files are found by `getdents`, never by a shell
-out, and no other program runs: the Bash version needed `rg`, `awk`, `find`,
+85-byte lines, take 2.3 MB at most. `tests/edge_test.odin` reads the peak of
+the per-line arena through a seam in `Config` and fails when it follows the file
+size: with the free after each line removed the arena holds 24 MB for a 10 MB
+file, with it 200 bytes. Files are found by `getdents`, never by a shell out, and no other program runs: the Bash version needed `rg`, `awk`, `find`,
 `sed` and `sort`. Hits are sorted by file name (bytes), line and rule, as
 `sort` in the C locale did, and a repeat of a hit is printed once.
 
@@ -110,6 +112,15 @@ broken sequence is no white space. A UTF-8 byte order mark at the start of a
 file is dropped; a file that starts with a UTF-16 mark (either order) is read
 as UTF-16, whole, and a unit that belongs to no pair counts as U+FFFD.
 
+One deliberate difference follows from it. The script found the Mermaid init
+blocks with `awk` on the raw bytes, not through ripgrep, so a byte order mark
+in front of the first line kept the block's opening line from matching: a `.md`
+or `.mmd` file with a mark before the shared init block gave the script four
+`hex-color` hits (the block's colors), and a different block after a mark gave
+it no `mermaid-init` hit. The program drops the mark first, so the shared block
+is exempt and a different one is a `mermaid-init` hit. That is the reading the
+rule means.
+
 ## Findings that are not fixed
 
 - `@keyframes` glued to a non-ASCII letter (`@keyframesé`) is a hit; the
@@ -137,7 +148,7 @@ as UTF-16, whole, and a unit that belongs to no pair counts as U+FFFD.
 
 ## Tests and bench
 
-`tests/` holds 158 `core:testing` tests: the 93 cases of the shell test that
+`tests/` holds 159 `core:testing` tests: the 93 cases of the shell test that
 fit a process (the 94th, a missing `rg`, is a shell case), a test per corner a
 mutation of the program survived until it was named (found by mutating the program and running the tests), and the edge cases: malformed bytes, a
 CR in the middle of a line, a symbolic link to a directory, a fifo, an
