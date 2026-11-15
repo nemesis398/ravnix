@@ -8,7 +8,10 @@ import "core:strings"
 // " * text" line inside a block comment (not a CSS rule that starts with
 // * as a selector: * button { ... }). In files where // starts a comment (CSS
 // and the other configs, not Nix) a line that starts with // is one, and in
-// Lua one that starts with --. Documents have no comment lines.
+// Lua one that starts with --. Documents have no comment lines. The script's
+// patterns for the /* and * shapes read the line to its end, and ripgrep's
+// character classes do not match a byte that is no UTF-8: a line with such a
+// byte is no comment line there, so it is none here.
 comment_line :: proc(line: string, kind: Kind) -> bool {
 	if kind == .Docs {
 		return false
@@ -29,11 +32,11 @@ comment_line :: proc(line: string, kind: Kind) -> bool {
 	case ';':
 		return true
 	case '/':
-		if len(s) >= 2 && s[1] == '*' && comment_stays_open_or_closes_at_end(s[2:]) {
+		if len(s) >= 2 && s[1] == '*' && comment_stays_open_or_closes_at_end(s[2:]) && valid_run(s) == len(s) {
 			return true
 		}
 	case '*':
-		if star_comment_line(s) {
+		if star_comment_line(s) && valid_run(s) == len(s) {
 			return true
 		}
 	}

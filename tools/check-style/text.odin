@@ -169,3 +169,66 @@ below_one :: proc(v: string) -> bool {
 is_letter_or_dash :: proc(c: u8) -> bool {
 	return (c >= 'a' && c <= 'z') || c == '-'
 }
+
+// unicode_space_at is the length in bytes of the white space character that
+// starts at s[i], or 0. White space is the Unicode White_Space property, what
+// ripgrep's \s matches: the ASCII white space, U+0085, U+00A0, U+1680,
+// U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F and U+3000, read from
+// UTF-8. A byte that starts no complete valid sequence of these is none.
+//
+// The Bash version took three searches from ripgrep (the key of a motion
+// rule, the separator after it, and a color property's colon), so they see
+// this white space and not only the ASCII one of [[:space:]].
+unicode_space_at :: proc(s: string, i: int) -> int {
+	if i < 0 || i >= len(s) {
+		return 0
+	}
+	c := s[i]
+	if c < 0x80 {
+		return 1 if is_space(c) else 0
+	}
+	rest := len(s) - i
+	switch c {
+	case 0xC2:
+		// U+0085, U+00A0
+		if rest >= 2 && (s[i + 1] == 0x85 || s[i + 1] == 0xA0) {
+			return 2
+		}
+	case 0xE1:
+		// U+1680
+		if rest >= 3 && s[i + 1] == 0x9A && s[i + 2] == 0x80 {
+			return 3
+		}
+	case 0xE2:
+		if rest >= 3 {
+			b, d := s[i + 1], s[i + 2]
+			// U+2000 to U+200A, U+2028, U+2029, U+202F
+			if b == 0x80 && ((d >= 0x80 && d <= 0x8A) || d == 0xA8 || d == 0xA9 || d == 0xAF) {
+				return 3
+			}
+			// U+205F
+			if b == 0x81 && d == 0x9F {
+				return 3
+			}
+		}
+	case 0xE3:
+		// U+3000
+		if rest >= 3 && s[i + 1] == 0x80 && s[i + 2] == 0x80 {
+			return 3
+		}
+	}
+	return 0
+}
+
+// The index after the white space (Unicode, see unicode_space_at) that
+// starts at i.
+skip_unicode_space :: proc(s: string, i: int) -> int {
+	i := i
+	for {
+		n := unicode_space_at(s, i)
+		if n == 0 {
+			return i
+		}
+		i += n
+	}
+}

@@ -759,6 +759,58 @@ the_repository_init_block_and_the_shared_theme_agree() {
 	expect_status 0
 }
 
+# ripgrep's \s is Unicode white space, and the motion and short-color searches
+# are ripgrep's. The program must find what the script finds: a no-break space
+# or an ideographic one between the words is white space there too.
+unicode_white_space_is_white_space_where_rg_sees_it() {
+	new_tree
+	# Before a motion key (the boundary), and between it and its separator.
+	put modules/m.conf 'foo\xc2\xa0transition: all 1s\nfoo\xe3\x80\x80animation: x\nfoo\xc2\x85transition: x\n'
+	put modules/q.conf 'transition\xc2\xa0= 1s\nanimation\xe2\x80\x83: x\nx\xe2\x80\xa8transition\xe1\x9a\x80: x\n'
+	# Between a color property and its colon.
+	put modules/p.conf 'color\xc2\xa0: #abc;\nborder\xe2\x80\xaf: 1px #abc\n'
+	expect_hits "modules/m.conf:1:motion" "modules/m.conf:2:motion" "modules/m.conf:3:motion" \
+		"modules/p.conf:1:hex-color" "modules/p.conf:2:hex-color" \
+		"modules/q.conf:1:motion" "modules/q.conf:2:motion" "modules/q.conf:3:motion"
+}
+
+unicode_look_alikes_and_broken_sequences_are_no_white_space() {
+	new_tree
+	# U+200B (zero width space) and U+FEFF are not White_Space; a lone lead
+	# byte, a truncated sequence and a stray continuation byte are no character.
+	put modules/a.conf 'foo\xe2\x80\x8btransition: all 1s\nfoo\xef\xbb\xbftransition: x\n'
+	put modules/b.conf 'foo\xc2transition: x\nfoo\xe2\x80transition: x\nfoo\xa0transition: x\ncolor\xc2: #abc;\n'
+	expect_clean
+}
+
+# ripgrep drops a UTF-8 byte order mark and reads a UTF-16 file as text; the
+# program does the same, or a mark would hide the first line of a file.
+a_byte_order_mark_does_not_hide_the_first_line() {
+	new_tree
+	put modules/a.conf '\xef\xbb\xbftransition: all 1s\n'
+	put modules/b.conf '\xef\xbb\xbfcolor: #abc;\nanimation: x\n'
+	put modules/c.conf 'x\n\xef\xbb\xbftransition: all 1s\n'
+	put modules/le.conf '\xff\xfet\x00r\x00a\x00n\x00s\x00i\x00t\x00i\x00o\x00n\x00:\x00 \x001\x00s\x00\n\x00'
+	put modules/be.conf '\xfe\xff\x00t\x00r\x00a\x00n\x00s\x00i\x00t\x00i\x00o\x00n\x00:\x00 \x001\x00s\x00\n'
+	expect_hits "modules/a.conf:1:motion" "modules/b.conf:1:hex-color" "modules/b.conf:2:motion" \
+		"modules/be.conf:1:motion" "modules/le.conf:1:motion"
+}
+
+# ripgrep's patterns do not cross a byte that is no UTF-8. A keyword right
+# after one starts the text a rule judges, a value ends at one, and a comment
+# line that holds one is read by no pattern as a comment line.
+a_byte_that_is_no_utf8_ends_what_a_rule_reads() {
+	new_tree
+	put modules/a.conf '\xffradius=3\n'
+	put modules/b.conf 'radius=0\xff5\n'
+	put modules/c.conf '\xe9opacity = 0.5\n'
+	put modules/d.conf 'opacity = 1\xff0.5\n'
+	put modules/e.conf '/*@keyframes\xa0\n* \x80@keyframes\n'
+	put modules/f.conf '/* note transition: x\n; \xe9 transition: x\n// \xe9 transition: x\n'
+	expect_hits "modules/a.conf:1:radius" "modules/c.conf:1:opacity" \
+		"modules/e.conf:1:motion" "modules/e.conf:2:motion"
+}
+
 # Robustness.
 
 an_empty_tree_and_an_empty_file_pass() {
@@ -1026,6 +1078,10 @@ tests=(
 	a_hex_color_in_a_mermaid_style_line_is_a_hit
 	a_missing_shared_theme_is_bad_usage_when_a_block_needs_it
 	the_repository_init_block_and_the_shared_theme_agree
+	unicode_white_space_is_white_space_where_rg_sees_it
+	unicode_look_alikes_and_broken_sequences_are_no_white_space
+	a_byte_order_mark_does_not_hide_the_first_line
+	a_byte_that_is_no_utf8_ends_what_a_rule_reads
 	an_empty_tree_and_an_empty_file_pass
 	a_directory_without_judged_files_passes
 	a_file_without_a_final_newline_is_judged

@@ -252,7 +252,7 @@ check_hex_property :: proc(j: ^Judge) {
 					i += 1
 				}
 				run_end := i
-				i = skip_space(s, i)
+				i = skip_unicode_space(s, i)
 				if i < len(s) && s[i] == ':' {
 					start = p
 					colon = i

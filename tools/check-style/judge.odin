@@ -1,6 +1,8 @@
 package check_style
 
+import "base:runtime"
 import "core:strings"
+import "core:unicode/utf8"
 
 // The rules, in the order their names sort, which is the order of hits on
 // one line.
@@ -74,9 +76,12 @@ Judge :: struct {
 	// The line is inside a Mermaid init block, or starts or ends one.
 	in_init:    bool,
 	mermaid:    Mermaid,
-	// Scratch buffers, reused from line to line.
+	// Scratch buffers, reused from line to line. They and everything that
+	// outlives a line (the theme, the hits) are made with persist; the rest
+	// of a line's work is made in an arena that is emptied after the line.
 	lower_buf:  [dynamic]u8,
 	strip_buf:  [dynamic]u8,
+	persist:    runtime.Allocator,
 }
 
 judge_destroy :: proc(j: ^Judge) {
@@ -122,19 +127,56 @@ judge_line :: proc(j: ^Judge, raw: string) -> (fatal: string) {
 	}
 	judged_as_code := j.file.kind != .Docs
 	if judged_as_code {
-		j.lower = lower_into(&j.lower_buf, line)
 		j.is_comment = comment_line(line, j.file.kind)
 	} else {
 		j.is_comment = false
+	}
+	if judged_as_code {
+		j.lower = lower_into(&j.lower_buf, line)
 	}
 	check_hex(j)
 	if !judged_as_code {
 		return
 	}
-	check_radius(j)
-	check_opacity(j)
-	check_transparent(j)
+	// ripgrep's windows (.{0,160} around a keyword) cannot cross a byte that is
+	// no UTF-8, and the text of a window was judged on its own, so for the
+	// three rules that judged windows each run of valid UTF-8 is judged on
+	// its own. The other rules look at the whole line: where ripgrep stopped
+	// at such a byte, they find at least what it found.
+	whole := j.lower
+	rest, at := line, 0
+	for len(rest) > 0 {
+		n := valid_run(rest)
+		if n == 0 {
+			rest, at = rest[1:], at + 1
+			continue
+		}
+		j.line, j.lower = rest[:n], whole[at:at + n]
+		check_radius(j)
+		check_opacity(j)
+		check_transparent(j)
+		rest, at = rest[n:], at + n
+	}
+	j.line, j.lower = line, whole
 	check_bare_color(j)
 	check_motion(j)
 	return
+}
+
+// The length of the run of valid UTF-8 at the start of s; 0 when s starts
+// with a byte that is no UTF-8.
+valid_run :: proc(s: string) -> int {
+	i := 0
+	for i < len(s) {
+		if s[i] < 0x80 {
+			i += 1
+			continue
+		}
+		r, w := utf8.decode_rune_in_string(s[i:])
+		if r == utf8.RUNE_ERROR && w <= 1 {
+			break
+		}
+		i += w
+	}
+	return i
 }

@@ -12,6 +12,7 @@ import "core:strings"
 // A key is found as a match, as ripgrep found it for the Bash version: after
 // the line start or one of white space { ; " ' ( , . the key, an optional
 // quote, white space, = or :, and up to 60 characters that are no ; { or }.
+// White space here is Unicode's, as ripgrep's \s was.
 // The matches do not overlap, so a value that runs on swallows the keys
 // inside it. The text of the match is what is judged.
 
@@ -38,8 +39,13 @@ check_motion :: proc(j: ^Judge) {
 	}
 }
 
-is_motion_boundary :: proc(c: u8) -> bool {
-	return is_space(c) || strings.index_byte("{;\"'(,.", c) >= 0
+// The length of the boundary character at p: one of { ; " ' ( , . or white
+// space (the Unicode one, as ripgrep's \s was), or 0.
+motion_boundary_width :: proc(s: string, p: int) -> int {
+	if strings.index_byte("{;\"'(,.", s[p]) >= 0 {
+		return 1
+	}
+	return unicode_space_at(s, p)
 }
 
 // The first match from index from on, as the start and the end of its text.
@@ -55,8 +61,8 @@ next_motion_match :: proc(s: string, from: int) -> (start, end: int, ok: bool) {
 				return 0, e, true
 			}
 		}
-		if is_motion_boundary(s[p]) {
-			if e, found := motion_key_at(s, p + 1); found {
+		if width := motion_boundary_width(s, p); width > 0 {
+			if e, found := motion_key_at(s, p + width); found {
 				return p, e, true
 			}
 		}
@@ -135,7 +141,7 @@ motion_key_at :: proc(s: string, k: int) -> (end: int, ok: bool) {
 		i += len("enable-animations")
 	}
 	i = skip_quote(s, i)
-	i = skip_space(s, i)
+	i = skip_unicode_space(s, i)
 	if i >= len(s) || (s[i] != '=' && s[i] != ':') {
 		return 0, false
 	}
