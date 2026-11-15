@@ -109,31 +109,50 @@ errno_text :: proc(e: linux.Errno) -> string {
 }
 
 // dial connects to the Unix socket at path.
-dial :: proc(path: string) -> (fd: linux.Fd, why: string) {
+dial :: proc(path: string, stop: linux.Fd, timeout: time.Duration) -> (fd: linux.Fd, err: Net_Error, why: string) {
 	if len(path) > MAX_SOCKET_PATH {
-		return -1, "the socket path is longer than a Unix socket path can be"
+		return -1, .Failed, "the socket path is longer than a Unix socket path can be"
 	}
 	addr: linux.Sock_Addr_Un
 	addr.sun_family = .UNIX
 	copy(addr.sun_path[:], path)
-	s, e := linux.socket(.UNIX, .STREAM, {.CLOEXEC}, .HOPOPT)
+	// Non-blocking, so that a Sway that does not take the connection (a
+	// full backlog) cannot hold the watcher past a stop, or `--leave` past
+	// the request timeout.
+	s, e := linux.socket(.UNIX, .STREAM, {.CLOEXEC, .NONBLOCK}, .HOPOPT)
 	if e != .NONE {
-		return -1, fmt.tprintf("cannot make a socket: %s", errno_text(e))
+		return -1, .Failed, fmt.tprintf("cannot make a socket: %s", errno_text(e))
 	}
+	deadline, limited := deadline_of(timeout)
 	for {
 		e = linux.connect(s, &addr)
-		if e != .EINTR {
+		if e == .EINTR {
+			continue
+		}
+		if e != .EAGAIN && e != .EINPROGRESS {
 			break
+		}
+		// A Unix socket says EAGAIN when the listener's backlog is full and
+		// has nothing to wait on; try again in a few milliseconds.
+		fds := [1]linux.Poll_Fd{{fd = stop, events = {.IN}}}
+		linux.poll(fds[:], min(10, max(wait_ms(deadline, limited), 1)))
+		if .IN in fds[0].revents {
+			linux.close(s)
+			return -1, .Stopped, ""
+		}
+		if limited && time.tick_diff(time.tick_now(), deadline) <= 0 {
+			linux.close(s)
+			return -1, .Timeout, fmt.tprintf("sway did not take the connection to %s in time", path)
 		}
 	}
 	if e != .NONE {
 		linux.close(s)
-		return -1, fmt.tprintf("cannot connect to %s: %s", path, errno_text(e))
+		return -1, .Failed, fmt.tprintf("cannot connect to %s: %s", path, errno_text(e))
 	}
-	return s, ""
+	return s, .None, ""
 }
 
-deadline_of :: proc(c: ^Conn, d: time.Duration) -> (deadline: time.Tick, limited: bool) {
+deadline_of :: proc(d: time.Duration) -> (deadline: time.Tick, limited: bool) {
 	if d <= 0 {
 		return {}, false
 	}
@@ -195,7 +214,7 @@ read_frame :: proc(c: ^Conn) -> (type: u32, payload: []u8, err: Net_Error) {
 		resize(&c.pending, remaining)
 		c.used = 0
 	}
-	deadline, limited := deadline_of(c, c.timeout)
+	deadline, limited := deadline_of(c.timeout)
 	if !limited {
 		// Between two events there is nothing to wait for but the next
 		// one; a frame that has begun, even one that came in with the
@@ -205,7 +224,7 @@ read_frame :: proc(c: ^Conn) -> (type: u32, payload: []u8, err: Net_Error) {
 				return
 			}
 		}
-		deadline, limited = deadline_of(c, c.stall)
+		deadline, limited = deadline_of(c.stall)
 	}
 	if err = fill_to(c, HEADER_SIZE, deadline, limited); err != .None {
 		return
@@ -240,16 +259,19 @@ encode_frame :: proc(out: ^[dynamic]u8, type: u32, payload: string) {
 
 // send_all writes data, before the connection's timeout.
 send_all :: proc(c: ^Conn, data: []u8) -> Net_Error {
-	deadline, limited := deadline_of(c, c.timeout)
+	deadline, limited := deadline_of(c.timeout)
 	rest := data
 	for len(rest) > 0 {
-		fds := []linux.Poll_Fd{{fd = c.fd, events = {.OUT}}}
-		n, e := linux.poll(fds, wait_ms(deadline, limited))
+		fds := [2]linux.Poll_Fd{{fd = c.fd, events = {.OUT}}, {fd = c.stop, events = {.IN}}}
+		n, e := linux.poll(fds[:], wait_ms(deadline, limited))
 		if e == .EINTR {
 			continue
 		}
 		if e != .NONE {
 			return .Failed
+		}
+		if .IN in fds[1].revents {
+			return .Stopped
 		}
 		if n == 0 {
 			return .Timeout

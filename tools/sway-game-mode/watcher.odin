@@ -316,7 +316,7 @@ sync :: proc(w: ^Watcher) -> (Status, string) {
 leave_if_game :: proc(cfg: Config) -> int {
 	cfg := cfg
 	cfg.stop = -1
-	fd, why := dial(cfg.socket)
+	fd, _, why := dial(cfg.socket, -1, cfg.timeout)
 	if why != "" {
 		say(cfg, "nothing to leave: %s", why)
 		return 0
@@ -380,7 +380,10 @@ watch :: proc(cfg: Config) -> int {
 
 	// Subscribe before the first look, so that a change between the two is
 	// an event and not a missed one.
-	sub_fd, why := dial(cfg.socket)
+	sub_fd, derr, why := dial(cfg.socket, cfg.stop, cfg.timeout)
+	if derr == .Stopped {
+		return 0
+	}
 	if why != "" {
 		say(cfg, "%s", why)
 		return 1
@@ -407,7 +410,10 @@ watch :: proc(cfg: Config) -> int {
 	sub.timeout = 0
 	sub.stall = FRAME_STALL
 
-	cmd_fd, why2 := dial(cfg.socket)
+	cmd_fd, derr2, why2 := dial(cfg.socket, cfg.stop, cfg.timeout)
+	if derr2 == .Stopped {
+		return 0
+	}
 	if why2 != "" {
 		say(cfg, "%s", why2)
 		return 1

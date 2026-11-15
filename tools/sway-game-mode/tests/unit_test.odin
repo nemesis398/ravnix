@@ -446,20 +446,108 @@ a_dead_peer_breaks_a_request :: proc(t: ^testing.T) {
 
 @(test)
 cannot_dial_what_is_not_there :: proc(t: ^testing.T) {
-	_, why := sg.dial("/nonexistent/sway-ipc.sock")
+	_, _, why := sg.dial("/nonexistent/sway-ipc.sock", -1, time.Second)
 	testing.expect(t, strings.contains(why, "no such file"), why)
-	_, why = sg.dial(strings.repeat("x", 108, context.temp_allocator))
+	_, _, why = sg.dial(strings.repeat("x", 108, context.temp_allocator), -1, time.Second)
 	testing.expect(t, strings.contains(why, "longer"), why)
 	d := scratch(t)
 	defer os.remove_all(d)
 	// A file that is no socket, and a directory.
 	path := strings.concatenate({d, "/plain"}, context.temp_allocator)
 	testing.expect(t, os.write_entire_file_from_string(path, "x") == nil)
-	_, why = sg.dial(path)
+	_, _, why = sg.dial(path, -1, time.Second)
 	testing.expect(t, why != "")
-	_, why = sg.dial(d)
+	_, _, why = sg.dial(d, -1, time.Second)
 	testing.expect(t, why != "")
 	free_all(context.temp_allocator)
+}
+
+// Later is a signal to the stop descriptor after a pause, from a thread; the
+// caller owns it until the thread is joined.
+Later :: struct {
+	fd:     linux.Fd,
+	after:  time.Duration,
+	worker: ^thread.Thread,
+}
+
+signal_later :: proc(l: ^Later) {
+	l.worker = thread.create_and_start_with_poly_data(l, proc(l: ^Later) {
+			time.sleep(l.after)
+			one := u64(1)
+			linux.write(l.fd, (cast(^[8]u8)&one)[:])
+		})
+}
+
+join_later :: proc(l: ^Later) {
+	thread.join(l.worker)
+	thread.destroy(l.worker)
+}
+
+@(test)
+a_stop_ends_a_connect_that_waits :: proc(t: ^testing.T) {
+	// A listener with a full backlog that never accepts: connect would
+	// block for ever.
+	d := scratch(t)
+	defer os.remove_all(d)
+	path := strings.concatenate({d, "/full.sock"}, context.temp_allocator)
+	addr: linux.Sock_Addr_Un
+	addr.sun_family = .UNIX
+	copy(addr.sun_path[:], path)
+	lfd, _ := linux.socket(.UNIX, .STREAM, {.CLOEXEC}, .HOPOPT)
+	defer linux.close(lfd)
+	testing.expect(t, linux.bind(lfd, &addr) == .NONE)
+	testing.expect(t, linux.listen(lfd, 0) == .NONE)
+	filler: [dynamic]linux.Fd
+	defer delete(filler)
+	defer for fd in filler {
+		linux.close(fd)
+	}
+	for _ in 0 ..< 8 {
+		fd, _ := linux.socket(.UNIX, .STREAM, {.CLOEXEC, .NONBLOCK}, .HOPOPT)
+		append(&filler, fd)
+		linux.connect(fd, &addr)
+	}
+	stop, _ := linux.eventfd(0, {.CLOEXEC, .NONBLOCK})
+	defer linux.close(stop)
+	// The request timeout ends it when nothing else does ...
+	start := time.tick_now()
+	fd, err, _ := sg.dial(path, -1, 150 * time.Millisecond)
+	testing.expect_value(t, err, sg.Net_Error.Timeout)
+	testing.expect(t, fd < 0)
+	testing.expect(t, time.tick_diff(start, time.tick_now()) < 3 * time.Second)
+	// ... and a stop ends it at once.
+	later := Later{fd = stop, after = 100 * time.Millisecond}
+	signal_later(&later)
+	start = time.tick_now()
+	_, err, _ = sg.dial(path, stop, 60 * time.Second)
+	join_later(&later)
+	testing.expect_value(t, err, sg.Net_Error.Stopped)
+	testing.expect(t, time.tick_diff(start, time.tick_now()) < 3 * time.Second)
+	free_all(context.temp_allocator)
+}
+
+@(test)
+a_stop_ends_a_send_that_waits :: proc(t: ^testing.T) {
+	a, b := socket_pair(t)
+	defer linux.close(b)
+	stop, _ := linux.eventfd(0, {.CLOEXEC, .NONBLOCK})
+	defer linux.close(stop)
+	c := sg.Conn {
+		fd      = a,
+		stop    = stop,
+		timeout = 5 * time.Second,
+	}
+	defer sg.conn_close(&c)
+	// More than the socket buffers hold, to a peer that never reads.
+	big := make([]u8, 16 << 20)
+	defer delete(big)
+	later := Later{fd = stop, after = 100 * time.Millisecond}
+	signal_later(&later)
+	start := time.tick_now()
+	err := sg.send_all(&c, big)
+	join_later(&later)
+	testing.expect_value(t, err, sg.Net_Error.Stopped)
+	testing.expect(t, time.tick_diff(start, time.tick_now()) < 3 * time.Second)
 }
 
 // ── the command line ─────────────────────────────────────────────────────────
