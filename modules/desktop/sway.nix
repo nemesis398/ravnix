@@ -180,10 +180,10 @@ let
         libnotify
         coreutils
       ] { };
+      # systemd and Sway from the session's PATH, see the script's header.
       sway-powermenu = bash "sway-powermenu" [
         fuzzel
-        systemd
-        swayPackage
+        coreutils
       ] { };
       sway-present = bash "sway-present" [
         util-linux

@@ -2,17 +2,42 @@
 # sway-powermenu — fuzzel session/power menu (bound to $mod+Escape).
 # Falls back to swaynag buttons if fuzzel isn't available. Actions use logind via
 # systemctl/loginctl — no sudo needed for the active seat.
+#
+#   sway-powermenu          the menu
+#   sway-powermenu logout   log out without the menu (swaynag's Logout button)
+#
+# Logout stops sway-session.target before Sway exits. NixOS stops it from a
+# subscriber of Sway's shutdown event (/etc/sway/config.d/nixos.conf), but on
+# huginn that stop did not come: the user manager outlived the logout (the next
+# login came within its stop delay), the session's targets stayed active, and
+# the next login's start of sway-session.target did nothing, so the keyring
+# unlock and the XDG autostart entries did not run again. The stop also ends
+# the session's units while Wayland is still up. It is bounded, so a unit that
+# hangs on its stop cannot hold the logout; the stop job goes on without us.
+# systemctl, loginctl and swaymsg are the session's (its PATH), so that the
+# script tests can stand in for them.
 set -uo pipefail
+
+logout() {
+  timeout 10 systemctl --user stop sway-session.target
+  exec swaymsg exit
+}
 
 act() {
   case "$1" in
     *Lock*)     exec loginctl lock-session ;;
-    *Logout*)   exec swaymsg exit ;;
+    *Logout*)   logout ;;
     *Suspend*)  exec systemctl suspend ;;
     *Reboot*)   exec systemctl reboot ;;
     *Shutdown*) exec systemctl poweroff ;;
   esac
 }
+
+case ${1:-}:$# in
+  :0) ;;
+  logout:1) logout ;;
+  *) echo "usage: sway-powermenu [logout]" >&2; exit 2 ;;
+esac
 
 if command -v fuzzel >/dev/null 2>&1; then
   choice=$(printf '%s\n' \
@@ -26,7 +51,7 @@ if command -v fuzzel >/dev/null 2>&1; then
 else
   swaynag -t warning -m 'Session' \
     -b 'Lock'     'loginctl lock-session' \
-    -b 'Logout'   'swaymsg exit' \
+    -b 'Logout'   'sway-powermenu logout' \
     -b 'Suspend'  'systemctl suspend' \
     -b 'Reboot'   'systemctl reboot' \
     -b 'Shutdown' 'systemctl poweroff'

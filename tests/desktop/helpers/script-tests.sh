@@ -375,6 +375,31 @@ PATH=$stubs:$PATH "$mode"
 [ "$(cat "$XDG_RUNTIME_DIR/waybar-mode")" = full ] || bad "an unknown mode does not fall back to full"
 ok "waybar-mode cycle"
 
+# ── sway-powermenu logout: the session's units stop before Sway exits ────────
+# A logout that leaves sway-session.target active leaves the next login
+# without its keyring unlock and its autostart: the start of an active target
+# does nothing. The stop comes first, and a failed stop still logs out.
+pm=$(script sway-powermenu)
+pmfakes=$work/powermenu-fakes
+pmlog=$work/powermenu.log
+mkdir -p "$pmfakes"
+# shellcheck disable=SC2016 # the fake expands it when it runs, not here
+printf '#!/bin/sh\necho "systemctl $*" >>"%s"\nexit "${FAKE_SYSTEMCTL_RC:-0}"\n' "$pmlog" >"$pmfakes/systemctl"
+printf '#!/bin/sh\necho "swaymsg $*" >>"%s"\n' "$pmlog" >"$pmfakes/swaymsg"
+chmod +x "$pmfakes/systemctl" "$pmfakes/swaymsg"
+want=$(printf 'systemctl --user stop sway-session.target\nswaymsg exit')
+for rc in 0 1; do
+  : >"$pmlog"
+  FAKE_SYSTEMCTL_RC=$rc PATH=$pmfakes:$PATH "$pm" logout </dev/null >/dev/null 2>&1
+  [ "$(cat "$pmlog")" = "$want" ] || bad "sway-powermenu logout, with a stop that exits $rc, ran: $(cat "$pmlog")"
+done
+: >"$pmlog"
+PATH=$pmfakes:$PATH "$pm" frobnicate </dev/null >/dev/null 2>&1
+rc=$?
+[ $rc = 2 ] || bad "sway-powermenu with an unknown argument exits $rc, not 2"
+[ ! -s "$pmlog" ] || bad "sway-powermenu with an unknown argument ran: $(cat "$pmlog")"
+ok "sway-powermenu logout"
+
 # ── the kanshi hook ──────────────────────────────────────────────────────────
 hook=$(grep -o '/nix/store/[^ ]*-kanshi-exec' "$kanshiConfig" | head -n1)
 [ -x "$hook" ] || bad "the kanshi hook $hook is not an executable"
