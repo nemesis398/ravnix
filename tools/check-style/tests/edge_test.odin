@@ -535,3 +535,24 @@ the_current_directory_follows_pwd_when_pwd_names_it :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expect_value(t, got, here)
 }
+
+// The memory of a run is that of its file list, its hits and its longest line,
+// not of the size of the files: a file of a million lines is read in a few
+// kilobytes.
+@(test)
+the_memory_does_not_grow_with_the_size_of_a_file :: proc(t: ^testing.T) {
+	f := enter(t)
+	b := strings.builder_make(context.temp_allocator)
+	line := "a { color: red; border: 1px solid blue; /* a note */ opacity: 1; transition: none; }\n"
+	for _ in 0 ..< 120_000 {
+		strings.write_string(&b, line)
+	}
+	put(t, f, "big.css", strings.to_string(b))
+	before := f.arena.total_used
+	status, out, _ := check(f, ".")
+	testing.expect_value(t, status, 0)
+	testing.expect_value(t, out, "")
+	used := f.arena.total_used - before
+	// The file is 10 MB; a line, the lists and the buffers are far below one.
+	testing.expectf(t, used < 1_000_000, "a run over a %d byte file took %d bytes", strings.builder_len(b), used)
+}

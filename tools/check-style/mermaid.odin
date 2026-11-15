@@ -92,7 +92,11 @@ mermaid_step :: proc(j: ^Judge) -> (fatal: string) {
 		if !ok {
 			return ""
 		}
-		fatal = theme_load(j.theme)
+		{
+			// The theme outlives the line.
+			context.allocator = j.persist
+			fatal = theme_load(j.theme)
+		}
 		if fatal != "" {
 			return
 		}

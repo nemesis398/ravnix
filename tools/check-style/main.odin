@@ -161,7 +161,7 @@ run :: proc(args: []string, cfg: Config, out, err: io.Writer) -> int {
 		}
 	}
 
-	hits: [dynamic]Hit
+	hits := make([dynamic]Hit, 0, 64)
 	theme := Theme {
 		path = cfg.theme,
 	}
@@ -216,10 +216,22 @@ judge_file :: proc(file: File, cfg: Config, theme: ^Theme, hits: ^[dynamic]Hit) 
 		return fmt.aprintf("cannot read %s: %v", file.shown, errno)
 	}
 	defer reader_close(&reader)
+	// What a line allocates goes into an arena that is emptied after the
+	// line, so a run takes the memory of its longest line and of its hits,
+	// not of the size of the files.
+	persist := context.allocator
+	line_arena: virtual.Arena
+	if virtual.arena_init_growing(&line_arena) != nil {
+		return "out of memory"
+	}
+	defer virtual.arena_destroy(&line_arena)
 	j := Judge {
-		file  = file,
-		hits  = hits,
-		theme = theme,
+		file      = file,
+		hits      = hits,
+		theme     = theme,
+		persist   = persist,
+		lower_buf = make([dynamic]u8, 0, 256),
+		strip_buf = make([dynamic]u8, 0, 256),
 	}
 	defer judge_destroy(&j)
 	for {
@@ -234,7 +246,14 @@ judge_file :: proc(file: File, cfg: Config, theme: ^Theme, hits: ^[dynamic]Hit) 
 		if !ok {
 			break
 		}
-		if fatal := judge_line(&j, line); fatal != "" {
+		fatal: string
+		{
+			context.allocator = virtual.arena_allocator(&line_arena)
+			context.temp_allocator = context.allocator
+			fatal = judge_line(&j, line)
+			virtual.arena_free_all(&line_arena)
+		}
+		if fatal != "" {
 			return fatal
 		}
 	}
