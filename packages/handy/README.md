@@ -58,6 +58,12 @@ build appends a block of CSS, made from `ravnix.theme`, to Handy's
   surface is opaque, and the primary button's text is the background color
   instead of white. The tooltip, which floats, is Base with a 1 px accent frame
   and Text text, without its arrow, where Handy draws a Text-colored block.
+- App.css sets color-scheme, the log surface and the scrollbar thumb again
+  after the block, by the media query and by Handy's setting, so those are
+  taken with `!important`; Tailwind's white and black (the switch knob, the
+  radio mark, the dialog scrim) are Text and Crust.
+  `tests/desktop/handy-theme-cascade.nix` builds the frontend and asks
+  headless Helium for the computed values under Handy's "light" setting.
 - The font is the theme's, in Tailwind's default family and Handy's stacks.
 
 The CSS is the frontend, which is embedded in the program, so another accent
