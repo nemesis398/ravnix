@@ -83,7 +83,15 @@ let
     ];
     accent = "teal";
   };
-  failing = name: entries: accent: pkgs.testers.testBuildFailure (make { src = file entries; inherit accent; });
+  failing =
+    name: entries: accent:
+    pkgs.testers.testBuildFailure (
+      (make {
+        src = file entries;
+        inherit accent;
+      }).overrideAttrs
+        { name = "stylus-import-${name}"; }
+    );
 
   hostModules = import ../flake/helpers/host-modules.nix { inherit lib; };
   mkHost =
