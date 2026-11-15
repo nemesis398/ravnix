@@ -189,6 +189,10 @@ pkgs.runCommand "desktop-handy-theme"
     drift "the tooltip panel" src/components/ui/Tooltip.tsx 's/rounded-\[9px\] bg-plum/rounded-[8px] bg-plum/'
     drift "the tooltip text" src/components/ui/Tooltip.tsx 's/text-background shadow/text-white shadow/'
     drift "the tooltip arrow" src/components/ui/Tooltip.tsx 's/rotate-45 rounded-\[1.5px\] bg-plum/rotate-45 bg-plum/'
+    drift "--radius-panel" src/App.css 's/--radius-panel: 16px;/--radius-panel: 15px;/'
+    drift "--radius-card" src/App.css 's/--radius-card: 12px;/--radius-card: 11px;/'
+    drift "--radius-control" src/App.css 's/--radius-control: 10px;/--radius-control: 9px;/'
+    drift "--radius-chip" src/App.css 's/--radius-chip: 6px;/--radius-chip: 5px;/'
 
     [ "$failed" = 0 ] || exit 1
     touch $out
