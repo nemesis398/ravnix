@@ -49,7 +49,22 @@
   ...
 }:
 let
-  inherit (pkgs.ravnix) energy;
+  # energy, wrapped so that its charge-mode is the charge-mode that battery.nix's
+  # sudo rule names (the same pkgs.ravnix.charge-mode), whatever a private flake
+  # overrides: the two cannot split, and `sudo -n` never meets a helper it has
+  # no rule for. The wrapper only sets the variable; the unit and every caller
+  # (Waybar, kanshi, swayidle, sway-settings) find this one on the PATH.
+  energy =
+    pkgs.runCommand "energy"
+      {
+        nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
+        meta = pkgs.ravnix.energy.meta;
+        passthru.chargeMode = lib.getExe pkgs.ravnix.charge-mode;
+      }
+      ''
+        makeWrapper ${lib.getExe pkgs.ravnix.energy} "$out/bin/energy" \
+          --set ENERGY_CHARGE_MODE ${lib.getExe pkgs.ravnix.charge-mode}
+      '';
 in
 {
   # tuned owns the CPU policy here, so power-profiles-daemon stays off:

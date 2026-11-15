@@ -9,27 +9,22 @@
 # fuzzel, swaymsg, keep-awake and waybar-launch belong to the session and
 # come from its PATH, which stays behind the directories listed here: fuzzel
 # so that the menu wears the session's theme, swaymsg to talk to the running
-# Sway, the other two from the desktop's scripts. charge-mode is the
-# package's own, by its store path.
+# Sway, the other two from the desktop's scripts. charge-mode is named by the
+# hardware module, which wraps the program with ENERGY_CHARGE_MODE set to the
+# very charge-mode its sudo rule names (power.nix); without that it is found on
+# the PATH by name.
 {
   buildOdinTool,
   pkgs,
   lib,
   ...
 }:
-let
-  # charge-mode is a package, and a tool must not read pkgs.ravnix
-  # (packages/README.md), so it is built from its file with the same pkgs,
-  # which is the derivation pkgs.ravnix.charge-mode is.
-  chargeMode = pkgs.callPackage ../../packages/charge-mode { };
-in
 buildOdinTool {
   name = "energy";
   src = ./.;
   tests = ./tests;
   bench = ./bench;
   odinFlags = [
-    "-define:CHARGE_MODE=${lib.getExe chargeMode}"
     # busctl and systemctl (systemd), gdbus (glib), notify-send (libnotify),
     # pgrep (procps) and setsid (util-linux): the programs it starts.
     "-define:TOOLS_PATH=${

@@ -223,6 +223,11 @@ pkgs.testers.runNixOSTest {
         machine.fail(f"su -l {user} -c 'sudo -n /run/current-system/sw/bin/bash -c true'")
         said = as_user("charge-mode 2>&1; charge-mode set Fast 2>&1")
         assert said.count("nothing to do") == 2, said
+        # The energy menu on the PATH is the wrapper that names this very
+        # charge-mode, the one whose helper the sudo rule names.
+        wrapper = machine.succeed("readlink -f $(command -v energy)").strip()
+        machine.succeed(f"grep -aF -- 'ENERGY_CHARGE_MODE' {wrapper}")
+        machine.succeed(f"grep -aF -- '${ravnixPkgs.ravnix.charge-mode}/bin/charge-mode' {wrapper}")
 
     with subtest("tuned owns the CPU policy, with the three laptop profiles"):
         machine.wait_for_unit("tuned.service")

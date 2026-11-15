@@ -34,9 +34,12 @@ The package brings `busctl` and `systemctl` (systemd), `gdbus` (glib),
 `notify-send` (libnotify), `pgrep` (procps) and `setsid` (util-linux): their
 directories go in front of the session's PATH, in the binary as
 `-define:TOOLS_PATH`, and a program energy starts gets that PATH too.
-`charge-mode` is named by its store path (`-define:CHARGE_MODE`; `default.nix`
-builds it from `packages/charge-mode` with `callPackage`, since a tool must not
-read `pkgs.ravnix`). `fuzzel`, `swaymsg`, `keep-awake` and `waybar-launch`
+`charge-mode` is looked up on the PATH by name, unless `ENERGY_CHARGE_MODE`
+names it: the IdeaPad module (`power.nix`) wraps this program with that
+variable set to `pkgs.ravnix.charge-mode`, the same package whose helper the
+sudo rule names, so a private flake's override of it reaches both and they
+cannot split. (A tool must not read `pkgs.ravnix`, so `default.nix` cannot name
+it, and the wrapper costs one more exec.) `fuzzel`, `swaymsg`, `keep-awake` and `waybar-launch`
 come from the session's PATH: fuzzel so that the menu wears the session's
 theme, swaymsg to talk to the running Sway, the other two from the desktop's
 scripts. The bus is followed by two `gdbus monitor` children: writing a D-Bus
@@ -54,7 +57,7 @@ tests use them, and nothing else needs to:
 | Variable | Replaces | Default |
 | --- | --- | --- |
 | `ENERGY_ONLINE_FILE` | the charger's file | `/sys/class/power_supply/ADP0/online` |
-| `ENERGY_CHARGE_MODE` | the `charge-mode` program | the store path from the build |
+| `ENERGY_CHARGE_MODE` | the `charge-mode` program | `charge-mode`, from the PATH; the module sets the store path |
 | `ENERGY_TOOLS_PATH` | the package's directories in front of the PATH (may be empty) | the store paths from the build |
 
 ## Changes from the Bash version
@@ -64,7 +67,7 @@ tests use them, and nothing else needs to:
   and the order in which the watcher acts are the same. The 62 cases of the
   Bash test (`tests/energy.test.sh`) pass against the Odin build, as 61: two
   that checked the script and its PATH became one that checks the package's
-  store paths, and the two that pinned the findings below now expect the
+  tool PATH, and the two that pinned the findings below now expect the
   fixes;
 - `energy get KEY` for a key that is none of the three says
   `'KEY' is not a key (refresh, idle_suspend, focus_bar)` and exits 2; Bash
@@ -88,6 +91,15 @@ tests use them, and nothing else needs to:
   before it exits 0; Bash printed the shell's `command not found`;
 - the watcher says `energy: gdbus is not on the PATH, so there is no monitor
   of the system bus` (or why it could not start one) before it exits 1;
+- in the menu, a fuzzel answer in the power-profile list that has no word
+  runs nothing and exits 0 (Bash ran `busctl ... set-property ... s ""`), and
+  an answer in the charge-mode list that has none of the three names runs
+  nothing (Bash ran `charge-mode set ""` and ended with its status);
+- the watcher gives each event, and its first refresh, a region of memory that
+  is freed when it is done. A first version kept everything of the whole run
+  until the process ended, about 300 KB an event with a docked sway's list of
+  modes; a monitor that ends early is reaped at once, not when the other
+  ends;
 - the rows of a choice list go to fuzzel through a file in memory, not a pipe,
   so a fuzzel that ends before it reads cannot raise SIGPIPE.
 
@@ -103,7 +115,7 @@ watcher relaunches would then find no setuid sudo for `charge-mode`.
 
 ## Tests
 
-`tests/*.odin`, the check `energy-tests`, 85 cases. Each builds a world in a
+`tests/*.odin`, the check `energy-tests`, 87 cases. Each builds a world in a
 temporary directory: the charger's file, the state and runtime directories, and
 a bin directory in which every program energy runs (busctl, swaymsg, fuzzel,
 gdbus, keep-awake, ...) is a link to `tests/testdata/fake`, which logs its call
@@ -126,7 +138,9 @@ notify-send; every menu row and choice, Escape at each level, a fuzzel that
 answers with something else, no fuzzel, no charge-mode, a refused profile,
 no or a failing keep-awake; the lookup of programs (directories, files that
 cannot run, empty PATH entries, too long names), a program killed by a
-signal, one that closes its output and runs on, one that leaves a daemon on
+signal, 3000 events through the handler with a docked sway's list of
+modes (the memory allocated must stay below 64 KB), a monitor that ends
+early (no zombie), one that closes its output and runs on, one that leaves a daemon on
 its pipe, and 400 KB of rows to a program that never reads them.
 
 `tests/energy.test.sh`, the check `bin-energy`, is the Bash suite that the

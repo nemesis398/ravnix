@@ -15,8 +15,8 @@
 # bus events for the watcher, waiting after each one until the watcher has
 # acted on it, so the order of what follows is fixed. keep-awake,
 # waybar-launch, setsid, systemctl, pgrep and notify-send log and do nothing
-# else. The last tests check the package: it names charge-mode by its store
-# path, and the programs it starts come with it.
+# else. The last test checks the package: the programs it starts come with it
+# (charge-mode is named by the hardware module, which wraps the program).
 #
 #   PACKAGE=  the built package
 #   TEST_LIB= scripts/tests/lib.sh
@@ -846,10 +846,8 @@ test_unknown_command() {
 
 # The package.
 
-test_package_names_its_charge_mode_and_tools() {
-	local cm path
-	cm="$(grep -aoE '/nix/store/[0-9a-z]{32}-charge-mode[-.0-9a-z]*/bin/charge-mode' "$PACKAGE/bin/energy" | head -n 1)"
-	[[ -x "$cm" ]] || { echo "  energy names no charge-mode from the store: '$cm'"; return 1; }
+test_package_names_its_tools() {
+	local path
 	# The directories of busctl, systemctl, gdbus, notify-send, pgrep and
 	# setsid, in front of the session's PATH.
 	path="$(grep -aoE '(/nix/store/[0-9a-z]{32}-[-.0-9a-zA-Z_+]+/bin:){4}/nix/store/[0-9a-z]{32}-[-.0-9a-zA-Z_+]+/bin' "$PACKAGE/bin/energy" | head -n 1)"
@@ -920,6 +918,6 @@ tests=(
 	test_menu_escape_in_a_choice_list_does_nothing
 	test_menu_without_fuzzel_exits_quietly
 	test_unknown_command
-	test_package_names_its_charge_mode_and_tools
+	test_package_names_its_tools
 )
 run_tests "${tests[@]}"

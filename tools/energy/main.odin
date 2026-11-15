@@ -29,7 +29,7 @@
 //
 // The tools of the session come from its PATH: fuzzel (with the session's
 // theme), swaymsg, keep-awake and waybar-launch. The rest comes with the
-// package, charge-mode by its store path. A missing keep-awake or
+// package, charge-mode by the store path the hardware module gives it. A missing keep-awake or
 // waybar-launch is said in the journal and a notification, never skipped
 // without a word.
 //
@@ -42,8 +42,10 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-// charge-mode, by its store path: default.nix sets it.
-CHARGE_MODE :: #config(CHARGE_MODE, "charge-mode")
+// charge-mode, looked up on the PATH by name. The hardware module wraps the
+// program with ENERGY_CHARGE_MODE set to the store path of the charge-mode
+// that its sudo rule names, so the two cannot be told apart from outside.
+CHARGE_MODE :: "charge-mode"
 // The directories of the programs the package brings (busctl, systemctl,
 // gdbus, notify-send, pgrep, setsid), in front of the session's PATH:
 // default.nix sets them.

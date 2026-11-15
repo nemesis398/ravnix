@@ -3,9 +3,12 @@
 // watcher has refreshed, so the order of what follows is fixed.
 package energy_tests
 
+import "core:fmt"
+import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
 import "core:testing"
+import energy ".."
 
 NOTIFY_OFF :: "notify-send -a Energy Keep-awake off Switched off on unplug."
 
@@ -372,4 +375,71 @@ a_dead_dependency_does_not_stop_the_watcher_from_refreshing :: proc(t: ^testing.
 	events(t, &f, "online 0", "noise x", "partial y")
 	code, _, _ := run(t, &f, "watch")
 	testing.expect_value(t, code, 1)
+}
+
+// The watcher runs for the whole session, so what one event allocates must
+// be gone when the next arrives: a docked sway reports tens of kilobytes of
+// modes, and the parsed list, the output buffers and the environment copied
+// for each child once stayed until the process ended (about 300 KB an event).
+@(test)
+the_watcher_does_not_grow_with_its_events :: proc(t: ^testing.T) {
+	f: Fixture
+	fixture(t, &f)
+	defer destroy(&f)
+	context.allocator = virtual.arena_allocator(&f.arena)
+
+	b := strings.builder_make()
+	strings.write_string(&b, `[{"name":"eDP-1","active":true,"modes":[`)
+	for i in 0 ..< 150 {
+		if i > 0 {
+			strings.write_string(&b, ",")
+		}
+		fmt.sbprintf(&b, `{{"width":%d,"height":1600,"refresh":%d}}`, 800 + i, 60000 + i)
+	}
+	strings.write_string(&b, `],"current_mode":{"width":2560,"height":1600,"refresh":120000}}]`)
+	write(t, join(f.bin, "outputs"), strings.to_string(b))
+
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+	last := false
+	{
+		// What `run` does for a command: both allocators, one place.
+		context.allocator = mem.tracking_allocator(&track)
+		context.temp_allocator = context.allocator
+		for _ in 0 ..< 3000 {
+			energy.handle_line(&f.cfg, "PropertiesChanged OnBattery", &last)
+		}
+		energy.refresh_in_region(&f.cfg)
+	}
+	testing.expect_value(t, refreshes(&f), "3001")
+	testing.expectf(t, track.current_memory_allocated < 64 << 10, "3000 events left %d bytes allocated", track.current_memory_allocated)
+}
+
+// A monitor that ends early is reaped at once, not when the other ends: the
+// profile monitor ends at once without tuned-ppd, and would stay a zombie for
+// the whole session.
+@(test)
+a_monitor_that_ends_early_is_reaped_at_once :: proc(t: ^testing.T) {
+	f: Fixture
+	fixture(t, &f)
+	defer destroy(&f)
+	context.allocator = virtual.arena_allocator(&f.arena)
+	// The profile monitor notes its pid and ends. The UPower monitor waits,
+	// then notes what state that pid is in: gone, or Z for a zombie.
+	write(
+		t,
+		join(f.bin, "gdbus.case"),
+		`case "$*" in
+*net.hadess*) echo $$ >"$dir/pm.pid"; exit 0 ;;
+esac
+sleep 0.5
+read -r pid <"$dir/pm.pid"
+if read -r l <"/proc/$pid/stat" 2>/dev/null; then set -- $l; echo "$3" >"$dir/pm.state"; else echo gone >"$dir/pm.state"; fi
+`,
+	)
+
+	code, _, _ := run(t, &f, "watch")
+	testing.expect_value(t, code, 1)
+	expect_file(t, join(f.bin, "pm.state"), "gone")
 }

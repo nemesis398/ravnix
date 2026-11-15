@@ -1,5 +1,6 @@
 package energy
 
+import "core:mem/virtual"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
@@ -97,7 +98,7 @@ MONITORS :: [2][]string {
 // back, but only if the watcher was the one that switched). It runs until
 // both monitors have ended, then returns 1: systemd restarts the watcher.
 watch :: proc(cfg: ^Config) -> int {
-	refresh(cfg)
+	refresh_in_region(cfg)
 	last := on_battery(cfg)
 
 	commands := MONITORS
@@ -145,6 +146,10 @@ watch :: proc(cfg: ^Config) -> int {
 				// the shell loop did not count it.
 				_ = os.close(m.pipe)
 				m.pipe = nil
+				// Reap it now, or it stays a zombie while the other runs.
+				_ = linux.kill(linux.Pid(m.process.pid), .SIGTERM)
+				_ = wait_child(m.process)
+				m.process = {}
 				continue
 			}
 			for c in buf[:got] {
@@ -202,6 +207,23 @@ start_monitor :: proc(cfg: ^Config, command: []string) -> (m: Monitor) {
 	return
 }
 
+// The watcher runs for the whole session, and `run` keeps everything a
+// command allocates until it ends. So each event, and the first refresh, gets
+// a region of its own, freed when it is done: what must outlast an event is
+// the monitors' line buffers and the charger's last state, which live outside.
+// If no region can be had, the event uses the command's memory.
+refresh_in_region :: proc(cfg: ^Config) {
+	region: virtual.Arena
+	if virtual.arena_init_growing(&region) != nil {
+		refresh(cfg)
+		return
+	}
+	defer virtual.arena_destroy(&region)
+	context.allocator = virtual.arena_allocator(&region)
+	context.temp_allocator = context.allocator
+	refresh(cfg)
+}
+
 // handle_line reacts to one line of a monitor: only OnBattery and
 // ActiveProfile count, anything else on the bus is noise. A change of the
 // charger runs unplugged or plugged_in; every event refreshes the rate.
@@ -209,6 +231,18 @@ handle_line :: proc(cfg: ^Config, line: string, last: ^bool) {
 	if !strings.contains(line, "OnBattery") && !strings.contains(line, "ActiveProfile") {
 		return
 	}
+	region: virtual.Arena
+	if virtual.arena_init_growing(&region) != nil {
+		handle_event(cfg, last)
+		return
+	}
+	defer virtual.arena_destroy(&region)
+	context.allocator = virtual.arena_allocator(&region)
+	context.temp_allocator = context.allocator
+	handle_event(cfg, last)
+}
+
+handle_event :: proc(cfg: ^Config, last: ^bool) {
 	now := on_battery(cfg)
 	if now != last^ {
 		if now {

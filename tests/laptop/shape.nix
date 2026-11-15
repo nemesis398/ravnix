@@ -324,6 +324,14 @@ let
     ++ check (!tuned.settings.dynamic_tuning) "tuned's dynamic tuning is on, which wakes it every 10 s"
     ++ check (has c.environment.systemPackages c.services.tuned.package) "tuned-adm is not installed"
     ++ check (lib.elem "sway-session.target" (c.systemd.user.services.energy-watch.wantedBy or [ ])) "energy-watch does not start with the Sway session"
+    ++ check (
+      let
+        wrapped = lib.filter (p: (p.name or "") == "energy") c.environment.systemPackages;
+      in
+      wrapped != [ ]
+      && (lib.head wrapped).chargeMode == lib.getExe huginn.pkgs.ravnix.charge-mode
+      && c.systemd.user.services.energy-watch.serviceConfig.ExecStart == "${lib.getExe (lib.head wrapped)} watch"
+    ) "energy is not the wrapper that gives it the charge-mode that the sudo rule names, on the PATH and in the unit"
     ++ check (!(c.systemd.user.services.energy-watch.environment ? PATH)) "energy-watch sets a PATH of its own, which drops the user manager's /run/wrappers/bin, so a Waybar it starts finds no setuid sudo"
     ++ check (
       rapl != null && (rapl.destination or null) == "/lib/udev/rules.d/99-rapl-readable.rules"
