@@ -305,13 +305,16 @@ start_gate() {
 	gate_pid=$!
 	set +m
 }
-# Waits (10 s at most) until $1 builds run, and sets running to their pids.
+# Waits (10 s at most) until $1 builds run and have logged their start, and
+# sets running to their pids. A build marks itself running a moment before
+# it logs its start, so a signal sent between the two would end a build that
+# never logged one.
 await_builds() {
 	local _
 	running=()
 	for _ in $(seq 100); do
 		running=("$bin"/running/*)
-		[[ ! -e "${running[0]}" ]] || ((${#running[@]} < $1)) || break
+		[[ ! -e "${running[0]}" ]] || ((${#running[@]} < $1)) || (($(builds | wc -l) < $1)) || break
 		running=()
 		sleep 0.1
 	done
