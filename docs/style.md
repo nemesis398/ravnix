@@ -81,6 +81,7 @@ The remaining hues (Rosewater, Flamingo, Pink, Sky, Sapphire, Lavender, Teal) ar
 - No transparency and no blur. The only exceptions are two parts of the lock ring: its inside, which is clear so the mark shows through and turns Base at 80 percent while it prints a word, and the ticks between its highlight segments, which are clear. Hover is the Surface0 wash plus the 2 px marker, never an alpha.
 - Terminal colors map to the palette this way: black is Surface1, red Red, green Green, yellow Yellow, blue Blue, magenta Pink, cyan Teal, white Subtext1. The bright set is Surface2, Red, Green, Yellow, Blue, **the accent** in the bright magenta slot, Teal, Subtext0.
 - A terminal selection is accent fill with Crust text. A terminal cursor is an accent block with Crust text.
+- A diff line is the one computed color. Added text is Green and removed text Red mixed over Base (the canvas role): 20 percent for a line, 35 percent for a changed word and 10 percent for a dimmed line, so Green at 20 percent is `#394545`. `modules/theme/color.nix` does the mixing from the palette and the roles, and no module writes the result as a literal. A diff line is a row, and a row is a wash, but Surface0 has no hue, so a diff row takes its state hue at the strength of a wash. Delta and Claude Code's diffs use it; nothing else may mix a state hue into a surface.
 
 ## 📐 Borders, shape and layout
 
@@ -158,7 +159,7 @@ The exact values live in the theme module. This table lists the choices that are
 | Lock screen | See *Identity* |
 | Login | The same palette, text only |
 | Boot | Text only. No splash screen. The disk-unlock prompt is plain text |
-| TUIs | The Catppuccin Mocha theme each one ships or accepts, with the accent on the focus marker: lazygit, Neovim, btop, bat, herdr |
+| TUIs | Mocha with the accent on the focus marker. Neovim, bat and herdr take a Catppuccin theme they ship or accept; lazygit, btop, fzf, delta, Claude Code, aerc, iamb, khal and wiremix are written from the roles, because their ports have no accent or draw a state hue as decoration; a program that takes nothing but a color name (tldr, nmtui) is mapped onto the terminal's palette |
 | GTK and Qt applications | Catppuccin Mocha in the accent; Qt through Fusion and a KDE color scheme so Kirigami applications follow |
 | Web applications | Catppuccin userstyles for the app, Mocha, in the accent |
 
