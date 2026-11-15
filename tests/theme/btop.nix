@@ -16,6 +16,7 @@ let
   configOf = accent: (hm [ { ravnix.theme.accent = lib.mkForce accent; } ]).config;
   mauve = configOf "mauve";
   teal = configOf "teal";
+  sky = configOf "sky";
   inherit (mauve.ravnix.theme) palette roles;
 
   textOf = c: builtins.readFile c.xdg.configFile."btop/themes/ravnix.theme".source;
@@ -109,4 +110,5 @@ colors.check "theme-btop" {
   inherit palette extra;
   mauve = textOf mauve;
   teal = textOf teal;
+  sky = textOf sky;
 }

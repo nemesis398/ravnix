@@ -18,6 +18,7 @@ let
   configOf = accent: (hm [ { ravnix.theme.accent = lib.mkForce accent; } ]).config;
   mauve = configOf "mauve";
   teal = configOf "teal";
+  sky = configOf "sky";
   inherit (mauve.ravnix.theme) palette roles;
 
   fileOf = c: c.home.file."${c.xdg.configHome}/lazygit/config.yml".source;
@@ -86,4 +87,5 @@ colors.check "theme-lazygit" {
   inherit palette extra;
   mauve = textOf mauve;
   teal = textOf teal;
+  sky = textOf sky;
 }

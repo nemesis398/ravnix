@@ -28,6 +28,7 @@ let
     };
   mauve = host "mauve";
   teal = host "teal";
+  sky = host "sky";
   inherit (mauve.config.ravnix.theme) palette roles;
 
   slurps = h: lib.filter (p: lib.getName p == "slurp-themed") h.config.environment.systemPackages;
@@ -79,4 +80,5 @@ colors.check "theme-slurp" {
   # The wrapper names itself by store path, which differs with the accent.
   mauve = builtins.replaceStrings [ (slurpPath mauve) ] [ "SLURP" ] (textOf mauve);
   teal = builtins.replaceStrings [ (slurpPath teal) ] [ "SLURP" ] (textOf teal);
+  sky = builtins.replaceStrings [ (slurpPath sky) ] [ "SLURP" ] (textOf sky);
 }

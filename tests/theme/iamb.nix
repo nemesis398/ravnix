@@ -24,6 +24,7 @@ let
   };
   mauve = (server "mauve" account).config;
   teal = (server "teal" account).config;
+  sky = (server "sky" account).config;
   inherit (mauve.ravnix.theme) palette roles;
 
   fileOf = c: c.home.file."${c.xdg.configHome}/iamb/config.toml".source;
@@ -94,4 +95,5 @@ colors.check "theme-iamb" {
   inherit palette extra;
   mauve = textOf mauve;
   teal = textOf teal;
+  sky = textOf sky;
 }

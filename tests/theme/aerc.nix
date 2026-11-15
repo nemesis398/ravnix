@@ -17,6 +17,7 @@ let
 
   mauve = (server "mauve" { }).config;
   teal = (server "teal" { }).config;
+  sky = (server "sky" { }).config;
   inherit (mauve.ravnix.theme) palette roles;
 
   files = c: lib.filterAttrs (n: _: lib.hasInfix "aerc/stylesets/" n) c.home.file;
@@ -85,4 +86,5 @@ colors.check "theme-aerc" {
   inherit palette extra;
   mauve = textOf mauve;
   teal = textOf teal;
+  sky = textOf sky;
 }

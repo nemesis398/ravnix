@@ -17,6 +17,7 @@ let
 
   mauve = (server "mauve" { }).config;
   teal = (server "teal" { }).config;
+  sky = (server "sky" { }).config;
   inherit (mauve.ravnix.theme) palette roles;
 
   textOf = c: c.xdg.configFile."khal/config".text;
@@ -107,4 +108,5 @@ colors.check "theme-khal" {
   inherit palette extra;
   mauve = textOf mauve;
   teal = textOf teal;
+  sky = textOf sky;
 }

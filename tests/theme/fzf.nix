@@ -17,6 +17,7 @@ let
   configOf = accent: (hm [ { ravnix.theme.accent = lib.mkForce accent; } ]).config;
   mauve = configOf "mauve";
   teal = configOf "teal";
+  sky = configOf "sky";
   inherit (mauve.ravnix.theme) palette roles;
 
   optsOf = c: c.home.sessionVariables.FZF_DEFAULT_OPTS;
@@ -82,4 +83,5 @@ colors.check "theme-fzf" {
   inherit palette extra;
   mauve = optsOf mauve;
   teal = optsOf teal;
+  sky = optsOf sky;
 }

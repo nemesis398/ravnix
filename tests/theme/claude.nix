@@ -20,6 +20,7 @@ let
   configOf = accent: (hm [ { ravnix.theme.accent = lib.mkForce accent; } ]).config;
   mauve = configOf "mauve";
   teal = configOf "teal";
+  sky = configOf "sky";
   inherit (mauve.ravnix.theme) palette roles;
 
   file = c: c.home.file."${c.programs.claude-code.configDir}/themes/ravnix.json";
@@ -127,4 +128,5 @@ colors.check "theme-claude" {
   allowed = washes;
   mauve = textOf mauve;
   teal = textOf teal;
+  sky = textOf sky;
 }

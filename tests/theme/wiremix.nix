@@ -28,6 +28,7 @@ let
   user = (import ../../templates/default/me.nix).ravnix.user.username;
   mauve = (host "mauve").config.home-manager.users.${user};
   teal = (host "teal").config.home-manager.users.${user};
+  sky = (host "sky").config.home-manager.users.${user};
   inherit (mauve.ravnix.theme) palette roles;
 
   file = c: c.xdg.configFile."wiremix/wiremix.toml".source;
@@ -105,4 +106,5 @@ colors.check "theme-wiremix" {
   inherit palette extra;
   mauve = textOf mauve;
   teal = textOf teal;
+  sky = textOf sky;
 }
