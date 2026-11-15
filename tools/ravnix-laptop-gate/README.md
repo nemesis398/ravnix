@@ -136,11 +136,12 @@ none of them. The server cannot add one: everything it sends is
 `SSH_ORIGINAL_COMMAND`.
 
 Exit status: 0 answered; 77 refused; 70 `machine-facts` could not be
-started (the message names the program and the errno); 64 bad usage.
+started (the message names the program and the errno), or the gate was
+built without its absolute path; 64 bad usage.
 
 ## Tests
 
-`ravnix-laptop-gate-tests` (`tests/`, 28 tests):
+`ravnix-laptop-gate-tests` (`tests/`, 29 tests):
 
 - Every call is let through, and nothing else is: shells, sudo, pkexec,
   run0, a rebuild, subsystem names, other cases and near misses, UTF-8,
@@ -160,7 +161,9 @@ started (the message names the program and the errno); 64 bad usage.
   fixture; an answer sends none.
 - A refusal still holds with no journal, and with a `/dev/log` that is a
   plain file. With a journal whose queue is full, it returns at once.
-- A program that is not there is not started (ENOENT, exit 70).
+- A program that is not there is not started (ENOENT, exit 70), and a
+  gate built without machine-facts' absolute path refuses `facts` with
+  exit 70 rather than look for it in the working directory.
 - The gate's own arguments are parsed as described above.
 - Eight threads answer the same at once.
 - The sysfs readings, against a fixture laptop: two batteries, AC, USB and

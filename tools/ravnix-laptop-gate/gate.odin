@@ -217,6 +217,14 @@ decide :: proc(cfg: Config, allocator: runtime.Allocator) -> (r: Result) {
 	case .Power:
 		r.stdout = power(cfg.root, allocator)
 	case .Facts:
+		// Only by an absolute path: a bare name is looked up in the working
+		// directory, the user's home under sshd. A build without the
+		// define fails closed.
+		if !strings.has_prefix(cfg.facts, "/") {
+			r.status = EXEC_FAILED
+			r.stderr = "ravnix-laptop-gate: facts is not available: built without the store path of machine-facts\n"
+			return
+		}
 		env := make([dynamic]string, 0, 5, allocator)
 		append(&env, strings.concatenate({"PATH=", cfg.path}, allocator))
 		if cfg.home != "" {

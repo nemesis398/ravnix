@@ -7,8 +7,8 @@ import "core:mem/virtual"
 import "core:os"
 
 // The program behind `facts`. default.nix sets it to the store path of
-// machine-facts.
-MACHINE_FACTS :: #config(MACHINE_FACTS, "machine-facts")
+// machine-facts; without it, facts fails with exit 70 (decide).
+MACHINE_FACTS :: #config(MACHINE_FACTS, "")
 
 // The PATH machine-facts runs with: the system's programs, and not
 // /run/wrappers/bin, where the setuid sudo and pkexec are. run0 and

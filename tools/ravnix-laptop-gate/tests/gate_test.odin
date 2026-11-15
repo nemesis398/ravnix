@@ -416,3 +416,20 @@ a_journal_that_is_full_does_not_hold_up_a_refusal :: proc(t: ^testing.T) {
 	testing.expect_value(t, r.status, gate.REFUSED)
 	testing.expectf(t, time.tick_since(start) < 2 * time.Second, "the refusal took %v", time.tick_since(start))
 }
+
+@(test)
+facts_fails_closed_without_an_absolute_machine_facts :: proc(t: ^testing.T) {
+	f: Fixture
+	fixture(t, &f)
+	defer done(&f)
+	context.allocator = virtual.arena_allocator(&f.arena)
+	// A build without the define, and one with a bare name: execve would
+	// look for it in the working directory, which is $HOME under sshd.
+	for facts in ([]string{"", "machine-facts", "./machine-facts", "bin/machine-facts"}) {
+		cfg := laptop_config(&f, "facts")
+		cfg.facts = facts
+		r := gate.decide(cfg, context.allocator)
+		testing.expectf(t, r.status == gate.EXEC_FAILED && r.exec.path == "" && r.stdout == "" && r.log == "", "%q: %v", facts, r)
+		testing.expectf(t, r.stderr == "ravnix-laptop-gate: facts is not available: built without the store path of machine-facts\n", "%q: %q", facts, r.stderr)
+	}
+}
