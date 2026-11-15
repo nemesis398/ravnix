@@ -140,7 +140,7 @@ started (the message names the program and the errno); 64 bad usage.
 
 ## Tests
 
-`ravnix-laptop-gate-tests` (`tests/`, 27 tests):
+`ravnix-laptop-gate-tests` (`tests/`, 28 tests):
 
 - Every call is let through, and nothing else is: shells, sudo, pkexec,
   run0, a rebuild, subsystem names, other cases and near misses, UTF-8,
@@ -159,7 +159,7 @@ started (the message names the program and the errno); 64 bad usage.
 - A refusal sends exactly one datagram to a real `/dev/log` socket in the
   fixture; an answer sends none.
 - A refusal still holds with no journal, and with a `/dev/log` that is a
-  plain file.
+  plain file. With a journal whose queue is full, it returns at once.
 - A program that is not there is not started (ENOENT, exit 70).
 - The gate's own arguments are parsed as described above.
 - Eight threads answer the same at once.
@@ -201,6 +201,8 @@ the gate as sshd's forced command. It covers:
   loop. sshd's `MaxStartups` and journald's rate limit are the only
   brakes.
 - **Without `/dev/log` there is no log line.** When journald is not
-  running, the refusal stands but nothing records it.
+  running, or stalls with the socket's queue full, the refusal stands but
+  nothing records it: the gate sends without waiting, so that a refusal
+  never hangs the server's session.
 - **An allowed call is not logged by the gate.** sshd's `Accepted
   publickey` line for the session is the record.

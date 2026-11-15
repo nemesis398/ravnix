@@ -252,6 +252,7 @@ SYSLOG_AUTHPRIV_WARNING :: 10 * 8 + 4
 
 // send_log sends one message to journald's syslog socket, the way syslog(3)
 // does, under the gate's name: journalctl -t ravnix-laptop-gate shows it.
+// It never waits for room in the socket's queue.
 // Not stderr: sshd hands a forced command's stderr to the client, so the
 // server would read it and the laptop's journal would not. It never fails
 // the refusal: without the socket there is no line, and the gate refuses
@@ -271,7 +272,10 @@ send_log :: proc(root, text: string, allocator := context.allocator) {
 	}
 	copy(addr.sun_path[:], path)
 	message := fmt.aprintf("<%d>ravnix-laptop-gate: %s", SYSLOG_AUTHPRIV_WARNING, text, allocator = allocator)
-	_, _ = linux.sendto(fd, transmute([]u8)message, {}, &addr)
+	// Without waiting: a journald that stalls fills the socket's queue,
+	// and a refusal that waited for room would hang the server's session.
+	// The line is lost then (EAGAIN), and the refusal stands.
+	_, _ = linux.sendto(fd, transmute([]u8)message, {.DONTWAIT}, &addr)
 }
 
 // start runs e in the gate's place, by its path and with its environment

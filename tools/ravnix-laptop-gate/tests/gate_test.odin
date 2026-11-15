@@ -7,6 +7,7 @@ import "core:strings"
 import "core:sys/linux"
 import "core:testing"
 import "core:thread"
+import "core:time"
 import gate ".."
 
 Case :: struct {
@@ -379,4 +380,39 @@ answers_the_same_from_eight_threads_at_once :: proc(t: ^testing.T) {
 		testing.expectf(t, c.out[i] == want && want != "", "thread %d: %q", i, c.out[i])
 		virtual.arena_destroy(&c.arenas[i])
 	}
+}
+
+@(test)
+a_journal_that_is_full_does_not_hold_up_a_refusal :: proc(t: ^testing.T) {
+	// A refusal that waits on the log would hang the server's session, and
+	// ravnix-laptop has no overall timeout.
+	testing.set_fail_timeout(t, 10 * time.Second)
+	f: Fixture
+	fixture(t, &f)
+	defer done(&f)
+	context.allocator = virtual.arena_allocator(&f.arena)
+	fd := listen_log(t, &f)
+	defer linux.close(fd)
+	// journald stalls: nobody reads, and the socket's queue fills up.
+	sender, errno := linux.socket(.UNIX, .DGRAM, {}, .HOPOPT)
+	testing.expect_value(t, errno, linux.Errno.NONE)
+	defer linux.close(sender)
+	addr := linux.Sock_Addr_Un {
+		sun_family = .UNIX,
+	}
+	copy(addr.sun_path[:len(addr.sun_path) - 1], join(&f, "dev/log"))
+	filler := strings.repeat("f", 1024)
+	sent := 0
+	for sent < 100_000 {
+		_, errno = linux.sendto(sender, transmute([]u8)filler, {.DONTWAIT}, &addr)
+		if errno != .NONE {
+			break
+		}
+		sent += 1
+	}
+	testing.expectf(t, errno == .EAGAIN, "the queue did not fill: %v after %d", errno, sent)
+	start := time.tick_now()
+	r := gate.answer(laptop_config(&f, "sudo -n true"), context.allocator)
+	testing.expect_value(t, r.status, gate.REFUSED)
+	testing.expectf(t, time.tick_since(start) < 2 * time.Second, "the refusal took %v", time.tick_since(start))
 }
