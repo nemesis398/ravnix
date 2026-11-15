@@ -608,3 +608,21 @@ leave_without_a_sway_is_done :: proc(t: ^testing.T) {
 	testing.expect_value(t, code, 1)
 	testing.expectf(t, strings.contains(out, "no such file"), "%q", out)
 }
+
+@(test)
+reads_trees_with_awkward_strings :: proc(t: ^testing.T) {
+	// Window titles are the user's, and a page or a file can put anything in
+	// them: non-ASCII text, a lone surrogate escape, bytes that are no UTF-8.
+	titles := [?]string{"Größe 日本語 🎮", `\ud800`, `\udc00x`, `😀`, "\xff\xfe", "\xc0\xaf", "a\x00b", "\xed\xa0\x80"}
+	for title in titles {
+		tree := strings.concatenate(
+			{`{"focused":false,"nodes":[{"name":"`, title, `","focused":false,"nodes":[]},{"focused":true,"app_id":"com.mojang.minecraft"}]}`},
+			context.temp_allocator,
+		)
+		v, ok := sg.parse_json(transmute([]u8)tree, context.temp_allocator)
+		testing.expectf(t, ok, "%q was refused", title)
+		if ok {
+			testing.expectf(t, sg.focused_app(v, context.temp_allocator) == "com.mojang.minecraft", "%q", title)
+		}
+	}
+}

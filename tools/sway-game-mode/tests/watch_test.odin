@@ -4,6 +4,7 @@ package sway_game_mode_tests
 
 import "core:fmt"
 import "core:os"
+import "core:sync"
 import "core:testing"
 import "core:time"
 import sg ".."
@@ -529,4 +530,24 @@ without_a_sway_the_watcher_ends_with_status_1 :: proc(t: ^testing.T) {
 	r.cfg = sg.Config{socket = "/nonexistent/sway-ipc.sock", stop = -1, timeout = time.Second, log = os.stderr}
 	testing.expect_value(t, sg.watch(r.cfg), 1)
 	free(r)
+}
+
+@(test)
+awkward_window_titles_do_not_end_the_watcher :: proc(t: ^testing.T) {
+	for title in ([?]string{"Größe 日本語 🎮", `\ud800`, "\xff\xfe", "\xc0\xaf", "a\x00b"}) {
+		tree := fmt.aprintf(
+			`{{"focused":false,"nodes":[{{"name":"%s","focused":false,"nodes":[]}},{{"focused":true,"app_id":"com.mojang.minecraft"}}]}}`,
+			title,
+		)
+		f := fake_start(t, {tree = tree})
+		r := begin(t, f)
+		expect_commands(t, f, ENTER)
+		testing.expect(t, !sync_done(r), "the watcher ended")
+		finish(t, f, r, 0)
+		delete(tree)
+	}
+}
+
+sync_done :: proc(r: ^Run) -> bool {
+	return sync.atomic_load(&r.done)
 }
