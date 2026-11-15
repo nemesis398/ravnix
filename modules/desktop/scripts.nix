@@ -1,9 +1,10 @@
 # The scripts that need the desktop, as the laptop shape installs them: the
 # display rescue (fix-display, panel-crtc), the Bluetooth codec switch for
 # games, btop with both GPUs, the Magic Trackpad's battery and the laptop's
-# machine facts. They come from packages/NAME (README.md in each), which this
-# module reads as pkgs.ravnix.NAME. The scripts both hosts need are installed
-# by modules/common/scripts.nix.
+# machine facts. They come from packages/NAME, or tools/NAME for the one
+# written in Odin (magic-trackpad-battery); README.md in each. This module
+# reads them as pkgs.ravnix.NAME. The scripts both hosts need are installed by
+# modules/common/scripts.nix.
 #
 # magic-trackpad-battery opens the pad's hidraw node. The udev rule that lets
 # the user on the active seat read it (the uaccess tag) is not here: the

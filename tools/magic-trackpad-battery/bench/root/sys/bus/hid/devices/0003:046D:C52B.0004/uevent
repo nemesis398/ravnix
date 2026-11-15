@@ -1,0 +1,3 @@
+DRIVER=hid-generic
+HID_ID=0003:046D:C52B.0004
+HID_NAME=Example Mouse

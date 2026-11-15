@@ -1,0 +1,272 @@
+# The cases of magic-trackpad-battery: a fake sysfs and /dev, the answers the
+# hidraw nodes give, the arguments, and what the command prints. The Odin
+# tests (tests/cases_test.odin) run every case, and so did a harness against
+# the Python tool this one replaces: every case without a "new:" line passed
+# on the Python first, which is how the port was held to its behavior.
+#
+#   case: NAME           starts a case
+#   new:                 the Python never handled this; Odin only
+#   args: ARG...         the arguments (default: none)
+#   dev: ID | DRIVER | MODELS | UEVENT | NODES
+#                        a HID device in /sys/bus/hid/devices. DRIVER is the
+#                        name its driver link points to. MODELS is the
+#                        power_supply directories (ps0, ps1 ...) separated by
+#                        ";": the text of the model_name file, or "!" for a
+#                        directory with no model_name, "@" for one whose
+#                        model_name is a directory. UEVENT is the file's
+#                        text. NODES are the hidraw nodes, separated by ",".
+#                        "-" leaves a field out.
+#   node: NAME ANSWER    what /dev/NAME gives: three hex bytes, optionally
+#                        followed by ret=N (the ioctl's return value, 3 by
+#                        default); "denied" (cannot be opened); "fail" (opens,
+#                        and the ioctl fails)
+#   out: LINE            a line of standard output, in order
+#
+# \n, \t, \xNN and \\ are escapes in dev fields and out lines.
+
+case: a full battery reads 100 percent, as the kernel does not (it says 4)
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad\n | - | hidraw3
+node: hidraw3 90 04 64
+out: Magic Trackpad: 100% (discharging)
+
+case: --tsv is capacity, status and name, separated by tabs
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad\n | - | hidraw3
+node: hidraw3 90 04 64
+out: 100\tDischarging\tMagic Trackpad
+
+case: bit 1 of the flags byte is charging
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad\n | - | hidraw3
+node: hidraw3 90 02 37
+out: Magic Trackpad: 55% (charging)
+
+case: the other bits of the flags byte do not count
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 90 FD 50
+out: Magic Trackpad: 80% (discharging)
+
+case: all the other bits and the charging bit set is charging
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 90 FF 50
+out: 80\tCharging\tMagic Trackpad
+
+case: an empty battery is 0 percent
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 90 00 00
+out: 0\tDischarging\tMagic Trackpad
+
+case: a capacity of exactly 100 is kept and 101 is no answer
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Hundred | - | hidraw3
+dev: 0005:004C:0324.0002 | magicmouse | Over | - | hidraw4
+node: hidraw3 90 00 64
+node: hidraw4 90 00 65
+out: 100\tDischarging\tHundred
+
+case: a capacity of 255 is no answer
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 90 00 FF
+
+case: a report that is not 0x90 is no answer
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 91 00 32
+
+case: a node that cannot be opened is no answer
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 denied
+
+case: a node that does not exist is no answer
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+
+case: a node whose ioctl fails is no answer
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 fail
+
+case: a device with no hidraw directory is no answer
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | -
+
+case: with several nodes the first one that answers is used
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Two Nodes | - | hidraw7,hidraw8
+node: hidraw7 denied
+node: hidraw8 90 00 2A
+out: 42\tDischarging\tTwo Nodes
+
+case: a node that answers with another report id does not stop the next one
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Two Nodes | - | hidraw7,hidraw8
+node: hidraw7 91 00 05
+node: hidraw8 90 02 2A
+out: 42\tCharging\tTwo Nodes
+
+case: the first node that answers wins when both do
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Two Nodes | - | hidraw7,hidraw8
+node: hidraw7 90 00 0A
+node: hidraw8 90 00 14
+out: 10\tDischarging\tTwo Nodes
+
+case: nodes are tried in name order, not in number order
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Ten | - | hidraw9,hidraw10
+node: hidraw9 90 00 09
+node: hidraw10 90 00 0A
+out: 10\tDischarging\tTen
+
+case: devices are picked by driver, whatever their name
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+dev: 0003:046D:C52B.0003 | hid-generic | Magic Trackpad | - | hidraw5
+dev: 0003:0000:0000.0004 | - | Magic Mouse | - | hidraw6
+node: hidraw3 90 00 32
+node: hidraw5 90 00 33
+node: hidraw6 90 00 34
+out: 50\tDischarging\tMagic Trackpad
+
+case: devices are listed in the order of their names
+args: --tsv
+dev: 0005:004C:0324.0010 | magicmouse | Second | - | hidraw3
+dev: 0003:05AC:0324.0002 | magicmouse | Third | - | hidraw4
+dev: 0003:05AC:0324.0001 | magicmouse | First | - | hidraw5
+node: hidraw3 90 00 01
+node: hidraw4 90 00 02
+node: hidraw5 90 00 03
+out: 3\tDischarging\tFirst
+out: 2\tDischarging\tThird
+out: 1\tDischarging\tSecond
+
+case: a device that cannot be read is left out and the others are printed
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Gone | - | hidraw3
+dev: 0005:004C:0324.0002 | magicmouse | Here | - | hidraw4
+node: hidraw3 denied
+node: hidraw4 90 00 5A
+out: 90\tDischarging\tHere
+
+case: the label is the power_supply model, stripped
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | \n  Magic Trackpad  \n | HID_NAME=Other\n | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic Trackpad
+
+case: without a power_supply the label is the HID_NAME of the uevent
+args: --tsv
+dev: 0003:05AC:0324.0002 | magicmouse | - | DRIVER=magicmouse\nHID_NAME=Magic Keyboard\nHID_ID=0003\n | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic Keyboard
+
+case: the last HID_NAME of the uevent wins
+args: --tsv
+dev: 0003:05AC:0324.0002 | magicmouse | - | HID_NAME=First\nHID_NAME=Second\n | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tSecond
+
+case: a HID_NAME with an equals sign keeps everything after the first
+args: --tsv
+dev: 0003:05AC:0324.0002 | magicmouse | - | HID_NAME=A=B\n | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tA=B
+
+case: with neither a model nor a uevent the label is Magic device
+args: --tsv
+dev: 0003:05AC:0324.0002 | magicmouse | - | - | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic device
+
+case: an empty model leaves the default label and the uevent is not read then
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | \n | HID_NAME=never read\n | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic device
+
+case: a uevent without a HID_NAME leaves the default label
+args: --tsv
+dev: 0003:05AC:0324.0002 | magicmouse | - | DRIVER=magicmouse\nMODALIAS=hid\n | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic device
+
+case: a power_supply directory without model_name is skipped for the next
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | !;Second Supply;Third Supply | - | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tSecond Supply
+
+case: only power_supply directories without model_name leave the default label
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | ! | HID_NAME=never read\n | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic device
+
+case: the first power_supply with a model_name wins even when the model is empty
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | \n;Second Supply | - | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic device
+
+case: no device prints nothing
+args: --tsv
+
+case: no device prints nothing in the text format
+
+case: an argument it does not know is ignored
+args: --bogus --tsv extra
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic Trackpad
+
+case: the text format has the state in lower case
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+dev: 0005:004C:0324.0002 | magicmouse | Magic Mouse | - | hidraw4
+node: hidraw3 90 02 0A
+node: hidraw4 90 00 0B
+out: Magic Trackpad: 10% (charging)
+out: Magic Mouse: 11% (discharging)
+
+# What the Python never handled.
+
+case: an empty HID_NAME leaves the default label
+new:
+args: --tsv
+dev: 0003:05AC:0324.0002 | magicmouse | - | HID_NAME=\n | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic device
+
+case: a name's control characters become spaces, so a tab cannot split a field
+new:
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Magic\tTrackpad\r\x1b[31m | - | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic Trackpad  [31m
+
+case: a name that is not UTF-8 shows the replacement character
+new:
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Magic \xff\xfeTrackpad | - | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tMagic \xef\xbf\xbd\xef\xbf\xbdTrackpad
+
+case: a model_name that is a directory is skipped for the next
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | @;Second Supply | - | hidraw3
+node: hidraw3 90 00 32
+out: 50\tDischarging\tSecond Supply
+
+case: a short ioctl is no answer, whatever the buffer holds
+new:
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 90 00 32 ret=2
+
+case: an ioctl that returns nothing is no answer
+new:
+dev: 0005:004C:0324.0001 | magicmouse | Magic Trackpad | - | hidraw3
+node: hidraw3 90 00 32 ret=0
+
+case: a short ioctl on one node leaves the next to answer
+new:
+args: --tsv
+dev: 0005:004C:0324.0001 | magicmouse | Two Nodes | - | hidraw7,hidraw8
+node: hidraw7 90 00 05 ret=1
+node: hidraw8 90 00 2A
+out: 42\tDischarging\tTwo Nodes
