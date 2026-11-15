@@ -31,9 +31,9 @@ in
         popup on the laptop's own screen that names the command, the user and
         where the sudo came from, and waits for the key only after Allow
         (tools/ravnix-tap-ask); polkit refuses a request from outside a local
-        session. This is consent against a mistaken touch, not a defense
-        against the server's laptop-access link, which runs any command as
-        the user (modules/desktop/u2f.nix).
+        session. This is consent against a mistaken touch. The server's
+        laptop-access link cannot reach sudo at all: its key runs only the
+        read-only calls of tools/ravnix-laptop-gate (modules/desktop/u2f.nix).
         No PIN is asked: a password typed into a PIN prompt by habit would
         count as a wrong FIDO2 PIN, and eight of those block FIDO2 on the key
         for good.

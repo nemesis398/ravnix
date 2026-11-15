@@ -22,12 +22,12 @@
 # looks for root's mapping in /root and, without one, asks for root's password
 # as before; sudo authenticates the user who runs it.
 #
-# SUDO ASKS ON THE SCREEN FIRST. sudo runs without a terminal too: a program
-# of the user's, or a command the server sends over the laptop-access link
-# (modules/glue/laptop-access.nix), which runs any command as the user. There
-# the cue goes to the caller's standard error, nobody at the laptop sees it,
-# and the key's blink looks like the blink of a git push: one touch out of
-# habit and the command is root. So sudo's auth stack has one line before
+# SUDO ASKS ON THE SCREEN FIRST. sudo runs without a terminal too, from a
+# program of the user's. (The server's laptop-access link runs no such
+# program: its key runs only the gate's read-only calls, modules/glue/
+# laptop-access.nix.) There the cue goes to the caller's standard error,
+# nobody at the laptop sees it, and the key's blink looks like the blink of
+# a git push: one touch out of habit and the command is root. So sudo's auth stack has one line before
 # pam_u2f, pam_exec of ravnix-tap-ask (tools/ravnix-tap-ask), as root:
 #
 #   auth [success=ignore default=1] pam_exec.so quiet quiet_log seteuid ravnix-tap-ask
@@ -60,14 +60,14 @@
 # user's systemd) as the user's display session, so such a request is local.
 #
 # WHAT THIS DOES NOT DO. The popup and the refusals are consent against a
-# mistaken touch, not a defense against a hostile link. The link runs any
-# command as the user, and a program that runs as the user can leave the ssh
-# session (systemd-run --user, swaymsg exec) so that its sudo or pkexec is a
-# local one, answer the popup itself (Sway lets any client type, as wtype
-# does), and blink the key for a sudo of its own. What it cannot do is touch
-# the key. The real fix is an allowlist forced command on the link's key, so
-# that the link runs only what it is for: a separate task
-# (modules/glue/laptop-access.nix, tools/ravnix-tap-ask/README.md).
+# mistaken touch, not a defense against a hostile program of the user's. A
+# program that runs as the user can leave the ssh session (systemd-run
+# --user, swaymsg exec) so that its sudo or pkexec is a local one, answer the
+# popup itself (Sway lets any client type, as wtype does), and blink the key
+# for a sudo of its own. What it cannot do is touch
+# the key. Against a hostile link the fix is the allowlist forced command on
+# the link's key, tools/ravnix-laptop-gate, so that the link runs only what
+# it is for (modules/glue/laptop-access.nix, tools/ravnix-tap-ask/README.md).
 #
 # THE LINE. `sufficient`: a tap is enough, and a failure (no key, a key that is
 # not enrolled, no ~/.config/Yubico/u2f_keys, no touch in time) is ignored and
