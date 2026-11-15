@@ -92,13 +92,22 @@ stream, one for requests, so an event can never be taken for a reply.
   16 MiB, ends the watcher with status 1, before anything is read for it.
 - A tree nested deeper than 512 brackets is refused before the JSON parser
   (which recurses) sees it.
-- Each request waits 10 s at most; a Sway that does not answer ends the
-  watcher with status 1. The event stream has no timeout between frames, but
-  a frame that has begun must finish within 10 s.
+- Each request waits 10 s at most, the connect included (it is non-blocking
+  and polls the stop descriptor, so a Sway whose listen backlog is full
+  holds neither the watcher nor `--leave`); a Sway that does not answer ends
+  the watcher with status 1. The event stream has no timeout between
+  frames, but a frame that has begun, also one that came in with the
+  previous frame, must finish within 10 s.
 - SIGTERM and SIGINT write to an eventfd that every wait polls next to the
   sockets, so a signal ends a wait at once, in the main flow and not in the
-  handler. The watcher then leaves `game` on a new connection that no signal
-  interrupts, so the leave itself finishes.
+  handler. Writes poll it too. The watcher then leaves `game` on a new
+  connection that no signal interrupts, so the leave itself finishes. A stop
+  in the middle of entering or leaving runs the whole leave whatever the
+  mode is, so the cursor hiding is never left off with the mode already
+  `default` (the Python watcher had that hole).
+- Window titles are not trusted: the tests read trees with non-ASCII text, a
+  lone surrogate escape, raw invalid UTF-8 and a NUL, which
+  `core:encoding/json` takes.
 - An event whose payload is not a JSON object, has no `change` or is of
   another type is skipped, like Python skipped an unreadable line.
 

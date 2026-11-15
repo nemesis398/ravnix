@@ -59,6 +59,7 @@ pkgs.runCommand "desktop-sway-game-mode"
     done
     [ -S "$SWAYSOCK" ] || { cat sway.log >&2; echo "Sway did not start" >&2; exit 1; }
     ok=0
+    set -o pipefail
     bash ${./helpers/sway-game-mode-e2e.sh} 2>&1 | tee $out || ok=1
     kill $sway 2>/dev/null || true
     grep -q '^FAIL' $out && ok=1
