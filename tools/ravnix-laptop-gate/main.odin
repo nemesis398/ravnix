@@ -24,7 +24,7 @@ server asked for from SSH_ORIGINAL_COMMAND and answers only these calls,
 each by its name alone, with no argument:
 
   ping          huginn is up
-  facts         machine-facts, without sudo
+  facts         machine-facts, without sudo and without waking the dGPU
   battery       charge, power, energy and cycles of each battery
   charge-mode   the active charge mode, read and never set
   power         the dGPU's runtime power state, the battery's draw, and the

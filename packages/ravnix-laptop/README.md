@@ -20,7 +20,7 @@ Each call is its name alone, with no argument:
 | Call | Answer |
 | --- | --- |
 | `ping` | `huginn is up` |
-| `facts` | the `machine-facts` block, made without sudo |
+| `facts` | the `machine-facts` block, made without sudo and without the one row that may wake the dGPU (the Sway config check) |
 | `battery` | status, charge, power, energy (now, full, design) and cycles of each of the laptop's batteries |
 | `charge-mode` | the active charge mode, read and never set |
 | `power` | the dGPU's runtime power state and the battery's draw (`power_now`); the CPU package's power counter is root's alone on NixOS, so it says `needs root` |

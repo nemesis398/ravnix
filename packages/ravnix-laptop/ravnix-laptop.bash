@@ -47,7 +47,7 @@ hands every call to its gate, which answers only these, each by its name
 alone, with no argument: ping, facts, battery, charge-mode, power.
 
   ping          huginn is up
-  facts         machine-facts, without sudo
+  facts         machine-facts, without sudo and without waking the dGPU
   battery       charge, power, energy and cycles of each battery
   charge-mode   the active charge mode, read and never set
   power         the dGPU's runtime power state, the battery's draw, and the
