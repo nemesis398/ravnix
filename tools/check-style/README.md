@@ -33,8 +33,10 @@ None.
 
 ## How it works
 
-Each file is read in blocks and judged line by line; the memory it needs is
-that of its longest line. Files are found by `getdents`, never by a shell
+Each file is read in blocks and judged line by line, and what a line allocates
+is freed after the line, so the memory is that of the longest line and of the
+hits, not of the size of the files: a file of 8.5 MB and one of 34 MB, both of
+85-byte lines, take 2.3 MB at most (`tests/edge_test.odin` pins it). Files are found by `getdents`, never by a shell
 out, and no other program runs: the Bash version needed `rg`, `awk`, `find`,
 `sed` and `sort`. Hits are sorted by file name (bytes), line and rule, as
 `sort` in the C locale did, and a repeat of a hit is printed once.
@@ -56,13 +58,18 @@ checks that judge generated files (`desktop-sway`, `desktop-helium-devtools-
 stylesheet`, `theme-apps`) use the port. The two cannot drift unseen while both
 exist: `scripts-tests` runs `scripts/tests/check-style.test.sh` on the script,
 and `bin-check-style` runs the same file on the program (`CHECK_STYLE`). When
-the fast gate can run the program (the options are in the port's report:
-a gcroot built once per run, or a binary on the PATH), `check.sh` switches
-and the script goes.
+the fast gate can run the program (it needs a way to have the built binary
+without a Nix build per commit: a binary kept in a cache that is keyed on the
+program's sources, `lib/odin.nix`, `flake.nix`, `flake.lock` and the shared
+theme, or one found on the PATH), `check.sh` switches and the script goes.
 
 ## What differs from the Bash version
 
-Fixed, and each with a test:
+Where the 160-character window cut a keyword's context, the port reads the
+whole line: it finds more (below), and in a few cases less, where the window
+made a hit that the line does not hold (a value that began at the window's
+edge read cut: `opacity` and 157 spaces and `0.9x` was `0.9`). That is not a
+regression: the whole line is what the rule means. Each, with a test:
 
 - **A line is searched whole.** ripgrep found each keyword with 160
   characters around it, and the rules judged those windows. Past 160
@@ -90,8 +97,30 @@ Not changed, on purpose: the odd rules are the rules (a hex color in a comment
 counts, `#123456` in a document is an issue number, a link target is no color,
 and so on); `edge_test.odin` and the shell cases pin them.
 
+## White space and the start of a file
+
+ripgrep's `\s` is Unicode white space, and ripgrep drops a byte order mark and
+reads UTF-16, and the script read every file through it. The program finds
+what the script finds: at the three places that used `\s` (the character
+before a motion key, the white space between it and its `=` or `:`, and the
+white space between a color property and its colon) it takes the Unicode
+White_Space characters (U+0085, U+00A0, U+1680, U+2000 to U+200A, U+2028,
+U+2029, U+202F, U+205F, U+3000, and the ASCII ones), read from UTF-8; a
+broken sequence is no white space. A UTF-8 byte order mark at the start of a
+file is dropped; a file that starts with a UTF-16 mark (either order) is read
+as UTF-16, whole, and a unit that belongs to no pair counts as U+FFFD.
+
 ## Findings that are not fixed
 
+- `@keyframes` glued to a non-ASCII letter (`@keyframesé`) is a hit; the
+  script's `\b` is Unicode and saw a longer word. The program finds more here,
+  never less.
+- Invalid UTF-8: ripgrep's patterns stop at a byte that is no UTF-8. The
+  radius, opacity and transparent rules judge each run of valid UTF-8 on its
+  own, and a line that holds such a byte is no `/*` or `*` comment line, as in
+  the script. The other rules (hex, bare color, motion) read across the byte,
+  where the script stopped: they can find more there (a short color after a
+  color property and a broken byte), never less.
 - Case folding is ASCII. ripgrep's `(?i)` folded Unicode, so `K` (the Kelvin
   sign) matched `k` in a key; no key of a real style source has one.
 - A character is a byte, except where the rules count characters (the 60 of
@@ -108,12 +137,11 @@ and so on); `edge_test.odin` and the shell cases pin them.
 
 ## Tests and bench
 
-`tests/` holds 145 `core:testing` tests: the 93 cases of the shell test that
+`tests/` holds 158 `core:testing` tests: the 93 cases of the shell test that
 fit a process (the 94th, a missing `rg`, is a shell case), a test per corner a
-mutation of the program survived until it was named (the list of mutations
-that was run is in the port's report), and the edge cases: malformed bytes, a
+mutation of the program survived until it was named (found by mutating the program and running the tests), and the edge cases: malformed bytes, a
 CR in the middle of a line, a symbolic link to a directory, a fifo, an
 unreadable file or directory, a missing or odd theme, 200 000 lines, lines of
-8 MB. `bin-check-style` runs the 94 shell cases on the built program. The
+8 MB. `bin-check-style` runs the 98 shell cases on the built program. The
 bench judges `bench/tree`, a small tree of one file of each kind, with no hit
 (a hit would be an exit status 1 and fail the bench).
