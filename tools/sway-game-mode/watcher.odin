@@ -239,6 +239,9 @@ Watcher :: struct {
 	cmd:   Conn,
 	arena: virtual.Arena,
 	a:     runtime.Allocator,
+	// Set while a run of commands that enters or leaves "game" is under
+	// way, so a stop in the middle of it can finish the job.
+	acting: bool,
 }
 
 watcher_open :: proc(w: ^Watcher, cfg: Config) -> bool {
@@ -275,6 +278,17 @@ run_commands :: proc(w: ^Watcher, commands: []string) -> (Status, string) {
 	return .Ok, ""
 }
 
+// act runs the commands that enter or leave "game". A stop that cuts them
+// short leaves w.acting set.
+act :: proc(w: ^Watcher, commands: []string) -> (Status, string) {
+	w.acting = true
+	st, why := run_commands(w, commands)
+	if st == .Ok {
+		w.acting = false
+	}
+	return st, why
+}
+
 // sync looks at the focus and the mode, and enters or leaves "game".
 sync :: proc(w: ^Watcher) -> (Status, string) {
 	defer virtual.arena_free_all(&w.arena)
@@ -299,10 +313,10 @@ sync :: proc(w: ^Watcher) -> (Status, string) {
 	switch decide(app, mode) {
 	case .Enter:
 		say(w.cfg, "%s has focus, entering mode game", app)
-		return run_commands(w, ENTER_COMMANDS[:])
+		return act(w, ENTER_COMMANDS[:])
 	case .Leave:
 		say(w.cfg, "focus is on %q, leaving mode game", app)
-		return run_commands(w, LEAVE_COMMANDS[:])
+		return act(w, LEAVE_COMMANDS[:])
 	case .Nothing:
 	}
 	return .Ok, ""
@@ -313,7 +327,8 @@ sync :: proc(w: ^Watcher) -> (Status, string) {
 // `--leave` is for the unit's ExecStopPost: after a crash the handler never
 // ran, and Sway must not stay in a mode that leaves the mouse buttons
 // unbound without the watcher. Without a Sway there is nothing to leave.
-leave_if_game :: proc(cfg: Config) -> int {
+// force runs the leave even from "default" (see below).
+leave_if_game :: proc(cfg: Config, force := false) -> int {
 	cfg := cfg
 	cfg.stop = -1
 	fd, _, why := dial(cfg.socket, -1, cfg.timeout)
@@ -340,7 +355,9 @@ leave_if_game :: proc(cfg: Config) -> int {
 		say(cfg, "sway sent a binding state without a mode name")
 		return 1
 	}
-	if mode != "game" {
+	// A stop in the middle of entering or leaving can find the mode already
+	// "default" with the cursor hiding still off: force runs the whole leave.
+	if mode != "game" && !force {
 		return 0
 	}
 	say(cfg, "leaving mode game")
@@ -441,7 +458,7 @@ watch :: proc(cfg: Config) -> int {
 	}
 	switch status {
 	case .Stopped:
-		return leave_if_game(cfg)
+		return leave_if_game(cfg, w.acting)
 	case .Failed:
 		say(cfg, "%s", text)
 		return 1

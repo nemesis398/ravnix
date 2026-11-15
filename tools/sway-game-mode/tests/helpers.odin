@@ -58,6 +58,10 @@ Behavior :: struct {
 	// The request type that gets no answer, and the one at which Sway
 	// hangs up (after close_skip such requests were answered).
 	hang_on:       Maybe(u32),
+	// Requests of that type answered before the hang, and whether only one
+	// request hangs (the next ones are answered).
+	hang_skip:     int,
+	hang_once:     bool,
 	close_on:      Maybe(u32),
 	close_skip:    int,
 	// The request type that is answered with these bytes instead of a frame.
@@ -298,8 +302,17 @@ fake_connection :: proc(f: ^Fake, fd: linux.Fd) {
 				return
 			}
 		}
-		hang, hung := b.hang_on.?
-		hung = hung && hang == type
+		hung := false
+		if hang, ok := b.hang_on.?; ok && hang == type {
+			if b.hang_skip > 0 {
+				b.hang_skip -= 1
+			} else {
+				hung = true
+				if b.hang_once {
+					b.hang_on = nil
+				}
+			}
+		}
 		garbage_on, has_garbage := b.garbage_on.?
 		wrong_on, has_wrong := b.wrong_type_on.?
 		reply: string

@@ -313,6 +313,33 @@ sigterm_ends_a_wait_for_a_hung_sway :: proc(t: ^testing.T) {
 }
 
 @(test)
+sigterm_in_the_middle_of_leaving_finishes_leaving :: proc(t: ^testing.T) {
+	// "mode default" is done and the cursor command hangs; the signal comes.
+	// The mode is "default" by then, but the cursor hiding is still off.
+	f := fake_start(t, {mode = "game", focused = "foot", hang_on = sg.MSG_RUN_COMMAND, hang_skip = 1, hang_once = true})
+	r := run_start(t, f, 60 * time.Second)
+	testing.expect(t, eventually(f, has_commands, 2))
+	run_signal(r)
+	testing.expect(t, run_done(r), "the watcher did not stop")
+	got := fake_commands(f)
+	testing.expectf(t, len(got) == 5 && same_strings(got[2:], LEAVE), "got %v", got)
+	finish(t, f, r, 0)
+}
+
+@(test)
+sigterm_in_the_middle_of_entering_leaves_game :: proc(t: ^testing.T) {
+	f := fake_start(t, {focused = GAME, hang_on = sg.MSG_RUN_COMMAND, hang_skip = 1, hang_once = true})
+	r := run_start(t, f, 60 * time.Second)
+	testing.expect(t, eventually(f, has_commands, 2))
+	run_signal(r)
+	testing.expect(t, run_done(r), "the watcher did not stop")
+	got := fake_commands(f)
+	testing.expectf(t, len(got) == 5 && same_strings(got[2:], LEAVE), "got %v", got)
+	testing.expect_value(t, fake_mode(f), "default")
+	finish(t, f, r, 0)
+}
+
+@(test)
 sigterm_before_the_first_reply_ends_it :: proc(t: ^testing.T) {
 	f := fake_start(t, {hang_on = sg.MSG_SUBSCRIBE})
 	r := run_start(t, f, 60 * time.Second)
