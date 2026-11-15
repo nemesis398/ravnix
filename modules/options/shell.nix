@@ -42,11 +42,12 @@ let
     "HISTFILE"
     "XDG_RUNTIME_DIR"
     "CLAUDECODE"
-    # What ravnix's own tools (packages/NAME) read from their environment for
-    # themselves and are not part of a family below. A secret under one of
-    # these would change where a tool looks for its notes, its vault or its
-    # state. tests/options/secret-env-reserved.nix reads the sources of
-    # packages/ and fails when a tool reads one that is missing here.
+    # What ravnix's own tools (packages/NAME and tools/NAME) read from their
+    # environment for themselves and are not part of a family below. A secret
+    # under one of these would change where a tool looks for its notes, its
+    # vault, its state or its compositor. tests/options/secret-env-reserved.nix
+    # reads the sources of packages/ and tools/ and fails when a tool reads one
+    # that is missing here.
     "VAULT_DIR"
     "MACHINE_NOTE"
     "AI_MEMORY_LINT"
@@ -56,6 +57,17 @@ let
     "XDG_STATE_HOME"
     "TMPDIR"
     "DBUS_SESSION_BUS_ADDRESS"
+    "XDG_DATA_HOME"
+    "HERDR_PANE_ID"
+    "SWAYSOCK"
+    "I3SOCK"
+    # The rbw item of LanguageTool's login. The login itself
+    # (LANGUAGETOOL_USERNAME, LANGUAGETOOL_API_KEY) is a secret and may be one.
+    "LANGUAGETOOL_RBW_ITEM"
+    # energy's seams, by name: ENERGY_ is too common a word for a family.
+    "ENERGY_ONLINE_FILE"
+    "ENERGY_CHARGE_MODE"
+    "ENERGY_TOOLS_PATH"
   ];
   # A name that starts with BASH or LD_ is one of the families bash and the
   # loader own. The others are the families of ravnix's tools: with-secret-env
@@ -78,6 +90,8 @@ let
     # What machine-facts leaves out when the laptop's link gate runs it
     # (MACHINE_FACTS_NO_SUDO, MACHINE_FACTS_NO_DGPU_WAKE).
     "MACHINE_FACTS_"
+    # charge-mode's seams: the sysfs file, the state, the helper, notify-send.
+    "CHARGE_MODE_"
   ];
   reserved = name: lib.elem name reservedNames || lib.any (p: lib.hasPrefix p name) reservedPrefixes;
 in

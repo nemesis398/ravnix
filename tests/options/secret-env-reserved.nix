@@ -10,7 +10,10 @@
 # The scan reads the shell and Python files of packages/NAME (not their
 # tests) for the two idioms the tools use: ${NAME:-...}, ${NAME-...},
 # ${NAME:=...} and ${NAME:+...} in shell, and os.environ.get("NAME"...),
-# os.environ["NAME"] and os.getenv("NAME") in Python.
+# os.environ["NAME"] and os.getenv("NAME") in Python. It reads the Odin
+# files of tools/NAME (not tests/ and bench/) too, where a name is the
+# literal of os.get_env or os.lookup_env, of a getter like get("NAME") or
+# env_or("NAME", ...), or a constant (SEAM_ATTR :: "CHARGE_MODE_ATTR").
 {
   self,
   inputs,
@@ -45,9 +48,30 @@ let
       lib.attrNames (lib.filterAttrs (_: t: t == "regular") (builtins.readDir (packagesDir + "/${pkg}")))
     );
   textsOf = lib.concatMap (pkg: map (f: builtins.readFile (packagesDir + "/${pkg}/${f}")) (sourcesOf pkg)) packageNames;
+
+  # The environment variables the Odin sources of tools/ read.
+  toolsDir = ../../tools;
+  odinFiles =
+    dir:
+    lib.concatLists (
+      lib.mapAttrsToList (
+        n: t:
+        if t == "directory" && n != "tests" && n != "bench" then
+          odinFiles (dir + "/${n}")
+        else if t == "regular" && lib.hasSuffix ".odin" n then
+          [ (dir + "/${n}") ]
+        else
+          [ ]
+      ) (builtins.readDir dir)
+    );
+  odinTexts = map builtins.readFile (odinFiles toolsDir);
   captures =
     regex: text:
     map lib.head (lib.filter builtins.isList (builtins.split regex text));
+  # The same, for a regex whose name is its last group.
+  capturesLast =
+    regex: text:
+    map lib.last (lib.filter builtins.isList (builtins.split regex text));
   readNames = lib.unique (
     lib.concatMap (
       text:
@@ -57,9 +81,35 @@ let
       ++ captures "getenv[(][\"]([A-Z][A-Z0-9_]*)[\"]" text
     ) textsOf
   );
+  odinNames = lib.unique (
+    lib.concatMap (
+      text:
+      capturesLast "(get_env|lookup_env)[(][^()]*[\"]([A-Z][A-Z0-9_]*)[\"]" text
+      ++ capturesLast "(get|env_or)[(][\"]([A-Z][A-Z0-9_]*)[\"]" text
+      ++ captures ":: [\"]([A-Z][A-Z0-9_]*)[\"]" text
+    ) odinTexts
+  );
   # Read after sourcing /etc/os-release, not from the environment.
   notEnvironment = [ "PRETTY_NAME" ];
-  toolNames = lib.subtractLists notEnvironment readNames;
+  # Set by PAM, sshd or systemd for the tool they start (the tap prompt, the
+  # link's gate, the keyring unlock, the notify helper of a unit): nothing
+  # started from the shell that exports the secrets reads them.
+  notShell = [
+    "PAM_TTY"
+    "PAM_TYPE"
+    "PAM_USER"
+    "SSH_ORIGINAL_COMMAND"
+    "SSH_CONNECTION"
+    "CREDENTIALS_DIRECTORY"
+    "JOURNAL_STREAM"
+  ];
+  # Meant to be secrets: ravnix-dict takes LanguageTool's login from them when
+  # the dictionary has no rbw item (modules/options/dictionary.nix).
+  secretsOfTools = [
+    "LANGUAGETOOL_API_KEY"
+    "LANGUAGETOOL_USERNAME"
+  ];
+  toolNames = lib.subtractLists (notEnvironment ++ notShell ++ secretsOfTools) (readNames ++ odinNames);
 
   # The two the review named, and one of each family.
   handOff = [
@@ -77,6 +127,8 @@ let
     "CHROME_DEVTOOLS_HELIUM"
     "CHROME_DEVTOOLS_HELIUM_FALLBACK_TMP"
     "MACHINE_FACTS_NO_SUDO"
+    "CHARGE_MODE_HELPER"
+    "ENERGY_TOOLS_PATH"
     "VAULT_DIR"
     "MACHINE_NOTE"
   ];
@@ -91,6 +143,8 @@ let
     "WITH_SECRET_TOKEN"
     "CHROME_DEVTOOLS_API_TOKEN"
     "MACHINE_FACTSTOKEN"
+    "ENERGY_PROVIDER_TOKEN"
+    "CHARGE_MODETOKEN"
   ];
 
   failures =
@@ -103,6 +157,19 @@ let
         "CCNA_DECK_NAME"
       ])
     ) "the scan of packages/ misses variables the tools read (found: ${toString readNames})"
+    ++ lib.optional (
+      !(lib.all (n: lib.elem n odinNames) [
+        "CHARGE_MODE_ATTR"
+        "ENERGY_TOOLS_PATH"
+        "RAVNIX_DICT_FILE"
+        "HERDR_PANE_ID"
+        "JOURNAL_STREAM"
+        "SWAYSOCK"
+      ])
+    ) "the scan of tools/ misses variables the tools read (found: ${toString odinNames})"
+    ++ map (n: "a good secret name ${n}, which a tool reads as a secret, is refused") (
+      lib.filter (n: refusedByAssertion n) secretsOfTools
+    )
     ++ map (n: "a secret named ${n}, which a tool reads for itself, is not refused") (
       lib.filter (n: !refusedByAssertion n) (lib.unique (handOff ++ toolNames))
     )
