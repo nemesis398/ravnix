@@ -492,6 +492,21 @@ let
         touch $out
       '';
 
+  # The gate on the laptop runs the real machine-facts: the VM puts a
+  # stand-in behind the same define, so this reads the production gate's
+  # binary for the store path of the laptop's machine-facts.
+  embedsFacts =
+    gatePackage: facts:
+    pkgs.runCommand "glue-laptop-access-embeds-machine-facts" { } ''
+      if ! grep -qaF ${lib.escapeShellArg facts} ${gatePackage}/bin/ravnix-laptop-gate; then
+        echo "the gate ${gatePackage} does not run ${facts}" >&2
+        exit 1
+      fi
+      test -x ${lib.escapeShellArg facts}
+      touch $out
+    '';
+  embeds = embedsFacts (host laptop).pkgs.ravnix.ravnix-laptop-gate "${(host laptop).pkgs.ravnix.machine-facts}/bin/machine-facts";
+
   # --- 3. the VMs ------------------------------------------------------------
 
   lanHuginn = "192.0.2.10";
@@ -1157,7 +1172,15 @@ pkgs.runCommand "glue-laptop-access"
   {
     # The parts, for building one at a time:
     #   nix build .#checks.x86_64-linux.glue-laptop-access.wrappers
-    passthru = { inherit wrappers vm failures; };
+    #   (.vm, .embeds; .failures is a list to evaluate)
+    passthru = {
+      inherit
+        wrappers
+        vm
+        failures
+        embeds
+        ;
+    };
   }
   (
     if failures != [ ] then
@@ -1168,7 +1191,7 @@ pkgs.runCommand "glue-laptop-access"
     else
       ''
         # The parts are the inputs: this builds only when each one has passed.
-        echo ${wrappers} ${vm}
+        echo ${wrappers} ${vm} ${embeds}
         touch $out
       ''
   )
