@@ -368,6 +368,30 @@ a_frame_that_stalls_in_the_stream_times_out :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_frame_begun_with_the_previous_one_stalls_too :: proc(t: ^testing.T) {
+	a, b := socket_pair(t)
+	defer linux.close(b)
+	c := sg.Conn {
+		fd    = a,
+		stop  = -1,
+		stall = 50 * time.Millisecond,
+	}
+	defer sg.conn_close(&c)
+	// One whole frame and the first five bytes of the next, in one write.
+	both := make([dynamic]u8, context.temp_allocator)
+	append(&both, ..frame(sg.EVENT_WINDOW, `{"change":"focus"}`))
+	append(&both, ..frame(sg.EVENT_WINDOW, `{"change":"close"}`)[:5])
+	send_bytes(b, both[:])
+	_, p, err := sg.read_frame(&c)
+	testing.expect_value(t, err, sg.Net_Error.None)
+	testing.expect_value(t, string(p), `{"change":"focus"}`)
+	start := time.tick_now()
+	_, _, err = sg.read_frame(&c)
+	testing.expect_value(t, err, sg.Net_Error.Timeout)
+	testing.expect(t, time.tick_diff(start, time.tick_now()) < 3 * time.Second)
+}
+
+@(test)
 a_stop_ends_a_wait_at_once :: proc(t: ^testing.T) {
 	a, b := socket_pair(t)
 	defer linux.close(b)

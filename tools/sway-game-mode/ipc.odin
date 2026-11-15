@@ -196,11 +196,14 @@ read_frame :: proc(c: ^Conn) -> (type: u32, payload: []u8, err: Net_Error) {
 		c.used = 0
 	}
 	deadline, limited := deadline_of(c, c.timeout)
-	if !limited && len(c.pending) == 0 {
+	if !limited {
 		// Between two events there is nothing to wait for but the next
-		// one; a frame that has begun must go on.
-		if err = fill_to(c, 1, deadline, false); err != .None {
-			return
+		// one; a frame that has begun, even one that came in with the
+		// previous frame, must go on.
+		if len(c.pending) == 0 {
+			if err = fill_to(c, 1, deadline, false); err != .None {
+				return
+			}
 		}
 		deadline, limited = deadline_of(c, c.stall)
 	}
