@@ -14,6 +14,8 @@ src="$(cd "$here/../.." && pwd)"
 . "$here/lib.sh"
 
 zero=0000000000000000000000000000000000000000
+# The style check the fake nix "builds" for the gate's style step.
+style_prog="$(style_check_program)"
 
 # Set by new_repo for the test that is running.
 repo=""
@@ -31,7 +33,7 @@ new_repo() {
 	git -C "$repo" config user.name test
 	git -C "$repo" config user.email test@example.invalid
 	mkdir -p "$repo/scripts/lib" "$repo/.githooks"
-	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$src/scripts/check-style.sh" "$repo/scripts/"
+	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$repo/scripts/"
 	cp -p "$src/scripts/lib/git-snapshot.sh" "$src/scripts/lib/flake-outputs.nix" \
 		"$src/scripts/lib/check-drv.nix" "$repo/scripts/lib/"
 	cp -p "$src/.githooks/pre-commit" "$src/.githooks/commit-msg" \
@@ -45,10 +47,13 @@ new_repo() {
 	# named one), checks the other outputs, evaluates the check's
 	# derivation and builds it; its
 	# claude-code step builds the verifier and the download, reads the
-	# version and runs the verifier. This nix answers with ones that pass,
-	# so a test here sees the hooks and nothing of those steps.
+	# version and runs the verifier. The fast gate's style step builds the
+	# style check (style-build, from lib.sh). This nix answers with ones that
+	# pass, so a test here sees the hooks and nothing of those steps.
+	style_build_script "$bin" "$style_prog"
 	write_script "$bin/nix" "printf '%s\n' \"\$*\" | tr '\n' ' ' >>'$bin/nix.log'; echo >>'$bin/nix.log'" \
 		'case "$*" in' \
+		"*' build '*'#check-style '*) exec '$bin/style-build' \"\$@\" ;;" \
 		"*'config show system'*) echo x86_64-linux ;;" \
 		"*' flake prefetch '*) echo '{\"storePath\":\"/nix/store/fake-source\"}' ;;" \
 		"*' eval --raw --expr '*) printf /nix/store/fake-source ;;" \
@@ -112,9 +117,11 @@ expect_full_gate() {
 		return 1
 	}
 }
+# The full gate did not run: nix ran for nothing but the fast gate's build
+# of the style check.
 expect_no_gate() {
-	[[ ! -s "$bin/nix.log" ]] || {
-		echo "  expected the full gate not to run"
+	[[ ! -s "$bin/nix.log" ]] || ! rg -q -v -F '#check-style ' "$bin/nix.log" || {
+		echo "  expected the full gate not to run, nix ran: $(cat "$bin/nix.log")"
 		return 1
 	}
 }
@@ -469,9 +476,13 @@ pre_push_leaves_no_files_behind() {
 
 a_failing_full_gate_fails_the_push() {
 	new_repo
-	write_script "$bin/nix" "exit 4"
+	# Every call fails but the style step's build, so the flake step does.
+	write_script "$bin/nix" 'case "$*" in' \
+		"*' build '*'#check-style '*) exec '$bin/style-build' \"\$@\" ;;" \
+		'esac' 'exit 4'
 	pre_push "$(head_sha)" "$zero"
 	expect_status 4
+	expect_said "flake failed (exit 4)"
 }
 
 tests=(

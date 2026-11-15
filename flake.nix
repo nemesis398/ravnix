@@ -60,8 +60,6 @@
                   ./scripts
                   ./.githooks
                   ./.claude/settings.json
-                  ./docs/mermaid-theme.json
-                  ./docs/style.md
                 ];
               };
               nativeBuildInputs = [
@@ -69,9 +67,12 @@
                 pkgs.jq
                 pkgs.ripgrep
                 pkgs.shellcheck
-                # flock, for scripts/tests/try-huginn.test.sh.
+                # flock, for scripts/tests/try-huginn.test.sh and the gate.
                 pkgs.util-linux
               ];
+              # The style check that the gate's tests give the gate of their
+              # scratch repositories, through a fake nix build.
+              CHECK_STYLE = lib.getExe self.packages.${system}.check-style;
             }
             ''
               cp -r "$src" src

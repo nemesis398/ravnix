@@ -1,5 +1,5 @@
 // The usage of the program, the hex rule, and the places that are not
-// judged: the cases of scripts/tests/check-style.test.sh, which the Bash
+// judged: the cases of tests/bin/check-style/check-style.test.sh, which the Bash
 // version passed, and which the Odin version must pass too.
 package check_style_tests
 

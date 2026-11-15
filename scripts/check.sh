@@ -14,12 +14,27 @@
 #     value) and over each tracked file whose work-tree copy differs from it.
 #     Untracked files are not read. Without ravnix.denyList the step says it
 #     was skipped and passes, so a clone without a private flake still works.
-#   - style: scripts/check-style.sh over the same two sets: a hex color
+#   - style: tools/check-style over the same two sets: a hex color
 #     outside modules/theme/, a radius other than 0, anything translucent
 #     but the inside and the separators of the lock ring, a transition or
-#     animation, a Mermaid
-#     init block that is not the shared one (docs/style.md). It needs rg and
-#     runs without a deny list.
+#     animation, a Mermaid init block that is not the shared one
+#     (docs/style.md). It runs without a deny list. The program is the one
+#     the index builds: nix builds the package check-style from the index's
+#     snapshot (path:SNAPSHOT#check-style), so a commit that changes the
+#     check is judged by the check it holds, as it is judged against the
+#     Mermaid theme it holds. The build is kept, behind a link that is a
+#     garbage-collector root, in the git directory of the work tree
+#     (git rev-parse --absolute-git-dir, so each linked worktree has its
+#     own), under ravnix-gate/check-style-KEY. KEY is the SHA-256 of the
+#     index entries (mode, object, path) of everything the build reads:
+#     style_inputs below. With that link in place nothing calls nix, so
+#     the step costs the program's run; any other KEY builds once (one
+#     evaluation and, when the derivation changed, one build) and removes
+#     the links of the other keys. A lock on ravnix-gate/lock makes a
+#     second gate run at the same time wait for the build instead of
+#     building too, and keeps a run's program linked while it runs. With
+#     no link for the key and no nix, or when the build fails, the step
+#     fails: there is no other style check to fall back to.
 #   - shellcheck: every tracked shell script, found by its extension (.sh,
 #     .bash) or by its shebang (sh, bash, dash, ksh), hooks included: the
 #     staged copy, and the work-tree copy where it differs.
@@ -141,6 +156,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
 deny_list="$(ravnix_deny_list)" || exit 2
 command -v rg >/dev/null 2>&1 || fail "rg not found. Install ripgrep."
 command -v shellcheck >/dev/null 2>&1 || fail "shellcheck not found. Install ShellCheck."
+command -v flock >/dev/null 2>&1 || fail "flock not found. Install util-linux."
 if [[ "$mode" == full ]]; then
 	command -v nix >/dev/null 2>&1 ||
 		fail "nix not found on PATH, and the full gate builds the flake's checks." \
@@ -196,17 +212,144 @@ step_boundary() {
 	return "$status"
 }
 
+# What the build of the style check reads, as pathspecs of the index: the
+# program's directory (its sources, tests and bench), the toolchain and the
+# discovery of tools, the flake and its lock (nixpkgs, and so Odin), and the
+# two files that tools/check-style/default.nix names at build time, the
+# shared Mermaid theme the program carries and docs/style.md, which its
+# tests read. Changing what the build reads means changing this list too.
+style_inputs=(
+	tools/check-style
+	lib/odin.nix
+	lib/discover-tools.nix
+	flake.nix
+	flake.lock
+	docs/mermaid-theme.json
+	docs/style.md
+)
+# How long a run waits for another to finish building the style check.
+style_lock_wait=600
+
+# The cache key of the style check: the SHA-256 of style_inputs' index
+# entries, and of the way the gate builds it.
+style_key() {
+	local sum
+	sum="$({
+		printf 'ravnix gate: check-style from path:INDEX#check-style\n'
+		git ls-files --stage -z -- "${style_inputs[@]}"
+	} | sha256sum)" || return 1
+	printf '%s\n' "${sum%% *}"
+}
+
+# Sets style_prog to the program behind link $1 and succeeds, when the link
+# names an absolute path that holds an executable bin/check-style.
+style_cached() {
+	local target
+	[[ -L "$1" ]] || return 1
+	target="$(readlink -- "$1")" || return 1
+	[[ "$target" == /* && -f "$target/bin/check-style" && -x "$target/bin/check-style" ]] || return 1
+	style_prog="$target/bin/check-style"
+}
+
+# Takes the lock of the style cache, on the descriptor style_lock, shared
+# ($1 -s) or exclusive (-x); says so when it has to wait.
+style_lock_take() {
+	flock -n "$1" "$style_lock" && return 0
+	echo "check.sh: waiting for another gate run that builds the style check (lock $style_cache/lock)" >&2
+	flock -w "$style_lock_wait" "$1" "$style_lock" && return 0
+	printf 'check.sh: %s\n' "the lock $style_cache/lock is still held after ${style_lock_wait} s;" \
+		"the style step fails. A gate run or a nix build of check-style still runs." >&2
+	return 1
+}
+
+# $1, a path, as the path of a flake reference: percent-encoded but for
+# A-Z a-z 0-9 / . _ ~ -, since nix decodes it.
+url_path() {
+	local LC_ALL=C s="$1" i c out=""
+	for ((i = 0; i < ${#s}; i++)); do
+		c="${s:i:1}"
+		case "$c" in
+		[A-Za-z0-9/._~-]) out+="$c" ;;
+		*)
+			printf -v c '%%%02X' "'$c"
+			out+="$c"
+			;;
+		esac
+	done
+	printf '%s\n' "$out"
+}
+
+# Sets style_prog to the style check for the index: the one cached for its
+# key, or one nix builds now from the index's snapshot. Holds the cache's
+# lock until the step ends, shared to run a cached program and exclusive to
+# build one, so no run removes a link another one runs.
+style_program() {
+	local gitdir key link old status=0 out
+	gitdir="$(git rev-parse --absolute-git-dir)" || {
+		echo "check.sh: git names no git directory for the style check's cache" >&2
+		return 1
+	}
+	style_cache="$gitdir/ravnix-gate"
+	key="$(style_key)" || {
+		echo "check.sh: could not hash the index entries the style check is built from" >&2
+		return 1
+	}
+	link="$style_cache/check-style-$key"
+	if ! mkdir -p -- "$style_cache" || ! exec {style_lock}>>"$style_cache/lock"; then
+		echo "check.sh: cannot write the style check's cache, $style_cache" >&2
+		return 1
+	fi
+	style_lock_take -s || return 1
+	style_cached "$link" && return 0
+	style_lock_take -x || return 1
+	# Another run may have built it while this one waited.
+	if ! style_cached "$link"; then
+		if ! command -v nix >/dev/null 2>&1; then
+			printf 'check.sh: %s\n' \
+				"nix not found on PATH, and the style step needs it: no style check is built yet for what the index holds" \
+				"(tools/check-style and what its build reads). Outside NixOS, open a new shell or source" \
+				"/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh." >&2
+			return 1
+		fi
+		echo "building the style check (tools/check-style) from the index, kept in $style_cache"
+		rm -f -- "$link"
+		out="$(nix_ build --out-link "$link" --print-out-paths "path:$(url_path "$work/index")#check-style")" || status=$?
+		if ((status != 0)); then
+			rm -f -- "$link"
+			printf 'check.sh: %s\n' \
+				"nix could not build the style check from the index (exit $status), so nothing judges the style." \
+				"The step fails; there is no other style check. nix build .#check-style shows why." >&2
+			return "$status"
+		fi
+		if ! style_cached "$link"; then
+			rm -f -- "$link"
+			printf 'check.sh: %s\n' "nix built ${out:-nothing}, but $link holds no program bin/check-style." >&2
+			return 1
+		fi
+	fi
+	# The links of other keys: this index needs none of them, and each keeps
+	# a build from the garbage collector.
+	for old in "$style_cache"/check-style-*; do
+		[[ "$old" == "$link" ]] || rm -f -- "$old"
+	done
+}
+
 step_style() {
-	local status=0 s=0 theme=()
+	local status=0 s=0 theme=() wtheme=()
+	style_program || return $?
+	echo "the style check: $style_prog"
 	# The shared Mermaid theme of the index, when the index has one, so a
-	# commit that changes it and docs/style.md together is judged as a whole.
+	# commit that changes it and docs/style.md together is judged as a whole;
+	# the work tree's copy for the work tree's changes.
 	[[ ! -f "$work/index/docs/mermaid-theme.json" ]] ||
 		theme=(RAVNIX_MERMAID_THEME="$work/index/docs/mermaid-theme.json")
+	[[ ! -f "$root/docs/mermaid-theme.json" ]] ||
+		wtheme=(RAVNIX_MERMAID_THEME="$root/docs/mermaid-theme.json")
 	echo "the index (what the next commit holds):"
-	(cd "$work/index" && env "${theme[@]}" "$root/scripts/check-style.sh" .) || status=$?
+	(cd "$work/index" && env "${theme[@]}" "$style_prog" .) || status=$?
 	if ((${#unstaged[@]} > 0)); then
 		echo "unstaged changes in the work tree (${#unstaged[@]} files):"
-		scripts/check-style.sh "${unstaged[@]}" || s=$?
+		env "${wtheme[@]}" "$style_prog" "${unstaged[@]}" || s=$?
 		((s <= status)) || status=$s
 	fi
 	((status != 0)) || echo "no style rule broken"
@@ -247,7 +390,8 @@ step_shellcheck() {
 	return "$status"
 }
 
-# nix as every slow step runs it: flakes on, and the lock file never written.
+# nix as every slow step and the style step's build run it: flakes on, and
+# the lock file never written.
 nix_() {
 	nix --extra-experimental-features 'nix-command flakes' "$@" --no-update-lock-file
 }

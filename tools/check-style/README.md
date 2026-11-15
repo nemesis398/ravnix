@@ -50,20 +50,21 @@ in the length of the line: lines of 8 MB made of one construct repeated take
 under 0.3 s each (`edge_test.odin` holds the shapes that would make a careless
 scanner quadratic).
 
-## Why the script is still here
+## In the gate
 
-`scripts/check.sh --fast` (pre-commit and the Claude Code Stop hook) runs
-`scripts/check-style.sh` straight from the checkout. The fast gate needs git,
-`rg` and `shellcheck` and no Nix, and builds no Odin tool; only the full gate
-needs Nix (it builds `claude-code-verify`). So the script stays, and the Nix
-checks that judge generated files (`desktop-sway`, `desktop-helium-devtools-
-stylesheet`, `theme-apps`) use the port. The two cannot drift unseen while both
-exist: `scripts-tests` runs `scripts/tests/check-style.test.sh` on the script,
-and `bin-check-style` runs the same file on the program (`CHECK_STYLE`). When
-the fast gate can run the program (it needs a way to have the built binary
-without a Nix build per commit: a binary kept in a cache that is keyed on the
-program's sources, `lib/odin.nix`, `flake.nix`, `flake.lock` and the shared
-theme, or one found on the PATH), `check.sh` switches and the script goes.
+`scripts/check.sh` (the fast part, which pre-commit and the Claude Code Stop
+hook run) judges the index and the unstaged changes with this program, as
+the index builds it: nix builds the package from the index's snapshot and the
+gate keeps the build in the work tree's git directory, keyed on the index
+entries of what the build reads (this directory, `lib/odin.nix`,
+`lib/discover-tools.nix`, `flake.nix`, `flake.lock`, `docs/mermaid-theme.json`
+and `docs/style.md`), so a commit that changes the program is judged by the
+program it holds and an unchanged key costs no nix call (`scripts/README.md`,
+"The style step"). The Nix checks that judge generated files
+(`desktop-sway`, `desktop-helium-devtools-stylesheet`, `theme-apps`) use the
+same package. The Bash script is deleted; its shell test is
+`tests/bin/check-style/check-style.test.sh`, which `bin-check-style` runs on
+the program.
 
 ## What differs from the Bash version
 
@@ -149,7 +150,8 @@ rule means.
 ## Tests and bench
 
 `tests/` holds 159 `core:testing` tests: the 93 cases of the shell test that
-fit a process (the 94th, a missing `rg`, is a shell case), a test per corner a
+fit a process (the 94th, which runs the program with an empty `PATH`, is a
+shell case), a test per corner a
 mutation of the program survived until it was named (found by mutating the program and running the tests), and the edge cases: malformed bytes, a
 CR in the middle of a line, a symbolic link to a directory, a fifo, an
 unreadable file or directory, a missing or odd theme, 200 000 lines, lines of

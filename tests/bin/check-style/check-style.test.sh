@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# Tests for the style check: scripts/check-style.sh, and the Odin program
-# tools/check-style that replaces it. Each test builds a fixture tree in a
-# temporary directory and runs the check on it. The colors in the fixtures are
+# Tests for the style check, the Odin program tools/check-style, run by the
+# check bin-check-style. Each test builds a fixture tree in a temporary
+# directory and runs the check on it. The colors in the fixtures are
 # Catppuccin Mocha values or made up; fixtures meant to fail live only here, in
 # the temporary directory, never in the tree the check judges. Run it with:
 #
-#   bash scripts/tests/check-style.test.sh
+#   CHECK_STYLE="$(nix build --no-link --print-out-paths .#check-style)/bin/check-style" \
+#     bash tests/bin/check-style/check-style.test.sh
 #
-# It tests the script. CHECK_STYLE names the program to test instead (the
-# check bin-check-style runs it on the Odin build): the same cases, but the one
-# about a missing rg, which the program does not need, and so tests that it
-# runs with no tool on the PATH.
+# These are the cases of the Bash script scripts/check-style.sh, which ran
+# in scripts-tests; they passed against the script and the program alike
+# before the script was deleted, but for the one about a missing rg, which the
+# program does not need: it tests that the program runs with no other
+# program on the PATH.
 #
 # It prints PASS or FAIL per test and exits non-zero if any test failed.
 
@@ -18,10 +20,10 @@
 # shellcheck disable=SC2016
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-src="$(cd "$here/../.." && pwd)"
-check="${CHECK_STYLE:-$here/../check-style.sh}"
+src="$(cd "$here/../../.." && pwd)"
+check="${CHECK_STYLE:?CHECK_STYLE names the program to test, bin/check-style of the package check-style}"
 # shellcheck source=scripts/tests/lib.sh
-. "$here/lib.sh"
+. "$src/scripts/tests/lib.sh"
 
 # Set by new_tree for the test that is running.
 tree=""
@@ -123,27 +125,18 @@ a_missing_path_is_bad_usage() {
 	expect_err "no such file or directory"
 }
 
-a_missing_rg_is_bad_usage() {
+the_program_runs_with_no_other_program() {
 	new_tree
-	local tools="$scratch/tools" tool
+	local tools="$scratch/tools"
 	mkdir -p "$tools"
 	put a.css 'a { color: red; }\n'
-	if [[ -n "${CHECK_STYLE:-}" ]]; then
-		# The program searches the files itself: it needs no other program.
-		capture in_tree env PATH="$tools" "$check" .
-		expect_status 0
-		put modules/b.nix 'c = "#cba6f7";\n'
-		capture in_tree env PATH="$tools" "$check" .
-		expect_status 1
-		expect_out "modules/b.nix:1:hex-color"
-		return
-	fi
-	for tool in bash cat dirname env find sed sort tr awk; do
-		ln -sf "$(command -v "$tool")" "$tools/$tool"
-	done
+	# The program searches the files itself (the script needed rg).
 	capture in_tree env PATH="$tools" "$check" .
-	expect_status 2
-	expect_err "rg not found"
+	expect_status 0
+	put modules/b.nix 'c = "#cba6f7";\n'
+	capture in_tree env PATH="$tools" "$check" .
+	expect_status 1
+	expect_out "modules/b.nix:1:hex-color"
 }
 
 # Hex colors.
@@ -753,8 +746,8 @@ the_repository_init_block_and_the_shared_theme_agree() {
 	new_tree
 	mkdir -p "$tree/docs"
 	cp "$src/docs/style.md" "$tree/docs/"
-	# Without RAVNIX_MERMAID_THEME the script reads the docs/mermaid-theme.json
-	# beside its own scripts/ directory, which is the repository's.
+	# Without RAVNIX_MERMAID_THEME the program reads the docs/mermaid-theme.json
+	# of the flake it was built from, which is the repository's.
 	capture in_tree env -u RAVNIX_MERMAID_THEME "$check" docs/style.md
 	expect_status 0
 }
@@ -1006,7 +999,7 @@ tests=(
 	an_option_is_bad_usage
 	a_file_named_like_an_option_is_reached_with_a_prefix
 	a_missing_path_is_bad_usage
-	a_missing_rg_is_bad_usage
+	the_program_runs_with_no_other_program
 	a_hex_color_in_a_module_outside_the_theme_is_a_hit
 	the_same_hex_color_inside_the_theme_module_passes
 	the_vendor_root_is_exempt_from_the_hex_rule_only

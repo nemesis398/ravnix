@@ -14,6 +14,9 @@ src="$(cd "$here/../.." && pwd)"
 # shellcheck source=scripts/tests/lib.sh
 . "$here/lib.sh"
 
+# The style check the fake nix "builds" for the gate's style step.
+style_prog="$(style_check_program)"
+
 # Set by new_repo for the test that is running.
 repo=""
 list=""
@@ -44,13 +47,14 @@ new_repo() {
 	git -C "$repo" config user.email test@example.invalid
 	git -C "$repo" config ravnix.denyList "$list"
 	mkdir -p "$repo/scripts/lib"
-	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$src/scripts/check-style.sh" "$repo/scripts/"
+	cp -p "$src/scripts/check.sh" "$src/scripts/check-public.sh" "$repo/scripts/"
 	cp -p "$src/scripts/lib/git-snapshot.sh" "$src/scripts/lib/flake-outputs.nix" \
 		"$src/scripts/lib/check-drv.nix" "$repo/scripts/lib/"
 	printf 'clean\n' >"$repo/a.md"
 	git -C "$repo" add -A
 	git -C "$repo" commit -qm init
 	fake_nix 0
+	style_build_script "$bin" "$style_prog"
 	checks_named alpha beta gamma
 }
 
@@ -90,6 +94,9 @@ new_repo() {
 #                            ignores SIGTERM
 #   version, no-download     the Claude Code version (1.2.3), and the build
 #                            of the download printing nothing
+#
+# The style step's build of check-style (path:SRC#check-style) is
+# $bin/style-build's, which lib.sh describes.
 #
 # An installable is logged and looked up in the files above with its source
 # written as ".", so .#.checks.x86_64-linux."alpha" stands for alpha of any
@@ -150,6 +157,7 @@ fail_from() {
 	done < <(cat -- "$tree/$1" 2>/dev/null)
 }
 case "$*" in
+*' build '*'#check-style '*) exec "$d/style-build" "$@" ;;
 *'config show system'*)
 	cat -- "$d/system" 2>/dev/null || echo x86_64-linux
 	exit "$(code system.status)"
@@ -371,6 +379,59 @@ expect_dead() {
 	return 1
 }
 
+# expect_nix_calls N: the fake nix ran N times.
+expect_nix_calls() {
+	local n=0
+	[[ ! -e "$bin/nix.log" ]] || n="$(wc -l <"$bin/nix.log")"
+	((n == $1)) || {
+		echo "  expected $1 nix calls, there were $n: $(cat -- "$bin/nix.log" 2>/dev/null)"
+		return 1
+	}
+}
+# expect_style_builds N: nix built the style check N times.
+expect_style_builds() {
+	local n=0
+	[[ ! -e "$bin/style.sources" ]] || n="$(wc -l <"$bin/style.sources")"
+	((n == $1)) || {
+		echo "  expected $1 builds of the style check, there were $n: $(cat -- "$bin/nix.log" 2>/dev/null)"
+		return 1
+	}
+}
+# The gate's cache of the style check: in the git directory of the work
+# tree that $1 names ($repo by default).
+cache_of() {
+	printf '%s/ravnix-gate\n' "$(git -C "${1:-$repo}" rev-parse --absolute-git-dir)"
+}
+# The links in the cache $1 (the repository's by default), one per line.
+cached_links() {
+	local cache="${1:-$(cache_of)}"
+	[[ ! -d "$cache" ]] || find "$cache" -mindepth 1 -maxdepth 1 -name 'check-style-*' -printf '%f\n' | sort
+}
+# expect_one_link: the cache holds exactly one link, to a program; sets
+# link to it.
+expect_one_link() {
+	local links
+	links="$(cached_links)"
+	[[ -n "$links" && "$links" != *$'\n'* ]] || {
+		echo "  expected one link in the cache, there are: ${links:-none}"
+		return 1
+	}
+	link="$(cache_of)/$links"
+	[[ -L "$link" && -x "$link/bin/check-style" ]] || {
+		echo "  $link is no link to a program"
+		return 1
+	}
+}
+# A PATH without any nix on it.
+path_without_nix() {
+	local path="" dir dirs=()
+	IFS=: read -r -a dirs <<<"$PATH"
+	for dir in "${dirs[@]}"; do
+		[[ -x "$dir/nix" ]] || path="$path${path:+:}$dir"
+	done
+	printf '%s\n' "$path"
+}
+
 # Writes $2 into $repo/$1 and stages it.
 stage() {
 	mkdir -p "$(dirname "$repo/$1")"
@@ -413,10 +474,10 @@ the_fast_gate_passes_on_a_clean_repository() {
 	gate --fast
 	expect_status 0
 	expect_out "all 3 steps passed"
-	[[ ! -s "$bin/nix.log" ]] || {
-		echo "  the fast gate ran nix: $(cat "$bin/nix.log")"
-		return 1
-	}
+	# One nix call, the build of the style check, which a new clone has
+	# not made yet; nothing of the flake step.
+	expect_nix_calls 1
+	expect_style_builds 1
 }
 
 the_full_gate_adds_the_flake_step_and_the_claude_code_check() {
@@ -689,6 +750,328 @@ a_style_break_stops_the_gate_before_shellcheck() {
 	gate --fast
 	expect_status 1
 	expect_no_out "==> shellcheck"
+}
+
+# The style step's program: tools/check-style, built by nix from the index
+# and kept in the git directory, keyed on what its build reads.
+
+the_style_check_is_built_from_the_index_into_the_git_directory() {
+	new_repo
+	gate --fast
+	expect_status 0
+	expect_one_link
+	local line
+	line="$(cat -- "$bin/nix.log")"
+	[[ "$line" == "--extra-experimental-features nix-command flakes build --out-link $link --print-out-paths path:$tmp/"*"/index#check-style --no-update-lock-file" ]] || {
+		echo "  unexpected build of the style check: $line"
+		return 1
+	}
+	expect_out "the style check: $(readlink -- "$link")/bin/check-style"
+}
+
+an_unchanged_key_runs_the_cached_style_check_without_nix() {
+	new_repo
+	gate --fast
+	expect_status 0
+	: >"$bin/nix.log"
+	# A file the build does not read, staged and unstaged.
+	stage docs/b.md 'clean'
+	printf 'clean too\n' >"$repo/a.md"
+	gate --fast
+	expect_status 0
+	expect_out "no style rule broken"
+	expect_nix_calls 0
+	# So the cache needs no nix at all.
+	mv -- "$bin/nix" "$scratch/nix.away"
+	capture in_repo env PATH="$bin:$(path_without_nix)" TMPDIR="$tmp" scripts/check.sh --fast
+	expect_status 0
+	expect_out "all 3 steps passed"
+	expect_style_builds 1
+}
+
+the_cached_style_check_still_judges() {
+	new_repo
+	gate --fast
+	expect_status 0
+	stage modules/bar.css 'a { border-radius: 4px; }'
+	gate --fast
+	expect_status 1
+	expect_out "modules/bar.css:1:radius"
+	expect_style_builds 1
+}
+
+a_change_to_what_the_build_reads_rebuilds_the_style_check() {
+	new_repo
+	local file n=1 before
+	gate --fast
+	expect_status 0
+	for file in tools/check-style/main.odin tools/check-style/tests/a_test.odin \
+		tools/check-style/README.md lib/odin.nix lib/discover-tools.nix flake.nix flake.lock \
+		docs/mermaid-theme.json docs/style.md; do
+		expect_one_link
+		before="$link"
+		stage "$file" "{ \"changed\": $n }"
+		gate --fast
+		expect_status 0
+		n=$((n + 1))
+		expect_style_builds "$n"
+		# The link of the old key is gone, so it no longer holds its
+		# program from a garbage collection.
+		expect_one_link
+		[[ "$link" != "$before" ]] || {
+			echo "  a change to $file kept the key $link"
+			return 1
+		}
+	done
+	# Back to an earlier index: an earlier key, built again.
+	git -C "$repo" rm -q --cached docs/style.md
+	gate --fast
+	expect_status 0
+	expect_style_builds $((n + 1))
+}
+
+a_commit_that_changes_the_style_check_is_judged_by_the_index_copy() {
+	new_repo
+	stage tools/check-style/main.odin 'staged'
+	printf 'unstaged\n' >"$repo/tools/check-style/main.odin"
+	gate --fast
+	expect_status 0
+	expect_one_link
+	[[ "$(cat -- "$link/src/main.odin")" == staged ]] || {
+		echo "  the style check was built from: $(cat -- "$link/src/main.odin")"
+		return 1
+	}
+	# The build read the index's snapshot, which the gate removes after it.
+	[[ "$(cat -- "$bin/style.sources")" == "$tmp/"*/index ]] || {
+		echo "  the style check was built from $(cat -- "$bin/style.sources")"
+		return 1
+	}
+	# An unstaged change to it alone changes nothing.
+	printf 'unstaged again\n' >"$repo/tools/check-style/main.odin"
+	gate --fast
+	expect_status 0
+	expect_style_builds 1
+}
+
+a_commit_all_is_judged_by_the_style_check_of_its_temporary_index() {
+	new_repo
+	stage tools/check-style/main.odin 'one'
+	git -C "$repo" commit -qm one
+	printf 'two\n' >"$repo/tools/check-style/main.odin"
+	# What git commit -a hands the pre-commit hook: a temporary index that
+	# holds the work tree's copy.
+	cp "$repo/.git/index" "$scratch/next-index"
+	GIT_INDEX_FILE="$scratch/next-index" git -C "$repo" add -u
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" GIT_INDEX_FILE="$scratch/next-index" scripts/check.sh --fast
+	expect_status 0
+	expect_one_link
+	[[ "$(cat -- "$link/src/main.odin")" == two ]] || {
+		echo "  the style check was built from: $(cat -- "$link/src/main.odin")"
+		return 1
+	}
+}
+
+a_failed_build_of_the_style_check_fails_the_gate() {
+	new_repo
+	echo 3 >"$bin/style.status"
+	gate --fast
+	expect_status 3
+	expect_err "error: builder for check-style failed"
+	expect_err "nix could not build the style check"
+	expect_err "style failed (exit 3)"
+	expect_no_out "no style rule broken"
+	expect_no_out "==> shellcheck"
+	[[ -z "$(cached_links)" ]] || {
+		echo "  a failed build left a link: $(cached_links)"
+		return 1
+	}
+	# Once the build works, the next run builds it.
+	rm -- "${bin:?}/style.status"
+	gate --fast
+	expect_status 0
+	expect_style_builds 2
+}
+
+a_build_that_makes_no_program_fails_the_gate() {
+	new_repo
+	: >"$bin/style.empty"
+	gate --fast
+	expect_status 1
+	expect_err "holds no program bin/check-style"
+	expect_err "style failed"
+	[[ -z "$(cached_links)" ]] || {
+		echo "  a build without a program left a link: $(cached_links)"
+		return 1
+	}
+}
+
+without_nix_and_no_cached_style_check_the_gate_fails() {
+	new_repo
+	mv -- "$bin/nix" "$scratch/nix.away"
+	capture in_repo env PATH="$(path_without_nix)" TMPDIR="$tmp" scripts/check.sh --fast
+	expect_status 1
+	expect_err "nix not found on PATH"
+	expect_err "style failed"
+	expect_no_out "no style rule broken"
+	expect_no_out "all 3 steps passed"
+}
+
+two_gate_runs_at_once_build_the_style_check_once() {
+	new_repo
+	echo 2 >"$bin/style.delay"
+	local one two s1=0 s2=0
+	(cd "$repo" && exec env PATH="$bin:$PATH" TMPDIR="$tmp" scripts/check.sh --fast) >"$scratch/one.out" 2>&1 &
+	one=$!
+	(cd "$repo" && exec env PATH="$bin:$PATH" TMPDIR="$tmp" scripts/check.sh --fast) >"$scratch/two.out" 2>&1 &
+	two=$!
+	wait "$one" || s1=$?
+	wait "$two" || s2=$?
+	((s1 == 0 && s2 == 0)) || {
+		echo "  the runs ended with $s1 and $s2:"
+		cat "$scratch/one.out" "$scratch/two.out"
+		return 1
+	}
+	expect_style_builds 1
+	[[ ! -e "$bin/style.overlap" ]] || {
+		echo "  two builds of the style check ran at once"
+		return 1
+	}
+	expect_one_link
+	# The one that waited said so.
+	cat "$scratch/one.out" "$scratch/two.out" | rg -q -F 'waiting for another gate run' || {
+		echo "  neither run said it waited:"
+		cat "$scratch/one.out" "$scratch/two.out"
+		return 1
+	}
+}
+
+two_gate_runs_on_different_indexes_at_once_both_pass() {
+	new_repo
+	echo 1 >"$bin/style.delay"
+	# The second run's index changes the key, under a temporary index as
+	# git commit -a has.
+	cp "$repo/.git/index" "$scratch/next-index"
+	mkdir -p "$repo/tools/check-style"
+	printf 'two\n' >"$repo/tools/check-style/main.odin"
+	GIT_INDEX_FILE="$scratch/next-index" git -C "$repo" add tools/check-style/main.odin
+	local one two s1=0 s2=0
+	(cd "$repo" && exec env PATH="$bin:$PATH" TMPDIR="$tmp" scripts/check.sh --fast) >"$scratch/one.out" 2>&1 &
+	one=$!
+	(cd "$repo" && exec env PATH="$bin:$PATH" TMPDIR="$tmp" GIT_INDEX_FILE="$scratch/next-index" scripts/check.sh --fast) >"$scratch/two.out" 2>&1 &
+	two=$!
+	wait "$one" || s1=$?
+	wait "$two" || s2=$?
+	((s1 == 0 && s2 == 0)) || {
+		echo "  the runs ended with $s1 and $s2:"
+		cat "$scratch/one.out" "$scratch/two.out"
+		return 1
+	}
+	expect_style_builds 2
+	[[ ! -e "$bin/style.overlap" ]] || {
+		echo "  two builds of the style check ran at once"
+		return 1
+	}
+	# One key's link is left, the last one built.
+	expect_one_link
+}
+
+a_run_waits_for_the_lock_of_the_cache() {
+	new_repo
+	gate --fast
+	expect_status 0
+	local holder
+	flock -x "$(cache_of)/lock" sleep 2 &
+	holder=$!
+	sleep 0.3
+	stage tools/check-style/main.odin 'changed'
+	gate --fast
+	wait "$holder"
+	expect_status 0
+	expect_err "waiting for another gate run"
+	expect_style_builds 2
+}
+
+a_dangling_link_of_the_key_is_built_again() {
+	new_repo
+	gate --fast
+	expect_status 0
+	expect_one_link
+	# What a store wiped under the cache, or a git directory copied to
+	# another machine, leaves.
+	local target
+	target="$(readlink -- "$link")"
+	rm -r -- "${target:?}"
+	gate --fast
+	expect_status 0
+	expect_out "no style rule broken"
+	expect_style_builds 2
+	expect_one_link
+}
+
+a_link_to_no_program_is_built_again() {
+	new_repo
+	gate --fast
+	expect_status 0
+	expect_one_link
+	local target
+	target="$(readlink -- "$link")"
+	rm -- "${target:?}/bin/check-style"
+	gate --fast
+	expect_status 0
+	expect_style_builds 2
+	expect_one_link
+}
+
+a_stale_link_of_another_key_is_never_run_and_goes() {
+	new_repo
+	local cache
+	cache="$(cache_of)"
+	mkdir -p "$cache" "$scratch/old/bin"
+	# A program that would pass everything: if the gate ran it, a style
+	# break would go through.
+	write_script "$scratch/old/bin/check-style" 'exit 0'
+	ln -s "$scratch/old" "$cache/check-style-0000000000000000000000000000000000000000000000000000000000000000"
+	ln -s "$scratch/gone" "$cache/check-style-1111111111111111111111111111111111111111111111111111111111111111"
+	stage modules/bar.css 'a { border-radius: 4px; }'
+	gate --fast
+	expect_status 1
+	expect_out "modules/bar.css:1:radius"
+	expect_style_builds 1
+	expect_one_link
+}
+
+a_linked_worktree_keeps_its_own_cache() {
+	new_repo
+	git -C "$repo" worktree add -q "$scratch/wt" 2>/dev/null
+	capture env -C "$scratch/wt" PATH="$bin:$PATH" TMPDIR="$tmp" scripts/check.sh --fast
+	expect_status 0
+	local main wt
+	main="$(cache_of)"
+	wt="$(cache_of "$scratch/wt")"
+	[[ "$wt" == "$repo/.git/worktrees/"*/ravnix-gate ]] || {
+		echo "  the worktree's cache is $wt"
+		return 1
+	}
+	[[ -n "$(cached_links "$wt")" && -z "$(cached_links "$main")" ]] || {
+		echo "  expected a link in $wt alone; $main holds: $(cached_links "$main")"
+		return 1
+	}
+}
+
+unstaged_files_are_judged_against_the_work_tree_copy_of_the_theme() {
+	new_repo
+	stage docs/mermaid-theme.json '{"theme": "base"}'
+	stage docs/a.md '%%{init: {"theme": "base"}}%%'
+	git -C "$repo" commit -qm theme
+	# A change of the theme and of the diagram, both unstaged.
+	printf '{"theme": "dark"}\n' >"$repo/docs/mermaid-theme.json"
+	printf '%%%%{init: {"theme": "dark"}}%%%%\n' >"$repo/docs/a.md"
+	gate --fast
+	expect_status 0
+	printf '%%%%{init: {"theme": "neutral"}}%%%%\n' >"$repo/docs/a.md"
+	gate --fast
+	expect_status 1
+	expect_out "docs/a.md:1:mermaid-init"
 }
 
 # The shellcheck step.
@@ -1106,6 +1489,8 @@ every_flake_call_of_the_step_reads_one_snapshot() {
 		*" flake prefetch --json --no-pretty --out-link "*" . "*) prefetches=$((prefetches + 1)) ;;
 		*" config show system" | *" eval --raw --expr "* | *" build "*".drv^*"*) ;;
 		*"claude-code"*) ;;
+		# The style step's, which builds the style check from the index.
+		*" build "*"#check-style "*) ;;
 		*)
 			n=$((n + 1))
 			[[ "$line" == *" path:/nix/store/fake1-source#."* ]] || {
@@ -1636,6 +2021,23 @@ tests=(
 	the_style_step_runs_without_a_deny_list
 	the_index_copy_of_the_shared_mermaid_theme_is_used
 	a_style_break_stops_the_gate_before_shellcheck
+	the_style_check_is_built_from_the_index_into_the_git_directory
+	an_unchanged_key_runs_the_cached_style_check_without_nix
+	the_cached_style_check_still_judges
+	a_change_to_what_the_build_reads_rebuilds_the_style_check
+	a_commit_that_changes_the_style_check_is_judged_by_the_index_copy
+	a_commit_all_is_judged_by_the_style_check_of_its_temporary_index
+	a_failed_build_of_the_style_check_fails_the_gate
+	a_build_that_makes_no_program_fails_the_gate
+	without_nix_and_no_cached_style_check_the_gate_fails
+	two_gate_runs_at_once_build_the_style_check_once
+	two_gate_runs_on_different_indexes_at_once_both_pass
+	a_run_waits_for_the_lock_of_the_cache
+	a_dangling_link_of_the_key_is_built_again
+	a_link_to_no_program_is_built_again
+	a_stale_link_of_another_key_is_never_run_and_goes
+	a_linked_worktree_keeps_its_own_cache
+	unstaged_files_are_judged_against_the_work_tree_copy_of_the_theme
 	a_staged_script_with_a_shellcheck_error_fails_the_gate
 	a_script_without_an_extension_is_found_by_its_shebang
 	a_python_script_is_not_shellchecked

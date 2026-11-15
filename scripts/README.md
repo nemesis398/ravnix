@@ -6,9 +6,8 @@ of each script.
 
 | Script | Does |
 | --- | --- |
-| `check.sh` | the gate: `--fast` (boundary check, style check, shellcheck) on every commit and stop, the full gate (adds the flake step, which checks what `nix flake check` did with a nix process per check, then `claude-code-verify` on the Claude Code download against Anthropic's live release manifest, remembering what it verified) before every push |
+| `check.sh` | the gate: `--fast` (boundary check, style check with `tools/check-style`, built from the index and cached in the git directory, shellcheck) on every commit and stop, the full gate (adds the flake step, which checks what `nix flake check` did with a nix process per check, then `claude-code-verify` on the Claude Code download against Anthropic's live release manifest, remembering what it verified) before every push |
 | `check-public.sh` | the public-boundary check: no deny-list value in any file, file name or link target |
-| `check-style.sh` | the style check: no hex color outside `modules/theme/`, no radius other than 0, nothing translucent (the keyword `transparent` too) but the inside of the lock ring, no transition or animation, no Mermaid init block but the shared one (`docs/mermaid-theme.json`); prints `file:line:rule`. A child that shows its parent uses the role color or `inherit`, never `transparent` |
 | `lib/flake-outputs.nix` | what the flake step checks of the outputs other than the checks (packages, overlays, modules, templates), in one evaluation that reads no check; an output it does not know fails the step |
 | `lib/check-drv.nix` | what the flake step evaluates of each check: its derivation, or an error when the check is no derivation |
 | `lib/git-snapshot.sh` | lays out the index or a commit as plain files, for the checks to read what git will commit or push |
@@ -19,7 +18,10 @@ of each script.
 | `../.githooks/` | `pre-commit` (fast gate), `commit-msg` (boundary check on the message), `pre-push` (each pushed commit, message and ref name, then the full gate) |
 
 Tests: `tests/*.test.sh` and `hooks/test.sh`, run by the flake check
-`scripts-tests`. `tests/lib.sh` points `XDG_STATE_HOME` into each test
+`scripts-tests`. The gate's tests (`check.test.sh`, `githooks.test.sh`) give
+their scratch repositories the style check through a fake nix build, so they
+need the program: `scripts-tests` sets `CHECK_STYLE`, and by hand it is
+`CHECK_STYLE="$(nix build --no-link --print-out-paths .#check-style)/bin/check-style"`. `tests/lib.sh` points `XDG_STATE_HOME` into each test
 file's scratch directory, so no test's gate records into your state. The
 flake checks `flake-gate-outputs` (`lib/flake-outputs.nix` on good and bad
 outputs), `flake-gate-check-drv` (`lib/check-drv.nix` on a derivation and on
@@ -181,14 +183,29 @@ Findings that are not fixed, so nobody mistakes them for covered.
   It resolves git aliases from the configuration of the directory Claude
   Code runs it in. `pre-push` catches what such a commit would publish.
 
-### `check-style.sh`
+### The style step
 
-The fast gate runs this script, straight from the checkout. Its port to Odin,
-`tools/check-style` (the package `check-style`), exists beside it and passes
-the same cases (`tests/bin/check-style.nix` runs this script's shell test on
-it); the Nix checks that judge generated files use the port. The script goes
-when the fast gate can run the program (`tools/check-style/README.md`, "Why the
-script is still here").
+The style check is the Odin program `tools/check-style` (the package
+`check-style`, ported from the Bash script `scripts/check-style.sh`, which is
+gone); its `README.md` says how it works and where it differs from the
+script. The style step of `check.sh` runs the program that the index builds,
+so a commit that changes the check is judged by the check it holds, and the
+unstaged changes by the same program. Nix builds it from the index's
+snapshot, once for each key: the SHA-256 of the index entries of
+`tools/check-style`, `lib/odin.nix`, `lib/discover-tools.nix`, `flake.nix`,
+`flake.lock`, `docs/mermaid-theme.json` and `docs/style.md`, what the build
+reads. The build is linked, as a garbage-collector root, at
+`ravnix-gate/check-style-KEY` in the work tree's git directory
+(`git rev-parse --absolute-git-dir`), so each linked worktree keeps its own
+and loses it with the worktree; the link of an older key goes when a new one
+is built. With the key unchanged the step calls no nix and costs the
+program's run, a few hundredths of a second on this repository; after a
+change to what the build reads it costs an evaluation and, when the
+derivation changed, a build, about 10 s. A second gate run at the same time,
+such as a commit while the Stop hook runs, waits on `ravnix-gate/lock` and
+then uses the first one's build. Without nix and no build for the key, or
+when the build fails, the step fails and says why: there is no other style
+check to fall back to.
 
 What it judges, and where:
 

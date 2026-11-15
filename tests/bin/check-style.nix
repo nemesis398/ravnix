@@ -1,9 +1,9 @@
-# check-style, the style check (tools/check-style): the shell test that
-# scripts/check-style.sh passes, run on the Odin program. It is the harness
-# of the port: the same cases, the same fixtures, the program in place of the
-# script (CHECK_STYLE), so the two cannot drift apart unseen while both exist.
-# The Odin tests are the check check-style-tests; the script's own run of the
-# file is in scripts-tests.
+# check-style, the style check (tools/check-style): the shell test of the
+# program, tests/bin/check-style/check-style.test.sh, the cases of the Bash
+# script it replaced, on the built program (CHECK_STYLE). The Odin tests are
+# the check check-style-tests; the gate's style step, which runs the program
+# from a cached build, is tested by scripts/tests/check.test.sh in
+# scripts-tests.
 {
   self,
   lib,
@@ -16,7 +16,7 @@ let
     root = ../..;
     fileset = lib.fileset.unions [
       ../../scripts/tests/lib.sh
-      ../../scripts/tests/check-style.test.sh
+      ./check-style/check-style.test.sh
       ../../docs/style.md
       ../../docs/mermaid-theme.json
     ];
@@ -35,6 +35,6 @@ pkgs.runCommand "bin-check-style"
   }
   ''
     export HOME="$TMPDIR"
-    bash ${src}/scripts/tests/check-style.test.sh
+    bash ${src}/tests/bin/check-style/check-style.test.sh
     touch "$out"
   ''
