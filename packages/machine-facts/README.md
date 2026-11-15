@@ -28,6 +28,31 @@ mode)`. The laptop's link gate (`tools/ravnix-laptop-gate`) runs it so for
 the server's `ravnix-laptop facts`: nothing that comes over the link may
 reach sudo, whose tap is the security key's.
 
+## Without waking the dGPU
+
+With `MACHINE_FACTS_NO_DGPU_WAKE=1`, nothing runs that may wake the dGPU
+from runtime suspend. One row is left out: the Sway config check. `sway
+-C` with the headless backend starts a renderer, which looks at every GPU
+through EGL and Vulkan, and so may open the NVIDIA card. Whether it does
+was never measured, so the row is left out on the side of the battery. It
+reads `(not checked: sway -C starts a renderer, which may wake the dGPU)`.
+The link gate sets this mode for `ravnix-laptop facts`, which the server
+may run often.
+
+The other rows touch no card, in either mode:
+
+- the GPU addresses and the dGPU's power state come from sysfs
+  attributes (`vendor`, `class`, `power/runtime_status`);
+- the driver versions come from `modinfo` (the module file) and
+  `/proc/driver/nvidia/version`;
+- the iGPU's card comes from a `readlink`.
+
+`lspci`, which reads config space and held the RTX 4050 awake for 1.5 s,
+is not run (2026-09-17), and neither is `nvidia-smi`. The tests put
+recording stand-ins for `sway`, `lspci` and `nvidia-smi` on the `PATH`
+and check that neither mode calls the last two and that this mode calls
+none.
+
 ## Changes from the original
 
 NixOS replaces what Fedora asked of its own system:

@@ -31,6 +31,12 @@
 #                  1: never run sudo, not even `sudo -n`; the rows that need
 #                  root say so. The laptop's link gate (tools/ravnix-laptop-gate)
 #                  runs it this way for the server.
+#   MACHINE_FACTS_NO_DGPU_WAKE
+#                  1: run nothing that may wake the dGPU from runtime
+#                  suspend; the one row that would (the `sway -C` check,
+#                  whose renderer looks at every GPU) says it was not
+#                  checked. The link gate sets this too: the server may ask
+#                  often, and a woken dGPU costs battery.
 #
 # `sudo -n` is used opportunistically for efibootmgr/blkid. Without it those
 # rows degrade to "(needs sudo)" rather than failing; the script never prompts.
@@ -242,7 +248,11 @@ sec_power_net() {
 sec_software() {
     echo "### Software state"
     echo
-    echo "- Sway config validates: \`sway -C\` exit $(WLR_BACKENDS=headless sway -C >/dev/null 2>&1; echo $?). **Judge by this exit code, not by stderr**; the headless renderer prints harmless EGL/Vulkan errors."
+    if [[ ${MACHINE_FACTS_NO_DGPU_WAKE:-} == 1 ]]; then
+        echo "- Sway config validates: (not checked: sway -C starts a renderer, which may wake the dGPU)"
+    else
+        echo "- Sway config validates: \`sway -C\` exit $(WLR_BACKENDS=headless sway -C >/dev/null 2>&1; echo $?). **Judge by this exit code, not by stderr**; the headless renderer prints harmless EGL/Vulkan errors."
+    fi
     echo
 }
 

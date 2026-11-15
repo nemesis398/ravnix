@@ -78,6 +78,22 @@ PATH="$SB/fakebin:$PATH" run MACHINE_FACTS_NO_SUDO=1 -- --write
 check "MACHINE_FACTS_NO_SUDO=1 changes nothing of the modes: --write still needs its note" \
     '[[ $rc == 2 && ! -e $SB/sudo-calls ]]'
 
+# Programs that wake the dGPU, or may: lspci reads config space, nvidia-smi
+# talks to the card, and sway -C starts a renderer, which looks at every GPU.
+# Each records its call.
+for prog in sway lspci nvidia-smi; do
+    printf '#!%s\necho "%s $*" >>%q\nexit 0\n' "$BASH_BIN" "$prog" "$SB/gpu-calls" >"$SB/fakebin/$prog"
+    chmod +x "$SB/fakebin/$prog"
+done
+rm -f "$SB/gpu-calls"
+PATH="$SB/fakebin:$PATH" run --
+check "by default the Sway row runs sway -C (so the next case can see it not run), and nothing runs lspci or nvidia-smi" \
+    '[[ $rc == 0 && $(<"$SB/gpu-calls") == "sway -C" ]]'
+rm -f "$SB/gpu-calls"
+PATH="$SB/fakebin:$PATH" run MACHINE_FACTS_NO_DGPU_WAKE=1 --
+check "MACHINE_FACTS_NO_DGPU_WAKE=1 runs nothing that may wake the dGPU, and the Sway row says so" \
+    '[[ $rc == 0 && ! -e $SB/gpu-calls && $out == *"- Sway config validates: (not checked: sway -C starts a renderer, which may wake the dGPU)"* && $out == *"### GPU"* && $out == *"dGPU power state"* ]]'
+
 for mode in --write --check --diff; do
     run -- "$mode"
     check "$mode without MACHINE_NOTE says what to set, exits 2 and touches nothing" \
