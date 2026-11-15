@@ -1,0 +1,14 @@
+#!/bin/sh
+# The stand-in for every program energy runs. The fixture links each of them
+# (busctl, swaymsg, fuzzel, ...) to this file in its bin directory, and
+# $name.case there says what the program does; without a case it logs its
+# call. A case is read, never run, so a test that writes one has no ETXTBSY
+# race with a thread that forks while a new file is still open for writing.
+dir=${0%/*}
+name=${0##*/}
+if [ -r "$dir/$name.case" ]; then
+	# shellcheck source=/dev/null
+	. "$dir/$name.case"
+else
+	printf '%s\n' "$name $*" >>"$dir/calls"
+fi

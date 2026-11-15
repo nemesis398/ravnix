@@ -11,7 +11,7 @@
 # `login=`; it never runs rbw, so nothing falls back to it.
 #
 # restic runs by the name `restic`, from PATH, so its command line starts
-# with `restic ` and idle-suspend sees it (packages/energy, `pgrep -f
+# with `restic ` and idle-suspend sees it (tools/energy, `pgrep -f
 # '^restic '`) and does not suspend the laptop under it.
 { lib, pkgs }:
 {

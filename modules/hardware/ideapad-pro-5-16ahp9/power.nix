@@ -114,7 +114,7 @@ in
 
   # The energy menu (Waybar's middle click, sway-settings) and the watcher
   # that applies its settings when the charger or the profile changes:
-  # packages/energy has the script and its header the why. kanshi's profiles
+  # tools/energy has the program and its header the why. kanshi's profiles
   # run `energy refresh`, and keep-awake's swayidle `energy idle-suspend`.
   environment.systemPackages = [ energy ];
 

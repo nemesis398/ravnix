@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016
-# Tests for energy (packages/energy), run by the check bin-energy.
+# Tests for energy (tools/energy), run by the check bin-energy: the built
+# program, end to end. Its Odin tests (tests/*.odin, the check energy-tests)
+# cover the same ground from inside; this one is the old Bash suite, which
+# the port had to pass before the script was deleted.
 #
-# energy runs as a copy whose two fixed strings point into the scratch
-# directory: the charger's sysfs file (ADP0/online) and the charge-mode it
-# calls. A test fails when the copy still names either. Everything it talks
-# to is a stub on the PATH that logs its calls: busctl answers for the power
-# profile from a file, swaymsg for the outputs, fuzzel picks rows by the
+# energy runs with two seams that point into the scratch directory: the
+# charger's sysfs file (ENERGY_ONLINE_FILE) and the charge-mode it calls
+# (ENERGY_CHARGE_MODE), and with no directory of the package in front of the
+# PATH (ENERGY_TOOLS_PATH empty), so the stubs are what it finds. Everything
+# it talks to is a stub on the PATH that logs its calls: busctl answers for
+# the power profile from a file, swaymsg for the outputs, fuzzel picks rows by the
 # patterns a test lists (ESC stands for Escape), and gdbus plays a list of
 # bus events for the watcher, waiting after each one until the watcher has
 # acted on it, so the order of what follows is fixed. keep-awake,
 # waybar-launch, setsid, systemctl, pgrep and notify-send log and do nothing
-# else. The last tests check the package: the command is this script with
-# the package's charge-mode, and its PATH has the tools the script calls.
+# else. The last tests check the package: it names charge-mode by its store
+# path, and the programs it starts come with it.
 #
-#   SOURCE=   packages/energy/energy.sh
 #   PACKAGE=  the built package
 #   TEST_LIB= scripts/tests/lib.sh
 #
@@ -22,13 +25,12 @@
 
 # shellcheck source=scripts/tests/lib.sh
 source "${TEST_LIB:?TEST_LIB names scripts/tests/lib.sh}"
-: "${SOURCE:?SOURCE names energy.sh}" "${PACKAGE:?PACKAGE names the built package}"
+: "${PACKAGE:?PACKAGE names the built package}"
 
 bin="$scratch/bin"
 calls="$scratch/calls"
 fake="$scratch/fake-sysfs"
 online="$fake/ADP0/online"
-energy="$scratch/energy"
 export STATE_HOME="$scratch/state" RUNTIME="$scratch/run"
 
 # busctl: get-property prints the profile in $PROFILE_FILE, set-property
@@ -101,14 +103,7 @@ for dir in "${host_dirs[@]}"; do
 done
 off_desktop=(-u WAYLAND_DISPLAY -u SWAYSOCK -u DISPLAY DBUS_SESSION_BUS_ADDRESS="unix:path=$scratch/no-bus")
 
-# The copy of energy.sh under test; the sandbox has no /usr/bin/env.
-sed -e "1s|^#!.*|#!$BASH|" \
-	-e "s|/sys/class/power_supply/ADP0|$fake/ADP0|g" \
-	-e "s|@chargeMode@|$scratch/charge-mode|g" "$SOURCE" >"$energy"
-if grep -Ev '^[[:space:]]*#' "$energy" | grep -Eq '/sys/|@chargeMode@'; then
-	echo "the copy of energy.sh still names a real path or the placeholder" >&2
-	exit 1
-fi
+energy="$PACKAGE/bin/energy"
 
 # A fresh world for each test: on the charger, profile balanced, no state.
 fresh() {
@@ -151,7 +146,8 @@ run() {
 		OUTPUTS="$scratch/outputs" PICKS="$scratch/picks" FUZZEL_LOG="$scratch/fuzzel.log" \
 		EVENTS="$scratch/events" REFRESHES="$scratch/refreshes" ONLINE="$online" \
 		XDG_STATE_HOME="$STATE_HOME" XDG_RUNTIME_DIR="$RUNTIME" \
-		"$BASH" "$energy" "$@"
+		ENERGY_ONLINE_FILE="$online" ENERGY_CHARGE_MODE="$scratch/charge-mode" ENERGY_TOOLS_PATH= \
+		"$energy" "$@"
 }
 
 calls_are() {
@@ -236,20 +232,28 @@ test_set_without_a_value_fails() {
 	expect_err "key"
 }
 
-# Findings, kept as Fedora has them (README.md).
-test_get_of_an_unknown_key_dies_unbound() {
+# Two findings of the Bash version are fixed in the port: a key that is not
+# one of the three is refused with a message, and a state file that holds
+# none of a key's values reads as the default.
+test_get_of_an_unknown_key_is_refused() {
 	fresh
 	run get bogus
-	[[ "$status" != 0 ]] || { echo "  exit 0"; return 1; }
-	expect_err "unbound variable"
+	expect_status 2
+	expect_err "'bogus' is not a key (refresh, idle_suspend, focus_bar)"
 }
 
-test_an_empty_state_file_reads_as_empty() {
+test_an_empty_state_file_reads_as_the_default() {
 	fresh
 	set_state refresh ""
 	run get refresh
 	expect_status 0
-	[[ "$out" == "" ]] || { echo "  got '$out'"; return 1; }
+	[[ "$out" == auto ]] || { echo "  got '$out'"; return 1; }
+	set_state idle_suspend ""
+	run get idle_suspend
+	[[ "$out" == on ]] || { echo "  got '$out'"; return 1; }
+	set_state focus_bar bogus
+	run get focus_bar
+	[[ "$out" == off ]] || { echo "  got '$out'"; return 1; }
 }
 
 # Two sets of one key at once leave one whole value, and nothing else in
@@ -259,8 +263,8 @@ test_two_sets_at_once_leave_one_value() {
 	fresh
 	local round got
 	for ((round = 1; round <= 200; round++)); do
-		env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" set refresh auto &
-		env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" set refresh 60 &
+		env XDG_STATE_HOME="$STATE_HOME" "$energy" set refresh auto &
+		env XDG_STATE_HOME="$STATE_HOME" "$energy" set refresh 60 &
 		wait
 		got="$(
 			cat "$STATE_HOME/energy/refresh"
@@ -288,13 +292,13 @@ test_a_get_during_sets_never_reads_empty() {
 	rm -f -- "$stop"
 	(
 		while [[ ! -e "$stop" ]]; do
-			env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" set refresh 60
-			env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" set refresh auto
+			env XDG_STATE_HOME="$STATE_HOME" "$energy" set refresh 60
+			env XDG_STATE_HOME="$STATE_HOME" "$energy" set refresh auto
 		done
 	) &
 	local writer=$!
 	for ((round = 1; round <= 600; round++)); do
-		got="$(env XDG_STATE_HOME="$STATE_HOME" "$BASH" "$energy" get refresh)"
+		got="$(env XDG_STATE_HOME="$STATE_HOME" "$energy" get refresh)"
 		if [[ "$got" != auto && "$got" != 60 ]]; then
 			bad="read $round got '$got'"
 			break
@@ -322,7 +326,7 @@ test_state_falls_back_to_home() {
 	fresh
 	local home="$scratch/home"
 	rm -rf -- "$home"
-	capture env -u XDG_STATE_HOME "${off_desktop[@]}" HOME="$home" PATH="$bin:$host_path" "$BASH" "$energy" set focus_bar on
+	capture env -u XDG_STATE_HOME "${off_desktop[@]}" HOME="$home" PATH="$bin:$host_path" ENERGY_TOOLS_PATH= "$energy" set focus_bar on
 	expect_status 0
 	content_is "$home/.local/state/energy/focus_bar" on
 }
@@ -842,28 +846,17 @@ test_unknown_command() {
 
 # The package.
 
-test_package_is_this_script_with_its_charge_mode() {
-	local line cm
-	cm="$(grep -o '/nix/store/[^"]*-charge-mode[^/"]*/bin/charge-mode' "$PACKAGE/bin/energy" | head -n 1)"
+test_package_names_its_charge_mode_and_tools() {
+	local cm path
+	cm="$(grep -aoE '/nix/store/[0-9a-z]{32}-charge-mode[-.0-9a-z]*/bin/charge-mode' "$PACKAGE/bin/energy" | head -n 1)"
 	[[ -x "$cm" ]] || { echo "  energy names no charge-mode from the store: '$cm'"; return 1; }
-	diff <(tail -n +2 "$SOURCE" | sed "s|@chargeMode@|$cm|g") \
-		<(awk 'body; /^export PATH=/ { body = 1 }' "$PACKAGE/bin/energy" | sed '1{/^$/d}; ${/^$/d}') || {
-		echo "  the package's energy is not this script"
-		return 1
-	}
-	line="$(grep -m1 '^export PATH=' "$PACKAGE/bin/energy")"
-	# fuzzel, swaymsg, keep-awake and waybar-launch come from the session.
-	[[ "$line" == *':$PATH"' ]] || { echo "  $line"; return 1; }
-}
-
-test_package_path_holds_the_tools() {
-	local line path
-	line="$(grep -m1 '^export PATH=' "$PACKAGE/bin/energy")"
-	path="${line#export PATH=\"}"
-	path="${path%:\$PATH\"}"
-	capture env -i PATH="$path" "$BASH" -c 'command -v awk busctl cat gdbus jq mkdir mktemp mv notify-send pgrep rm setsid systemctl'
+	# The directories of busctl, systemctl, gdbus, notify-send, pgrep and
+	# setsid, in front of the session's PATH.
+	path="$(grep -aoE '(/nix/store/[0-9a-z]{32}-[-.0-9a-zA-Z_+]+/bin:){4}/nix/store/[0-9a-z]{32}-[-.0-9a-zA-Z_+]+/bin' "$PACKAGE/bin/energy" | head -n 1)"
+	[[ -n "$path" ]] || { echo "  no PATH of tools in the binary"; return 1; }
+	capture env -i PATH="$path" "$BASH" -c 'command -v busctl systemctl gdbus notify-send pgrep setsid'
 	expect_status 0
-	expect_lines 13
+	expect_lines 6
 }
 
 tests=(
@@ -871,8 +864,8 @@ tests=(
 	test_set_and_get_every_value
 	test_set_refuses_other_values
 	test_set_without_a_value_fails
-	test_get_of_an_unknown_key_dies_unbound
-	test_an_empty_state_file_reads_as_empty
+	test_get_of_an_unknown_key_is_refused
+	test_an_empty_state_file_reads_as_the_default
 	test_two_sets_at_once_leave_one_value
 	test_a_get_during_sets_never_reads_empty
 	test_set_into_an_unwritable_state_fails
@@ -927,7 +920,6 @@ tests=(
 	test_menu_escape_in_a_choice_list_does_nothing
 	test_menu_without_fuzzel_exits_quietly
 	test_unknown_command
-	test_package_is_this_script_with_its_charge_mode
-	test_package_path_holds_the_tools
+	test_package_names_its_charge_mode_and_tools
 )
 run_tests "${tests[@]}"
