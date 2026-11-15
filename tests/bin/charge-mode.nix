@@ -3,9 +3,10 @@
 # package's program with its battery and state paths pointed into the
 # sandbox, and sudo and notify-send as stubs (the Waybar refresh against
 # real processes named as Waybar's are); then the package's three programs
-# and the helper they call, and the helper's calls under strace. The Odin tests are the check charge-mode-tests;
-# the VM test hardware-power checks the sudo rule and the boot unit on a
-# running system.
+# and the helper they call, and the helper's calls under strace, with a
+# failed fsync injected. The Odin tests are the check charge-mode-tests; the
+# VM test hardware-power checks the sudo rule and the boot unit on a running
+# system.
 {
   self,
   pkgs,

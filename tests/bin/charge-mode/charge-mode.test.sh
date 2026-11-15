@@ -726,6 +726,43 @@ test_apply_syncs_the_state_dir_after_the_rename() {
 	}
 }
 
+# A failed sync of the directory comes after both writes have landed: the
+# mode is set and saved, and only its survival of a power cut is in doubt.
+# So it is a warning and exit 0, and charge-mode reports the mode as set,
+# refreshes Waybar and shows the warning. strace fails the second fsync,
+# the directory's (the first is the temporary file's), with EIO.
+test_a_failed_dir_sync_is_a_warning() {
+	if ! command -v strace >/dev/null 2>&1; then
+		echo "SKIP test_a_failed_dir_sync_is_a_warning: no strace on the PATH" >&3
+		return 0
+	fi
+	firmware "Fast Standard [Long_Life]"
+	saved Long_Life
+	capture env CHARGE_MODE_ATTR="$attr" CHARGE_MODE_STATE="$state" \
+		strace -qq -o /dev/null -e trace=fsync -e inject=fsync:error=EIO:when=2 \
+		"$PACKAGE/bin/charge-mode-apply" Fast
+	expect_status 0
+	expect_err "charge-mode-apply: warning: saved the mode, but cannot sync $(dirname "$state")"
+	content_is "$attr" Fast
+	content_is "$state" Fast
+
+	# Through the user's command, as a Waybar click runs it.
+	firmware "Fast Standard [Long_Life]"
+	saved Long_Life
+	wrap charge-mode-apply "$apply" unused
+	write_script "$scratch/apply-eio" \
+		"exec strace -qq -o /dev/null -e trace=fsync -e inject=fsync:error=EIO:when=2 ${apply@Q} \"\$@\""
+	wrap charge-mode "$cm" "$scratch/apply-eio"
+	run "$cm" set Standard
+	expect_status 0
+	[[ "$out" == Standard ]] || { echo "  printed '$out'"; return 1; }
+	expect_err "warning: saved the mode, but cannot sync"
+	content_is "$attr" Standard
+	content_is "$state" Standard
+	calls_are "sudo -n $scratch/apply-eio Standard" \
+		"notify-send -a charge-mode Charge mode: Standard Charges to 100% at the normal rate."
+}
+
 # The package as the Odin build makes it: three programs, not one under
 # three names; the helper the other two call is the package's own, by its
 # store path; the two that run as root carry none of the user's side (sudo,
@@ -1027,6 +1064,7 @@ tests=(
 	test_apply_refuses_a_state_dir_others_can_write
 	test_apply_saves_the_mode_readable_by_all
 	test_apply_syncs_the_state_dir_after_the_rename
+	test_a_failed_dir_sync_is_a_warning
 	test_restore_refuses_a_symlinked_saved_mode
 	test_restore_refuses_a_huge_saved_mode
 	test_package_has_three_programs

@@ -140,6 +140,10 @@ run_helper :: proc(cfg: Config, helper_args: []string, err: io.Writer) -> bool {
 		append(&command, ..helper_args)
 		output, ran, start_error := run_captured(command[:], env_with(cfg.env, "LC_ALL", "C"))
 		if ran {
+			// A helper that succeeds says nothing, unless it warns.
+			if words := trim_newlines(output); words != "" {
+				fmt.wprintln(err, words)
+			}
 			return true
 		}
 		said = trim_newlines(output)

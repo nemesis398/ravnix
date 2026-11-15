@@ -226,12 +226,14 @@ save_state :: proc(dir: linux.Fd, state, base, mode: string, err: io.Writer) -> 
 		return false
 	}
 	// The rename is durable only once the directory is synced: without it a
-	// power cut right after a `set` could bring the old saved mode back. The
-	// new mode is in place by now, so a failure here is reported and fails
-	// the run, but there is nothing to undo.
+	// power cut right after a `set` could bring the old saved mode back. By
+	// now the mode is set and saved, so a failure here is a warning and the
+	// run still succeeds: an exit 1 would make charge-mode say "not changed"
+	// about a mode that did change. The warning goes to standard error, which
+	// the boot unit's journal and charge-mode both show.
 	if serr := linux.fsync(dir); serr != .NONE {
-		fmt.wprintfln(err, "charge-mode-apply: saved the mode, but cannot sync %s: %s", state, errno_text(serr))
-		return false
+		dir_name, _ := split_path(state)
+		fmt.wprintfln(err, "charge-mode-apply: warning: saved the mode, but cannot sync %s (%s); it may not survive a power cut", dir_name, errno_text(serr))
 	}
 	return true
 }

@@ -306,8 +306,13 @@ only_a_caller_without_root_moves_the_paths :: proc(t: ^testing.T) {
 	c = user
 	c.gid, c.egid = 0, 0
 	testing.expect(t, cm.seams_allowed(c))
-	// The process's own credentials: the tests run without privilege.
-	testing.expect(t, cm.seams_allowed(cm.current_credentials()))
+	// The process's own credentials: in the check the tests run without
+	// privilege; run as root, they must not allow the seams.
+	own := cm.current_credentials()
+	testing.expect_value(t, cm.seams_allowed(own), own.uid != 0 && own.euid != 0 && own.uid == own.euid && own.gid == own.egid && own.capabilities == 0)
+	if linux.getuid() != 0 {
+		testing.expect(t, cm.seams_allowed(own))
+	}
 }
 
 @(test)

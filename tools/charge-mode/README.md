@@ -27,7 +27,8 @@ Every `charge-mode` command does nothing and exits 0 on a machine without
 `charge_types`. Exit statuses: `charge-mode` 0, 1 when the helper did not
 run or refused, 2 for bad usage; `charge-mode-apply` 0, 1 when the system is
 not as it should be (no attribute, a symlink, a failed write), 2 when it
-refuses its arguments; `charge-mode-restore` 0 also when there is nothing to
+refuses its arguments, and 0 with a warning when only the sync of the state
+directory fails; `charge-mode-restore` 0 also when there is nothing to
 restore or the attribute never appears, else the helper's status.
 
 Odin, ported from the Bash scripts carried over from Fedora's
@@ -63,8 +64,9 @@ command and the restore have that path built in.
   its owner alone; the saved mode is absent or a regular file. Then it writes
   the mode to `charge_types` (opened without `O_CREAT`, with `O_NOFOLLOW`,
   one write) and saves it through a temporary file, `fsync` and a rename,
-  as 0644, then syncs the directory, so the rename survives a power cut. It
-  runs nothing.
+  as 0644, then syncs the directory, so the rename survives a power cut. A
+  failed sync of the directory is a warning, not a failure, since both
+  writes have landed by then. It runs nothing.
 - `charge-mode-restore` reads the saved mode (no symlink, at most 4096
   bytes, no NUL), waits up to 20 times half a second for `charge_types`, and
   execs the helper by its store path with the mode, unchecked.
@@ -75,8 +77,8 @@ The tests point the programs at a fake battery and state through
 neither its real nor its effective uid is 0, its real and effective uid and
 gid are the same (no setuid or setgid exec, to root or anyone else), and it
 holds no effective capability: under sudo, and as the boot unit, the fixed
-paths hold whatever the environment says. The VM test `hardware-power` checks that as root,
-directly and through sudo.
+paths hold whatever the environment says. The VM test `hardware-power`
+checks that as root, directly and through sudo.
 
 ## Changes from the Bash scripts
 
@@ -136,7 +138,7 @@ the refusals, a late attribute and giving up; the user's command without
 helper, no sudo, sudo's words and their hints, the PATH lookup, the locale,
 and which processes count as the user's Waybar in a fake `/proc`.
 
-`tests/bin/charge-mode/charge-mode.test.sh` (the check `bin-charge-mode`, 61
+`tests/bin/charge-mode/charge-mode.test.sh` (the check `bin-charge-mode`, 62
 cases) runs the built programs, with sudo and notify-send as stubs: the
 cases of the Bash scripts' test, which passed against the Bash scripts and
 the Odin programs alike before the scripts were deleted, among them the
@@ -146,7 +148,8 @@ its argv, and 200 rounds of two helpers at once; then the helper's refusals
 of control characters, a huge mode, a symlinked or non-file or huge
 attribute, a symlinked or missing or others-writable state directory, a
 symlinked or directory saved mode, the directory synced after the rename
-(under strace); and the package: three different ELF
+and a failed sync of it a warning, alone and through `charge-mode` (under
+strace, which injects the EIO); and the package: three different ELF
 programs, the helper path built into the other two, no `sudo`,
 `notify-send` or `waybar` in the root programs, and both root programs
 working with an empty environment. The VM test `hardware-power` checks the
