@@ -58,7 +58,7 @@ charge_mode_now :: proc(cfg: ^Config) -> string {
 	return strings.trim_right(string(res.stdout), "\n")
 }
 
-// menu is `energy menu` (middle click on waybar's power-profile icon): a
+// menu is `energy menu` (middle click on waybar's power draw): a
 // fuzzel dropdown with one row per setting and its current value. Picking a
 // row opens that setting's choices. The status is that of the last thing it
 // ran, as the shell version's was.

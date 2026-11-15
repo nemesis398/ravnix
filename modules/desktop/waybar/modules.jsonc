@@ -30,12 +30,11 @@
 
   // Power-profile switch — talks to the net.hadess.PowerProfiles D-Bus API; a
   // left-click cycles the profile. Glyph changes per mode (the "power mode switch").
-  // A middle click opens the energy menu: profile, refresh rate (auto = 60 Hz on
-  // power-saver), keep-awake, idle suspend, charge mode and the focus bar on
-  // battery.
+  // Waybar 0.15's module switches the profile on EVERY button (left forward, any
+  // other back) and runs no on-click command, so the energy menu is the power
+  // draw's middle click (custom/powerdraw below), not this module's.
   "power-profiles-daemon": {
     "format": "{icon}",
-    "on-click-middle": "energy menu",
     "tooltip-format": "Power profile: {profile}\nDriver: {driver}",
     "format-icons": {
       "default": "󰾅",
@@ -78,8 +77,13 @@
 
   // CPU(RAPL)+GPU(amdgpu) power draw — custom script. Degrades to GPU-only when
   // RAPL energy_uj is root-locked (the rapl udev rule makes it readable).
+  // A middle click opens the energy menu: profile, refresh rate (auto = 60 Hz on
+  // power-saver), keep-awake, idle suspend, charge mode and the focus bar on
+  // battery. It sits here because the power-profile module beside it cannot run
+  // a click command; both bars show the power draw.
   "custom/powerdraw": {
     "exec": "waybar-powerdraw",
+    "on-click-middle": "energy menu",
     "return-type": "json",
     "interval": 2,
     "tooltip": true,

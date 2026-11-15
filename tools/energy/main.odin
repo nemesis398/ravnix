@@ -3,7 +3,7 @@
 // Fedora laptop, in Bash; ported to Odin with the same commands and state
 // files (README.md has what changed).
 //
-// THE MENU (`energy menu`, middle click on waybar's power-profile icon) is a
+// THE MENU (`energy menu`, middle click on waybar's power draw) is a
 // fuzzel dropdown in the style of waybar-netmenu. Each row is one setting with
 // its current value; picking a row opens that setting's choices:
 //   Power profile    power-saver / balanced / performance (tuned-ppd)

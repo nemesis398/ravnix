@@ -223,6 +223,16 @@ def main():
             if isinstance(module, dict) and module.get("exec"):
                 exe = module["exec"].split()[0]
                 expect(exe in scripts or exe == "keep-awake", label(f"modules.jsonc runs {exe} for {name}, which this module does not provide"))
+        # Waybar 0.15's power-profiles-daemon module switches the profile on
+        # every mouse button and runs none of the on-click commands, so the
+        # energy menu is the power draw's middle click, on both bars.
+        for name, module in modules_json.items():
+            if name.split("#")[0] == "power-profiles-daemon" and isinstance(module, dict):
+                clicks = [k for k in module if k.startswith("on-click") or k.startswith("on-scroll")]
+                expect(not clicks, label(f"modules.jsonc gives {name} {', '.join(clicks)}, which Waybar's module never runs"))
+        expect(modules_json.get("custom/powerdraw", {}).get("on-click-middle") == "energy menu", label("the power draw's middle click does not open the energy menu"))
+        for bar_name, bar in (("config.jsonc", config), ("config-focus.jsonc", focus)):
+            expect("custom/powerdraw" in bar.get("modules-left", []), label(f"waybar/{bar_name} has no power draw, so no energy menu"))
         expect(f"color='{accent}'" in modules, label("modules.jsonc has no Pango span in the accent"))
         for line in modules.splitlines():
             if "color='#" in line and f"color='{accent}'" not in line and f"color='{palette['red']}'" not in line and f"color='{palette['overlay0']}'" not in line:

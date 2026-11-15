@@ -3,7 +3,7 @@
 The laptop's energy settings in one fuzzel menu, and the watcher that
 applies them: power profile, refresh rate, keep-awake, idle suspend on
 battery, charge mode and the focus bar on battery. `energy menu` is Waybar's
-middle click on the power-profile icon; `energy watch` is the user unit
+middle click on the power draw; `energy watch` is the user unit
 `energy-watch.service`, which follows UPower's `OnBattery` and tuned-ppd's
 `ActiveProfile` on the system bus; kanshi's profiles run `energy refresh`,
 keep-awake's swayidle `energy idle-suspend`. Carried over from Fedora's
