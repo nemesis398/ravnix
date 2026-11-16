@@ -15,6 +15,8 @@
 #     a plain Shift+a after it is Shift+a.
 #   - A stop gives the keyboard back at once, and a killed daemon is
 #     restarted and grabs again.
+#   - A start while a key is held waits, and says so, until the key is let
+#     go: the raw keyboard sees the release, and only then comes the grab.
 #   - A keyboard that goes away (atkbd unbound from its serio port) ends the
 #     daemon with an error, systemd gives up after 5 starts, and with the
 #     keyboard bound again the service comes back.
@@ -129,6 +131,26 @@ pkgs.testers.runNixOSTest {
             f"p=$(systemctl show -P MainPID copilot-key-super); [ \"$p\" != 0 ] && [ \"$p\" != {before} ]"
         )
         machine.wait_until_succeeds("grep -qx copilot-key-super /sys/class/input/event*/device/name")
+
+    with subtest("a start while a key is held waits for its release"):
+        machine.succeed("systemctl stop copilot-key-super")
+        machine.wait_until_fails("grep -qx copilot-key-super /sys/class/input/event*/device/name")
+        watch("watch-held", raw, "/tmp/held.log")
+        # A held for 4 s, as QEMU's sendkey holds it.
+        machine.send_monitor_command("sendkey a 4000")
+        machine.wait_until_succeeds(f"grep -q 'code {A} (KEY_A), value 1' /tmp/held.log")
+        machine.succeed("systemctl reset-failed copilot-key-super")
+        machine.succeed("systemctl start copilot-key-super")
+        this_run = "journalctl -o cat _SYSTEMD_INVOCATION_ID=$(systemctl show -P InvocationID copilot-key-super)"
+        machine.wait_until_succeeds(f"{this_run} | grep -q 'still down'")
+        machine.fail(f"{this_run} | grep -q grabbing")
+        # The release reaches the raw keyboard, so nothing was grabbed yet.
+        machine.wait_until_succeeds(f"grep -q 'code {A} (KEY_A), value 0' /tmp/held.log")
+        machine.wait_until_succeeds(f"{this_run} | grep -q grabbing")
+        machine.succeed("systemctl stop watch-held")
+        watch("watch-regrab", raw, "/tmp/regrab.log")
+        machine.succeed("grep -q 'grabbed by another process' /tmp/regrab.log")
+        machine.succeed("systemctl stop watch-regrab")
 
     with subtest("a keyboard that goes away ends the daemon, and systemd gives up"):
         machine.succeed("systemctl reset-failed copilot-key-super")

@@ -39,7 +39,8 @@
 # module as well, and adds the uinput group and the udev rule that gives
 # /dev/uinput to it (0660), so the service can run as a dynamic user in the
 # input and uinput groups instead of as root. Nothing else on huginn opens
-# /dev/uinput.
+# /dev/uinput, and no user is in the uinput group: a user put in it could
+# type into every session, so that takes a reason.
 #
 # The unit mirrors Fedora's: Restart=on-failure after 2 s, and at most 5
 # starts in 60 s, since a daemon that flaps while it holds a keyboard grab
