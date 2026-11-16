@@ -79,7 +79,9 @@ in
     "/root/.config/atuin/config.toml"."L+".argument = "${configFile}";
   };
 
-  programs.bash.interactiveShellInit = ''
+  # mkAfter: bash-preexec hooks PROMPT_COMMAND and the DEBUG trap, so it comes
+  # after everything else that /etc/bashrc sets up.
+  programs.bash.interactiveShellInit = lib.mkAfter ''
     if [ "$EUID" -eq 0 ]; then
       source ${init}
     fi

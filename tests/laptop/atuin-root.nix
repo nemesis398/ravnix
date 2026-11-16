@@ -92,6 +92,16 @@ let
     ++ check (
       lib.hasInfix "atuin-root-init.bash" huginn.config.environment.etc.bashrc.text
     ) "/etc/bashrc does not read root's atuin init"
+    # It comes last in the interactive part of /etc/bashrc, after the prompt,
+    # dircolors and completion: bash-preexec wants to hook PROMPT_COMMAND and
+    # the DEBUG trap after everyone else has set theirs.
+    ++ check (
+      let
+        text = huginn.config.environment.etc.bashrc.text;
+        at = needle: builtins.stringLength (builtins.head (lib.splitString needle text));
+      in
+      at "dircolors" < at "atuin-root-init.bash"
+    ) "root's atuin init is not after the other interactive init in /etc/bashrc"
     # Not on the server.
     ++ check ((rules muninn) == { }) "the server links an atuin config for root"
     ++ check (!(lib.hasInfix "atuin-root-init" muninn.config.environment.etc.bashrc.text)) "the server's /etc/bashrc reads root's atuin init"
@@ -140,12 +150,23 @@ pkgs.runCommand "laptop-atuin-root"
         grep -qxF "sync_address=$SYNC_URL" "$HELPER_SYNCED" || fail "the helper on a host with the service does not have $SYNC_URL written in"
         grep -qx "sync_address='''" "$HELPER_BARE" || fail "the helper on a host without the service has an address written in"
 
+        # bash-preexec is ravnix's copy, the one of the user's shell
+        # (modules/common/bash.nix), and not atuin's own older one (0.6.0), and
+        # it is sourced before atuin's integration.
+        pre=$(grep -nF "source ${pkgs.bash-preexec}/share/bash/bash-preexec.sh" "$INIT" | cut -d: -f1 || true)
+        integ=$(grep -n "atuin-root-integration.bash" "$INIT" | cut -d: -f1 || true)
+        [ -n "$pre" ] || fail "the init does not source ${pkgs.bash-preexec}/share/bash/bash-preexec.sh"
+        [ -n "$integ" ] && [ "$pre" -lt "$integ" ] || fail "bash-preexec is not sourced before atuin's integration"
+
         # As root's shell reads it: bash-preexec is loaded, atuin's hooks are
         # in, Ctrl-R is atuin's and the up arrow is left to bash (--disable-up-arrow).
         probe=$(bash --norc --noprofile -i -c '
           . "$INIT"
           declare -F __bp_precmd_invoke_cmd >/dev/null || echo "NO-PREEXEC"
           [[ -n ''${ATUIN_SESSION:-} ]] || echo "NO-SESSION"
+          # bash-preexec waits for the first prompt to install its hooks, and
+          # has put __bp_install on the prompt command for it.
+          [[ "''${PROMPT_COMMAND[*]}" == *__bp_install* ]] || echo "NO-PROMPT-HOOK"
           declare -F __atuin_preexec >/dev/null || echo "NO-ATUIN-HOOK"
           [[ ''${__atuin_bind_ctrl_r:-} == true ]] || echo "NO-CTRL-R"
           [[ ''${__atuin_bind_up_arrow:-} == false ]] || echo "UP-ARROW-BOUND"
