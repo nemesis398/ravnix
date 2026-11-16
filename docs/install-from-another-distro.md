@@ -227,17 +227,35 @@ systemd-ask-password -n 'Login keyring password:' |
 
 ## After the laptop's first boot: the NetworkManager profiles
 
-Wi-Fi and wired profiles are state, not configuration: they hold the networks' passwords, and a flake that is public must not. So the flake declares none, and you copy them over once, from the other distribution's root file system. Copy every file of `/etc/NetworkManager/system-connections/` and not only the home Wi-Fi's, with root as owner and mode 0600 (NetworkManager ignores a file that anyone else can read):
+Wi-Fi and wired profiles are state, not configuration: they hold the networks' passwords, and a flake that is public must not. So the flake declares none, and you copy them over once, from the other distribution's root file system. Copy every file of `/etc/NetworkManager/system-connections/` and not only the home Wi-Fi's, except the profile `wg-nord`, which `nord setup` builds again with a fresh WireGuard key (`packages/nord/README.md`).
+
+The other distribution's root file system is on the disk the laptop keeps, so open it read-only, by the by-id link of that disk's own partition, and write nothing to it (AGENTS.md, rule 2). On Fedora's default layout the partition is LUKS, holding a btrfs file system with the subvolume `root`. `ls -l /dev/disk/by-id/` lists the links, and `lsblk -f` shows which partition is `crypto_LUKS`. Take the link of the other disk, and never the one of huginn's own (the disk of `ravnix.laptop.diskModel` and `diskSerial`), and never a kernel name such as `/dev/nvme0n1p3`, which can be the other disk after the next boot. The disk's model and serial are in the link's name.
+
+```sh
+OLD=/dev/disk/by-id/nvme-MODEL_SERIAL-part3   # the other disk's LUKS partition
+sudo cryptsetup open --readonly "$OLD" oldroot
+sudo mkdir -p /mnt/old-root
+sudo mount -o ro,rescue=nologreplay,subvol=root /dev/mapper/oldroot /mnt/old-root
+```
+
+`--readonly` opens the mapping read-only, and `ro,rescue=nologreplay` keeps btrfs from replaying its log, which would write. Then copy. The directory is root's alone, so the copy has no glob that your shell would expand, and the last command lets root find the files: your shell cannot list the directory, so a `*` after it stays a literal `*` and `sudo chmod 600 /etc/NetworkManager/system-connections/*` fails.
 
 ```sh
 sudo install -d -m 0700 -o root -g root /etc/NetworkManager/system-connections
 sudo cp -a /mnt/old-root/etc/NetworkManager/system-connections/. /etc/NetworkManager/system-connections/
-sudo chown root:root /etc/NetworkManager/system-connections/*
-sudo chmod 600 /etc/NetworkManager/system-connections/*
+sudo find /etc/NetworkManager/system-connections -type f -exec chown root:root {} + -exec chmod 600 {} +
+sudo rm -f /etc/NetworkManager/system-connections/wg-nord.nmconnection
 sudo nmcli connection reload
 ```
 
-Take out the profile `wg-nord` (`wg-nord.nmconnection`) before you reload, or delete it afterward: `nord setup` builds it again with a fresh WireGuard key (`packages/nord/README.md`), so a copied one only carries the old key. Profiles of a machine that is not this one, such as a wired connection of a docking station you no longer use, can stay out too. A profile that names a network interface or a MAC address (`interface-name`, `mac-address` in its `[connection]` or `[wifi]` section) works on the same laptop and nowhere else. `nmcli connection show` lists what NetworkManager loaded, and `nmcli connection up NAME` joins one.
+The owner root and the mode 0600 matter: NetworkManager ignores a file that anyone else can read. `cp -a` keeps them, and the `find` makes sure. Close the old root again before you go on:
+
+```sh
+sudo umount /mnt/old-root
+sudo cryptsetup close oldroot
+```
+
+Profiles of a machine that is not this one, such as a wired connection of a docking station you no longer use, can stay out too: delete their files before the reload. A profile that names a network interface or a MAC address (`interface-name`, `mac-address` in its `[connection]` or `[wifi]` section) works on the same laptop and nowhere else. `nmcli connection show` lists what NetworkManager loaded, and `nmcli connection up NAME` joins one.
 
 ## After the laptop's first boot: root's atuin login
 
