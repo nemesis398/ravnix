@@ -21,8 +21,9 @@ Tests: `tests/*.test.sh` and `hooks/test.sh`, run by the flake check
 `scripts-tests`. The gate's tests (`check.test.sh`, `githooks.test.sh`) give
 their scratch repositories the style check through a fake nix build, so they
 need the program: `scripts-tests` sets `CHECK_STYLE`, and by hand it is
-`CHECK_STYLE="$(nix build --no-link --print-out-paths .#check-style)/bin/check-style"`. `tests/lib.sh` points `XDG_STATE_HOME` into each test
-file's scratch directory, so no test's gate records into your state. The
+`CHECK_STYLE="$(nix build --no-link --print-out-paths .#check-style)/bin/check-style"`.
+`tests/lib.sh` points `XDG_STATE_HOME` into each test file's scratch
+directory, so no test's gate records into your state. The
 flake checks `flake-gate-outputs` (`lib/flake-outputs.nix` on good and bad
 outputs), `flake-gate-check-drv` (`lib/check-drv.nix` on a derivation and on
 values that are none) and `flake-check-names` (the listing of the checks

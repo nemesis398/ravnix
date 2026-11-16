@@ -83,7 +83,8 @@
 # Why Bash and not an Odin tool (AGENTS.md rule 4): this is not a tool of the
 # system but an acceptance harness that runs a few times, once per surface
 # port. It is the format normalisers (awk), `diff` and a table of allowed
-# lines, and it carries no state or user data. Its tests are scripts/tests/style-parity.test.sh. Known limits:
+# lines, and it carries no state or user data. Its tests are
+# scripts/tests/style-parity.test.sh. Known limits:
 # normalisation is line and token based, not a parser: a CSS string holding a
 # brace or a semicolon, a TOML key in quotes, a YAML flow mapping or a JSON
 # comment marker inside a TOML string are not understood. In kv the sections
