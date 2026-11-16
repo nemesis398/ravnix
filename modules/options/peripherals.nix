@@ -152,6 +152,21 @@ in
       example = "office";
       description = "The name of the printer that prints when none is chosen: one of `printers`, or null for CUPS's own choice.";
     };
+
+    skra.enable = mkOption {
+      type = types.bool;
+      default = true;
+      example = false;
+      description = ''
+        skrá, the web interface for CUPS at `http://127.0.0.1:7631/`: your
+        printers with their ink levels, the queue, the CUPS log, and a launcher
+        that opens it in a window of its own. It runs as your user, and a
+        socket unit starts it on the first request; it exits after five idle
+        minutes, so nothing runs while the page is closed. It marks the queues
+        of `printers` as declared, so it shows them read-only. Turn it off when
+        you want `lpadmin` and nothing else.
+      '';
+    };
   };
 
   options.ravnix.vpn = {

@@ -297,6 +297,9 @@
       };
       # One of the names above, or null for CUPS's own choice.
       defaultPrinter = "office";
+      # skrá, the web interface for CUPS at http://127.0.0.1:7631/, with a
+      # launcher. On by default; false leaves `lpadmin` and nothing else.
+      skra.enable = true;
     };
 
     # The VPNs. Secrets stay in Bitwarden: only item names or ids go here,
