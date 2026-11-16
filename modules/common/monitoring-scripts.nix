@@ -152,8 +152,9 @@ in
   #   1   it is older, there is none, or the check could not run (restic
   #       refused, its answer unreadable, an item missing): `down` for the
   #       first two, nothing for the rest
-  #   69  the NAS did not answer within listTimeout (EX_UNAVAILABLE): the
-  #       laptop is away from it, nothing
+  #   69  restic did not finish within listTimeout (EX_UNAVAILABLE):
+  #       mostly the NAS out of reach, or an error restic keeps retrying
+  #       (a 5xx); nothing
   #   75  the vault is locked: nothing
   #
   # This is more than the thin glue AGENTS.md rule 4 allows in Bash: it
@@ -191,7 +192,7 @@ in
         json=$(RESTIC_REST_USERNAME=$host RESTIC_REST_PASSWORD=$login \
           timeout ${toString listTimeout} restic --no-lock snapshots --json --host "$host") || listed=$?
         if ((listed == 124)); then
-          echo "the NAS did not answer within ${toString listTimeout} s, so restic could not list the snapshots of $host in $RESTIC_REPOSITORY; nothing was pushed" >&2
+          echo "restic did not finish within ${toString listTimeout} s listing the snapshots of $host in $RESTIC_REPOSITORY (the NAS out of reach, or an error restic keeps retrying; its messages are above); nothing was pushed" >&2
           exit 69
         elif ((listed)); then
           echo "restic could not list the snapshots of $host in $RESTIC_REPOSITORY (exit $listed); nothing was pushed" >&2

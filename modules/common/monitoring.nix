@@ -42,8 +42,10 @@
 #     and curl's statuses for a network that is not there or not working
 #     (6 no name, 7 no connection, 28 timeout, 35 TLS handshake, 52 no
 #     reply, 56 reset, 60 a captive portal's certificate), do not mark the
-#     unit failed, as on Fedora; nor do the check's 75 and 69 (the NAS out
-#     of reach). The missing beat is the signal, and it is read on the
+#     unit failed, as on Fedora; nor do the check's 75 and 69 (restic did
+#     not finish in time: mostly the NAS out of reach, but also an error
+#     restic keeps retrying, such as a 5xx; the backup itself fails
+#     visibly then). The missing beat is the signal, and it is read on the
 #     other end. An HTTP error (curl's 22), a malformed item or restic
 #     refusing the repository still fails the unit: that is a fault here.
 #
@@ -157,7 +159,7 @@ in
         Service = {
           Type = "oneshot";
           ExecStart = lib.getExe check;
-          # The NAS out of reach (69) and the vault locked (75): the check
+          # restic did not finish in time (69) and the vault locked (75): the check
           # could not tell, pushed nothing, and the monitor's silence is the
           # alarm, so the unit is not failed for it.
           SuccessExitStatus = "69 75";

@@ -630,7 +630,7 @@ pkgs.runCommand "common-monitoring"
         [ "$status" = 69 ] || fail "the NAS out of reach gave $status, not 69"
         [[ $(calm_of ${unitFile "backup-age-check.service"}) == *" 69 "* ]] || fail "the NAS out of reach fails the check's unit"
         (($(date +%s) - started < 30)) || fail "the check waited $(($(date +%s) - started)) s for the NAS, not its 5"
-        grep -q 'did not answer within 5 s' ${build}/age-nas.err || fail "the check does not say the NAS did not answer: $(cat ${build}/age-nas.err)"
+        grep -q 'restic did not finish within 5 s' ${build}/age-nas.err || fail "the check does not say restic did not finish in time: $(cat ${build}/age-nas.err)"
         [ "$(beats)" = "$n" ] || fail "the check pushed something without an answer: $(tail -n 3 "$kuma_log")"
 
         # Across every run: curl read no curlrc (-q first), no token reached
