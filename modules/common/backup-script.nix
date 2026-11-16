@@ -2,7 +2,14 @@
 # both ways of reading its two secrets. Not a module: they call it as
 #
 #   import ./backup-script.nix { inherit lib pkgs; } { cfg; home; rbw ? null; }
-#   => { package = the ravnix-backup program; problems = [ messages ]; }
+#   => { package = the ravnix-backup program; problems = [ messages ];
+#        password; readLogin; }
+#
+# password is the program restic runs as its --password-command, and
+# readLogin the shell text that sets $login, the rest-server login's
+# password, or stops; the backup's age check (./monitoring-scripts.nix)
+# reaches the repository with the same two, so it needs no secret of its
+# own.
 #
 # cfg is ravnix.backup.nas. With secrets = "rbw", rbw (its program) reads
 # both items at each run. With secrets = "file", the program reads the
@@ -95,6 +102,7 @@ let
 in
 {
   inherit (excludes) problems;
+  inherit password readLogin;
   package = pkgs.writeShellApplication {
     name = "ravnix-backup";
     runtimeInputs = [
