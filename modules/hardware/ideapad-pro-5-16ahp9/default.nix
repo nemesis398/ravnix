@@ -12,7 +12,8 @@
 #   nvidia.nix   the dGPU around a suspend: no nvidia-powerd, where the
 #                video memory is saved
 #   panel.nix    the panel's ABM level, pinned
-#   keys.nix     F4 and F8 reported once: the driver's WMI copies dropped
+#   keys.nix     F4 and F8 reported once: the driver's WMI copies dropped;
+#                the Copilot key as a plain Super (copilot-key-super)
 #
 # Each file has the Fedora workaround it carries over and why it is still
 # needed. tests/hardware/power.nix runs the power parts in a VM, and
