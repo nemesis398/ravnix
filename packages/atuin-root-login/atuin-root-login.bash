@@ -74,15 +74,19 @@ fi
 
 # One value of the item, or an exit with the field's name and never its
 # content. rbw's stderr is thrown away so that it cannot spill a value.
-read_field() { # read_field VAR FIELD
+read_field() { # read_field VAR FIELD [trim]
     local value
     if ! value=$(rbw get --field "$2" -- "$item" 2>/dev/null </dev/null); then
         say "rbw cannot read the $2 of \"$item\""
         exit 1
     fi
-    # The ends: a note ends in a newline and may start with a blank line.
-    value=${value#"${value%%[![:space:]]*}"}
-    value=${value%"${value##*[![:space:]]}"}
+    # The ends of the notes only: a note ends in a newline and may start with
+    # a blank line. A password or a user name is taken as it is, spaces at its
+    # ends included, since those may be part of it.
+    if [[ ${3:-} == trim ]]; then
+        value=${value#"${value%%[![:space:]]*}"}
+        value=${value%"${value##*[![:space:]]}"}
+    fi
     if [[ -z $value ]]; then
         say "the $2 of \"$item\" is empty"
         exit 1
@@ -96,9 +100,10 @@ read_field() { # read_field VAR FIELD
 
 username="" password="" key=""
 read_field username username
-read_field key notes
-# The password is read like the others; a password cannot hold a newline here
-# either, since atuin takes the input to its end and drops the last one only.
+read_field key notes trim
+# The password is read like the others, and refused with a newline in it:
+# atuin drops every CR and LF at the end of what it reads, and a field of
+# several lines is the wrong field.
 read_field password password
 
 self=$(readlink -f -- "$0")

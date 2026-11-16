@@ -255,6 +255,19 @@ it_trims_the_notes_but_keeps_the_key_inside() {
 	}
 }
 
+it_keeps_the_spaces_at_the_ends_of_the_password_and_the_user_name() {
+	pass_v='  spaced pw  ' user_v='name ' run "$SUT" "$item"
+	expect_status 0
+	[[ "$(cat "$rec/atuin.stdin")" == '  spaced pw  ' ]] || {
+		echo "  the password reached atuin as: [$(cat "$rec/atuin.stdin")]"
+		return 1
+	}
+	[[ "$(head -n1 "$rec/atuin.calls")" == '[login][--username=name ][-p][-]' ]] || {
+		echo "  atuin was called as: $(head -n1 "$rec/atuin.calls")"
+		return 1
+	}
+}
+
 it_refuses_a_locked_vault_without_asking_for_anything() {
 	RBW_LOCKED=1 run "$SUT" "$item"
 	expect_status 1
@@ -520,6 +533,7 @@ tests=(
 	it_prints_no_secret_even_when_traced
 	it_hands_over_values_that_look_like_options_or_shell_syntax
 	it_trims_the_notes_but_keeps_the_key_inside
+	it_keeps_the_spaces_at_the_ends_of_the_password_and_the_user_name
 	it_refuses_a_locked_vault_without_asking_for_anything
 	it_says_so_when_rbw_is_missing
 	it_stops_at_a_field_rbw_cannot_read_and_names_it

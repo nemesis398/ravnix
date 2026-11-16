@@ -34,7 +34,8 @@ do it. The user reads the three fields, and the root half of the script, which
   refusal names the field, never its content.
 
 A field that is empty, or has more than one line, is refused before `sudo`
-runs.
+runs. Only the notes are trimmed of white space at their ends; a password or a
+user name is passed as it is, spaces at its ends included.
 
 ## Tests
 
