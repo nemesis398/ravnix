@@ -2,11 +2,14 @@
 # Tests for ravnix-nas-credential (packages/ravnix-nas-credential), run by the
 # check bin-ravnix-nas-credential. The script under test is a copy of the
 # package's whose PATH starts with $STUB_PATH (tests/bin/helpers/
-# stub-first.nix), so that setpriv, rbw and timeout are stand-ins: setpriv
-# records how it was asked to drop to the user and then runs the rest with an
-# environment as bare as --reset-env leaves it, rbw answers from files in
-# $fake and logs every call without its secret, and timeout is the real one
-# with a limit of one second. The build user stands in for the login.
+# stub-first.nix), so that setpriv, rbw, timeout and mv are stand-ins:
+# setpriv records how it was asked to drop to the user and then runs the
+# rest with an environment as bare as --reset-env leaves it, rbw answers from
+# files in $fake and logs every call without its secret, timeout logs the
+# limit it was given and is the real one with one second, and mv is the real
+# one, slowed when a test needs a run caught mid-write. The build user stands
+# in for the login. tests/desktop/nas-rbw-vm.nix runs the real setpriv and
+# rbw against a real agent.
 #
 # The cases that matter most are the negative ones: a locked vault, a vault
 # that is not there, an empty, a multi-line, an overlong or a slow secret, and
@@ -14,7 +17,8 @@
 # none is made; a secret reaches the file byte for byte, whatever it holds,
 # and reaches no command line, no environment and no output on the way.
 #
-# NAS_CREDENTIAL_UNDER_TEST names the copy, and TEST_LIB scripts/tests/lib.sh.
+# NAS_CREDENTIAL_UNDER_TEST names the copy, TEST_LIB scripts/tests/lib.sh, and
+# RBW_TIMEOUT the limit the package gives each rbw call.
 
 # The stubs' bodies are written in single quotes on purpose.
 # shellcheck disable=SC2016
@@ -23,6 +27,7 @@
 . "${TEST_LIB:?}"
 
 SUT=${NAS_CREDENTIAL_UNDER_TEST:?}
+limit=${RBW_TIMEOUT:?}
 login=$(id -un)
 uid=$(id -u)
 gid=$(id -g)
@@ -30,6 +35,7 @@ gid=$(id -g)
 bin="$scratch/bin"
 fake="$scratch/fake"
 real_timeout=$(type -P timeout)
+real_mv=$(type -P mv)
 # The tools of the rbw stand-in, which setpriv's stand-in starts with no PATH.
 tools=$(dirname "$(type -P tr)")
 mkdir -p "$bin" "$fake"
@@ -49,6 +55,10 @@ write_script "$bin/setpriv" \
 #   locked     the vault is locked: `unlocked` fails
 #   no-vault   rbw has no configuration and no agent: every call fails
 #   slow       `get` takes five seconds
+#   slow-unlocked
+#              `unlocked` takes 0.3 seconds
+#   flood      `get` prints 2 MiB, then makes flood-done, unless the
+#              reader stopped it before the end
 #   item.NAME  the password of the item NAME (non-alphanumerics as _),
 #              printed with a newline after it, as rbw does
 #   rbw.log    one line per call, the arguments only
@@ -62,42 +72,61 @@ write_script "$bin/rbw" \
 	'readlink /proc/$$/fd/0 >"$d/rbw.stdin"' \
 	'if [[ -e $d/no-vault ]]; then echo "rbw: failed to load config" >&2; exit 1; fi' \
 	'case "$1" in' \
-	'unlocked) [[ ! -e $d/locked ]] ;;' \
+	'unlocked) [[ ! -e $d/slow-unlocked ]] || sleep 0.3; [[ ! -e $d/locked ]] ;;' \
 	'get)' \
 	'  [[ -e $d/locked ]] && { echo "rbw: agent is locked" >&2; exit 1; }' \
 	'  [[ -e $d/slow ]] && sleep 5' \
 	'  [[ $2 == -- ]] || { echo "fake rbw: get without --" >&2; exit 98; }' \
+	'  if [[ -e $d/flood ]]; then head -c 2097152 /dev/zero | tr "\\0" f || exit 1; touch "$d/flood-done"; exit 0; fi' \
 	'  f="$d/item.$(printf %s "$3" | tr -c "A-Za-z0-9" _)"' \
 	'  [[ -e $f ]] || { echo "rbw: no entry found" >&2; exit 1; }' \
 	'  cat "$f"; echo ;;' \
 	'*) echo "fake rbw: unexpected call: $*" >&2; exit 99 ;;' \
 	'esac'
 
-# timeout: the real one, with one second in place of the script's limit.
-write_script "$bin/timeout" 'shift; exec '"'$real_timeout'"' 1 "$@"'
+# timeout: logs the limit, then is the real one with one second in its place.
+write_script "$bin/timeout" \
+	'printf "%s\n" "$1" >>'"'$fake/timeout.log'" \
+	'shift; exec '"'$real_timeout'"' 1 "$@"'
+# mv: the real one, five seconds late while $fake/slow-mv exists.
+write_script "$bin/mv" \
+	'[[ ! -e '"'$fake/slow-mv'"' ]] || sleep 5' \
+	'exec '"'$real_mv'"' "$@"'
 
 dir="$scratch/run/nas"
 file="$dir/share.cred"
 
 # item NAME SECRET: stores SECRET, exactly, as the password of NAME.
 item() { printf '%s' "$2" >"$fake/item.$(printf %s "$1" | tr -c 'A-Za-z0-9' _)"; }
+# What the script is started with on its standard input: a file, not
+# /dev/null, so that rbw's own /dev/null is the script's doing.
+stdin="$scratch/stdin"
+printf 'a terminal would be here\n' >"$stdin"
 # run [ITEM_USER]: the script for the item "NAS - share", as the user u-1.
 run() {
-	capture "$SUT" "$login" "$file" u-1 "NAS - share" "$@"
+	capture "$SUT" "$login" "$file" u-1 "NAS - share" "$@" <"$stdin"
 }
-# No secret of the tests in the output, the logs or the setpriv options.
+# No part of a secret of the tests, six bytes or more, in the output, the
+# logs or the setpriv options: every six-byte window of the secret's first
+# 600 bytes is looked for.
 clean() {
-	local f
-	for f in "$fake/rbw.log" "$fake/setpriv.log" "$fake/rbw.env"; do
-		[[ ! -e $f ]] || ! command grep -qF -e "$1" "$f" || {
-			echo "  the secret is in $f"
+	local f i w
+	local -A seen=()
+	for ((i = 0; i + 6 <= ${#1} && i < 600; i++)); do
+		w=${1:i:6}
+		[[ -z ${seen[$w]-} ]] || continue
+		seen[$w]=1
+		for f in "$fake/rbw.log" "$fake/setpriv.log" "$fake/rbw.env"; do
+			[[ ! -e $f ]] || ! command grep -qF -e "$w" "$f" || {
+				echo "  '$w' of the secret is in $f"
+				return 1
+			}
+		done
+		[[ "$out$err" != *"$w"* ]] || {
+			echo "  '$w' of the secret is in the output: $out $err"
 			return 1
 		}
 	done
-	[[ "$out$err" != *"$1"* ]] || {
-		echo "  the secret is in the output: $out $err"
-		return 1
-	}
 }
 # Nothing but the file itself in its directory: no temporary file is left.
 alone() {
@@ -109,7 +138,8 @@ alone() {
 	}
 }
 fresh() {
-	rm -rf -- "$dir" "$fake"/item.* "$fake"/locked "$fake"/no-vault "$fake"/slow "$fake"/*.log "$fake"/rbw.*
+	rm -rf -- "$dir" "$fake"/item.* "$fake"/locked "$fake"/no-vault "$fake"/slow "$fake"/slow-* \
+		"$fake"/flood "$fake"/flood-done "$fake"/*.log "$fake"/rbw.*
 }
 expect_file() {
 	local want
@@ -140,14 +170,14 @@ expect_earlier() {
 
 test_writes_the_file_root_only() {
 	fresh
-	item "NAS - share" "plain-secret-1"
+	item "NAS - share" "Qz7plain-secret-1"
 	run
 	expect_status 0
-	expect_file plain-secret-1
+	expect_file Qz7plain-secret-1
 	expect_mode 600 "$file"
 	expect_mode 700 "$dir"
 	alone
-	clean plain-secret-1
+	clean Qz7plain-secret-1
 }
 
 test_reads_the_item_as_the_login_through_rbw_alone() {
@@ -238,24 +268,107 @@ test_refuses_a_secret_longer_than_mount_cifs_takes() {
 	expect_status 0
 	expect_file "$max"
 	fresh
-	over="${max}y"
+	over="Qz7${max}y"
 	item "NAS - share" "$over"
 	run
 	expect_status 1
 	expect_err "512"
+	clean "$over"
 	[[ ! -e "$file" ]]
 	fresh
-	commas=$(printf ',%.0s' {1..257})
+	commas="Qz7$(printf ',%.0s' {1..257})"
 	item "NAS - share" "$commas"
 	run
 	expect_status 1
 	expect_err "512"
+	clean "$commas"
 	# A huge one, a mebibyte, the same.
 	fresh
 	item "NAS - share" "$(head -c 1048576 /dev/zero | tr '\0' x)"
 	run
 	expect_status 1
+	expect_err "512"
 	[[ ! -e "$file" ]]
+}
+
+# A flood from rbw is read no further than the 512-byte limit needs: rbw
+# never gets to the end of its output.
+test_reads_no_more_of_rbw_than_it_needs() {
+	fresh
+	touch "$fake/flood"
+	run
+	expect_status 1
+	expect_err "512"
+	[[ ! -e "$fake/flood-done" ]] || {
+		echo "  the script read all 2 MiB that rbw wrote"
+		return 1
+	}
+	[[ ! -e "$file" ]]
+}
+
+# Each rbw call gets the package's limit, and the two together fit the
+# unit's start timeout (tests/desktop/nas.nix holds the unit to it): a slow
+# answer to both still ends in the fallback, which keeps the earlier file.
+test_each_rbw_call_has_the_limit_and_both_leave_time_to_keep() {
+	fresh
+	earlier
+	touch "$fake/slow-unlocked" "$fake/slow"
+	item "NAS - share" "slow-secret"
+	local start=$SECONDS
+	run
+	expect_status 0
+	expect_earlier
+	alone
+	((SECONDS - start < 4)) || {
+		echo "  two slow calls took $((SECONDS - start)) s"
+		return 1
+	}
+	[[ "$(cat "$fake/timeout.log")" == "$limit"$'\n'"$limit" ]] || {
+		echo "  the limits given: $(cat "$fake/timeout.log"), not $limit twice"
+		return 1
+	}
+}
+
+# Killed while it writes, as systemd's stop or start timeout does (SIGTERM
+# to the unit's processes), it leaves no temporary file and the earlier
+# file as it was.
+test_a_kill_mid_write_leaves_no_temporary_file() {
+	fresh
+	earlier
+	item "NAS - share" "killed-secret"
+	touch "$fake/slow-mv"
+	setsid "$SUT" "$login" "$file" u-1 "NAS - share" </dev/null 2>/dev/null &
+	local pid=$! i
+	for ((i = 0; i < 50; i++)); do
+		compgen -G "$file.??????" >/dev/null && break
+		sleep 0.1
+	done
+	compgen -G "$file.??????" >/dev/null || {
+		echo "  the run never made its temporary file"
+		return 1
+	}
+	kill -TERM -- "-$pid"
+	wait "$pid" || true
+	expect_earlier
+	alone
+}
+
+# A temporary file that a SIGKILL left behind is removed by the next run once
+# it is old; a new one, which may be another run's, is left alone.
+test_removes_old_temporary_files_only() {
+	fresh
+	earlier
+	item "NAS - share" "plain-secret-4"
+	printf 'username=u-1\npassword=left\n' >"$file.Old123"
+	touch -d '10 minutes ago' "$file.Old123"
+	printf 'username=u-1\npassword=busy\n' >"$file.New123"
+	run
+	expect_status 0
+	expect_file plain-secret-4
+	[[ ! -e "$file.Old123" && -e "$file.New123" ]] || {
+		echo "  the directory holds: $(ls -A "$dir")"
+		return 1
+	}
 }
 
 test_locked_vault_keeps_the_earlier_file_and_makes_none() {
@@ -389,6 +502,10 @@ tests=(
 	test_refuses_a_secret_of_two_lines
 	test_refuses_an_empty_secret
 	test_refuses_a_secret_longer_than_mount_cifs_takes
+	test_reads_no_more_of_rbw_than_it_needs
+	test_each_rbw_call_has_the_limit_and_both_leave_time_to_keep
+	test_a_kill_mid_write_leaves_no_temporary_file
+	test_removes_old_temporary_files_only
 	test_locked_vault_keeps_the_earlier_file_and_makes_none
 	test_no_vault_at_all_is_a_locked_one
 	test_an_item_rbw_cannot_read

@@ -8,9 +8,15 @@
   lib,
   writeShellApplication,
   coreutils,
+  findutils,
   util-linux,
   rbw,
 }:
+let
+  # Seconds for each of the script's two rbw calls; the module's unit gives
+  # the run room for both (modules/desktop/nas.nix).
+  rbwTimeout = 15;
+in
 writeShellApplication {
   name = "ravnix-nas-credential";
   # The script sets its own options (set -uo pipefail): errexit would end it
@@ -18,10 +24,14 @@ writeShellApplication {
   bashOptions = [ ];
   runtimeInputs = [
     coreutils
+    findutils
     util-linux
     rbw
   ];
-  text = lib.removePrefix "#!/usr/bin/env bash\n" (builtins.readFile ./ravnix-nas-credential.sh);
+  text = builtins.replaceStrings [ "@rbwTimeout@" ] [ (toString rbwTimeout) ] (
+    lib.removePrefix "#!/usr/bin/env bash\n" (builtins.readFile ./ravnix-nas-credential.sh)
+  );
+  passthru = { inherit rbwTimeout; };
   meta = {
     description = "Writes a NAS share's root-only SMB credentials file from the login's vault";
     license = lib.licenses.agpl3Plus;
