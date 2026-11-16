@@ -80,17 +80,20 @@ if ! as_login unlocked >/dev/null; then
 fi
 args=(get -- "$item")
 [[ -z $item_user ]] || args+=("$item_user")
-# 1100 bytes is past any password that passes below; rbw is stopped there
-# (SIGPIPE), whatever it would have sent after.
+# 1100 bytes is past any password that passes below; head stops reading
+# there, and rbw's next write fails (rbw, in Rust, ignores SIGPIPE and exits
+# with an error on EPIPE). So a failed rbw whose output reached the cut was
+# cut off by this script, and the password is too long; any other failure
+# of rbw is one, however much it printed.
 password=$(as_login "${args[@]}" | head -c 1100)
 read_status=$?
+if ((read_status != 0 && ${#password} < 1100)); then
+	fallback "rbw cannot read the item \"$item\" of $login"
+fi
 # mount.cifs doubles each comma and takes 512 bytes.
 commas=${password//[^,]/}
 if ((${#password} + ${#commas} > 512)); then
 	fallback "the password of \"$item\" is longer than the 512 bytes mount.cifs takes (a comma counts twice)"
-fi
-if ((read_status != 0)); then
-	fallback "rbw cannot read the item \"$item\" of $login"
 fi
 if [[ -z $password ]]; then
 	fallback "the item \"$item\" has an empty password"

@@ -58,7 +58,10 @@ write_script "$bin/setpriv" \
 #   slow-unlocked
 #              `unlocked` takes 0.3 seconds
 #   flood      `get` prints 2 MiB, then makes flood-done, unless the
-#              reader stopped it before the end
+#              reader stopped it before the end; then it fails, as rbw
+#              does on EPIPE
+#   fail-after `get` prints the password and then fails, as an rbw that is
+#              cut off or errs after a partial line
 #   item.NAME  the password of the item NAME (non-alphanumerics as _),
 #              printed with a newline after it, as rbw does
 #   rbw.log    one line per call, the arguments only
@@ -80,7 +83,7 @@ write_script "$bin/rbw" \
 	'  if [[ -e $d/flood ]]; then head -c 2097152 /dev/zero | tr "\\0" f || exit 1; touch "$d/flood-done"; exit 0; fi' \
 	'  f="$d/item.$(printf %s "$3" | tr -c "A-Za-z0-9" _)"' \
 	'  [[ -e $f ]] || { echo "rbw: no entry found" >&2; exit 1; }' \
-	'  cat "$f"; echo ;;' \
+	'  cat "$f"; echo; [[ ! -e $d/fail-after ]] || exit 1 ;;' \
 	'*) echo "fake rbw: unexpected call: $*" >&2; exit 99 ;;' \
 	'esac'
 
@@ -139,7 +142,7 @@ alone() {
 }
 fresh() {
 	rm -rf -- "$dir" "$fake"/item.* "$fake"/locked "$fake"/no-vault "$fake"/slow "$fake"/slow-* \
-		"$fake"/flood "$fake"/flood-done "$fake"/*.log "$fake"/rbw.*
+		"$fake"/flood "$fake"/flood-done "$fake"/fail-after "$fake"/*.log "$fake"/rbw.*
 }
 expect_file() {
 	local want
@@ -412,6 +415,32 @@ test_no_vault_at_all_is_a_locked_one() {
 	expect_earlier
 }
 
+# What an rbw that fails printed is never written, however it looks: a
+# whole password, or one longer than the limit. The run says rbw failed.
+test_what_a_failed_rbw_printed_is_not_written() {
+	fresh
+	touch "$fake/fail-after"
+	item "NAS - share" "Qz7looks-whole"
+	run
+	expect_status 1
+	expect_err "cannot read"
+	[[ ! -e "$file" ]]
+	clean Qz7looks-whole
+	fresh
+	touch "$fake/fail-after"
+	item "NAS - share" "Qz7$(printf 'y%.0s' {1..600})"
+	run
+	expect_status 1
+	expect_err "cannot read"
+	expect_no_err "512"
+	[[ ! -e "$file" ]]
+	earlier
+	run
+	expect_status 0
+	expect_err "cannot read"
+	expect_earlier
+}
+
 test_an_item_rbw_cannot_read() {
 	fresh
 	run
@@ -509,6 +538,7 @@ tests=(
 	test_refuses_an_empty_secret
 	test_refuses_a_secret_longer_than_mount_cifs_takes
 	test_reads_no_more_of_rbw_than_it_needs
+	test_what_a_failed_rbw_printed_is_not_written
 	test_each_rbw_call_has_the_limit_and_both_leave_time_to_keep
 	test_a_kill_mid_write_leaves_no_temporary_file
 	test_removes_old_temporary_files_only
