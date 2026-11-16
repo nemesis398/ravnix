@@ -65,8 +65,8 @@
 #      60 Hz. With Focus bar on, unplug (the watcher relaunches Waybar), then
 #      click Waybar's battery: the charge mode changes without an error, so
 #      the relaunched Waybar found the setuid sudo.
-#  11. The swap: `swapon --show` lists /dev/zram0 alone, 8 GiB, and
-#      /sys/block/zram0/comp_algorithm says lzo-rle.
+#  11. The swap: `swapon --show` lists /dev/zram0 alone, 16 GiB, and
+#      /sys/block/zram0/comp_algorithm says zstd.
 #  12. As on Fedora, with nothing set for it here: `iw dev <wlan> get
 #      power_save` says on (NetworkManager left at its default), and the
 #      s2idle drain overnight stays near 0.25 to 0.3 % per hour.

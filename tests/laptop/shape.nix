@@ -128,13 +128,19 @@ let
   };
   upower = c.services.upower;
   zram = s: s.config.zramSwap;
-  zramAsFedora =
+  # The maintainer's decision of 2026-11-16: the smaller of the RAM and
+  # 16 GiB (all 16 GiB on huginn, whose RAM is 27 GiB), zstd, priority 100.
+  # zram-generator reads the size as an expression of the RAM in MiB, so the
+  # generated settings are checked too.
+  zramAsDecided =
     s:
     (zram s).enable
     && (zram s).memoryPercent == 100
-    && (zram s).memoryMax == 8 * 1024 * 1024 * 1024
-    && (zram s).algorithm == "lzo-rle"
-    && (zram s).priority == 100;
+    && (zram s).memoryMax == 16 * 1024 * 1024 * 1024
+    && (zram s).algorithm == "zstd"
+    && (zram s).priority == 100
+    && s.config.services.zram-generator.settings.zram0.zram-size == "min(100 / 100 * ram, 17179869184 / 1024 / 1024)"
+    && s.config.services.zram-generator.settings.zram0.compression-algorithm == "zstd";
   laptopProfiles = {
     laptop-ac = {
       main = {
@@ -243,10 +249,10 @@ let
     ) "the initrd does not open cryptroot from the LUKS partition"
     ++ check (c.boot.initrd.luks.devices.cryptroot.allowDiscards or false) "cryptroot does not pass discards to the SSD"
     ++ check (c.swapDevices == [ ]) "huginn has a swap device; zram is its only swap"
-    # zram, as Fedora has it: the smaller of the RAM and 8 GiB, lzo-rle,
-    # priority 100; with or without a hardware module.
-    ++ check (zramAsFedora huginn) "huginn's zram is not on, or not min(RAM, 8 GiB) with lzo-rle at priority 100"
-    ++ check (zramAsFedora bare) "the shape without a hardware module has no zram as Fedora's"
+    # zram: the smaller of the RAM and 16 GiB, zstd, priority 100; with or
+    # without a hardware module.
+    ++ check (zramAsDecided huginn) "huginn's zram is not on, or not min(RAM, 16 GiB) with zstd at priority 100"
+    ++ check (zramAsDecided bare) "the shape without a hardware module has no zram of 16 GiB with zstd"
 
     # The boot loader: systemd-boot on the ESP, and no write to the
     # firmware's boot entries; the install adds its entry on purpose.

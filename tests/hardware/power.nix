@@ -137,7 +137,7 @@ pkgs.testers.runNixOSTest {
         swaps = machine.succeed("swapon --noheadings --raw --show=NAME,TYPE").strip()
         assert swaps == "/dev/zram0 partition", f"the swap is {swaps!r}, not zram alone"
         algorithm = machine.succeed("cat /sys/block/zram0/comp_algorithm")
-        assert "[lzo-rle]" in algorithm, f"zram compresses with {algorithm!r}, not lzo-rle"
+        assert "[zstd]" in algorithm, f"zram compresses with {algorithm!r}, not zstd"
         machine.fail("grep -Ew 'swap|none' /etc/fstab | grep -v '^#'")
 
     with subtest("the battery units are enabled"):
