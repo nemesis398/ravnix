@@ -4,7 +4,7 @@ Ravnix is a NixOS flake, so building it needs Nix. On a machine that still runs 
 
 The install writes no partition, filesystem or boot entry. `/nix` becomes a plain directory on the root filesystem, and the disk layout stays as it was.
 
-The last section is for the move itself: a file of your home that ravnix takes over on the laptop, `~/.ssh/config`.
+The sections after the install are for the move itself: a file of your home that ravnix takes over on the laptop, `~/.ssh/config`, and the state that the flake does not hold and that you copy or set up once after the first boot: the keyring and root's atuin login.
 
 ## Why upstream Nix and not Determinate Nix
 
@@ -224,3 +224,17 @@ systemd-ask-password -n 'Login keyring password:' |
   systemd-creds --user encrypt --name=ravnix-keyring-login - \
     ~/.config/credstore.encrypted/ravnix-keyring-login
 ```
+
+## After the laptop's first boot: root's atuin login
+
+huginn records root's shell history in atuin and shares one timeline with your own, as the other distribution did. The configuration is in the flake (`hosts/laptop/atuin-root.nix`): root's atuin config, with the sync address of `ravnix.services.atuin`, and the init that `sudo -i`, `su -` and a root console read. What the flake cannot hold is the login to the account, which needs the account's password and its recovery key. Until you log root in, root's history is recorded and stays on the laptop.
+
+Do it once, as yourself and not as root, in a terminal, with the vault unlocked (`ai-unlock`). Bitwarden's item for the account holds the username, the password, and the recovery key (the 24 words of `atuin key`) alone in its notes:
+
+```sh
+atuin-root-login "Atuin"
+```
+
+Give it your item's name or id. It reads the three fields through rbw, as you, because root has no vault, and hands them to the root half of itself through sudo, which asks for your password or key as it does for any command. The password and the key travel through a pipe and shell variables only: on no command line (atuin gets `-p -`, which reads the password from its standard input, and the key in `ATUIN_ENCRYPTION_KEY` for that one command), in no file but atuin's own key file, in no output and in no trace. The account's name is on atuin's command line, since it is a name and not a secret. It then runs `atuin sync` once, so root's history appears on the laptop and the laptop's in root's. If root is logged in already, atuin says so and changes nothing, so running it again is safe.
+
+Run it again whenever root's atuin has to log in again, for instance after the account's password changed (`sudo atuin logout` first) or after a reinstall. `sudo atuin status` shows whether root is logged in.

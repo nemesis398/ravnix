@@ -1,7 +1,8 @@
 # The laptop shape, huginn: what every ravnix laptop is, whatever its model.
 # The common module (shell, user, home-manager), the disk layout of
 # ./disko.nix, the boot, ./hide-other-disks.nix, which keeps the other
-# internal disks out of udisks, and ./zram.nix, the only swap. flake.nix
+# internal disks out of udisks, ./zram.nix, the only swap, and
+# ./atuin-root.nix, root's shell history in the user's atuin timeline. flake.nix
 # adds nixosModules.desktop and nixosModules.glue beside this file in
 # nixosModules.laptop; the glue takes its laptop end from ravnix.shape, set
 # here. A laptop's hardware is a module of its own under modules/hardware/,
@@ -63,6 +64,7 @@ in
     self.nixosModules.common
     ./hide-other-disks.nix
     ./zram.nix
+    ./atuin-root.nix
     # The Claude Code update, whose laptop end follows the lock the server
     # pushes (the module says how).
     (import ../../modules/workbench/claude-update.nix { inherit self; })
