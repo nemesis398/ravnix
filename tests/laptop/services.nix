@@ -43,7 +43,10 @@ let
     ++ check c.systemd.oomd.enableRootSlice "${name}: systemd-oomd does not watch the root slice"
     ++ check c.systemd.oomd.enableUserSlices "${name}: systemd-oomd does not watch the user slices"
     # irqbalance spreads the interrupts over the cores, as Fedora does.
-    ++ check c.services.irqbalance.enable "${name}: irqbalance is off";
+    ++ check c.services.irqbalance.enable "${name}: irqbalance is off"
+    # fwupd updates the firmware from the LVFS, as Fedora does. It is
+    # the laptop shape's, not one model's: any laptop has firmware.
+    ++ check c.services.fwupd.enable "${name}: fwupd is off";
 
   failures = each "huginn" huginn ++ each "the shape without a hardware module" bare;
 in

@@ -103,4 +103,9 @@ in
   # irqbalance spreads the hardware interrupts over the cores, as the Fedora
   # laptop does. NixOS leaves it off.
   services.irqbalance.enable = true;
+
+  # fwupd, firmware updates from the LVFS, as on Fedora. It sits here and not
+  # in a hardware module: the update tool and its daemon do not depend on the
+  # model, and a second laptop model should get it with the shape.
+  services.fwupd.enable = true;
 }
