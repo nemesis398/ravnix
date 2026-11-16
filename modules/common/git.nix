@@ -19,6 +19,11 @@ in
   programs.git = {
     enable = true;
 
+    # git-lfs, with its filter in git's configuration and marked required, as
+    # a repository that stores files in LFS expects: without the filter a
+    # clone checks out pointer files, or fails.
+    lfs.enable = true;
+
     signing = {
       format = "ssh";
       # The public key as a literal (the key:: prefix): ssh-keygen finds the
