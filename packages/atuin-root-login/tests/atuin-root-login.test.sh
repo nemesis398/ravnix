@@ -31,7 +31,7 @@ tools="$scratch/tools"
 mkdir -p "$bin" "$nobin" "$rec" "$vault" "$tools"
 # The tools the helper and the stand-ins use, found once: a run's PATH is the
 # stand-ins and these, so a test can leave rbw out.
-for t in env cat sort readlink head wc find timeout; do
+for t in env cat sort readlink head wc find timeout sleep seq python3; do
 	p="$(type -P "$t" || true)"
 	[[ -z "$p" ]] || ln -s "$p" "$tools/$t"
 done
@@ -415,42 +415,97 @@ it_leaves_what_sudo_kept_out_of_atuin() {
 	}
 }
 
-# The contract with the real atuin: the password is read from the standard
-# input by `-p -` and the key from ATUIN_ENCRYPTION_KEY, so neither needs a
-# command line, and no prompt opens (the standard input is not a terminal). The
-# server is a closed port: the login gets as far as the connection, and the key
-# file holds the key by then.
-it_works_against_the_real_atuin() {
-	local h="$scratch/real"
+# The contract with the real atuin: `-p -` reads the password from the
+# standard input, ATUIN_ENCRYPTION_KEY is the key, and ATUIN_SYNC_ADDRESS the
+# server. The server is a one-shot listener in the sandbox that records the
+# login request, so the test sees the password that arrives, with the spaces at
+# its ends, and not only that no prompt opened. $real_login is the command
+# under test: the same flags as the helper's, with the password argument
+# `-p -`; the test shows below what a literal one would do.
+real_login() { # real_login HOME PASSWORD_ARGUMENT KEY: password on stdin
+	local h="$1" arg="$2" key="$3"
+	printf '%s\n' "$stdin_password" |
+		env -i PATH="$tools" HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" \
+			ATUIN_SYNC_ADDRESS="http://127.0.0.1:$port" ATUIN_ENCRYPTION_KEY="$key" \
+			timeout 60 "$real_atuin" login --username=someone -p "$arg" >/dev/null 2>&1 || true
+}
+real_key() { # a 24-word key from a fresh atuin home
+	local h="$scratch/real-key-home"
 	mkdir -p "$h/.config/atuin"
-	printf 'sync_address = "http://127.0.0.1:9"\nauto_sync = false\nupdate_check = false\n' >"$h/.config/atuin/config.toml"
-	local key session
-	session="$(HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" "$real_atuin" uuid)"
-	HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" ATUIN_SESSION="$session" \
+	printf 'auto_sync = false\nupdate_check = false\n' >"$h/.config/atuin/config.toml"
+	local session
+	session="$(env -i PATH="$tools" HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" "$real_atuin" uuid)"
+	env -i PATH="$tools" HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" ATUIN_SESSION="$session" \
 		"$real_atuin" history list >/dev/null 2>&1 || true
-	key="$(HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" "$real_atuin" key)"
+	env -i PATH="$tools" HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" "$real_atuin" key
+}
+# Starts the listener and waits for it; the request log is $scratch/requests.
+listen() {
+	rm -f "$scratch/requests" "$scratch/listening"
+	python3 -I "$here/listener.py" "$port" "$scratch/requests" "$scratch/listening" &
+	listener=$!
+	local n
+	for n in $(seq 1 100); do
+		[[ -e "$scratch/listening" ]] && return 0
+		sleep 0.1
+	done
+	echo "  the listener did not start"
+	return 1
+}
+port=18765
+stdin_password='  a password with  spaces  '
+
+it_works_against_the_real_atuin() {
+	local key h="$scratch/real-login-home"
+	key="$(real_key)"
 	[[ "$(printf '%s' "$key" | wc -w)" == 24 ]] || {
 		echo "  the real atuin made no 24-word key: $key"
 		return 1
 	}
-	# A second home that is not logged in.
-	local h2="$scratch/real2"
-	mkdir -p "$h2/.config/atuin"
-	cp "$h/.config/atuin/config.toml" "$h2/.config/atuin/"
-	capture env -i PATH="$tools" HOME="$h2" XDG_CONFIG_HOME="$h2/.config" XDG_DATA_HOME="$h2/.local/share" \
-		ATUIN_ENCRYPTION_KEY="$key" "$BASH" -c 'printf "%s\n" "a password" | timeout 60 "$1" login --username=someone -p -' _ "$real_atuin"
-	[[ "$out$err" == *"Connection refused"* || "$out$err" == *"Connect"* ]] || {
-		echo "  the real login did not reach the connection: $out $err"
+	mkdir -p "$h/.config/atuin"
+	# No sync_address in the file: the environment names the server.
+	printf 'auto_sync = false\nupdate_check = false\n' >"$h/.config/atuin/config.toml"
+	listen
+	real_login "$h" - "$key"
+	wait "$listener" || true
+	[[ -s "$scratch/requests" ]] || {
+		echo "  the login never reached the listener"
 		return 1
 	}
+	local want
+	want="$(printf '{"method": "POST", "path": "/login", "body": "{\\"username\\":\\"someone\\",\\"password\\":\\"%s\\"}"}' "$stdin_password")"
+	[[ "$(head -n1 "$scratch/requests")" == "$want" ]] || {
+		echo "  the login request is not the user name and the password from the standard input"
+		echo "  got:  $(head -n1 "$scratch/requests")"
+		echo "  want: $want"
+		return 1
+	}
+	# The key reached atuin through the environment.
 	local stored
-	stored="$(HOME="$h2" XDG_CONFIG_HOME="$h2/.config" XDG_DATA_HOME="$h2/.local/share" "$real_atuin" key)"
+	stored="$(env -i PATH="$tools" HOME="$h" XDG_CONFIG_HOME="$h/.config" XDG_DATA_HOME="$h/.local/share" "$real_atuin" key)"
 	[[ "$stored" == "$key" ]] || {
 		echo "  the stored key is not the one from ATUIN_ENCRYPTION_KEY"
 		return 1
 	}
-	[[ "$out$err" != *"a password"* ]] || {
-		echo "  atuin printed the password"
+}
+
+# The test above would pass for a literal password that equals the one on the
+# standard input; this one shows that it can fail: a literal `-p` argument
+# makes the request carry that word and not the standard input.
+it_sees_a_password_that_does_not_come_from_stdin() {
+	local key h="$scratch/real-literal-home"
+	key="$(real_key)"
+	mkdir -p "$h/.config/atuin"
+	printf 'auto_sync = false\nupdate_check = false\n' >"$h/.config/atuin/config.toml"
+	listen
+	real_login "$h" literal-not-stdin "$key"
+	wait "$listener" || true
+	[[ "$(head -n1 "$scratch/requests")" == *literal-not-stdin* ]] || {
+		echo "  a literal password did not reach the listener as it is: $(head -n1 "$scratch/requests")"
+		return 1
+	}
+	[[ "$(head -n1 "$scratch/requests")" != *"$stdin_password"* ]] || {
+		echo "  the standard input reached the listener beside a literal password"
 		return 1
 	}
 }
@@ -478,5 +533,6 @@ tests=(
 	it_stops_the_root_half_on_a_short_input
 	it_leaves_what_sudo_kept_out_of_atuin
 	it_works_against_the_real_atuin
+	it_sees_a_password_that_does_not_come_from_stdin
 )
 run_tests "${tests[@]}"

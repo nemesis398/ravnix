@@ -24,6 +24,7 @@ pkgs.runCommand "bin-atuin-root-login"
       pkgs.coreutils
       pkgs.findutils
       pkgs.gnugrep
+      pkgs.python3
     ];
     ATUIN_ROOT_LOGIN_UNDER_TEST = lib.getExe helper;
     ATUIN_REAL = lib.getExe pkgs.atuin;

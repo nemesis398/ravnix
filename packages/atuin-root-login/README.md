@@ -47,13 +47,14 @@ that look like options or shell syntax; they break each step (a locked vault, a
 missing `rbw`, a field `rbw` cannot read, an empty field, two lines, a failing
 `sudo`, a failing login, a failing sync, a root half started by a normal user,
 a short input); and one test runs the real atuin, against a closed port, to show
-that it reads the password from `-p -` and the key from the environment.
+that it reads the password from `-p -`, the key from the environment and the server from `ATUIN_SYNC_ADDRESS`: a one-shot listener in the sandbox records the login request, and the test asserts that the password from the standard input, spaces at its ends included, is in its body. A second test shows the listener tells a literal `-p` argument apart.
 
 ## Findings that are not fixed
 
 - `-p -` (the password from the standard input) and `ATUIN_ENCRYPTION_KEY` are
   atuin 18.x. An older atuin would take `-` as the password. The test with the
-  real atuin fails then, at the flake bump that brings the older one.
+  real atuin fails then, at the flake bump that brings the older one (it
+  records the request body, which then holds `-`).
 - `rbw get` has no timeout of its own. If the vault wants a master password and
   no pinentry can show, the helper waits for it; the unlocked check before it
   makes that rare.
