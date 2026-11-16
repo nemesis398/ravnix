@@ -208,8 +208,10 @@ derivation changed, a build: about 0.5 s and 4 s, measured on 2026-11-16. A
 second gate run at the same time, such as a commit while the Stop hook runs,
 waits on `ravnix-gate/lock` and then uses the first one's build; a run that
 builds also waits for the runs still using a cached program, so it never
-removes a link one of them runs. A run waits 240 s at most, under the Stop
-hook's deadline of 300 s, and then fails saying so. Without nix and no build
+removes a link one of them runs. Each of the two waits, for the shared lock
+and for the exclusive one, gives up after 240 s and fails saying so; a run
+that meets both in a row can pass the Stop hook's deadline of 300 s, and is
+then killed and red, never green. Without nix and no build
 for the key (exit 127), or when the build fails (nix's status), the step
 fails and says why: there is no other style check to fall back to.
 
