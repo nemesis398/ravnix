@@ -19,8 +19,8 @@
 # tests/laptop/shape.nix checks all of it on huginn's configuration.
 #
 # Task 3.7 checks, on the real laptop, what neither test can show. Each
-# reads without changing anything, except 4 (a suspend) and 9 (a mode
-# switch, set back after):
+# reads without changing anything, except 4 (a suspend), 9 (a mode switch,
+# set back after) and 13 (the command itself causes what it looks for):
 #   1. The power draw: the median watts at idle and under light load, on
 #      battery, no higher than Fedora's (Task 0.1's baseline).
 #   2. The dGPU asleep at idle: /sys/bus/pci/devices/0000:01:00.0/power/
@@ -70,6 +70,15 @@
 #  12. As on Fedora, with nothing set for it here: `iw dev <wlan> get
 #      power_save` says on (NetworkManager left at its default), and the
 #      s2idle drain overnight stays near 0.25 to 0.3 % per hour.
+#  13. fwupd and the other disk (a known, accepted exception to rule 2 of
+#      AGENTS.md, explained next to services.fwupd.enable in
+#      hosts/laptop/default.nix). Run `fwupdmgr get-devices` (it starts the
+#      probe, so it is the one check that touches that ESP), then read
+#      `journalctl -b -u udisks2 -u fwupd`: a mount of the other disk's ESP
+#      (its partition, not huginn's /boot) shows how often it happens, and
+#      `fwupdmgr get-devices` lists the other disk's NVMe, which no
+#      `fwupdmgr update` may touch. Do not run `fwupdmgr update` without
+#      naming the device.
 #
 # nixos-hardware was checked first and is not used: it has no profile for
 # this model. Its lenovo/ideapad/16ahp9 is the IdeaPad 5 2-in-1 16AHP9, a

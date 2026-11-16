@@ -109,6 +109,26 @@ in
   # fwupd, firmware updates from the LVFS, as on Fedora. It sits here and not
   # in a hardware module: the update tool and its daemon do not depend on the
   # model, and a second laptop model should get it with the shape.
+  #
+  # KNOWN, ACCEPTED EXCEPTION to rule 2 of AGENTS.md (the maintainer decided on
+  # 2026-11-16 to keep fwupd fully on, and not to disable any plugin):
+  #
+  #   - fwupd's UEFI plugins (uefi-dbx at startup, uefi-capsule when it
+  #     registers its devices, and so on every fwupd-refresh) look for the ESP.
+  #     When there is more than one, as here with the other disk's, they
+  #     mount each one through udisks before they compare it with
+  #     EspLocation (fu_context_get_default_esp in libfwupdplugin/fu-context.c
+  #     takes a fu_volume_locker on every volume, and fu-volume-locker.c
+  #     mounts an unmounted one with udisks' Filesystem.Mount and no options,
+  #     which is read-write). Linux sets the FAT dirty bit on a read-write
+  #     mount, so the other disk's ESP is written to. hide-other-disks.nix
+  #     only sets UDISKS_IGNORE, a hint that udisks still lists past.
+  #     NixOS sets EspLocation to /boot, so a capsule goes to huginn's ESP.
+  #   - `fwupdmgr update` without a device updates every device that has an
+  #     update, and that includes the other disk's NVMe firmware. Name the
+  #     device (`fwupdmgr update DEVICE-ID`) and do not update that disk.
+  #
+  # The hardware module's checklist has the check on the real laptop.
   services.fwupd.enable = true;
 
   # smartd watches the SMART status of the disks, as on Fedora. It names no
