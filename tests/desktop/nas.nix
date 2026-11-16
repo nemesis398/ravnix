@@ -6,11 +6,17 @@
 #     rw, or ro for a read-only share, SMB 3.1.1, the user's uid and gid,
 #     modes 640 and 750, noauto, nofail, _netdev, the automount with its 10
 #     minute idle timeout and 20 second mount timeout, and the unit that
-#     writes the file as a requirement;
+#     writes the file as a requirement; each share's mount unit has no
+#     start limit (a drop-in), so quick failures never stop its automount;
 #   - each account a share uses has that unit, a oneshot with no start
 #     limit, which runs the helper with the user, the file, the SMB user and
 #     the item (and rbw's item user, unless it is null); an account no share
-#     uses has none; the directory is root's, mode 700, on /run;
+#     uses has none; the directory is root's, mode 700, on /run, and the
+#     unit's runtime directory; the unit is sandboxed (read-only system and
+#     home, the directory alone writable, no network but AF_UNIX, the
+#     capabilities of the drop to the user and of its timeout alone), and
+#     its start timeout leaves room for the helper's two rbw calls and the
+#     fallback after them;
 #   - no secret is in the store: no option, unit or fstab line holds a
 #     password or an environment, and the credentials file is not a store
 #     path;
@@ -20,7 +26,8 @@
 #   - the options refuse two shares on one mount point, a share of an account
 #     that is not there, a link outside the home, an account name that cannot
 #     be a unit's, and a share name, mount point or user name with a space or
-#     a newline; the template's values pass.
+#     a newline; the template's values pass, and the template mounts nothing
+#     (ravnix.nas is null there, as other per-site features are).
 #
 # tests/desktop/nas-vm.nix mounts shares of a real Samba server.
 {
@@ -121,6 +128,16 @@ let
   fstab = config.environment.etc.fstab.text;
   allOptions = lib.concatMap (f: f.options) (lib.attrValues (cifsOf config));
 
+  helper = self.packages.${system}.ravnix-nas-credential;
+  # A time span of systemd's in seconds: a number, or a string "Ns".
+  seconds = v: if builtins.isInt v then v else lib.toInt (lib.removeSuffix "s" v);
+  # The mount units of the shares, as systemd names them.
+  mountUnits = [
+    "mnt-nas-a-share\\x2da"
+    "mnt-nas-a-share\\x2dro"
+    "mnt-nas-b"
+  ];
+
   emptyHosts = [
     (host (with' null)).config
     (host (with' (nas // { shares = [ ]; }))).config
@@ -157,15 +174,80 @@ let
     ]) "the units are ${toString (unitsOf config)}"
     ++ expect (unitA.serviceConfig.Type == "oneshot") "the credentials unit is no oneshot"
     ++ expect (unitA.unitConfig.StartLimitIntervalSec == 0) "a failed credentials run holds back the next mount"
-    ++ expect (
-      {
-        inherit (config.systemd.tmpfiles.settings."10-ravnix-nas"."/run/ravnix/nas".d) mode user group;
-      } == {
-        mode = "0700";
-        user = "root";
-        group = "root";
-      }
-    ) "the credentials directory is not root's with mode 700"
+    ++ lib.concatMap (
+      u:
+      let
+        # What the unit does not set reads as unset, so a missing setting
+        # fails its expectation instead of the evaluation.
+        sc =
+          lib.genAttrs [
+            "RuntimeDirectory"
+            "RuntimeDirectoryMode"
+            "RuntimeDirectoryPreserve"
+            "ProtectSystem"
+            "ProtectHome"
+            "RestrictAddressFamilies"
+            "IPAddressDeny"
+          ] (_: null)
+          // lib.genAttrs [
+            "PrivateTmp"
+            "PrivateDevices"
+            "NoNewPrivileges"
+            "ProtectKernelTunables"
+            "ProtectKernelModules"
+            "ProtectControlGroups"
+            "RestrictSUIDSGID"
+            "LockPersonality"
+          ] (_: false)
+          // {
+            CapabilityBoundingSet = [ ];
+          }
+          // u.serviceConfig;
+      in
+      expect (
+        sc.RuntimeDirectory == "ravnix/nas" && sc.RuntimeDirectoryMode == "0700" && sc.RuntimeDirectoryPreserve == "yes"
+      ) "the credentials directory is not the unit's, root's with mode 700 and kept"
+      ++ expect (
+        sc.ProtectSystem == "strict"
+        && sc.ProtectHome == "read-only"
+        && sc.PrivateTmp
+        && sc.PrivateDevices
+        && sc.NoNewPrivileges
+        && sc.ProtectKernelTunables
+        && sc.ProtectKernelModules
+        && sc.ProtectControlGroups
+        && sc.RestrictSUIDSGID
+        && sc.LockPersonality
+      ) "the credentials unit is not sandboxed: ${builtins.toJSON sc}"
+      ++ expect (sc.RestrictAddressFamilies == "AF_UNIX" && sc.IPAddressDeny == "any") "the credentials unit can reach the network"
+      ++ expect (
+        lib.sort lib.lessThan sc.CapabilityBoundingSet == [
+          "CAP_KILL"
+          "CAP_SETGID"
+          "CAP_SETUID"
+        ]
+      ) "the credentials unit's capabilities are ${toString sc.CapabilityBoundingSet}"
+      ++ expect (!(sc ? ReadWritePaths)) "the credentials unit writes more than its runtime directory"
+      # Two rbw calls of rbwTimeout each, and ten seconds for the fallback.
+      ++ expect (
+        seconds sc.TimeoutStartSec >= 2 * helper.rbwTimeout + 10
+      ) "the credentials unit's start timeout ${toString sc.TimeoutStartSec} s leaves no room after two rbw calls of ${toString helper.rbwTimeout} s"
+    ) [
+      unitA
+      unitB
+    ]
+    # The mount units: no start limit, so a NAS out of reach does not kill
+    # the automount after five quick failures.
+    ++ lib.concatMap (
+      name:
+      let
+        unit = config.systemd.units."${name}.mount" or null;
+      in
+      expect (
+        unit != null && unit.overrideStrategy == "asDropin" && lib.hasInfix "StartLimitIntervalSec=0" unit.text
+      ) "the mount unit ${name} has no drop-in without a start limit"
+    ) mountUnits
+    ++ expect ((import ../../templates/default/me.nix).ravnix.nas == null) "the template mounts shares"
     # No secret: nothing names a password, no unit has an environment, and
     # the file is on /run, not in the store.
     ++ expect (
@@ -199,7 +281,7 @@ let
       c:
       expect (cifsOf c == { }) "with no shares there is a cifs file system"
       ++ expect (unitsOf c == [ ]) "with no shares there is a credentials unit"
-      ++ expect (!(c.systemd.tmpfiles.settings ? "10-ravnix-nas")) "with no shares there is a credentials directory"
+      ++ expect (!lib.any (n: lib.hasPrefix "mnt-" n) (lib.attrNames c.systemd.units)) "with no shares there is a mount drop-in"
       ++ expect (!lib.any (n: lib.hasPrefix "NAS" n || lib.hasPrefix "Folders" n) (linksOf c)) "with no shares there is a link"
     ) emptyHosts
     # What the options refuse.

@@ -11,6 +11,22 @@
 # cifs-utils comes with the file system type (system.fsPackages, from
 # boot.supportedFilesystems, which NixOS fills from the cifs entries).
 #
+# The group is the user's primary group, which on NixOS is `users` (gid
+# 100) and on Fedora was the user's own: the group bits of 640 and 750 reach
+# every normal user of the host here. ravnix makes one; the maintainer
+# accepted that (2026-11-16).
+#
+# No domain= is written: the NAS is standalone, and Fedora's fstab has
+# none. An account of an Active Directory domain cannot be expressed yet.
+#
+# A NAS out of reach makes mount.cifs fail in milliseconds (no route, or
+# the connection refused), and five such starts within 10 s would trip the
+# mount unit's start limit: the automount would then fail for good
+# (mount-start-limit-hit) and the folder read as empty until a reboot. Each
+# mount unit therefore gets a drop-in without a start limit, so the
+# automount stays armed and the share mounts again once the NAS is back
+# (tests/desktop/nas-vm.nix).
+#
 # THE PASSWORDS. mount.cifs reads each account's password from a file,
 # credentials=, as root, when the automount fires. The file is
 # /run/ravnix/nas/ACCOUNT.cred: on tmpfs, root's, mode 600, in a directory
@@ -28,6 +44,32 @@
 # unit fails, the mount with it, a program that opens the folder gets an
 # error, and the automount waits for the next access; after ai-unlock the
 # next access mounts.
+#
+# Each mount reads the vault while it is unlocked, and every read starts
+# rbw's idle lock (lock_timeout) again, as the syncs' reads do
+# (modules/common/rbw.nix): opening a share every hour keeps the vault
+# unlocked until the 12-hour cap locks it.
+#
+# The unit is sandboxed as far as its job allows: the system and the home
+# read-only, its runtime directory /run/ravnix/nas the one place it writes,
+# private /tmp and /dev, no network but AF_UNIX (rbw's agent socket), and
+# of root's capabilities only CAP_SETUID and CAP_SETGID, for the drop to the
+# user, and CAP_KILL, for the timeout that stops the user's rbw. Its start
+# timeout is the helper's two rbw calls and 15 s, so a slow vault still ends
+# in the fallback to the kept file and not in a kill.
+#
+# THE HELPER IS BASH, by the maintainer's explicit exception to rule 4 of
+# AGENTS.md (2026-11-16): "Keep Bash, it's glue". It runs as root, which the
+# Odin tools that drop to the user with setpriv do too (tools/ravnix-tap-ask,
+# tools/claude-roll), and the exception holds because the helper is small
+# (one read, four checks, one rename), every branch is covered by its shell
+# test (tests/bin/ravnix-nas-credential.nix) and the real path by
+# tests/desktop/nas-rbw-vm.nix, and it is root only until the drop: what it
+# runs as root is setpriv, timeout, head and the write of the file.
+#
+# The server is an option of its own and not taken from ravnix.hosts: a NAS
+# can serve SMB on another interface than the one its services are reached
+# on (a management VLAN, say), and the registry names the latter.
 #
 # Why not the other routes:
 #   - A user unit that pushes the password to a root helper (a sudo rule or
@@ -47,6 +89,7 @@
   config,
   lib,
   pkgs,
+  utils,
   ...
 }:
 let
@@ -93,11 +136,19 @@ in
       }) cfg.shares
     );
 
-    systemd.tmpfiles.settings."10-ravnix-nas".${dir}.d = {
-      mode = "0700";
-      user = "root";
-      group = "root";
-    };
+    # No start limit on the mounts: see the header.
+    systemd.units = lib.listToAttrs (
+      map (share: {
+        name = "${utils.escapeSystemdPath share.mountPoint}.mount";
+        value = {
+          overrideStrategy = "asDropin";
+          text = ''
+            [Unit]
+            StartLimitIntervalSec=0
+          '';
+        };
+      }) cfg.shares
+    );
 
     systemd.services = lib.listToAttrs (
       map (
@@ -131,8 +182,40 @@ in
               Type = "oneshot";
               ExecStart = "${run}";
               UMask = "0077";
-              # Longer than the helper's 20 s for rbw.
-              TimeoutStartSec = "40s";
+              # Two rbw calls, and the fallback after them.
+              TimeoutStartSec = 2 * helper.rbwTimeout + 15;
+              # The directory, root's and mode 700, kept between runs and
+              # for the mounts; the one place the unit writes.
+              RuntimeDirectory = "ravnix/nas";
+              RuntimeDirectoryMode = "0700";
+              RuntimeDirectoryPreserve = "yes";
+              ProtectSystem = "strict";
+              # rbw reads the user's configuration and vault copy, and
+              # connects to the agent's socket in /run/user, which a
+              # read-only mount does not stop.
+              ProtectHome = "read-only";
+              PrivateTmp = true;
+              PrivateDevices = true;
+              NoNewPrivileges = true;
+              ProtectKernelTunables = true;
+              ProtectKernelModules = true;
+              ProtectKernelLogs = true;
+              ProtectControlGroups = true;
+              ProtectClock = true;
+              ProtectHostname = true;
+              RestrictSUIDSGID = true;
+              RestrictRealtime = true;
+              RestrictNamespaces = true;
+              LockPersonality = true;
+              RestrictAddressFamilies = "AF_UNIX";
+              IPAddressDeny = "any";
+              # setpriv's drop to the user, and timeout's signal to the
+              # user's rbw.
+              CapabilityBoundingSet = [
+                "CAP_SETUID"
+                "CAP_SETGID"
+                "CAP_KILL"
+              ];
             };
           };
         }

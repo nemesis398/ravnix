@@ -15,6 +15,9 @@
 #   - mounted again with the vault locked (as after an idle unmount), a share
 #     takes the password read before; after a change of the password on the
 #     server and in the vault, the next mount takes the new one by itself;
+#   - with the NAS out of reach, eight quick failed accesses leave the
+#     automount armed (the mount units have no start limit), and the share
+#     mounts again once the NAS is back;
 #   - the automounts unmount after 10 idle minutes and give up a mount after
 #     20 seconds; the links in the home lead to the mounts;
 #   - no password is in the journal, the fstab or a unit.
@@ -177,6 +180,13 @@ pkgs.testers.runNixOSTest {
     # file systems of the same modules, evaluated as a host apart.
     virtualisation.fileSystems = lib.filterAttrs (_: fs: fs.fsType == "cifs") host.config.fileSystems;
     systemd.tmpfiles.rules = [ "d /var/lib/fake-rbw 0777 root root -" ];
+    # The stand-in rbw logs into its directory, which the units' read-only
+    # system would refuse it; the real rbw writes nothing there
+    # (tests/desktop/nas-rbw-vm.nix runs it without this).
+    systemd.services = lib.genAttrs [
+      "ravnix-nas-credential-share-owner"
+      "ravnix-nas-credential-other"
+    ] (_: { serviceConfig.ReadWritePaths = [ "/var/lib/fake-rbw" ]; });
   };
 
   testScript = ''
@@ -271,6 +281,18 @@ pkgs.testers.runNixOSTest {
         laptop.succeed("rm /var/lib/fake-rbw/locked")
         laptop.succeed(f"systemctl stop {unit('/mnt/nas/b', 'mount')}")
         laptop.succeed(as_user("timeout 60 cat /mnt/nas/b/from-b"))
+
+    with subtest("a NAS out of reach fails each access, and the share comes back with it"):
+        # mount.cifs fails in milliseconds without a route: more than the
+        # five starts in 10 s that a mount unit's default start limit takes.
+        laptop.succeed(f"systemctl stop {unit('/mnt/nas/b', 'mount')}")
+        laptop.succeed("ip link set eth1 down")
+        for _ in range(8):
+            laptop.fail(as_user("timeout 60 cat /mnt/nas/b/from-b"))
+        laptop.succeed(f"systemctl is-active {unit('/mnt/nas/b', 'automount')}")
+        laptop.succeed("ip link set eth1 up")
+        laptop.wait_until_succeeds(as_user("timeout 60 cat /mnt/nas/b/from-b"), timeout=120)
+        laptop.succeed(f"systemctl is-active {unit('/mnt/nas/b', 'mount')}")
 
     with subtest("the automounts' timeouts are Fedora's"):
         a = unit("/mnt/nas/b", "automount")

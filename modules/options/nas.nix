@@ -92,7 +92,12 @@ in
           server = mkOption {
             type = ravnix.address;
             example = "nas.example.org";
-            description = "The NAS, by its address or name, as `//SERVER/SHARE` names it.";
+            description = ''
+              The NAS, by its address or name, as `//SERVER/SHARE` names it:
+              where it serves SMB, which may be another interface than the
+              address of the NAS in ravnix.hosts, where its services are
+              reached, so it is not taken from there.
+            '';
           };
           accounts = mkOption {
             type = types.attrsOf account;
@@ -108,7 +113,9 @@ in
               choice (lowercase letters, digits and `-`). Each account has one
               credentials file, /run/ravnix/nas/NAME.cred, root's and mode
               600, which a unit writes from your vault when a share of it is
-              mounted.
+              mounted. The file has no domain line: an account of a
+              standalone NAS needs none, and one of an Active Directory
+              domain cannot be given yet.
             '';
           };
           shares = mkOption {
