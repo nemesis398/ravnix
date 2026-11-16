@@ -857,7 +857,9 @@ a_commit_all_is_judged_by_the_style_check_of_its_temporary_index() {
 	new_repo
 	stage tools/check-style/main.odin 'one'
 	git -C "$repo" commit -qm one
-	printf 'two\n' >"$repo/tools/check-style/main.odin"
+	# Of another size than one, so git add -u cannot take the file for
+	# unchanged when both writes fall in one second.
+	printf 'second\n' >"$repo/tools/check-style/main.odin"
 	# What git commit -a hands the pre-commit hook: a temporary index that
 	# holds the work tree's copy.
 	cp "$repo/.git/index" "$scratch/next-index"
@@ -865,7 +867,7 @@ a_commit_all_is_judged_by_the_style_check_of_its_temporary_index() {
 	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" GIT_INDEX_FILE="$scratch/next-index" scripts/check.sh --fast
 	expect_status 0
 	expect_one_link
-	[[ "$(cat -- "$link/src/main.odin")" == two ]] || {
+	[[ "$(cat -- "$link/src/main.odin")" == second ]] || {
 		echo "  the style check was built from: $(cat -- "$link/src/main.odin")"
 		return 1
 	}
