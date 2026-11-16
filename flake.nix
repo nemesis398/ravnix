@@ -60,6 +60,8 @@
                   ./scripts
                   ./.githooks
                   ./.claude/settings.json
+                  # What check.test.sh holds the style step's key against.
+                  ./tools/check-style/default.nix
                 ];
               };
               nativeBuildInputs = [

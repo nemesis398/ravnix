@@ -217,7 +217,9 @@ step_boundary() {
 # discovery of tools, the flake and its lock (nixpkgs, and so Odin), and the
 # two files that tools/check-style/default.nix names at build time, the
 # shared Mermaid theme the program carries and docs/style.md, which its
-# tests read. Changing what the build reads means changing this list too.
+# tests read. Changing what the build reads means changing this list too;
+# scripts/tests/check.test.sh holds the list against the files default.nix
+# names.
 style_inputs=(
 	tools/check-style
 	lib/odin.nix

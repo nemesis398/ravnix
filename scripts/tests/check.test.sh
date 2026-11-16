@@ -913,6 +913,67 @@ the_key_is_that_of_the_snapshot_the_build_reads() {
 	}
 }
 
+a_cached_program_keeps_its_link_while_it_runs() {
+	new_repo
+	gate --fast
+	expect_status 0
+	echo 2 >"$bin/style.slow"
+	local hit s1=0
+	# A run that hits the cache and runs its program for 2 s.
+	(cd "$repo" && exec env PATH="$bin:$PATH" TMPDIR="$tmp" scripts/check.sh --fast) >"$scratch/hit.out" 2>&1 &
+	hit=$!
+	await_file "$bin/prog.running" || return 1
+	# A run on another index, which builds and removes the other links.
+	cp "$repo/.git/index" "$scratch/next-index"
+	mkdir -p "$repo/tools/check-style"
+	printf 'two\n' >"$repo/tools/check-style/main.odin"
+	GIT_INDEX_FILE="$scratch/next-index" git -C "$repo" add tools/check-style/main.odin
+	capture in_repo env PATH="$bin:$PATH" TMPDIR="$tmp" GIT_INDEX_FILE="$scratch/next-index" scripts/check.sh --fast
+	wait "$hit" || s1=$?
+	((s1 == 0)) || {
+		echo "  the run on the cache ended with $s1:"
+		cat "$scratch/hit.out"
+		return 1
+	}
+	expect_status 0
+	expect_err "waiting for another gate run"
+	expect_style_builds 2
+	[[ ! -e "$bin/style.while-in-use" ]] || {
+		echo "  a build, and the removal of the links after it, ran while a cached program ran"
+		return 1
+	}
+}
+
+the_key_covers_every_file_the_build_names() {
+	# Every repository file that tools/check-style/default.nix names
+	# (../../PATH) is one of the style step's inputs, or below one.
+	local nix="$src/tools/check-style/default.nix" inputs file covered input n=0
+	[[ -f "$nix" ]] || {
+		echo "  $nix is missing"
+		return 1
+	}
+	inputs="$(sed -n '/^style_inputs=(/,/^)/{/^\t/s/^\t//p}' "$src/scripts/check.sh")"
+	[[ "$inputs" == *tools/check-style* ]] || {
+		echo "  could not read style_inputs from scripts/check.sh: $inputs"
+		return 1
+	}
+	while IFS= read -r file; do
+		n=$((n + 1))
+		covered=""
+		while IFS= read -r input; do
+			[[ "$file" != "$input" && "$file" != "$input/"* ]] || covered=1
+		done <<<"$inputs"
+		[[ -n "$covered" ]] || {
+			echo "  default.nix names $file, which the key of the style check leaves out"
+			return 1
+		}
+	done < <(rg -o --no-filename '\.\./\.\./[A-Za-z0-9._/-]+' "$nix" | sed 's|^\.\./\.\./||' | sort -u)
+	((n >= 2)) || {
+		echo "  expected default.nix to name the theme and the style document, it names $n files"
+		return 1
+	}
+}
+
 a_failed_build_of_the_style_check_fails_the_gate() {
 	new_repo
 	echo 3 >"$bin/style.status"
@@ -2077,6 +2138,8 @@ tests=(
 	a_commit_that_changes_the_style_check_is_judged_by_the_index_copy
 	a_commit_all_is_judged_by_the_style_check_of_its_temporary_index
 	the_key_is_that_of_the_snapshot_the_build_reads
+	a_cached_program_keeps_its_link_while_it_runs
+	the_key_covers_every_file_the_build_names
 	a_failed_build_of_the_style_check_fails_the_gate
 	a_build_that_makes_no_program_fails_the_gate
 	without_nix_and_no_cached_style_check_the_gate_fails

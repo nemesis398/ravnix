@@ -157,6 +157,9 @@ style_check_program() {
 #   style.empty    the output has no program in it
 #   style.running  while present, a build runs; a second one at the same
 #                  time writes style.overlap
+#   style.slow     the built program takes this many seconds per run, with
+#                  its pid in prog.running while it runs; a build that
+#                  starts then writes style.while-in-use
 style_build_script() {
 	local dir="$1" program="$2"
 	# shellcheck disable=SC2016 # the fake build's code, for its own shell
@@ -172,6 +175,7 @@ done
 [[ -n "$link" && -n "$src" ]] || { echo "fake nix: a style build without --out-link or path:SRC#check-style: $*" >&2; exit 64; }
 printf "%s\n" "$src" >>"$d/style.sources"
 [[ ! -e "$d/style.running" ]] || : >"$d/style.overlap"
+[[ ! -e "$d/prog.running" ]] || : >"$d/style.while-in-use"
 : >"$d/style.running"
 [[ ! -e "$d/style.delay" ]] || sleep "$(cat -- "$d/style.delay")"
 rm -f -- "$d/style.running"
@@ -183,7 +187,12 @@ mkdir -p "$d/store"
 out="$(mktemp -d -p "$d/store" XXXXXX-check-style)"
 if [[ ! -e "$d/style.empty" ]]; then
 	mkdir -p "$out/bin"
-	printf "#!%s\nexec %q \"\$@\"\n" "$BASH" "$program" >"$out/bin/check-style"
+	{
+		printf "#!%s\n" "$BASH"
+		printf "d=%q\n" "$d"
+		printf "%s\n" "if [[ -e \"\$d/style.slow\" ]]; then echo \$\$ >\"\$d/prog.running\"; sleep \"\$(cat -- \"\$d/style.slow\")\"; rm -f -- \"\$d/prog.running\"; fi"
+		printf "exec %q \"\$@\"\n" "$program"
+	} >"$out/bin/check-style"
 	chmod +x "$out/bin/check-style"
 fi
 [[ ! -d "$src/tools/check-style" ]] || cp -r -- "$src/tools/check-style" "$out/src"
