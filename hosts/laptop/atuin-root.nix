@@ -66,7 +66,9 @@ in
 {
   environment.systemPackages = [
     pkgs.atuin
-    pkgs.ravnix.atuin-root-login
+    # With the service's URL written in; with none, the helper refuses, since
+    # atuin would log in to its public server.
+    (pkgs.ravnix.atuin-root-login.override { syncAddress = if sync then service.url else null; })
   ];
 
   # The directories are root's alone; the config is a link, replaced at every

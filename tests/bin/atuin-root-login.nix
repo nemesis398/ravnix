@@ -15,7 +15,13 @@
 }:
 let
   stub = pkgs.writeShellScriptBin "atuin" (builtins.readFile ../../packages/atuin-root-login/tests/atuin-stub.bash);
-  helper = self.packages.${system}.atuin-root-login.override { atuin = stub; };
+  syncAddress = "http://sync.test:8888";
+  helper = self.packages.${system}.atuin-root-login.override {
+    atuin = stub;
+    inherit syncAddress;
+  };
+  # No atuin service placed: no sync address.
+  helperNoSync = self.packages.${system}.atuin-root-login.override { atuin = stub; };
 in
 pkgs.runCommand "bin-atuin-root-login"
   {
@@ -28,6 +34,8 @@ pkgs.runCommand "bin-atuin-root-login"
       pkgs.util-linux
     ];
     ATUIN_ROOT_LOGIN_UNDER_TEST = lib.getExe helper;
+    ATUIN_ROOT_LOGIN_NO_SYNC = lib.getExe helperNoSync;
+    ATUIN_ROOT_LOGIN_SYNC_ADDRESS = syncAddress;
     ATUIN_REAL = lib.getExe pkgs.atuin;
   }
   ''

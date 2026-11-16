@@ -54,6 +54,7 @@ let
       link = (rules s)."/root/.config/atuin/config.toml"."L+" or { };
     in
     if link ? argument then builtins.fromTOML (builtins.readFile link.argument) else null;
+  helperOf = s: lib.findFirst (p: (p.pname or p.name or "") == "atuin-root-login") null s.config.environment.systemPackages;
   hasPackage = s: name: lib.any (p: (p.pname or p.name or "") == name) s.config.environment.systemPackages;
 
   failures =
@@ -114,6 +115,11 @@ pkgs.runCommand "laptop-atuin-root"
       pkgs.gnugrep
     ];
     INIT = initFile;
+    # The helper as each host gets it: with the service's URL written in, and
+    # without one where no service is placed (it refuses then).
+    HELPER_SYNCED = lib.getExe (helperOf synced);
+    HELPER_BARE = lib.getExe (helperOf huginn);
+    SYNC_URL = synced.config.ravnix.services.atuin.url;
     BASHRC = huginn.config.environment.etc.bashrc.source;
   }
   (
@@ -128,6 +134,11 @@ pkgs.runCommand "laptop-atuin-root"
         mkdir -p "$HOME"
         fail() { echo "FAIL: $*" >&2; exit 1; }
         [ -n "$INIT" ] && [ -r "$INIT" ] || fail "no readable init file: $INIT"
+
+        # The helper knows the server it logs in to: the service's URL where
+        # one is placed, and none (so it refuses) where not.
+        grep -qxF "sync_address=$SYNC_URL" "$HELPER_SYNCED" || fail "the helper on a host with the service does not have $SYNC_URL written in"
+        grep -qx "sync_address='''" "$HELPER_BARE" || fail "the helper on a host without the service has an address written in"
 
         # As root's shell reads it: bash-preexec is loaded, atuin's hooks are
         # in, Ctrl-R is atuin's and the up arrow is left to bash (--disable-up-arrow).

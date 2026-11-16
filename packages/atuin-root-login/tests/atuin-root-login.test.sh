@@ -21,6 +21,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$here/../../../scripts/tests/lib.sh"
 
 SUT="${ATUIN_ROOT_LOGIN_UNDER_TEST:?set ATUIN_ROOT_LOGIN_UNDER_TEST to the helper}"
+# The same helper built without a sync address, as a host without an atuin
+# service gets it.
+SUT_NOSYNC="${ATUIN_ROOT_LOGIN_NO_SYNC:?set ATUIN_ROOT_LOGIN_NO_SYNC to the helper without a sync address}"
+# The sync address SUT is built with.
+SYNC_ADDRESS="${ATUIN_ROOT_LOGIN_SYNC_ADDRESS:?set ATUIN_ROOT_LOGIN_SYNC_ADDRESS}"
 real_atuin="${ATUIN_REAL:?set ATUIN_REAL to the real atuin}"
 
 bin="$scratch/bin"
@@ -459,6 +464,40 @@ it_stops_the_root_half_on_a_short_input() {
 	done
 }
 
+it_points_atuin_at_the_baked_sync_address() {
+	helper "$item"
+	expect_status 0
+	grep -qx "ATUIN_SYNC_ADDRESS=$SYNC_ADDRESS" "$rec/atuin.env" || {
+		echo "  atuin's environment has no ATUIN_SYNC_ADDRESS=$SYNC_ADDRESS"
+		return 1
+	}
+}
+
+it_refuses_without_a_sync_address_before_it_reads_the_vault() {
+	# No atuin service is placed: atuin would log in to its public server, and
+	# the password would go there. Nothing is read, asked or run.
+	run "$SUT_NOSYNC" "$item"
+	expect_status 1
+	expect_err 'ravnix.services.atuin'
+	expect_err 'public'
+	[[ ! -s "$rec/rbw.calls" && ! -s "$rec/sudo.calls" && ! -s "$rec/atuin.calls" ]] || {
+		echo "  something ran: rbw [$(cat "$rec/rbw.calls")] sudo [$(cat "$rec/sudo.calls")] atuin [$(cat "$rec/atuin.calls")]"
+		return 1
+	}
+}
+
+it_refuses_in_the_root_half_without_a_sync_address() {
+	: >"$rec/atuin.calls"
+	capture env -i PATH="$bin:$tools" HOME="$scratch/home" REC="$rec" \
+		unshare -Ur -- "$BASH" -c 'printf "u\nk\np\n" | "$1" --as-root' _ "$SUT_NOSYNC"
+	expect_status 1
+	expect_err 'ravnix.services.atuin'
+	[[ ! -s "$rec/atuin.calls" ]] || {
+		echo "  atuin ran without a sync address: $(cat "$rec/atuin.calls")"
+		return 1
+	}
+}
+
 it_makes_what_atuin_creates_private_to_root() {
 	# The caller's umask is open; the root half closes it before atuin runs,
 	# so atuin's key file and database are not made readable by others.
@@ -610,6 +649,9 @@ tests=(
 	it_goes_by_euid_and_never_asks_id
 	it_runs_sudo_on_its_own_store_path_whoever_started_it
 	it_stops_the_root_half_on_a_short_input
+	it_points_atuin_at_the_baked_sync_address
+	it_refuses_without_a_sync_address_before_it_reads_the_vault
+	it_refuses_in_the_root_half_without_a_sync_address
 	it_makes_what_atuin_creates_private_to_root
 	it_leaves_what_sudo_kept_out_of_atuin
 	it_works_against_the_real_atuin

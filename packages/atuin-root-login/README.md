@@ -14,6 +14,15 @@ in the notes. Run it as the user, in a terminal, with the vault unlocked. The
 laptop installs it (`hosts/laptop/atuin-root.nix`); the install guide has the
 step (`docs/install-from-another-distro.md`).
 
+## The server
+
+The package is built with the URL of the atuin service
+(`ravnix.services.atuin`, through `syncAddress`), and the root half starts
+atuin with `ATUIN_SYNC_ADDRESS` set to it, so root logs in to that server and to
+no other. With no service placed the URL is empty, and the helper refuses before
+it reads the vault or runs sudo: atuin's default is its public server, and the
+password would go there.
+
 ## Why it is a helper
 
 Root has no rbw vault, and the login is state with secrets, so the flake cannot

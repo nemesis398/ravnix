@@ -261,7 +261,7 @@ Profiles of a machine that is not this one, such as a wired connection of a dock
 
 huginn records root's shell history in atuin and shares one timeline with your own, as the other distribution did. The configuration is in the flake (`hosts/laptop/atuin-root.nix`): root's atuin config, with the sync address of `ravnix.services.atuin`, and the init that `sudo -i`, `su -` and a root console read. What the flake cannot hold is the login to the account, which needs the account's password and its recovery key. Until you log root in, root's history is recorded and stays on the laptop.
 
-Do it once, as yourself and not as root, in a terminal, with the vault unlocked (`ai-unlock`). Bitwarden's item for the account holds the username, the password, and the recovery key (the 24 words of `atuin key`) alone in its notes:
+It needs the atuin service in your private flake (`ravnix.services.atuin`); without it the command refuses, because atuin would otherwise log in to its public server and the password would go there. Do it once, as yourself and not as root, in a terminal, with the vault unlocked (`ai-unlock`). Bitwarden's item for the account holds the username, the password, and the recovery key (the 24 words of `atuin key`) alone in its notes:
 
 ```sh
 atuin-root-login "Atuin"

@@ -39,6 +39,16 @@ usage() {
 
 say() { printf 'atuin-root-login: %s\n' "$1" >&2; }
 
+# The atuin service's URL, written in when the package is built. Without one,
+# atuin would log in to its public server and the password would go there, so
+# nothing is read or run.
+sync_address=@syncAddress@
+need_sync() {
+    [[ -n $sync_address ]] && return 0
+    say "no atuin service is placed (ravnix.services.atuin), so atuin would log in to atuin's public server; set the option first"
+    exit 1
+}
+
 if [[ ${1:-} == --as-root ]]; then
     (($# == 1)) || { usage >&2; exit 2; }
     # $EUID, not id: sudo keeps the caller's PATH here, and an id of the
@@ -47,6 +57,7 @@ if [[ ${1:-} == --as-root ]]; then
         say "--as-root is for sudo to start; run atuin-root-login ITEM as yourself"
         exit 1
     fi
+    need_sync
     IFS= read -r user || { say "no username on the standard input"; exit 1; }
     IFS= read -r key || { say "no recovery key on the standard input"; exit 1; }
     # root's own atuin: its home and its config, whatever sudo kept.
@@ -54,6 +65,8 @@ if [[ ${1:-} == --as-root ]]; then
     unset XDG_CONFIG_HOME XDG_DATA_HOME ATUIN_CONFIG_DIR ATUIN_DB_PATH ATUIN_KEY_PATH ATUIN_SESSION ATUIN_PASSWORD
     umask 077
     # atuin reads the rest of the standard input as the password.
+    # root's config names the same server; the environment makes it certain.
+    export ATUIN_SYNC_ADDRESS=$sync_address
     ATUIN_ENCRYPTION_KEY=$key atuin login --username="$user" -p - || exit
     unset key
     # The first sync, so the shared history shows at once.
@@ -68,6 +81,7 @@ esac
 (($# == 1)) || { usage >&2; exit 2; }
 item=$1
 
+need_sync
 type -P rbw >/dev/null || { say "rbw is not installed"; exit 1; }
 if ! rbw unlocked >/dev/null 2>&1 </dev/null; then
     say "the vault is locked; run ai-unlock first"
