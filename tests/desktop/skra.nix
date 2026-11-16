@@ -97,8 +97,8 @@ let
     ++ expect ((serviceOf plain).Service.NoNewPrivileges or null == true) "NoNewPrivileges is not set"
     ++ expect ((serviceOf plain).Service.Type or null == "simple") "the service is not Type=simple"
     ++ expect (
-      list (serviceOf plain).Unit.Requires == [ "skra.socket" ]
-      && list (serviceOf plain).Unit.After == [ "skra.socket" ]
+      list ((serviceOf plain).Unit.Requires or null) == [ "skra.socket" ]
+      && list ((serviceOf plain).Unit.After or null) == [ "skra.socket" ]
     ) "the service does not require and follow skra.socket"
     # Only the socket is started: the service has no Install section, so no
     # login starts it and nothing runs while the page is closed.
