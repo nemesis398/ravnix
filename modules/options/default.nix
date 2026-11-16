@@ -33,6 +33,7 @@ in
     ./laptop.nix
     ./link.nix
     ./peripherals.nix
+    ./nas.nix
     ./apps.nix
     ./server.nix
     ./scripts.nix

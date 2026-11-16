@@ -324,6 +324,39 @@
       };
     };
 
+    # Your NAS's SMB shares on the laptop, mounted when a program first opens
+    # one and unmounted after 10 idle minutes; null mounts none. Each account
+    # names the Bitwarden item with its password: the mount reads it from your
+    # vault, so the first one after a boot needs ai-unlock, and later ones
+    # work while the vault is locked too (modules/desktop/nas.nix).
+    nas = {
+      server = "nas.example.org";
+      accounts = {
+        # itemUser, rbw's user of the item, is the username unless you say
+        # otherwise; null asks by the item's name alone.
+        alice = {
+          username = "alice";
+          item = "NAS - alice";
+        };
+      };
+      shares = [
+        {
+          share = "media";
+          account = "alice";
+          mountPoint = "/mnt/nas/media";
+        }
+        {
+          share = "backups";
+          account = "alice";
+          mountPoint = "/mnt/nas/backups";
+          # Mounted read-only, whatever the account may do on the NAS.
+          readOnly = true;
+        }
+      ];
+      # Links in your home, by their path below it, to folders of the mounts.
+      links.NAS = "/mnt/nas";
+    };
+
     # The graphical applications of the laptop.
     apps = {
       # Cisco Packet Tracer. Its download needs a Networking Academy login, so
