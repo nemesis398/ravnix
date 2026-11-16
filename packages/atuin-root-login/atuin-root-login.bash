@@ -17,8 +17,9 @@
 #   - not on a command line: sudo's and atuin's arguments hold the program, the
 #     flags and `-p -`, which makes atuin read the password from its standard
 #     input; the item's name is the only thing the user types;
-#   - not in a file: nothing is written but atuin's own key file under
-#     /root/.local/share, which is atuin's login;
+#   - not in a file: atuin writes its own files under /root/.local/share (the
+#     key file, the session token, which is a credential, and its database),
+#     mode 0600 under the umask below, and the helper writes none;
 #   - not in the environment of any process but atuin: the recovery key reaches
 #     atuin as ATUIN_ENCRYPTION_KEY, set for that one command;
 #   - not in a trace or an error message: tracing is turned off, whatever bash

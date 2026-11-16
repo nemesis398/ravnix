@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # Tests for atuin-root-login (packages/atuin-root-login), run by the check
-# bin-atuin-root-login. rbw, sudo and id are stand-ins made here, and atuin is
-# a stand-in built into the package (atuin-stub.bash), so no vault, no root and
-# no server are involved. What matters most is what the helper keeps out of
-# reach: the username, the password and the recovery key are on no command
-# line (not rbw's, sudo's or atuin's), in no file, in no output and in no
-# trace, apart from the user name, which is the account's name, and a failure of any step still prints none of them. One test runs
-# the real atuin, to show that it takes the password from its standard input
-# and the key from its environment, which the helper relies on.
+# bin-atuin-root-login. rbw and sudo are stand-ins made here (sudo runs the
+# command as root in a user namespace), and atuin is a stand-in built into the
+# package (atuin-stub.bash), so no vault, no real root and no server are
+# involved. What matters most is what the helper keeps out of reach: the
+# password and the recovery key are on no command line (not rbw's, sudo's or
+# atuin's), in no file, in no output and in no trace, and a failure of any step
+# still prints neither. The account's name is not a secret and is atuin's
+# argument. Two tests run the real atuin against a one-shot listener, to show
+# that it takes the password from its standard input, the key from its
+# environment and the server from its environment, which the helper relies on.
 #
-# ATUIN_ROOT_LOGIN_UNDER_TEST is the helper built with the stand-in atuin, and
-# ATUIN_REAL the real atuin.
+# ATUIN_ROOT_LOGIN_UNDER_TEST is the helper built with the stand-in atuin and a
+# sync address, ATUIN_ROOT_LOGIN_NO_SYNC the same without one, and ATUIN_REAL
+# the real atuin.
 
 # The stubs are written in single quotes on purpose; the checks read variables
 # that they set.

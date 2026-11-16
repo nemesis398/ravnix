@@ -35,7 +35,9 @@ do it. The user reads the three fields, and the root half of the script, which
   and the recovery key in `ATUIN_ENCRYPTION_KEY`, set for that one command.
   `rbw`, `sudo` and `atuin` get no secret as an argument. The account's name is
   on atuin's command line: it is a name, not a secret.
-- **A file.** Nothing is written but atuin's own key file under `/root`.
+- **A file of the helper's.** It writes none. atuin writes its own under
+  `/root/.local/share/atuin`: the key file, the session token (a credential)
+  and its database, mode 0600 under the umask the root half sets.
 - **Any other process's environment.** The values are shell variables and a
   pipe; `sudo`'s environment holds none.
 - **A trace or an error.** The script turns tracing off first, whatever
@@ -48,16 +50,22 @@ user name is passed as it is, spaces at its ends included.
 
 ## Tests
 
-`tests/atuin-root-login.test.sh`, the check `bin-atuin-root-login`. `rbw`,
-`sudo` and `id` are stand-ins, and `atuin` is a stand-in built into the
-package's `PATH`, so no vault, no root and no server are involved. The tests
-look for the password and the key on every command line, in the environment of
-`sudo` and of atuin, in files, in output and under `bash -x`; they feed values
-that look like options or shell syntax; they break each step (a locked vault, a
-missing `rbw`, a field `rbw` cannot read, an empty field, two lines, a failing
-`sudo`, a failing login, a failing sync, a root half started by a normal user,
-a short input); and one test runs the real atuin, against a closed port, to show
-that it reads the password from `-p -`, the key from the environment and the server from `ATUIN_SYNC_ADDRESS`: a one-shot listener in the sandbox records the login request, and the test asserts that the password from the standard input, spaces at its ends included, is in its body. A second test shows the listener tells a literal `-p` argument apart.
+`tests/atuin-root-login.test.sh`, the check `bin-atuin-root-login`. `rbw` and
+`sudo` are stand-ins (the `sudo` runs the command as root in a user namespace,
+`unshare -Ur`, so the root half sees `$EUID` 0 without a real root), and
+`atuin` is a stand-in built into the package's `PATH`, so no vault, no real
+root and no server are involved. The tests look for the password and the key
+on every command line, in the environment of `sudo` and of atuin, in files, in
+output and under `bash -x`; they feed values that look like options or shell
+syntax and a password with spaces at its ends; they break each step (a locked
+vault, a missing `rbw`, a field `rbw` cannot read, an empty field, two lines, a
+failing `sudo`, a failing login, a failing sync, a root half started by a
+normal user, a short input, no sync address); they show that an `id` on the
+`PATH` is never run and that a copy of the helper makes `sudo` run the store
+path; and they check the mode of what the root half creates. Two tests run the
+real atuin against a one-shot listener in the sandbox, which records the login
+request: the password from the standard input, the key from the environment and
+the server from `ATUIN_SYNC_ADDRESS`.
 
 ## Findings that are not fixed
 
