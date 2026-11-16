@@ -31,7 +31,7 @@ tools="$scratch/tools"
 mkdir -p "$bin" "$nobin" "$rec" "$vault" "$tools"
 # The tools the helper and the stand-ins use, found once: a run's PATH is the
 # stand-ins and these, so a test can leave rbw out.
-for t in env cat sort readlink head wc find timeout sleep seq python3; do
+for t in env cat sort readlink head wc find timeout sleep seq python3 unshare cp stat; do
 	p="$(type -P "$t" || true)"
 	[[ -z "$p" ]] || ln -s "$p" "$tools/$t"
 done
@@ -60,22 +60,25 @@ write_script "$bin/rbw" \
 	'  *) exit 1 ;;' \
 	'esac'
 # sudo: records its arguments and its environment, fails with SUDO_RC, and
-# otherwise becomes root (for the id stand-in) and runs the command.
+# otherwise runs the command as root in a user namespace (unshare -Ur), where
+# $EUID is 0 and nothing outside the sandbox is root's.
 write_script "$bin/sudo" \
 	'printf "[%s]" "$@" >>"$REC/sudo.calls"; echo >>"$REC/sudo.calls"' \
 	'env | sort >"$REC/sudo.env"' \
 	'[[ -z ${SUDO_RC:-} ]] || exit "$SUDO_RC"' \
 	'[[ $1 == -- ]] && shift' \
-	'FAKE_UID=0 exec "$@"'
+	'exec unshare -Ur -- "$@"'
+# An id that would say root and leaves a mark when it runs: the helper reads
+# $EUID and must not ask it.
 write_script "$bin/id" \
-	'[[ $1 == -u ]] && echo "${FAKE_UID:-1000}"'
+	'echo ran >>"$REC/id.ran"; echo 0'
 
 # Runs the helper with the stand-ins on the PATH, in an environment of its own
 # that holds no secret. The variables below pass through when the test sets
 # them; the arguments are the command to run.
 run() {
 	local extra=() v
-	for v in RBW_LOCKED RBW_FAIL SUDO_RC ATUIN_LOGIN_RC ATUIN_SYNC_RC FAKE_UID; do
+	for v in RBW_LOCKED RBW_FAIL SUDO_RC ATUIN_LOGIN_RC ATUIN_SYNC_RC; do
 		[[ -z ${!v+x} ]] || extra+=("$v=${!v}")
 	done
 	printf '%s\n' "$user_v" >"$vault/username"
@@ -84,7 +87,7 @@ run() {
 	: >"$rec/rbw.calls"
 	: >"$rec/sudo.calls"
 	: >"$rec/atuin.calls"
-	rm -f "$rec"/atuin.stdin "$rec"/atuin.key "$rec"/atuin.home "$rec"/atuin.env "$rec"/sudo.env
+	rm -f "$rec"/id.ran "$rec"/atuin.stdin "$rec"/atuin.key "$rec"/atuin.home "$rec"/atuin.env "$rec"/sudo.env
 	capture env -i \
 		PATH="$bin:$tools" HOME="$scratch/home" TMPDIR="$scratch/tmp" REC="$rec" \
 		VAULT="$vault" RBW_ITEM="$item" "${extra[@]}" \
@@ -383,8 +386,10 @@ it_refuses_usage_mistakes_before_it_reads_anything() {
 }
 
 it_does_not_run_the_root_half_as_a_normal_user() {
-	# The stand-in id says 1000: nothing is read from the input or run.
-	capture env -i PATH="$bin:$tools" HOME="$scratch/home" REC="$rec" FAKE_UID=1000 \
+	# The shell of the build is no root, and the id on the PATH says it is: the
+	# helper goes by $EUID. Nothing is read from the input or run.
+	rm -f "$rec/id.ran"
+	capture env -i PATH="$bin:$tools" HOME="$scratch/home" REC="$rec" \
 		"$BASH" -c 'printf "u\nk\np\n" | "$1" --as-root' _ "$SUT"
 	expect_status 1
 	expect_err 'for sudo to start'
@@ -394,12 +399,58 @@ it_does_not_run_the_root_half_as_a_normal_user() {
 	}
 }
 
+it_goes_by_euid_and_never_asks_id() {
+	# The id on the PATH says 0 and leaves a mark. The user half and the root
+	# half must neither run it nor believe it.
+	helper "$item"
+	expect_status 0
+	[[ ! -e "$rec/id.ran" ]] || {
+		echo "  the helper ran id from the PATH"
+		return 1
+	}
+	rm -f "$rec/id.ran"
+	capture env -i PATH="$bin:$tools" HOME="$scratch/home" REC="$rec" \
+		"$BASH" -c 'printf "u\nk\np\n" | "$1" --as-root' _ "$SUT"
+	expect_status 1
+	[[ ! -e "$rec/id.ran" ]] || {
+		echo "  the root half ran id from the PATH"
+		return 1
+	}
+}
+
+it_runs_sudo_on_its_own_store_path_whoever_started_it() {
+	# A copy of the helper, in a directory the caller can write to, started by
+	# its path and through bash, is what a caller could make sudo run as root
+	# if the helper took its name from $0. It names its own store path.
+	local want copy="$scratch/copy/atuin-root-login"
+	want="$(readlink -f "$SUT")"
+	mkdir -p "$scratch/copy"
+	cp -- "$want" "$copy"
+	chmod +x "$copy"
+	run "$copy" "$item"
+	expect_status 0
+	[[ "$(cat "$rec/sudo.calls")" == "[--][$want][--as-root]" ]] || {
+		echo "  sudo was called as: $(cat "$rec/sudo.calls")"
+		return 1
+	}
+	run "$BASH" "$copy" "$item"
+	expect_status 0
+	[[ "$(cat "$rec/sudo.calls")" == "[--][$want][--as-root]" ]] || {
+		echo "  through bash, sudo was called as: $(cat "$rec/sudo.calls")"
+		return 1
+	}
+	case "$want" in /nix/store/*) ;; *)
+		echo "  the helper under test is not a store path: $want"
+		return 1 ;;
+	esac
+}
+
 it_stops_the_root_half_on_a_short_input() {
 	local input
 	for input in "" "only-a-user\n"; do
 		: >"$rec/atuin.calls"
-		capture env -i PATH="$bin:$tools" HOME="$scratch/home" REC="$rec" FAKE_UID=0 \
-			"$BASH" -c 'printf "$2" | "$1" --as-root' _ "$SUT" "$input"
+		capture env -i PATH="$bin:$tools" HOME="$scratch/home" REC="$rec" \
+			unshare -Ur -- "$BASH" -c 'printf "$2" | "$1" --as-root' _ "$SUT" "$input"
 		expect_status 1
 		[[ ! -s "$rec/atuin.calls" ]] || {
 			echo "  atuin ran on the input [$input]"
@@ -544,6 +595,8 @@ tests=(
 	it_reports_a_failed_first_sync
 	it_refuses_usage_mistakes_before_it_reads_anything
 	it_does_not_run_the_root_half_as_a_normal_user
+	it_goes_by_euid_and_never_asks_id
+	it_runs_sudo_on_its_own_store_path_whoever_started_it
 	it_stops_the_root_half_on_a_short_input
 	it_leaves_what_sudo_kept_out_of_atuin
 	it_works_against_the_real_atuin

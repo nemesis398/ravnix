@@ -14,7 +14,9 @@ writeShellApplication {
   # errexit would end it at the first command that fails, which it handles.
   bashOptions = [ ];
   runtimeInputs = [ atuin ];
-  text = lib.removePrefix "#!/usr/bin/env bash\n" (builtins.readFile ./atuin-root-login.bash);
+  text = lib.replaceStrings [ "@self@" ] [ "${placeholder "out"}/bin/atuin-root-login" ] (
+    lib.removePrefix "#!/usr/bin/env bash\n" (builtins.readFile ./atuin-root-login.bash)
+  );
   meta = {
     description = "Log root in to the user's atuin account from a Bitwarden item";
     license = lib.licenses.agpl3Plus;

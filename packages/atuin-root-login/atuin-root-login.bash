@@ -41,7 +41,9 @@ say() { printf 'atuin-root-login: %s\n' "$1" >&2; }
 
 if [[ ${1:-} == --as-root ]]; then
     (($# == 1)) || { usage >&2; exit 2; }
-    if [[ $(id -u) != 0 ]]; then
+    # $EUID, not id: sudo keeps the caller's PATH here, and an id of the
+    # caller's would run as root.
+    if ((EUID != 0)); then
         say "--as-root is for sudo to start; run atuin-root-login ITEM as yourself"
         exit 1
     fi
@@ -106,7 +108,10 @@ read_field key notes trim
 # several lines is the wrong field.
 read_field password password
 
-self=$(readlink -f -- "$0")
+# Its own store path, written in when the package is built: $0 would be a
+# copy in the caller's own directory if the caller started one, and sudo would
+# run that as root.
+self=@self@
 # printf is a builtin: nothing here starts a process that has a value in its
 # arguments. sudo reads its own password from the terminal, not from the pipe.
 printf '%s\n%s\n%s\n' "$username" "$key" "$password" | sudo -- "$self" --as-root
