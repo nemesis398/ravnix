@@ -54,7 +54,8 @@
 # read-only, its runtime directory /run/ravnix/nas the one place it writes,
 # private /tmp and /dev, no network but AF_UNIX (rbw's agent socket), and
 # of root's capabilities only CAP_SETUID and CAP_SETGID, for the drop to the
-# user, and CAP_KILL, for the timeout that stops the user's rbw. Its start
+# user: the timeout that stops a hung rbw runs after the drop, as the user,
+# and needs no CAP_KILL (tests/desktop/nas-vm.nix hangs one). Its start
 # timeout is the helper's two rbw calls and 15 s, so a slow vault still ends
 # in the fallback to the kept file and not in a kill.
 #
@@ -209,12 +210,10 @@ in
               LockPersonality = true;
               RestrictAddressFamilies = "AF_UNIX";
               IPAddressDeny = "any";
-              # setpriv's drop to the user, and timeout's signal to the
-              # user's rbw.
+              # setpriv's drop to the user; timeout runs after it.
               CapabilityBoundingSet = [
                 "CAP_SETUID"
                 "CAP_SETGID"
-                "CAP_KILL"
               ];
             };
           };

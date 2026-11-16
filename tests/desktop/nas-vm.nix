@@ -18,6 +18,9 @@
 #   - with the NAS out of reach, eight quick failed accesses leave the
 #     automount armed (the mount units have no start limit), and the share
 #     mounts again once the NAS is back;
+#   - a hung rbw is stopped by the helper's limit, though the unit holds no
+#     CAP_KILL, and the mount takes the kept file well before systemd's own
+#     start timeout;
 #   - the automounts unmount after 10 idle minutes and give up a mount after
 #     20 seconds; the links in the home lead to the mounts;
 #   - no password is in the journal, the fstab or a unit.
@@ -33,6 +36,8 @@
 }:
 let
   me = import ../../templates/default/me.nix;
+  # The helper's limit for each rbw call.
+  limit = self.packages.${pkgs.stdenv.hostPlatform.system}.ravnix-nas-credential.rbwTimeout;
   user = me.ravnix.user.username;
 
   # The passwords, made up for the test. A sits in the vault and on the
@@ -46,7 +51,8 @@ let
 
   fakeRbw = pkgs.writeShellScriptBin "rbw" ''
     # A stand-in for rbw: the vault is locked while /var/lib/fake-rbw/locked
-    # exists, and the password of an item is the file item.NAME (the name's
+    # exists, `get` hangs while /var/lib/fake-rbw/hang exists, and the
+    # password of an item is the file item.NAME (the name's
     # non-alphanumerics as _). Every call logs who ran it and its arguments.
     d=/var/lib/fake-rbw
     echo "$(${pkgs.coreutils}/bin/id -un) XDG_RUNTIME_DIR=''${XDG_RUNTIME_DIR-} RBW_AGENT=''${RBW_AGENT-} $*" >>"$d/log"
@@ -54,6 +60,8 @@ let
       unlocked) [ ! -e "$d/locked" ] ;;
       get)
         [ ! -e "$d/locked" ] || exit 1
+        # A hung agent: one process that never answers, as rbw would be.
+        [ ! -e "$d/hang" ] || exec ${pkgs.coreutils}/bin/sleep 1000
         f="$d/item.$(printf %s "$3" | ${pkgs.coreutils}/bin/tr -c A-Za-z0-9 _)"
         [ -e "$f" ] || exit 1
         ${pkgs.coreutils}/bin/cat "$f"
@@ -191,6 +199,7 @@ pkgs.testers.runNixOSTest {
 
   testScript = ''
     import shlex
+    import time
 
     secrets = [${lib.concatMapStringsSep ", " (p: "'" + p + "'") (lib.attrValues passwords)}]
 
@@ -281,6 +290,20 @@ pkgs.testers.runNixOSTest {
         laptop.succeed("rm /var/lib/fake-rbw/locked")
         laptop.succeed(f"systemctl stop {unit('/mnt/nas/b', 'mount')}")
         laptop.succeed(as_user("timeout 60 cat /mnt/nas/b/from-b"))
+
+    with subtest("a hung rbw is stopped by its limit, and the mount takes the kept file"):
+        # The limit's timeout runs as the user, inside the unit's sandbox,
+        # whose bounding set has no CAP_KILL: it must still stop rbw, and in
+        # time for the fallback, before systemd's own start timeout.
+        laptop.succeed("touch /var/lib/fake-rbw/hang")
+        laptop.succeed(f"systemctl stop {unit('/mnt/nas/b', 'mount')}")
+        start = time.monotonic()
+        laptop.succeed(as_user("timeout 120 cat /mnt/nas/b/from-b"))
+        took = time.monotonic() - start
+        assert took < ${toString (2 * limit + 10)}, f"the mount waited {took} s"
+        laptop.succeed("journalctl -u ravnix-nas-credential-other -o cat | grep -F 'rbw cannot read the item'")
+        laptop.fail("pgrep -f 'bin/[s]leep 1000'")
+        laptop.succeed("rm /var/lib/fake-rbw/hang")
 
     with subtest("a NAS out of reach fails each access, and the share comes back with it"):
         # mount.cifs fails in milliseconds without a route: more than the

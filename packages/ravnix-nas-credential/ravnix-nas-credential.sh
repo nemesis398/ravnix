@@ -17,6 +17,8 @@
 #
 # Each of the two rbw calls (unlocked, get) has @rbwTimeout@ seconds; the
 # unit's start timeout leaves room for both and for the fallback after them.
+# timeout runs after the drop, as LOGIN, so it signals rbw as its own user
+# and root needs no capability to signal another (the unit holds none).
 #
 # The file is written whole or not at all: a new one beside it, mode 600,
 # then renamed over it. A run that is stopped (SIGTERM, SIGINT, SIGHUP)
@@ -64,12 +66,13 @@ fallback() {
 if ! uid=$(id -u -- "$login" 2>/dev/null) || ! gid=$(id -g -- "$login" 2>/dev/null); then
 	fallback "there is no user $login"
 fi
-rbw=$(type -P rbw) env=$(type -P env) false=$(type -P false)
+rbw=$(type -P rbw) env=$(type -P env) false=$(type -P false) timeout=$(type -P timeout)
 
-# rbw ARGS as the login, within the limit.
+# rbw ARGS as the login, within the limit, which the login's timeout keeps.
 as_login() {
-	timeout @rbwTimeout@ setpriv --reuid="$uid" --regid="$gid" --init-groups --no-new-privs --reset-env -- \
-		"$env" XDG_RUNTIME_DIR="/run/user/$uid" RBW_AGENT="$false" "$rbw" "$@" </dev/null 2>/dev/null
+	setpriv --reuid="$uid" --regid="$gid" --init-groups --no-new-privs --reset-env -- \
+		"$timeout" @rbwTimeout@ "$env" XDG_RUNTIME_DIR="/run/user/$uid" RBW_AGENT="$false" "$rbw" "$@" \
+		</dev/null 2>/dev/null
 }
 
 if ! as_login unlocked >/dev/null; then

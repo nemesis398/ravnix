@@ -190,8 +190,14 @@ test_reads_the_item_as_the_login_through_rbw_alone() {
 		echo "  rbw was asked: $(cat "$fake/rbw.log")"
 		return 1
 	}
-	# setpriv dropped to the login twice, once per call.
+	# setpriv dropped to the login twice, once per call, and the limit runs
+	# after the drop, as the login: timeout signals rbw as its own user, and
+	# root keeps no capability to signal another.
 	[[ "$(wc -l <"$fake/setpriv.log")" == 2 ]]
+	command grep -q -- "--reset-env -- $bin/timeout $limit " "$fake/setpriv.log" || {
+		echo "  setpriv ran: $(cat "$fake/setpriv.log")"
+		return 1
+	}
 	# rbw never starts an agent of its own here: RBW_AGENT is a program that
 	# fails, and its runtime directory is the login's.
 	command grep -qx "RBW_AGENT=$(type -P false)" "$fake/rbw.env" || {

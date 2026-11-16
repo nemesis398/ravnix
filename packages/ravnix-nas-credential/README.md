@@ -21,12 +21,14 @@ because:
 - every branch is covered by the shell test, which also traces every
   program it starts for the secret, and the real path by the VM test with
   the real rbw;
-- it is root only until the drop: as root it runs `id`, `timeout`,
-  `setpriv`, `head` and the write of the file, and rbw runs as the login.
+- it is root only until the drop: as root it runs `id`, `setpriv`, `head`
+  and the write of the file, and `timeout` and rbw run as the login, so the
+  unit needs no capability but CAP_SETUID and CAP_SETGID.
 
 ## Limits
 
-- Each rbw call has 15 seconds (`rbwTimeout` in `default.nix`), and the
+- Each rbw call has 15 seconds (`rbwTimeout` in `default.nix`), kept by a
+  `timeout` that runs as the login after the drop, and the
   module's unit gives the run twice that and 15 seconds more, so a slow
   vault ends in the fallback to the kept file and not in a kill.
 - Of rbw's answer it reads 1100 bytes at most, past the 512 that mount.cifs

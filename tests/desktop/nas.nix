@@ -14,7 +14,7 @@
 #     uses has none; the directory is root's, mode 700, on /run, and the
 #     unit's runtime directory; the unit is sandboxed (read-only system and
 #     home, the directory alone writable, no network but AF_UNIX, the
-#     capabilities of the drop to the user and of its timeout alone), and
+#     capabilities of the drop to the user alone), and
 #     its start timeout leaves room for the helper's two rbw calls and the
 #     fallback after them;
 #   - no secret is in the store: no option, unit or fstab line holds a
@@ -222,7 +222,6 @@ let
       ++ expect (sc.RestrictAddressFamilies == "AF_UNIX" && sc.IPAddressDeny == "any") "the credentials unit can reach the network"
       ++ expect (
         lib.sort lib.lessThan sc.CapabilityBoundingSet == [
-          "CAP_KILL"
           "CAP_SETGID"
           "CAP_SETUID"
         ]
