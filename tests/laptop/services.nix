@@ -46,7 +46,12 @@ let
     ++ check c.services.irqbalance.enable "${name}: irqbalance is off"
     # fwupd updates the firmware from the LVFS, as Fedora does. It is
     # the laptop shape's, not one model's: any laptop has firmware.
-    ++ check c.services.fwupd.enable "${name}: fwupd is off";
+    ++ check c.services.fwupd.enable "${name}: fwupd is off"
+    # smartd watches the disks' SMART status, as Fedora does. NixOS's
+    # default is DEVICESCAN, which finds the disks itself, so the module
+    # names none.
+    ++ check c.services.smartd.enable "${name}: smartd is off"
+    ++ check c.services.smartd.autodetect "${name}: smartd does not scan for the disks (DEVICESCAN)";
 
   failures = each "huginn" huginn ++ each "the shape without a hardware module" bare;
 in

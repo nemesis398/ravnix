@@ -108,4 +108,9 @@ in
   # in a hardware module: the update tool and its daemon do not depend on the
   # model, and a second laptop model should get it with the shape.
   services.fwupd.enable = true;
+
+  # smartd watches the SMART status of the disks, as on Fedora. It names no
+  # device: NixOS's default is DEVICESCAN, which finds them, as Fedora's
+  # does, so a disk swapped or added later is watched too.
+  services.smartd.enable = true;
 }
