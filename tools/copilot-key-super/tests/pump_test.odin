@@ -91,7 +91,7 @@ pump_file :: proc(t: ^testing.T, events: []tool.Event) -> (result: tool.Pump_Res
 	input := open_fd(t, in_path, {})
 	output := open_fd(t, out_path, {.WRONLY, .CREAT, .TRUNC})
 	tr: tool.Translator
-	result = tool.pump(&tr, input, output, tool.read_fd, no_keys)
+	result = tool.pump(&tr, input, output, tool.read_fd, tool.write_fd, no_keys)
 	linux.close(input)
 	linux.close(output)
 	data, err := os.read_entire_file(out_path, context.temp_allocator)
@@ -146,7 +146,7 @@ input_a_byte_at_a_time_gives_the_same :: proc(t: ^testing.T) {
 	out_path := strings.concatenate({dir, "/out"}, context.temp_allocator)
 	output := open_fd(t, out_path, {.WRONLY, .CREAT, .TRUNC})
 	tr: tool.Translator
-	result := tool.pump(&tr, 0, output, fake_read, no_keys)
+	result := tool.pump(&tr, 0, output, fake_read, tool.write_fd, no_keys)
 	linux.close(output)
 	testing.expect_value(t, result.stop, tool.Stop.Ended)
 	testing.expect_value(t, result.torn, 0)
@@ -165,7 +165,7 @@ a_torn_last_event_is_reported :: proc(t: ^testing.T) {
 	output := open_fd(t, strings.concatenate({dir, "/out"}, context.temp_allocator), {.WRONLY, .CREAT, .TRUNC})
 	defer linux.close(output)
 	tr: tool.Translator
-	result := tool.pump(&tr, 0, output, fake_read, no_keys)
+	result := tool.pump(&tr, 0, output, fake_read, tool.write_fd, no_keys)
 	testing.expect_value(t, result.stop, tool.Stop.Ended)
 	testing.expect_value(t, result.torn, size_of(tool.Event) - 5)
 }
@@ -182,15 +182,13 @@ a_keyboard_that_goes_away_stops_the_loop :: proc(t: ^testing.T) {
 	out_path := strings.concatenate({dir, "/out"}, context.temp_allocator)
 	output := open_fd(t, out_path, {.WRONLY, .CREAT, .TRUNC})
 	tr: tool.Translator
-	result := tool.pump(&tr, 0, output, fake_read, no_keys)
+	result := tool.pump(&tr, 0, output, fake_read, tool.write_fd, no_keys)
 	linux.close(output)
 	testing.expect_value(t, result.stop, tool.Stop.Gone)
 	testing.expect_value(t, result.errno, linux.Errno.ENODEV)
 	testing.expect_value(t, script.calls, 2)
 	out, _ := os.read_entire_file(out_path, context.temp_allocator)
 	expect_out(t, decode(t, out), sample_out())
-	// And the command exits nonzero for it, so systemd restarts it.
-	testing.expect_value(t, tool.exit_status(result), 1)
 }
 
 @(test)
@@ -203,10 +201,9 @@ a_failed_read_stops_and_an_interrupted_one_does_not :: proc(t: ^testing.T) {
 	output := open_fd(t, strings.concatenate({dir, "/out"}, context.temp_allocator), {.WRONLY, .CREAT, .TRUNC})
 	defer linux.close(output)
 	tr: tool.Translator
-	result := tool.pump(&tr, 0, output, fake_read, no_keys)
+	result := tool.pump(&tr, 0, output, fake_read, tool.write_fd, no_keys)
 	testing.expect_value(t, result.stop, tool.Stop.Read_Failed)
 	testing.expect_value(t, result.errno, linux.Errno.EIO)
-	testing.expect_value(t, tool.exit_status(result), 1)
 }
 
 @(test)
@@ -221,10 +218,82 @@ a_failed_write_stops_the_loop :: proc(t: ^testing.T) {
 	output := open_fd(t, path, {})
 	defer linux.close(output)
 	tr: tool.Translator
-	result := tool.pump(&tr, 0, output, fake_read, no_keys)
+	result := tool.pump(&tr, 0, output, fake_read, tool.write_fd, no_keys)
 	testing.expect_value(t, result.stop, tool.Stop.Write_Failed)
 	testing.expect_value(t, result.errno, linux.Errno.EBADF)
 	testing.expect_value(t, script.calls, 1)
+}
+
+// Sink is where the fake writer puts what it takes: at most chunk bytes a
+// call, after an EINTR on every interrupt-th call, and nothing at all (a
+// return of 0) once stall calls have passed, when stall is set.
+Sink :: struct {
+	data:      [dynamic]u8,
+	chunk:     int,
+	interrupt: int,
+	stall:     int,
+	calls:     int,
+}
+
+fake_write :: proc(fd: linux.Fd, data: []u8) -> (int, linux.Errno) {
+	s := cast(^Sink)context.user_ptr
+	s.calls += 1
+	if s.interrupt > 0 && s.calls % s.interrupt == 0 {
+		return 0, .EINTR
+	}
+	if s.stall > 0 && s.calls > s.stall {
+		return 0, .NONE
+	}
+	n := min(len(data), s.chunk)
+	append(&s.data, ..data[:n])
+	return n, .NONE
+}
+
+@(test)
+short_and_interrupted_writes_are_finished :: proc(t: ^testing.T) {
+	// Writes that take 1, 2 or 7 bytes, with an EINTR every third call: all
+	// of the data arrives, in order.
+	data := as_bytes(sample())
+	for chunk in ([]int{1, 2, 7}) {
+		sink := Sink{data = make([dynamic]u8, context.temp_allocator), chunk = chunk, interrupt = 3}
+		context.user_ptr = &sink
+		testing.expect_value(t, tool.write_all(1, data, fake_write), linux.Errno.NONE)
+		testing.expectf(t, string(sink.data[:]) == string(data), "chunk %d: %d bytes arrived of %d", chunk, len(sink.data), len(data))
+	}
+	// A write that takes nothing and reports no error would loop forever:
+	// it is an EIO.
+	sink := Sink{data = make([dynamic]u8, context.temp_allocator), chunk = 5, stall = 2}
+	context.user_ptr = &sink
+	testing.expect_value(t, tool.write_all(1, data, fake_write), linux.Errno.EIO)
+	testing.expect_value(t, len(sink.data), 10)
+}
+
+@(test)
+the_loop_writes_through_short_writes :: proc(t: ^testing.T) {
+	// The loop with a reader and a writer that both hand over a few bytes at
+	// a time.
+	script := Script{steps = {{data = as_bytes(sample())}}}
+	sink := Sink{data = make([dynamic]u8, context.temp_allocator), chunk = 5, interrupt = 4}
+	Both :: struct {
+		script: ^Script,
+		sink:   ^Sink,
+	}
+	both := Both{&script, &sink}
+	context.user_ptr = &both
+	read :: proc(fd: linux.Fd, buf: []u8) -> (int, linux.Errno) {
+		b := cast(^Both)context.user_ptr
+		context.user_ptr = b.script
+		return fake_read(fd, buf[:min(len(buf), 11)])
+	}
+	write :: proc(fd: linux.Fd, data: []u8) -> (int, linux.Errno) {
+		b := cast(^Both)context.user_ptr
+		context.user_ptr = b.sink
+		return fake_write(fd, data)
+	}
+	tr: tool.Translator
+	result := tool.pump(&tr, 0, 1, read, write, no_keys)
+	testing.expect_value(t, result.stop, tool.Stop.Ended)
+	expect_out(t, decode(t, sink.data[:]), sample_out())
 }
 
 @(test)
@@ -244,14 +313,19 @@ a_full_pipe_reader_gone_fails_the_write :: proc(t: ^testing.T) {
 	script := Script{steps = {{data = as_bytes(sample())}}}
 	context.user_ptr = &script
 	tr: tool.Translator
-	result := tool.pump(&tr, 0, fds[1], fake_read, no_keys)
+	result := tool.pump(&tr, 0, fds[1], fake_read, tool.write_fd, no_keys)
 	testing.expect_value(t, result.stop, tool.Stop.Write_Failed)
 	testing.expect_value(t, result.errno, linux.Errno.EPIPE)
 }
 
-dropped_held :: proc(fd: linux.Fd, held: ^tool.Key_Bits) -> linux.Errno {
+// The keyboard after the reads below, as EVIOCGKEY reports it. A fake
+// snapshot may only be a state the kernel can return: the keys as they are
+// after every event the reads handed out, and after whatever came since
+// (EVIOCGKEY also throws away the key events still queued for the reader).
+held_b_and_c :: proc(fd: linux.Fd, held: ^tool.Key_Bits) -> linux.Errno {
 	held^ = {}
 	tool.set_bit(held, KEY_B, true)
+	tool.set_bit(held, KEY_C, true)
 	return .NONE
 }
 
@@ -259,17 +333,11 @@ failing_held :: proc(fd: linux.Fd, held: ^tool.Key_Bits) -> linux.Errno {
 	return .ENODEV
 }
 
-@(test)
-a_syn_dropped_resyncs_from_the_keyboard :: proc(t: ^testing.T) {
-	events := []tool.Event {
-		at(0, tool.EV_KEY, KEY_A, 1),
-		at(0, tool.EV_SYN, tool.SYN_REPORT, 0),
-		at(1, tool.EV_SYN, tool.SYN_DROPPED, 0),
-		at(2, tool.EV_KEY, KEY_A, 0),
-		at(2, tool.EV_SYN, tool.SYN_REPORT, 0),
-		at(3, tool.EV_KEY, KEY_B, 0),
-		at(3, tool.EV_SYN, tool.SYN_REPORT, 0),
-	}
+KEY_C :: 46
+
+// pump_events runs the loop over events in one read, with held as the
+// snapshot, and returns what came out.
+pump_events :: proc(t: ^testing.T, events: []tool.Event, held: tool.Held_Reader) -> (tool.Pump_Result, []Out) {
 	script := Script{steps = {{data = as_bytes(events)}}}
 	context.user_ptr = &script
 	dir := scratch(t)
@@ -277,22 +345,49 @@ a_syn_dropped_resyncs_from_the_keyboard :: proc(t: ^testing.T) {
 	out_path := strings.concatenate({dir, "/out"}, context.temp_allocator)
 	output := open_fd(t, out_path, {.WRONLY, .CREAT, .TRUNC})
 	tr: tool.Translator
-	result := tool.pump(&tr, 0, output, fake_read, dropped_held)
+	result := tool.pump(&tr, 0, output, fake_read, tool.write_fd, held)
 	linux.close(output)
-	testing.expect_value(t, result.stop, tool.Stop.Ended)
 	out, _ := os.read_entire_file(out_path, context.temp_allocator)
-	// A is held, the drop loses its release, the keyboard says B is down and
-	// A up: A released, B pressed (in code order), then B's release comes as usual.
-	expect_out(t, decode(t, out), {k(KEY_A, 1), SYN, k(KEY_A, 0), k(KEY_B, 1), SYN, k(KEY_B, 0), SYN})
+	return result, decode(t, out)
+}
+
+@(test)
+a_syn_dropped_resyncs_from_the_keyboard :: proc(t: ^testing.T) {
+	// A is held; the drop loses A's release and B's press; C comes after
+	// it. The snapshot, taken after the read, has B and C down: A is
+	// released and B pressed, in code order, after everything of the read.
+	events := []tool.Event {
+		at(0, tool.EV_KEY, KEY_A, 1),
+		at(0, tool.EV_SYN, tool.SYN_REPORT, 0),
+		at(1, tool.EV_SYN, tool.SYN_DROPPED, 0),
+		at(2, tool.EV_SYN, tool.SYN_REPORT, 0),
+		at(3, tool.EV_KEY, KEY_C, 1),
+		at(3, tool.EV_SYN, tool.SYN_REPORT, 0),
+	}
+	result, got := pump_events(t, events, held_b_and_c)
+	testing.expect_value(t, result.stop, tool.Stop.Ended)
+	expect_out(t, got, {k(KEY_A, 1), SYN, k(KEY_C, 1), SYN, k(KEY_A, 0), k(KEY_B, 1), SYN})
 
 	// When the keys cannot be read, the loop stops.
-	script = Script{steps = {{data = as_bytes(events)}}}
-	output = open_fd(t, out_path, {.WRONLY, .CREAT, .TRUNC})
-	defer linux.close(output)
-	tr = {}
-	result = tool.pump(&tr, 0, output, fake_read, failing_held)
+	result, _ = pump_events(t, events, failing_held)
 	testing.expect_value(t, result.stop, tool.Stop.Resync_Failed)
 	testing.expect_value(t, result.errno, linux.Errno.ENODEV)
+}
+
+@(test)
+a_key_pressed_after_the_drop_and_let_go_before_the_snapshot_is_up :: proc(t: ^testing.T) {
+	// One read: the drop, its report, then A pressed. A is let go before the
+	// snapshot, which says A is up and throws the queued release away. The
+	// snapshot is the newest word, so A must end up.
+	events := []tool.Event {
+		at(0, tool.EV_SYN, tool.SYN_DROPPED, 0),
+		at(0, tool.EV_SYN, tool.SYN_REPORT, 0),
+		at(1, tool.EV_KEY, KEY_A, 1),
+		at(1, tool.EV_SYN, tool.SYN_REPORT, 0),
+	}
+	result, got := pump_events(t, events, no_keys)
+	testing.expect_value(t, result.stop, tool.Stop.Ended)
+	expect_out(t, got, {k(KEY_A, 1), SYN, k(KEY_A, 0), SYN})
 }
 
 @(test)

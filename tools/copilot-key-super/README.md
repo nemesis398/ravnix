@@ -12,6 +12,10 @@ copilot-key-super --filter       # input_event records, stdin to stdout
 `modules/hardware/ideapad-pro-5-16ahp9/keys.nix` runs the daemon as a
 service.
 
+## Personal values
+
+None.
+
 ## What the key sends
 
 Measured on the laptop with evdev, on Fedora:
@@ -39,9 +43,12 @@ the whole job is to cancel the Shift, and that takes a grab.
   scancodes (`EV_MSC`) and LEDs the keyboard has, plus left Shift and left
   Meta, named `copilot-key-super` with vendor 1, product 1 and version 1,
   which Sway's config finds as `1:1:copilot-key-super`.
-- **Waits up to 1 s for every key to be up**, then grabs the keyboard
-  (`EVIOCGRAB`). A key held across the grab would never be released for
-  whoever saw its press.
+- **Waits until every key is up**, polling `EVIOCGKEY` every 10 ms, for as
+  long as that takes, and then grabs the keyboard (`EVIOCGRAB`). A key held
+  across the grab would never be released for whoever saw its press, and
+  without the grab the keyboard works as stock, so waiting is the safe
+  state. After 1 s it says once that a key is still down. A stop ends the
+  wait at once: nothing is held, and SIGTERM ends the sleep.
 - **Translates** (`translate.odin`), one event in and at most one out:
   - F23 is never forwarded; nothing but the Copilot key sends it.
   - The macro: an F23 press while the left Meta is down, with a left Shift
@@ -60,16 +67,27 @@ the whole job is to cancel the Shift, and that takes a grab.
   `SYN_REPORT`s they came in. A frame the filter emptied (F23 alone) gets no
   report.
 - **Resyncs after lost events**: after a `SYN_DROPPED` it drops everything up
-  to the next report, reads the keyboard's keys (`EVIOCGKEY`) and writes the
-  presses and releases that bring the virtual device to them. A cancelled
-  Shift stays released while F23 is still down.
+  to the next report, and at the end of that read, after every event the read
+  handed out, it reads the keyboard's keys (`EVIOCGKEY`) and writes the
+  presses and releases that bring the virtual device to them. The end of the
+  read and not the report: the snapshot is newer than every event of the
+  read, and `EVIOCGKEY` also throws away the key events still queued for the
+  reader, so an event of the read forwarded after it would undo it. A
+  cancelled Shift stays released while F23 is still down. When the drop
+  swallowed the macro's press (F23, Meta and Shift down now, F23 up before,
+  and Shift not yet down on the virtual device), its Shift is cancelled too.
 - **Stops on the first failure**, with one line on standard error and exit
   status 1: no keyboard, a node that is not one, no `/dev/uinput`, a failed
   ioctl, a keyboard that goes away (`ENODEV`), a failed read or write. The
   grab and the virtual device end with the process, and the kernel gives the
-  raw keyboard back with the key at its stock behaviour. The only blocking
-  call is the keyboard's read, so it cannot hang while it holds the grab.
-  SIGTERM keeps its default action; systemd counts that as a clean stop.
+  raw keyboard back with the key at its stock behaviour. While it holds the
+  grab it does nothing but read the keyboard and write the virtual device:
+  the line that says it grabs comes before the grab, and on a failure both
+  devices are closed, which ends the grab, before the line that says why.
+  Standard error is the journal's socket, and a write there blocks when
+  journald does not read; that may stall the daemon but never with the
+  keyboard in its hands. SIGTERM keeps its default action; systemd counts
+  that as a clean stop.
 - **`--filter`** runs the same translation from standard input to standard
   output, with no device; a `SYN_DROPPED` there resyncs to no key held. The
   bench uses it.
@@ -113,14 +131,22 @@ the whole job is to cancel the Shift, and that takes a grab.
 through `translate`: the macro, with scancodes, held with repeats, twice,
 with a real Shift (left or right) or Super held before it, a Shift pressed
 just before it, the window's edges, a clock that goes back, releases without
-a press, odd values and codes, frame bounds, `SYN_DROPPED` and its resync,
-and a burst of a million frames. The device side runs on a fake sysfs (near
+a press, odd values and codes, a key typed while the key is held (a cancel
+that came too early shows only there), Meta and Shift in the same
+microsecond and one apart, repeats and the key bitmap, frame bounds,
+`SYN_DROPPED` and its resync (a macro press lost in the drop, a key pressed
+in the read and let go before the snapshot), and a burst of a million
+frames. The device side runs on a fake sysfs (near
 names, odd entries, `event10` against `event9`, a huge name, no sysfs) and
 the ioctl numbers and struct sizes are checked against the values a C
 program built on the flake's kernel headers printed. The loop runs on real
 files and pipes, and on a fake reader for `ENODEV`, `EIO`, `EINTR`, a byte
-at a time and a torn last event. `tests/hardware/copilot-key-vm.nix` runs
-the daemon in a VM, under huginn's unit, against QEMU's PS/2 keyboard.
+at a time and a torn last event, and on a fake writer for short and
+interrupted writes. The virtual keyboard's setup runs on a fake ioctl (the
+build has no `/dev/uinput`), and the wait before the grab on a fake
+keyboard and a fake sleep. `tests/hardware/copilot-key-vm.nix` runs
+the daemon in a VM, under huginn's unit, against QEMU's PS/2 keyboard, a key
+held across a start included.
 
 The bench translates `bench/typing.events` with `--filter`: 4096 events of
 typing with scancodes, Shift and Copilot presses, held with repeats. It is
@@ -159,6 +185,10 @@ COPILOT_KEY_SUPER_WRITE_BENCH=$PWD/tools/copilot-key-super/bench/typing.events \
   named"; the restart 2 s later grabbed it. On the laptop it costs one of
   the 5 starts in 60 s at most. A udev rule that starts the unit when the
   keyboard appears would close this.
+- **A real Shift and the Copilot key both pressed inside one overflow** are
+  taken for the macro by the resync, so the Shift is cancelled: the snapshot
+  cannot tell them apart. It takes a starved daemon and both presses inside
+  the lost events; the Shift comes back with its next press.
 - **Nothing checks that `bench/typing.events` is still `make_stream`'s
   output**: the tests cannot read `bench/`, which `lib/odin.nix` leaves out
   of their source.

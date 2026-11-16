@@ -65,7 +65,7 @@ run :: proc(args: []string, out, err: io.Writer) -> int {
 // no device. A SYN_DROPPED in the input resyncs to no key held.
 filter :: proc(input, output: linux.Fd, err: io.Writer) -> int {
 	t: Translator
-	result := pump(&t, input, output, read_fd, proc(fd: linux.Fd, held: ^Key_Bits) -> linux.Errno {
+	result := pump(&t, input, output, read_fd, write_fd, proc(fd: linux.Fd, held: ^Key_Bits) -> linux.Errno {
 		held^ = {}
 		return .NONE
 	})

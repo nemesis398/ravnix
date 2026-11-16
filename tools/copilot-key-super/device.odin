@@ -24,14 +24,14 @@ VIRTUAL_VERSION :: 1
 // match.
 MAX_NAME_BYTES :: 512
 
-// How long the start waits for every key of the keyboard to be up before it
-// grabs, in steps of WAIT_STEP_NS: a key held across the grab would never be
-// released for whoever saw its press.
+// The start polls the keyboard's keys every WAIT_STEP_NS until none is down
+// before it grabs (wait_keys_up), and says so after WAIT_STEPS polls.
 WAIT_STEPS :: 100
 WAIT_STEP_NS :: 10_000_000
 
 Find_Error :: enum {
 	None,
+	No_Memory, // no arena for the listing
 	No_Input_Class, // ROOT/sys/class/input cannot be listed
 	Not_Found, // no eventN there has the name
 }
@@ -83,7 +83,7 @@ read_name :: proc(path: string, buf: []u8) -> (name: string, ok: bool) {
 find_keyboard :: proc(root, name: string) -> (number: int, err: Find_Error) {
 	arena: virtual.Arena
 	if virtual.arena_init_growing(&arena) != nil {
-		return -1, .No_Input_Class
+		return -1, .No_Memory
 	}
 	defer virtual.arena_destroy(&arena)
 	a := virtual.arena_allocator(&arena)
@@ -169,8 +169,11 @@ virtual_setup :: proc "contextless" (bustype: u16) -> Uinput_Setup {
 	return s
 }
 
+// An Ioctl is call, or a stand-in in the tests.
+Ioctl :: #type proc(fd: linux.Fd, request: u32, arg: uintptr) -> linux.Errno
+
 // call runs an ioctl and returns its errno.
-call :: proc "contextless" (fd: linux.Fd, request: u32, arg: uintptr) -> linux.Errno {
+call :: proc(fd: linux.Fd, request: u32, arg: uintptr) -> linux.Errno {
 	ret := int(linux.ioctl(fd, request, arg))
 	if ret < 0 {
 		return linux.Errno(-ret)
@@ -209,55 +212,71 @@ read_caps :: proc(fd: linux.Fd) -> (caps: Caps, errno: linux.Errno) {
 	return caps, .NONE
 }
 
-// create_virtual makes the virtual keyboard on an open /dev/uinput: the
+// create_virtual makes the virtual keyboard on an open /dev/uinput, through
+// ioctl (call, or a stand-in in the tests, which have no /dev/uinput): the
 // keys, scancodes and LEDs the keyboard has (as the Python copied them), the
 // two keys the filter writes itself, and no EV_REP, so the kernel does not
 // repeat keys on its own: the keyboard's repeats are forwarded instead.
-create_virtual :: proc(ui: linux.Fd, caps: ^Caps) -> linux.Errno {
-	call(ui, ui_set_evbit(), EV_KEY) or_return
+create_virtual :: proc(ui: linux.Fd, caps: ^Caps, ioctl: Ioctl = call) -> linux.Errno {
+	ioctl(ui, ui_set_evbit(), EV_KEY) or_return
 	keys := caps.keys
 	set_bit(&keys, KEY_LEFTSHIFT, true)
 	set_bit(&keys, KEY_LEFTMETA, true)
 	for code in u16(0) ..< KEY_CNT {
 		if bit(&keys, code) {
-			call(ui, ui_set_keybit(), uintptr(code)) or_return
+			ioctl(ui, ui_set_keybit(), uintptr(code)) or_return
 		}
 	}
 	if caps.types & (1 << EV_MSC) != 0 {
-		call(ui, ui_set_evbit(), EV_MSC) or_return
+		ioctl(ui, ui_set_evbit(), EV_MSC) or_return
 		for code in u32(0) ..< MSC_CNT {
 			if caps.mscs & (1 << code) != 0 {
-				call(ui, ui_set_mscbit(), uintptr(code)) or_return
+				ioctl(ui, ui_set_mscbit(), uintptr(code)) or_return
 			}
 		}
 	}
 	if caps.types & (1 << EV_LED) != 0 {
-		call(ui, ui_set_evbit(), EV_LED) or_return
+		ioctl(ui, ui_set_evbit(), EV_LED) or_return
 		for code in u32(0) ..< LED_CNT {
 			if caps.leds & (1 << code) != 0 {
-				call(ui, ui_set_ledbit(), uintptr(code)) or_return
+				ioctl(ui, ui_set_ledbit(), uintptr(code)) or_return
 			}
 		}
 	}
 	phys: cstring = VIRTUAL_NAME
-	call(ui, ui_set_phys(), uintptr(rawptr(phys))) or_return
+	ioctl(ui, ui_set_phys(), uintptr(rawptr(phys))) or_return
 	setup := virtual_setup(caps.id.bustype)
-	call(ui, ui_dev_setup(), uintptr(&setup)) or_return
-	return call(ui, ui_dev_create(), 0)
+	ioctl(ui, ui_dev_setup(), uintptr(&setup)) or_return
+	return ioctl(ui, ui_dev_create(), 0)
 }
 
-// wait_keys_up waits up to WAIT_STEPS steps for no key of the keyboard to
-// be down, and reports whether that came.
-wait_keys_up :: proc(fd: linux.Fd) -> bool {
-	for _ in 0 ..< WAIT_STEPS {
-		held: Key_Bits
-		if held_keys(fd, &held) != .NONE || !any_down(&held) {
-			return true
+// A Sleeper sleeps ns nanoseconds: nanosleep, or a stand-in in the tests.
+Sleeper :: #type proc(ns: i64)
+
+nanosleep :: proc(ns: i64) {
+	step := linux.Time_Spec{time_sec = uint(ns / 1_000_000_000), time_nsec = uint(ns % 1_000_000_000)}
+	linux.nanosleep(&step, nil)
+}
+
+// wait_keys_up waits, before the grab, until no key of the keyboard is down,
+// polling every WAIT_STEP_NS, for as long as that takes: a key held across
+// the grab would stay down for whoever saw its press, and without the grab
+// the keyboard works as it does stock, so waiting is the safe state. After
+// WAIT_STEPS polls it says so, once. It holds nothing a stop has to wait
+// for: SIGTERM ends it in its sleep. A failed EVIOCGKEY ends the wait with
+// its errno.
+wait_keys_up :: proc(fd: linux.Fd, held: Held_Reader, sleep: Sleeper, err: io.Writer) -> linux.Errno {
+	for polls := 1;; polls += 1 {
+		keys: Key_Bits
+		held(fd, &keys) or_return
+		if !any_down(&keys) {
+			return .NONE
 		}
-		step := linux.Time_Spec{time_nsec = WAIT_STEP_NS}
-		linux.nanosleep(&step, nil)
+		if polls == WAIT_STEPS {
+			fmt.wprintln(err, "copilot-key-super: a key is still down; the grab waits until every key is up")
+		}
+		sleep(WAIT_STEP_NS)
 	}
-	return false
 }
 
 // daemon is the command without --filter. Every step that fails ends it with
@@ -266,6 +285,9 @@ daemon :: proc(root: string, err: io.Writer) -> int {
 	number, ferr := find_keyboard(root, KEYBOARD_NAME)
 	switch ferr {
 	case .None:
+	case .No_Memory:
+		fmt.wprintln(err, "copilot-key-super: there is no memory to list the input devices")
+		return 1
 	case .No_Input_Class:
 		fmt.wprintfln(err, "copilot-key-super: cannot list %s/sys/class/input", root)
 		return 1
@@ -280,7 +302,8 @@ daemon :: proc(root: string, err: io.Writer) -> int {
 		fmt.wprintfln(err, "copilot-key-super: cannot open %s: %v", path, oerr)
 		return 1
 	}
-	defer linux.close(kbd)
+	kbd_open := true
+	defer if kbd_open {linux.close(kbd)}
 
 	// The node is the keyboard still, and not one renumbered since sysfs was
 	// read.
@@ -318,23 +341,33 @@ daemon :: proc(root: string, err: io.Writer) -> int {
 		fmt.wprintfln(err, "copilot-key-super: cannot open %s: %v", uinput, uerr)
 		return 1
 	}
-	defer linux.close(ui)
+	ui_open := true
+	defer if ui_open {linux.close(ui)}
 	if e := create_virtual(ui, &caps); e != .NONE {
 		fmt.wprintfln(err, "copilot-key-super: cannot create the virtual keyboard: %v", e)
 		return 1
 	}
 
-	if !wait_keys_up(kbd) {
-		fmt.wprintfln(err, "copilot-key-super: a key of %s is still down; grabbing anyway", path)
+	if e := wait_keys_up(kbd, held_keys, nanosleep, err); e != .NONE {
+		fmt.wprintfln(err, "copilot-key-super: cannot read the keys of %s: %v", path, e)
+		return 1
 	}
+	// Nothing goes to standard error while the grab is held: it is the
+	// journal's socket, and a write there blocks when journald does not
+	// read, which would hang the daemon with the keyboard in its hands. So
+	// the line comes before the grab, and a failure closes both devices
+	// (which ends the grab and the virtual keyboard) before it says why.
+	fmt.wprintfln(err, "copilot-key-super: grabbing %s, its events go to %s", path, VIRTUAL_NAME)
 	if e := call(kbd, eviocgrab(), 1); e != .NONE {
 		fmt.wprintfln(err, "copilot-key-super: cannot grab %s: %v", path, e)
 		return 1
 	}
-	fmt.wprintfln(err, "copilot-key-super: %s grabbed, its events go to %s", path, VIRTUAL_NAME)
 
 	t: Translator
-	result := pump(&t, kbd, ui, read_fd, held_keys)
+	result := pump(&t, kbd, ui, read_fd, write_fd, held_keys)
+	linux.close(ui)
+	linux.close(kbd)
+	ui_open, kbd_open = false, false
 	switch result.stop {
 	case .Ended:
 		fmt.wprintfln(err, "copilot-key-super: %s ended", path)
@@ -347,5 +380,7 @@ daemon :: proc(root: string, err: io.Writer) -> int {
 	case .Resync_Failed:
 		fmt.wprintfln(err, "copilot-key-super: cannot read the keys of %s after lost events: %v", path, result.errno)
 	}
-	return exit_status(result)
+	// The daemon only ever stops on a failure, and systemd restarts it on
+	// one.
+	return 1
 }

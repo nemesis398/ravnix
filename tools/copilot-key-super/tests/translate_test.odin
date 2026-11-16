@@ -172,8 +172,35 @@ a_real_shift_pressed_just_before_the_key_is_kept :: proc(t: ^testing.T) {
 	// Shift, then Copilot 20 ms later: inside the window, but the Shift press
 	// came before the macro's Meta, so it is the user's. The Python cancelled
 	// this one.
-	got := run_keys(&tr, key(0, SHIFT, 1), key(20, META, 1), key(21, SHIFT, 2), key(22, F23, 1), key(400, F23, 0), key(401, SHIFT, 0), key(402, META, 0))
-	expect_out(t, got, {k(SHIFT, 1), SYN, k(META, 1), SYN, k(SHIFT, 2), SYN, k(SHIFT, 0), SYN, k(META, 0), SYN})
+	// An A typed while the key is held shows the Shift is still down: a
+	// cancel at the F23 would put the Shift release before it.
+	got := run_keys(&tr, key(0, SHIFT, 1), key(20, META, 1), key(21, SHIFT, 2), key(22, F23, 1), key(200, KEY_A, 1), key(250, KEY_A, 0), key(400, F23, 0), key(401, SHIFT, 0), key(402, META, 0))
+	expect_out(t, got, {k(SHIFT, 1), SYN, k(META, 1), SYN, k(SHIFT, 2), SYN, k(KEY_A, 1), SYN, k(KEY_A, 0), SYN, k(SHIFT, 0), SYN, k(META, 0), SYN})
+	testing.expect(t, !tr.shift_cancelled)
+}
+
+@(test)
+the_order_of_shift_and_meta_decides_to_the_microsecond :: proc(t: ^testing.T) {
+	// The same microsecond for Meta and Shift is the macro (its keys can
+	// share a timestamp); a Shift one microsecond before the Meta is not.
+	feed_at :: proc(tr: ^tool.Translator, meta_us, shift_us, f23_us: i64) {
+		got := make([dynamic]Out, context.temp_allocator)
+		feed(tr, {tool.Event{usec = meta_us, type = tool.EV_KEY, code = META, value = 1}}, &got)
+		feed(tr, {tool.Event{usec = shift_us, type = tool.EV_KEY, code = SHIFT, value = 1}}, &got)
+		feed(tr, {tool.Event{usec = f23_us, type = tool.EV_KEY, code = F23, value = 1}}, &got)
+	}
+	{
+		tr: tool.Translator
+		feed_at(&tr, 1000, 1000, 1001)
+		testing.expect(t, tr.shift_cancelled)
+		testing.expect(t, !tool.bit(&tr.down, SHIFT))
+	}
+	{
+		tr: tool.Translator
+		feed_at(&tr, 1001, 1000, 1002)
+		testing.expect(t, !tr.shift_cancelled)
+		testing.expect(t, tool.bit(&tr.down, SHIFT))
+	}
 }
 
 @(test)
@@ -197,8 +224,35 @@ a_right_shift_held_is_left_alone :: proc(t: ^testing.T) {
 @(test)
 f23_without_meta_cancels_nothing :: proc(t: ^testing.T) {
 	tr: tool.Translator
-	got := run_keys(&tr, key(0, SHIFT, 1), key(1, F23, 1), key(2, F23, 0), key(3, SHIFT, 0))
-	expect_out(t, got, {k(SHIFT, 1), SYN, k(SHIFT, 0), SYN})
+	// Shift and F23 inside the window, no Meta: a Shift+A typed while F23
+	// is held stays Shift+A.
+	got := run_keys(&tr, key(0, SHIFT, 1), key(1, F23, 1), key(100, KEY_A, 1), key(150, KEY_A, 0), key(200, F23, 0), key(300, SHIFT, 0))
+	expect_out(t, got, {k(SHIFT, 1), SYN, k(KEY_A, 1), SYN, k(KEY_A, 0), SYN, k(SHIFT, 0), SYN})
+	testing.expect(t, !tr.shift_cancelled)
+}
+
+@(test)
+an_f23_repeat_alone_cancels_nothing :: proc(t: ^testing.T) {
+	// A repeat of F23 is no press: with Meta and Shift just pressed it opens
+	// nothing (a stray repeat after a lost press, say).
+	tr: tool.Translator
+	got := run_keys(&tr, key(0, META, 1), key(1, SHIFT, 1), key(2, F23, 2), key(100, KEY_A, 1))
+	expect_out(t, got, {k(META, 1), SYN, k(SHIFT, 1), SYN, k(KEY_A, 1), SYN})
+	testing.expect(t, !tr.shift_cancelled)
+	testing.expect(t, tool.bit(&tr.down, SHIFT))
+}
+
+@(test)
+a_repeat_leaves_the_key_bitmap_alone :: proc(t: ^testing.T) {
+	// The input core passes a 2 without changing the key's state: a repeat
+	// of a key that is up does not make it down, and one of a key that is
+	// down keeps it down.
+	tr: tool.Translator
+	got := run_keys(&tr, key(0, KEY_A, 2))
+	expect_out(t, got, {k(KEY_A, 2), SYN})
+	testing.expect(t, !tool.bit(&tr.down, KEY_A))
+	_ = run_keys(&tr, key(10, KEY_B, 1), key(260, KEY_B, 2), key(293, KEY_B, 2))
+	testing.expect(t, tool.bit(&tr.down, KEY_B))
 }
 
 @(test)
@@ -382,13 +436,17 @@ a_resync_with_nothing_to_fix_writes_nothing :: proc(t: ^testing.T) {
 	tr.resync_wanted = true
 	testing.expect_value(t, tool.resync(&tr, &held, 0, 0, out[:]), 0)
 	testing.expect(t, !tr.resync_wanted)
-	// Every key held at once: one press each but F23, then the report.
+	// Every key held at once: one press each but F23, then the report. F23,
+	// Meta and Shift held, none of them seen before, is a lost macro press,
+	// so Shift is not pressed either.
 	all: tool.Key_Bits
 	for &b in all {
 		b = 0xff
 	}
 	n := tool.resync(&tr, &all, 0, 0, out[:])
-	testing.expect_value(t, n, tool.KEY_CNT)
+	testing.expect_value(t, n, tool.KEY_CNT - 1)
+	testing.expect(t, tr.shift_cancelled)
+	testing.expect(t, !tool.bit(&tr.down, SHIFT))
 	testing.expect_value(t, out[n - 1].type, tool.EV_SYN)
 	testing.expect(t, !tool.bit(&tr.down, F23))
 	testing.expect(t, tr.meta_down)
@@ -418,6 +476,53 @@ a_resync_inside_a_held_macro_keeps_the_shift_cancelled :: proc(t: ^testing.T) {
 	testing.expect_value(t, out[0].value, 0)
 	testing.expect(t, !tr.shift_cancelled)
 	testing.expect(t, !tr.meta_down)
+}
+
+@(test)
+a_resync_over_a_lost_macro_press_cancels_its_shift :: proc(t: ^testing.T) {
+	// The drop swallowed the whole press: the keyboard now holds Meta, Shift
+	// and F23, none of which the virtual device has. That is the macro, so
+	// Meta goes down and Shift does not; the rest of the hold is Super.
+	tr: tool.Translator
+	held: tool.Key_Bits
+	tool.set_bit(&held, META, true)
+	tool.set_bit(&held, SHIFT, true)
+	tool.set_bit(&held, F23, true)
+	out: [tool.RESYNC_MAX]tool.Event
+	n := tool.resync(&tr, &held, 0, 0, out[:])
+	testing.expect_value(t, n, 2)
+	testing.expect_value(t, out[0].code, u16(META))
+	testing.expect_value(t, out[0].value, 1)
+	testing.expect(t, tr.shift_cancelled)
+	r := macro_release(500)
+	got := run_keys(&tr, key(300, KEY_A, 1), key(350, KEY_A, 0), r[0], r[1], r[2])
+	expect_out(t, got, {k(KEY_A, 1), SYN, k(KEY_A, 0), SYN, k(META, 0), SYN})
+	testing.expect(t, !tool.any_down(&tr.down))
+}
+
+@(test)
+a_resync_keeps_a_real_shift_held_from_before_the_drop :: proc(t: ^testing.T) {
+	// The user's Shift was down before the drop, and the Copilot press was
+	// lost in it: the Shift is the user's, and stays.
+	tr: tool.Translator
+	_ = run_keys(&tr, key(0, SHIFT, 1))
+	held: tool.Key_Bits
+	tool.set_bit(&held, META, true)
+	tool.set_bit(&held, SHIFT, true)
+	tool.set_bit(&held, F23, true)
+	out: [tool.RESYNC_MAX]tool.Event
+	n := tool.resync(&tr, &held, 0, 0, out[:])
+	testing.expect_value(t, n, 2)
+	testing.expect_value(t, out[0].code, u16(META))
+	testing.expect(t, !tr.shift_cancelled)
+	testing.expect(t, tool.bit(&tr.down, SHIFT))
+	// And when F23 was already down before the drop, the resync leaves the
+	// cancel as it was: here none, since the macro's press was seen whole
+	// with the user's Shift held.
+	tr2: tool.Translator
+	_ = run_keys(&tr2, key(0, SHIFT, 1), key(1000, META, 1), key(1001, SHIFT, 2), key(1002, F23, 1))
+	testing.expect_value(t, tool.resync(&tr2, &held, 0, 0, out[:]), 0)
+	testing.expect(t, !tr2.shift_cancelled)
 }
 
 @(test)

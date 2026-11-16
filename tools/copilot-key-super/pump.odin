@@ -19,6 +19,14 @@ read_fd :: proc(fd: linux.Fd, buf: []u8) -> (int, linux.Errno) {
 	return linux.read(fd, buf)
 }
 
+// A Writer is write_fd, or a stand-in in the tests.
+Writer :: #type proc(fd: linux.Fd, data: []u8) -> (int, linux.Errno)
+
+// write_fd is the Writer of the command.
+write_fd :: proc(fd: linux.Fd, data: []u8) -> (int, linux.Errno) {
+	return linux.write(fd, data)
+}
+
 // A Held_Reader fills held with the keys the keyboard holds down now
 // (EVIOCGKEY), for the resync after a SYN_DROPPED.
 Held_Reader :: #type proc(fd: linux.Fd, held: ^Key_Bits) -> linux.Errno
@@ -39,10 +47,10 @@ Pump_Result :: struct {
 
 // pump runs the loop until the input ends or fails. An event read in parts
 // (a pipe can do that, evdev does not) is put together first.
-pump :: proc(t: ^Translator, input, output: linux.Fd, read: Reader, held: Held_Reader) -> Pump_Result {
+pump :: proc(t: ^Translator, input, output: linux.Fd, read: Reader, write: Writer, held: Held_Reader) -> Pump_Result {
 	events: [READ_EVENTS]Event
 	bytes := mem.slice_to_bytes(events[:])
-	out: [READ_EVENTS + RESYNC_MAX]Event
+	out: [max(READ_EVENTS, RESYNC_MAX)]Event
 	have := 0
 	for {
 		n, rerr := read(input, bytes[have:])
@@ -66,20 +74,24 @@ pump :: proc(t: ^Translator, input, output: linux.Fd, read: Reader, held: Held_R
 				out[o] = e
 				o += 1
 			}
-			if t.resync_wanted {
-				// Out first what came before, so out always has room for a
-				// whole resync.
-				if werr := write_all(output, mem.slice_to_bytes(out[:o])); werr != .NONE {
-					return {stop = .Write_Failed, errno = werr}
-				}
-				keys: Key_Bits
-				if herr := held(input, &keys); herr != .NONE {
-					return {stop = .Resync_Failed, errno = herr}
-				}
-				o = resync(t, &keys, ev.sec, ev.usec, out[:])
-			}
 		}
-		if werr := write_all(output, mem.slice_to_bytes(out[:o])); werr != .NONE {
+		// The resync after a SYN_DROPPED comes after every event of the read,
+		// never between them: the snapshot is newer than all of them, and
+		// EVIOCGKEY also throws away the key events still queued for this
+		// reader, so an event of the read put after it would undo it (a key
+		// pressed in the read and let go before the snapshot would stick).
+		if t.resync_wanted {
+			if werr := write_all(output, mem.slice_to_bytes(out[:o]), write); werr != .NONE {
+				return {stop = .Write_Failed, errno = werr}
+			}
+			keys: Key_Bits
+			if herr := held(input, &keys); herr != .NONE {
+				return {stop = .Resync_Failed, errno = herr}
+			}
+			last := events[whole - 1]
+			o = resync(t, &keys, last.sec, last.usec, out[:])
+		}
+		if werr := write_all(output, mem.slice_to_bytes(out[:o]), write); werr != .NONE {
 			return {stop = .Write_Failed, errno = werr}
 		}
 		used := whole * size_of(Event)
@@ -88,11 +100,12 @@ pump :: proc(t: ^Translator, input, output: linux.Fd, read: Reader, held: Held_R
 	}
 }
 
-// write_all writes all of data, through short writes and EINTR.
-write_all :: proc(fd: linux.Fd, data: []u8) -> linux.Errno {
+// write_all writes all of data, through short writes and EINTR. A write
+// that takes nothing and reports nothing would loop forever, so it is EIO.
+write_all :: proc(fd: linux.Fd, data: []u8, write: Writer) -> linux.Errno {
 	rest := data
 	for len(rest) > 0 {
-		n, err := linux.write(fd, rest)
+		n, err := write(fd, rest)
 		switch {
 		case err == .EINTR:
 			continue
@@ -104,11 +117,4 @@ write_all :: proc(fd: linux.Fd, data: []u8) -> linux.Errno {
 		rest = rest[n:]
 	}
 	return .NONE
-}
-
-// exit_status is the daemon's status for how the loop stopped: 1 for every
-// way, since the daemon only stops on a failure, and systemd restarts it on
-// one.
-exit_status :: proc(result: Pump_Result) -> int {
-	return 1
 }
