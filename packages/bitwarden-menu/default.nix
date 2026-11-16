@@ -55,6 +55,18 @@ let
   # with a dash from being read as a flag. The two replacements fail the build
   # when upstream changes the lines they match, so a newer bwm is looked at
   # and not silently left unpatched (tests/desktop/bitwarden-menu-prompts.nix).
+  #
+  # `hide_folders` in config.ini crashed the menu. bwm 0.6.0 hides an item
+  # when `i["folder"]` names a hidden folder (bwm/bwm.py, dmenu_run), but an
+  # item from `bw list items` has no `folder`, only `folderId`, and the folders
+  # are a dict by id whose values have the `name` (bwcli.get_folders; "No
+  # Folder" is the id null). Any `hide_folders`, even one that names no folder,
+  # raised KeyError in the child process that runs the menu, right after the
+  # unlock, and bwm sends that child's stderr to /dev/null: the login was the
+  # last thing to show. The replacement looks the name up by `folderId`, as
+  # bwm's own obj_name does everywhere else; an item whose folder is gone is
+  # shown. It fails the build when upstream changes the line, so a fixed bwm
+  # is noticed (tests/desktop/bitwarden-menu-hide-folders.nix).
   patched = bitwarden-menu.overrideAttrs (old: {
     postPatch = (old.postPatch or "") + ''
       substituteInPlace bwm/menu.py \
@@ -66,6 +78,10 @@ let
           '"wofi": ["-P"],' \
           '"wofi": ["-P"],
               "fuzzel": ["--password"],'
+      substituteInPlace bwm/bwm.py \
+        --replace-fail \
+          'entries_hid = [i for i in vault.entries if i["folder"] not in hid_fold]' \
+          'entries_hid = [i for i in vault.entries if vault.folders.get(i.get("folderId"), {}).get("name") not in hid_fold]'
     '';
   });
 
