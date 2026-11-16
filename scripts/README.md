@@ -206,8 +206,9 @@ change to what the build reads it costs an evaluation and, when the
 derivation changed, a build, about 10 s. A second gate run at the same time,
 such as a commit while the Stop hook runs, waits on `ravnix-gate/lock` and
 then uses the first one's build. Without nix and no build for the key, or
-when the build fails, the step fails and says why: there is no other style
-check to fall back to.
+when the build fails, the step fails and says why (exit 127 without nix,
+nix's status for a failed build): there is no other style check to fall
+back to.
 
 What it judges, and where:
 

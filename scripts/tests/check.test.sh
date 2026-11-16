@@ -921,6 +921,8 @@ a_failed_build_of_the_style_check_fails_the_gate() {
 	expect_err "error: builder for check-style failed"
 	expect_err "nix could not build the style check"
 	expect_err "style failed (exit 3)"
+	expect_no_err "found no style check to run"
+	expect_no_err "unbound variable"
 	expect_no_out "no style rule broken"
 	expect_no_out "==> shellcheck"
 	[[ -z "$(cached_links)" ]] || {
@@ -941,6 +943,8 @@ a_build_that_makes_no_program_fails_the_gate() {
 	expect_status 1
 	expect_err "holds no program bin/check-style"
 	expect_err "style failed"
+	expect_no_err "found no style check to run"
+	expect_no_err "unbound variable"
 	[[ -z "$(cached_links)" ]] || {
 		echo "  a build without a program left a link: $(cached_links)"
 		return 1
@@ -951,9 +955,12 @@ without_nix_and_no_cached_style_check_the_gate_fails() {
 	new_repo
 	mv -- "$bin/nix" "$scratch/nix.away"
 	capture in_repo env PATH="$(path_without_nix)" TMPDIR="$tmp" scripts/check.sh --fast
-	expect_status 1
+	# The status of a command not found, from the step itself.
+	expect_status 127
 	expect_err "nix not found on PATH"
-	expect_err "style failed"
+	expect_err "style failed (exit 127)"
+	expect_no_err "found no style check to run"
+	expect_no_err "unbound variable"
 	expect_no_out "no style rule broken"
 	expect_no_out "all 3 steps passed"
 }

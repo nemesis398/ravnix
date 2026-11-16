@@ -335,7 +335,8 @@ style_program() {
 				"nix not found on PATH, and the style step needs it: no style check is built yet for what the index holds" \
 				"(tools/check-style and what its build reads). Outside NixOS, open a new shell or source" \
 				"/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh." >&2
-			return 1
+			# A command not found.
+			return 127
 		fi
 		echo "building the style check (tools/check-style) from the index, kept in $style_cache"
 		rm -f -- "$link"
@@ -362,7 +363,12 @@ style_program() {
 
 step_style() {
 	local status=0 s=0 theme=() wtheme=()
+	style_prog=""
 	style_program || return $?
+	if [[ -z "$style_prog" ]]; then
+		echo "check.sh: the style step found no style check to run" >&2
+		return 1
+	fi
 	echo "the style check: $style_prog"
 	# The shared Mermaid theme of the index, when the index has one, so a
 	# commit that changes it and docs/style.md together is judged as a whole;
