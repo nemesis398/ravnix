@@ -4,7 +4,7 @@ Ravnix is a NixOS flake, so building it needs Nix. On a machine that still runs 
 
 The install writes no partition, filesystem or boot entry. `/nix` becomes a plain directory on the root filesystem, and the disk layout stays as it was.
 
-The sections after the install are for the move itself: a file of your home that ravnix takes over on the laptop, `~/.ssh/config`, and the state that the flake does not hold and that you copy or set up once after the first boot: the keyring and root's atuin login.
+The sections after the install are for the move itself: a file of your home that ravnix takes over on the laptop, `~/.ssh/config`, and the state that the flake does not hold and that you copy or set up once after the first boot: the keyring, the NetworkManager profiles and root's atuin login.
 
 ## Why upstream Nix and not Determinate Nix
 
@@ -224,6 +224,20 @@ systemd-ask-password -n 'Login keyring password:' |
   systemd-creds --user encrypt --name=ravnix-keyring-login - \
     ~/.config/credstore.encrypted/ravnix-keyring-login
 ```
+
+## After the laptop's first boot: the NetworkManager profiles
+
+Wi-Fi and wired profiles are state, not configuration: they hold the networks' passwords, and a flake that is public must not. So the flake declares none, and you copy them over once, from the other distribution's root file system. Copy every file of `/etc/NetworkManager/system-connections/` and not only the home Wi-Fi's, with root as owner and mode 0600 (NetworkManager ignores a file that anyone else can read):
+
+```sh
+sudo install -d -m 0700 -o root -g root /etc/NetworkManager/system-connections
+sudo cp -a /mnt/old-root/etc/NetworkManager/system-connections/. /etc/NetworkManager/system-connections/
+sudo chown root:root /etc/NetworkManager/system-connections/*
+sudo chmod 600 /etc/NetworkManager/system-connections/*
+sudo nmcli connection reload
+```
+
+Take out the profile `wg-nord` (`wg-nord.nmconnection`) before you reload, or delete it afterward: `nord setup` builds it again with a fresh WireGuard key (`packages/nord/README.md`), so a copied one only carries the old key. Profiles of a machine that is not this one, such as a wired connection of a docking station you no longer use, can stay out too. A profile that names a network interface or a MAC address (`interface-name`, `mac-address` in its `[connection]` or `[wifi]` section) works on the same laptop and nowhere else. `nmcli connection show` lists what NetworkManager loaded, and `nmcli connection up NAME` joins one.
 
 ## After the laptop's first boot: root's atuin login
 
