@@ -459,6 +459,18 @@ it_stops_the_root_half_on_a_short_input() {
 	done
 }
 
+it_makes_what_atuin_creates_private_to_root() {
+	# The caller's umask is open; the root half closes it before atuin runs,
+	# so atuin's key file and database are not made readable by others.
+	umask 022
+	helper "$item"
+	expect_status 0
+	[[ "$(stat -c %a "$rec/atuin.created")" == 600 ]] || {
+		echo "  a file made by atuin has the mode $(stat -c %a "$rec/atuin.created"), not 600"
+		return 1
+	}
+}
+
 it_leaves_what_sudo_kept_out_of_atuin() {
 	# sudo may keep the caller's variables; atuin must look at root's home.
 	run env XDG_CONFIG_HOME=/home/other/.config XDG_DATA_HOME=/home/other/.local/share \
@@ -598,6 +610,7 @@ tests=(
 	it_goes_by_euid_and_never_asks_id
 	it_runs_sudo_on_its_own_store_path_whoever_started_it
 	it_stops_the_root_half_on_a_short_input
+	it_makes_what_atuin_creates_private_to_root
 	it_leaves_what_sudo_kept_out_of_atuin
 	it_works_against_the_real_atuin
 	it_sees_a_password_that_does_not_come_from_stdin
