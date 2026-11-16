@@ -221,7 +221,6 @@ let
       type_library = "wtype";
       editor = "nvim";
       terminal = "ghostty";
-      hide_folders = "Trash";
     };
   };
   package = bwmOf on;
@@ -273,6 +272,10 @@ pkgs.runCommand "desktop-bitwarden-menu"
         problems.append("[dmenu] pinentry = %r is not one store path" % pin)
     if conf.getint("vault", "session_timeout_min", fallback=0) != 360:
         problems.append("session_timeout_min is not an integer of 360")
+    # No hide_folders: Bitwarden has no folder of deleted items to hide (they
+    # are not in `bw list items`), and a name that is no folder hides nothing.
+    if conf.has_option("vault", "hide_folders"):
+        problems.append("[vault] hide_folders = %r is set" % conf.get("vault", "hide_folders"))
     for p in problems:
         print("  " + p)
     sys.exit(1 if problems else 0)

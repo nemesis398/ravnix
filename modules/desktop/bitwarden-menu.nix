@@ -112,7 +112,6 @@ in
                       type_library = "wtype";
                       inherit editor;
                       terminal = "ghostty";
-                      hide_folders = "Trash";
                     };
                   }
                 );
