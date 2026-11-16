@@ -8,10 +8,12 @@
 # ./dictionary.nix puts ravnix-dict on the PATH, with the user's dictionary,
 # and ./dictionary-watch.nix syncs it with the tools when a list changes.
 # ./backup.nix backs the home up to the NAS, where ravnix.backup.nas is set.
+# ./monitoring.nix reports the host to the estate's Beszel hub and Uptime
+# Kuma, where ravnix.monitoring sets them.
 #
 # It reads ravnix.user, ravnix.secrets, ravnix.services, ravnix.dev,
-# ravnix.shell, ravnix.editor, ravnix.dictionary, ravnix.backup and
-# ravnix.theme, so
+# ravnix.shell, ravnix.editor, ravnix.dictionary, ravnix.backup,
+# ravnix.monitoring and ravnix.theme, so
 # homeModules.options and homeModules.theme must be imported beside it.
 # nixosModules.common does all three, and gives home-manager the user's
 # values; use homeModules.common by itself only outside a ravnix host.
@@ -33,6 +35,7 @@
     ./dictionary.nix
     ./dictionary-watch.nix
     ./backup.nix
+    ./monitoring.nix
   ];
 
   # Outside a host, home-manager is told who it is working for once, here.

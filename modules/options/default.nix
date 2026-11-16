@@ -45,6 +45,7 @@ in
     ./backdrop.nix
     ./radial.nix
     ./backup.nix
+    ./monitoring.nix
     ./dictionary.nix
     ./editor.nix
     ./claude.nix

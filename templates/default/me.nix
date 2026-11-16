@@ -579,6 +579,60 @@
       content = null;
     };
 
+    # The host in your monitoring: its metrics to a Beszel hub, a heartbeat
+    # to an Uptime Kuma push monitor, and the age of its newest backup on the
+    # NAS to another one, each a user unit; null for none. Per host, like
+    # backup.nas: set them in each host's own module, beside these nulls,
+    # which are defaults (lib.mkDefault, written out). The secrets are names
+    # of Bitwarden items, which rbw reads at each start; the hub's address
+    # and its key are no secrets. For the laptop, for example:
+    #   monitoring.beszel = {
+    #     # The hub's address and its public key (the line it shows under
+    #     # Add system).
+    #     hubUrl = "https://metrics.example.org";
+    #     hubKey = "ssh-ed25519 AAAA...";
+    #     # The item whose password is the hub's token, and the name the
+    #     # hub shows the host by.
+    #     tokenItem = "Beszel - universal token";
+    #     systemName = "huginn";
+    #   };
+    #   # Every 15 minutes, while a session is open; `down` while one of
+    #   # the user units is not active.
+    #   monitoring.kuma = {
+    #     pushUrlItem = "Uptime Kuma - push URL (huginn)";
+    #     units = [ ];
+    #   };
+    #   # Needs backup.nas with secrets = "rbw". `down` once the newest
+    #   # snapshot is maxAgeDays old.
+    #   monitoring.backupAge = {
+    #     pushUrlItem = "Uptime Kuma - push URL (huginn backup)";
+    #     maxAgeDays = 3;
+    #   };
+    monitoring.beszel = {
+      _type = "override";
+      priority = 1000;
+      content = null;
+    };
+    monitoring.kuma = {
+      _type = "override";
+      priority = 1000;
+      content = null;
+    };
+    monitoring.backupAge = {
+      _type = "override";
+      priority = 1000;
+      content = null;
+    };
+    # The agent's GPU collector, a fact of the machine: its hardware module
+    # sets it (amd_sysfs on the IdeaPad, so the dGPU is never woken). The
+    # null below is weaker even than that module's lib.mkDefault, so leave
+    # it unless the machine has no hardware module.
+    monitoring.gpuCollector = {
+      _type = "override";
+      priority = 1250;
+      content = null;
+    };
+
     # Your dictionary, as an absolute path to it in your checkout of this
     # flake: the tools add words to it at runtime, and every tool with a word
     # list gets them without a rebuild. Leave it out on a host that should
