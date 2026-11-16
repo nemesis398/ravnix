@@ -99,4 +99,8 @@ in
     enableRootSlice = true;
     enableUserSlices = true;
   };
+
+  # irqbalance spreads the hardware interrupts over the cores, as the Fedora
+  # laptop does. NixOS leaves it off.
+  services.irqbalance.enable = true;
 }

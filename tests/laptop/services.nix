@@ -41,7 +41,9 @@ let
     # it, so a runaway build is killed before the machine thrashes.
     check c.systemd.oomd.enable "${name}: systemd-oomd is off"
     ++ check c.systemd.oomd.enableRootSlice "${name}: systemd-oomd does not watch the root slice"
-    ++ check c.systemd.oomd.enableUserSlices "${name}: systemd-oomd does not watch the user slices";
+    ++ check c.systemd.oomd.enableUserSlices "${name}: systemd-oomd does not watch the user slices"
+    # irqbalance spreads the interrupts over the cores, as Fedora does.
+    ++ check c.services.irqbalance.enable "${name}: irqbalance is off";
 
   failures = each "huginn" huginn ++ each "the shape without a hardware module" bare;
 in
