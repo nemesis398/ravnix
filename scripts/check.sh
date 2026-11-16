@@ -263,10 +263,13 @@ style_digest() {
 			mode="${entry%% *}"
 			path="${entry#* }"
 			printf '%s %s %s\0' "$kind" "$mode" "$path"
+			# The caller's `|| return 1` turns errexit off in here, and the
+			# loop's status is its last command's: a read that fails has to
+			# end the loop itself, or the key leaves that file out.
 			if [[ "$kind" == l ]]; then
-				readlink -- "$path"
+				readlink -- "$path" || exit 1
 			else
-				sha256sum <"$path"
+				sha256sum <"$path" || exit 1
 			fi
 		done
 }

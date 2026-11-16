@@ -873,6 +873,34 @@ a_commit_all_is_judged_by_the_style_check_of_its_temporary_index() {
 	}
 }
 
+# A file of the key's list that cannot be read fails the key, wherever it
+# stands in the list. The gate computes the key under `|| return 1`, which
+# turns errexit off inside, so a failed read in the middle of the loop was
+# lost and the key left the file out. The function is taken from check.sh
+# itself and called the way the gate calls it.
+a_file_the_style_key_cannot_read_fails_the_key() {
+	local dir fn
+	dir="$scratch/digest"
+	mkdir "$dir"
+	fn="$dir/digest.sh"
+	awk '/^style_digest\(\) \{/,/^\}/' "$src/scripts/check.sh" >"$fn"
+	[[ -s "$fn" ]] || { echo "  no style_digest in check.sh"; return 1; }
+	mkdir "$dir/t"
+	printf a >"$dir/t/a"
+	printf b >"$dir/t/b"
+	printf c >"$dir/t/c"
+	chmod 000 "$dir/t/b"
+	if cat -- "$dir/t/b" >/dev/null 2>&1; then
+		echo "  the test cannot make a file unreadable here (root?)"
+		return 1
+	fi
+	capture bash -c 'set -euo pipefail; . "$1"; cd "$2"; sum="$( { printf x; style_digest a b c; } | sha256sum)" || exit 3; echo "$sum"' _ "$fn" "$dir/t"
+	chmod 644 "$dir/t/b"
+	expect_status 3
+	capture bash -c 'set -euo pipefail; . "$1"; cd "$2"; sum="$( { printf x; style_digest a b c; } | sha256sum)" || exit 3; echo "$sum"' _ "$fn" "$dir/t"
+	expect_status 0
+}
+
 the_key_is_that_of_the_snapshot_the_build_reads() {
 	new_repo
 	stage tools/check-style/main.odin 'old'
@@ -2137,6 +2165,7 @@ tests=(
 	a_change_to_what_the_build_reads_rebuilds_the_style_check
 	a_commit_that_changes_the_style_check_is_judged_by_the_index_copy
 	a_commit_all_is_judged_by_the_style_check_of_its_temporary_index
+	a_file_the_style_key_cannot_read_fails_the_key
 	the_key_is_that_of_the_snapshot_the_build_reads
 	a_cached_program_keeps_its_link_while_it_runs
 	the_key_covers_every_file_the_build_names
