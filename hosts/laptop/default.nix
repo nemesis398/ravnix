@@ -113,4 +113,15 @@ in
   # device: NixOS's default is DEVICESCAN, which finds them, as Fedora's
   # does, so a disk swapped or added later is watched too.
   services.smartd.enable = true;
+
+  # sudo keeps EDITOR and VISUAL, which its env_reset drops: `sudo systemctl
+  # edit`, `sudo crontab -e` and visudo then open the user's editor
+  # (modules/common/bash.nix sets both, and SUDO_EDITOR for sudoedit) and not
+  # nano, the editor this sudo falls back on. A user's choice of editor can
+  # run any program as root through these commands; on the laptop the user is
+  # the administrator who can have root anyway. The server keeps its sudo as
+  # hosts/server/deploy.nix has it and does not get this.
+  security.sudo.extraConfig = ''
+    Defaults env_keep += "EDITOR VISUAL"
+  '';
 }

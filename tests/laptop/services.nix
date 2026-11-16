@@ -29,6 +29,12 @@ let
     self.nixosModules.laptop
     { nixpkgs.hostPlatform = system; }
   ];
+  # The server, whose sudo hosts/server/deploy.nix locks down: it must not
+  # keep the caller's EDITOR or VISUAL, and nothing here may change it.
+  muninn = inputs.nixpkgs.lib.nixosSystem {
+    inherit system;
+    modules = (import ../flake/helpers/host-modules.nix { inherit lib; }) ++ [ self.nixosModules.server ];
+  };
   check = cond: msg: lib.optional (!cond) msg;
 
   # What each system must have, said once for both.
@@ -51,13 +57,27 @@ let
     # default is DEVICESCAN, which finds the disks itself, so the module
     # names none.
     ++ check c.services.smartd.enable "${name}: smartd is off"
-    ++ check c.services.smartd.autodetect "${name}: smartd does not scan for the disks (DEVICESCAN)";
+    ++ check c.services.smartd.autodetect "${name}: smartd does not scan for the disks (DEVICESCAN)"
+    # sudo (not sudo-rs) keeps EDITOR and VISUAL, so `sudo systemctl edit`,
+    # `sudo crontab -e` and visudo open the user's editor and not nano, which
+    # sudo falls back on. The sudoers file is checked below, as built.
+    ++ check c.security.sudo.enable "${name}: sudo is off"
+    ++ check (!c.security.sudo-rs.enable) "${name}: sudo-rs is on, and the sudoers line is sudo's"
+    ++ check (lib.hasInfix ''Defaults env_keep += "EDITOR VISUAL"'' c.security.sudo.extraConfig) "${name}: sudo does not keep EDITOR and VISUAL";
 
-  failures = each "huginn" huginn ++ each "the shape without a hardware module" bare;
+  # The server's sudo stays as hosts/server/deploy.nix leaves it.
+  serverFailures =
+    check (!lib.hasInfix "EDITOR" muninn.config.security.sudo.extraConfig) "muninn: sudo keeps EDITOR"
+    ++ check (!lib.hasInfix "VISUAL" muninn.config.security.sudo.extraConfig) "muninn: sudo keeps VISUAL";
+
+  failures = each "huginn" huginn ++ each "the shape without a hardware module" bare ++ serverFailures;
+  # The sudoers file as built; the build runs visudo -c on it.
+  sudoers = huginn.config.environment.etc.sudoers.source;
 in
 pkgs.runCommand "laptop-services" { } (
   if failures == [ ] then
     ''
+      grep -Fx 'Defaults env_keep += "EDITOR VISUAL"' ${sudoers}
       touch $out
     ''
   else
