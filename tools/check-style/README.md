@@ -55,8 +55,8 @@ scanner quadratic).
 `scripts/check.sh` (the fast part, which pre-commit and the Claude Code Stop
 hook run) judges the index and the unstaged changes with this program, as
 the index builds it: nix builds the package from the index's snapshot and the
-gate keeps the build in the work tree's git directory, keyed on the index
-entries of what the build reads (this directory, `lib/odin.nix`,
+gate keeps the build in the work tree's git directory, keyed on what the
+build reads, as the index's snapshot holds it (this directory, `lib/odin.nix`,
 `lib/discover-tools.nix`, `flake.nix`, `flake.lock`, `docs/mermaid-theme.json`
 and `docs/style.md`), so a commit that changes the program is judged by the
 program it holds and an unchanged key costs no nix call (`scripts/README.md`,

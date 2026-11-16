@@ -25,9 +25,9 @@
 #     Mermaid theme it holds. The build is kept, behind a link that is a
 #     garbage-collector root, in the git directory of the work tree
 #     (git rev-parse --absolute-git-dir, so each linked worktree has its
-#     own), under ravnix-gate/check-style-KEY. KEY is the SHA-256 of the
-#     index entries (mode, object, path) of everything the build reads:
-#     style_inputs below. With that link in place nothing calls nix, so
+#     own), under ravnix-gate/check-style-KEY. KEY is the SHA-256 of
+#     everything the build reads (style_inputs below) as the snapshot that
+#     nix builds from holds it, so the key and the build are of one tree. With that link in place nothing calls nix, so
 #     the step costs the program's run; any other KEY builds once (one
 #     evaluation and, when the derivation changed, one build) and removes
 #     the links of the other keys. A lock on ravnix-gate/lock makes a
@@ -212,7 +212,7 @@ step_boundary() {
 	return "$status"
 }
 
-# What the build of the style check reads, as pathspecs of the index: the
+# What the build of the style check reads, as paths of the index: the
 # program's directory (its sources, tests and bench), the toolchain and the
 # discovery of tools, the flake and its lock (nixpkgs, and so Odin), and the
 # two files that tools/check-style/default.nix names at build time, the
@@ -230,15 +230,41 @@ style_inputs=(
 # How long a run waits for another to finish building the style check.
 style_lock_wait=600
 
-# The cache key of the style check: the SHA-256 of style_inputs' index
-# entries, and of the way the gate builds it.
+# The cache key of the style check: the SHA-256 of the way the gate builds
+# it and of style_inputs as the build reads them, in the index's snapshot
+# under $work/index. It reads the snapshot and not the index again, so an
+# index that changes while the gate runs cannot pair one tree's key with a
+# build of another.
 style_key() {
-	local sum
-	sum="$({
+	local sum path present=()
+	for path in "${style_inputs[@]}"; do
+		[[ ! -e "$work/index/$path" && ! -L "$work/index/$path" ]] || present+=("$path")
+	done
+	sum="$(cd "$work/index" && {
 		printf 'ravnix gate: check-style from path:INDEX#check-style\n'
-		git ls-files --stage -z -- "${style_inputs[@]}"
+		((${#present[@]} == 0)) || style_digest "${present[@]}"
 	} | sha256sum)" || return 1
 	printf '%s\n' "${sum%% *}"
+}
+
+# What the files and links at or below the paths $@ of the current directory
+# hold, sorted by path: for each, its kind and mode as find prints them, its
+# path, and the SHA-256 of a file's content or a link's target.
+style_digest() {
+	local entry kind mode path
+	find "$@" \( -type f -o -type l \) -printf '%y %m %p\0' | LC_ALL=C sort -z |
+		while IFS= read -r -d '' entry; do
+			kind="${entry%% *}"
+			entry="${entry#* }"
+			mode="${entry%% *}"
+			path="${entry#* }"
+			printf '%s %s %s\0' "$kind" "$mode" "$path"
+			if [[ "$kind" == l ]]; then
+				readlink -- "$path"
+			else
+				sha256sum <"$path"
+			fi
+		done
 }
 
 # Sets style_prog to the program behind link $1 and succeeds, when the link
@@ -291,7 +317,7 @@ style_program() {
 	}
 	style_cache="$gitdir/ravnix-gate"
 	key="$(style_key)" || {
-		echo "check.sh: could not hash the index entries the style check is built from" >&2
+		echo "check.sh: could not hash the files of the index's snapshot that the style check is built from" >&2
 		return 1
 	}
 	link="$style_cache/check-style-$key"

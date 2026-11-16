@@ -191,10 +191,12 @@ gone); its `README.md` says how it works and where it differs from the
 script. The style step of `check.sh` runs the program that the index builds,
 so a commit that changes the check is judged by the check it holds, and the
 unstaged changes by the same program. Nix builds it from the index's
-snapshot, once for each key: the SHA-256 of the index entries of
-`tools/check-style`, `lib/odin.nix`, `lib/discover-tools.nix`, `flake.nix`,
-`flake.lock`, `docs/mermaid-theme.json` and `docs/style.md`, what the build
-reads. The build is linked, as a garbage-collector root, at
+snapshot, once for each key: the SHA-256 of what the build reads, as that
+snapshot holds it: `tools/check-style`, `lib/odin.nix`,
+`lib/discover-tools.nix`, `flake.nix`, `flake.lock`, `docs/mermaid-theme.json`
+and `docs/style.md`. The key comes from the snapshot and not from a second
+read of the index, so an index staged while the gate runs cannot pair its
+key with a build of the tree before it. The build is linked, as a garbage-collector root, at
 `ravnix-gate/check-style-KEY` in the work tree's git directory
 (`git rev-parse --absolute-git-dir`), so each linked worktree keeps its own
 and loses it with the worktree; the link of an older key goes when a new one

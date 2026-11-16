@@ -873,6 +873,46 @@ a_commit_all_is_judged_by_the_style_check_of_its_temporary_index() {
 	}
 }
 
+the_key_is_that_of_the_snapshot_the_build_reads() {
+	new_repo
+	stage tools/check-style/main.odin 'old'
+	git -C "$repo" commit -qm old
+	# The boundary step's rg stages a change to the style check: an index
+	# that changes after the gate laid it out, as another session or a
+	# person staging while the Stop hook runs would do.
+	local real_rg
+	real_rg="$(command -v rg)"
+	write_script "$bin/rg" \
+		"if [[ ! -e '$bin/staged' ]]; then" \
+		"	: >'$bin/staged'" \
+		"	printf 'newer\n' >'$repo/tools/check-style/main.odin'" \
+		"	git -C '$repo' add tools/check-style/main.odin" \
+		'fi' \
+		"exec '$real_rg' \"\$@\""
+	gate --fast
+	expect_status 0
+	[[ -e "$bin/staged" ]] || {
+		echo "  the boundary step ran no rg, so the index never changed"
+		return 1
+	}
+	expect_one_link
+	[[ "$(cat -- "$link/src/main.odin")" == old ]] || {
+		echo "  the first run built from: $(cat -- "$link/src/main.odin")"
+		return 1
+	}
+	rm -- "${bin:?}/rg"
+	# The index holds newer now, and no build of it exists. (Its size
+	# differs from old's, so git cannot take the file for unchanged.)
+	gate --fast
+	expect_status 0
+	expect_style_builds 2
+	expect_one_link
+	[[ "$(cat -- "$link/src/main.odin")" == newer ]] || {
+		echo "  the index holds newer, the link's program was built from: $(cat -- "$link/src/main.odin")"
+		return 1
+	}
+}
+
 a_failed_build_of_the_style_check_fails_the_gate() {
 	new_repo
 	echo 3 >"$bin/style.status"
@@ -2029,6 +2069,7 @@ tests=(
 	a_change_to_what_the_build_reads_rebuilds_the_style_check
 	a_commit_that_changes_the_style_check_is_judged_by_the_index_copy
 	a_commit_all_is_judged_by_the_style_check_of_its_temporary_index
+	the_key_is_that_of_the_snapshot_the_build_reads
 	a_failed_build_of_the_style_check_fails_the_gate
 	a_build_that_makes_no_program_fails_the_gate
 	without_nix_and_no_cached_style_check_the_gate_fails
