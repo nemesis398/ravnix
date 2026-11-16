@@ -1,18 +1,21 @@
 # skrá, a small web interface for CUPS: printers with their ink levels, the
-# queue, the CUPS log, and (on a branch that is not pushed yet) scanning. It
-# listens on 127.0.0.1 only and is started by a socket unit on the first
-# request (modules/desktop/skra.nix). Source: https://github.com/nemesis398/skra,
-# AGPL-3.0-or-later.
+# queue and the CUPS log. It listens on 127.0.0.1 only and is started by a
+# socket unit on the first request (modules/desktop/skra.nix). Source:
+# https://github.com/nemesis398/skra, AGPL-3.0-or-later.
 #
 # What the upstream build does, and this does the same (Makefile: `go build -o
 # skra ./cmd/skra`): no ldflags, no tags and no version string. The page
 # templates and static files are embedded with go:embed (web/embed.go), so the
-# binary needs nothing beside itself. SQLite is modernc.org/sqlite, pure Go, so
-# there is no cgo and no C library.
+# binary needs nothing beside itself.
 #
-# The pinned revision is the newest one on GitHub (origin/main of the author's
-# checkout). The author's local main has more commits that are not pushed
-# (scanning, cmd/fakescanner), and a bump takes them once they are.
+# cgo stays on, as it does in upstream's `go build`. SQLite is pure Go
+# (modernc.org/sqlite) and needs none, but Go's own resolver never asks nss:
+# without cgo a printer's `.local` name, which only nss-mdns resolves on ravnix
+# (modules/desktop/printing.nix), fails with "no such host", so the queue's ink
+# levels are missing while CUPS reaches the printer. tests/desktop/skra.nix
+# checks the binary for CGO_ENABLED=1 and resolves such a name in a VM.
+#
+# The pinned revision is the newest one on GitHub.
 #
 # skra has no --help and no --version: it starts serving whatever its
 # arguments are, so tests/desktop/skra.nix runs the program with a config
@@ -40,13 +43,6 @@ buildGoModule {
   };
 
   vendorHash = "sha256-VmhKOkE1pcpkFkZ2VH43DOsZ7MBUFcacG5Kanzf8+eE=";
-
-  # subPackages would also narrow the tests to cmd/skra, which has none; with
-  # everything built, the tests of internal/ run. cmd/fakescanner (a stand-in
-  # eSCL scanner for `make dev`, on the unpushed branch) is not shipped.
-  excludedPackages = [ "cmd/fakescanner" ];
-
-  env.CGO_ENABLED = "0";
 
   # The build sandbox's host name is "localhost". That test takes the host name
   # for a name that only the dial can tell is local, but "localhost" is

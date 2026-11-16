@@ -26,9 +26,10 @@
 #
 # The rights it needs, and where they come from on this system:
 #   - CUPS admin over /run/cups/cups.sock. skrá sends `Authorization: PeerCred
-#     USER`; NixOS's cupsd.conf has `SystemGroup root wheel lpadmin`
-#     (nixos/modules/services/printing/cupsd.nix), and the account is in wheel
-#     (modules/common/nixos.nix). The unit needs nothing added.
+#     USER`; NixOS writes `SystemGroup root wheel lpadmin` into
+#     cups-files.conf (nixos/modules/services/printing/cupsd.nix), and the
+#     account is in wheel (modules/common/nixos.nix). The unit needs nothing
+#     added.
 #   - The CUPS log is `journalctl -u cups.service`. systemd gives the system
 #     journal's read ACL to wheel and adm, so the same group is enough;
 #     tests/desktop/skra.nix reads it as the user in a VM.
@@ -38,10 +39,11 @@
 # because that set is the sites the user chooses (tests/desktop/webapps.nix).
 # Opening the page is the first request, which starts the service.
 #
-# Style exception (docs/style.md, rule 9): the page is skrá's own, a
-# stylesheet inside the program with its own colors and corners. The theme
-# cannot reach it without a patch to the program; it stays as its author draws
-# it until skrá takes the theme as a setting.
+# Style exception (docs/style.md, rule 9): the page follows the style's shape,
+# with square corners, JetBrainsMono Nerd Font and no animation, but its
+# Catppuccin Mocha palette and mauve accent are hard-coded in the program's
+# stylesheet. ravnix.theme's flavor and accent do not reach it, and cannot
+# without a patch to the program or a theme setting upstream.
 {
   config,
   lib,

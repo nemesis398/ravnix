@@ -69,28 +69,33 @@ let
       (import ../../modules/desktop/default.nix { inherit lib; }).imports
     ) "modules/desktop/default.nix does not import modules/desktop/skra.nix"
     # On by default, where printing is.
-    ++ expect plain.config.ravnix.printing.skra.enable "ravnix.printing.skra.enable is not on by default"
+    # The declared default, not the evaluated value: the template's me.nix
+    # sets the option as well, so the value would be true whatever the default.
+    ++ expect (
+      plain.options.ravnix.printing.skra.enable.default == true
+    ) "ravnix.printing.skra.enable is not on by default"
+    ++ expect plain.config.ravnix.printing.skra.enable "ravnix.printing.skra.enable is off in the template"
     # The socket: loopback and the one port, never a wildcard.
     ++ expect (
-      list (socketOf plain).Socket.ListenStream == [ "127.0.0.1:7631" ]
+      list (socketOf plain).Socket.ListenStream or [ ] == [ "127.0.0.1:7631" ]
     ) "the socket does not listen on exactly 127.0.0.1:7631: ${builtins.toJSON (socketOf plain).Socket}"
     ++ expect (
       !lib.hasInfix "0.0.0.0" (builtins.toJSON (socketOf plain))
     ) "the socket unit names 0.0.0.0"
     ++ expect (
-      (socketOf plain).Install.WantedBy == [ "sockets.target" ]
+      (socketOf plain).Install.WantedBy or null == [ "sockets.target" ]
     ) "the socket is not wanted by sockets.target"
     # The service: the package's binary, started by the socket, limited.
     ++ expect (
-      list (serviceOf plain).Service.ExecStart == [ (lib.getExe package) ]
-    ) "the service does not run the package's binary: ${builtins.toJSON (serviceOf plain).Service.ExecStart}"
+      list (serviceOf plain).Service.ExecStart or null == [ (lib.getExe package) ]
+    ) "the service does not run the package's binary: ${builtins.toJSON ((serviceOf plain).Service.ExecStart or null)}"
     ++ expect (
       !lib.hasInfix ".local/bin" (builtins.toJSON (serviceOf plain))
     ) "the service names ~/.local/bin"
-    ++ expect ((serviceOf plain).Service.MemoryMax == "100M") "MemoryMax is not 100M"
-    ++ expect ((serviceOf plain).Service.Restart == "on-failure") "Restart is not on-failure"
-    ++ expect ((serviceOf plain).Service.NoNewPrivileges == true) "NoNewPrivileges is not set"
-    ++ expect ((serviceOf plain).Service.Type == "simple") "the service is not Type=simple"
+    ++ expect ((serviceOf plain).Service.MemoryMax or null == "100M") "MemoryMax is not 100M"
+    ++ expect ((serviceOf plain).Service.Restart or null == "on-failure") "Restart is not on-failure"
+    ++ expect ((serviceOf plain).Service.NoNewPrivileges or null == true) "NoNewPrivileges is not set"
+    ++ expect ((serviceOf plain).Service.Type or null == "simple") "the service is not Type=simple"
     ++ expect (
       list (serviceOf plain).Unit.Requires == [ "skra.socket" ]
       && list (serviceOf plain).Unit.After == [ "skra.socket" ]
@@ -146,10 +151,35 @@ let
         nativeBuildInputs = [
           package
           pkgs.curl
+          pkgs.go
         ];
         config = configFileOf plain;
+        launcher = lib.findFirst (p: lib.getName p == "skra.desktop") null plain.config.environment.systemPackages;
       }
       ''
+        failed=0
+        fail() { printf 'FAIL: %s\n' "$*" >&2; failed=1; }
+
+        # The launcher, line by line as tests/desktop/webapps.nix reads its own.
+        file=$launcher/share/applications/skra.desktop
+        want() { grep -qxF -- "$1" "$file" || fail "skra.desktop lacks the line $1"; }
+        want "Type=Application"
+        want "Name=skrá"
+        want "Exec=helium --app=http://127.0.0.1:7631/"
+        want "StartupWMClass=chrome-127.0.0.1__-Default"
+        want "Terminal=false"
+        want "StartupNotify=true"
+        grep -q '^Icon=.' "$file" || fail "skra.desktop has no icon"
+        if grep '^Exec=' "$file" | sed 's/%%//g' | grep -q '%'; then fail "skra.desktop has a field code in Exec"; fi
+
+        # cgo stays on, as in upstream's `go build`. Without it Go's resolver
+        # never asks nss, so a printer's .local name (nss-mdns, printing.nix)
+        # does not resolve and its ink levels are missing.
+        go version -m "$(command -v skra)" | grep -qF 'build	CGO_ENABLED=1' ||
+          fail "skra is built without cgo: $(go version -m "$(command -v skra)" | grep CGO || echo 'no CGO_ENABLED line')"
+
+        [ "$failed" = 0 ] || exit 1
+
         export HOME=$TMPDIR/home USER=tester
         mkdir -p "$HOME/.config/skra"
         install -m 0644 "$config" "$HOME/.config/skra/config.json"
@@ -209,7 +239,13 @@ let
         };
         # The user manager runs while someone is logged in; here nobody is.
         users.users.${user}.linger = true;
-        environment.systemPackages = [ pkgs.curl ];
+        # An interface of the test (see the .local subtest) that avahi leaves be.
+        services.avahi.denyInterfaces = [ "dum0" ];
+        environment.systemPackages = [
+          pkgs.curl
+          pkgs.avahi
+          pkgs.iproute2
+        ];
         virtualisation.memorySize = 2048;
         system.stateVersion = "26.05";
       };
@@ -289,6 +325,33 @@ let
         # The declared queue cannot be removed from the page.
         assert post("/printers/desk/delete", header) == "403"
         machine.succeed("lpstat -p desk")
+
+      with subtest("skra shows the CUPS log through the journal"):
+        log = as_user("curl -fsS http://127.0.0.1:7631/printers/log")
+        # The lines of cups.service itself, from the journal as the user.
+        assert "Starting CUPS Scheduler" in log and "cupsd[" in log, log[:1500]
+
+      with subtest("a .local name resolves through nss-mdns inside skra"):
+        # An address of this machine, published by avahi under a name nothing
+        # else knows. skra's add page resolves the host of an address and
+        # refuses one that is this machine's own CUPS: it can only say so when
+        # the name resolved, which Go's own resolver (no cgo) cannot do for
+        # .local, and which the user's printers need for their ink levels.
+        # The address is on a dummy interface that avahi ignores: avahi refuses
+        # to publish an address of an interface it serves under another name
+        # ("Local name collision").
+        ip = "192.0.2.77"
+        machine.succeed("ip link add dum0 type dummy && ip addr add " + ip + "/32 dev dum0 && ip link set dum0 up")
+        machine.succeed("systemd-run --unit=publish-skra-vm avahi-publish -a skra-vm.local " + ip)
+        try:
+          machine.wait_until_succeeds("getent hosts skra-vm.local | grep -qF " + ip, timeout=30)
+        except Exception:
+          print(machine.execute("systemctl status publish-skra-vm --no-pager; journalctl -u publish-skra-vm -u avahi-daemon --no-pager | tail -30; grep ^hosts /etc/nsswitch.conf; avahi-resolve -n skra-vm.local; getent hosts skra-vm.local")[1])
+          raise
+        token = as_user("cat ~/.local/state/skra/token").strip()
+        out = as_user("curl -s -X POST -H 'X-Skra-Token: " + token + "' --data-urlencode name=viaMdns --data-urlencode address=ipp://skra-vm.local:631/ipp/print --data-urlencode driver=everywhere http://127.0.0.1:7631/printers/add")
+        assert "own CUPS" in out, out
+        machine.fail("lpstat -p viaMdns")
 
       with subtest("the service exits when idle and the socket starts it again"):
         # A second config, for a short idle time, read through the user
