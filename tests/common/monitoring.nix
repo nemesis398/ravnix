@@ -66,6 +66,11 @@ let
   fakeRbw =
     (pkgs.writeShellScriptBin "rbw" ''
       echo "rbw $*" >>"$FAKE_RBW_LOG"
+      # A read that standard input could answer: rbw would hand it to its
+      # pinentry, or wait on a terminal.
+      if [ "$1" = get ] && IFS= read -r -t 1 line && [ -n "$line" ]; then
+        echo "rbw $* with standard input" >>"$FAKE_RBW_LOG"
+      fi
       case "$1" in
         unlocked | unlock) [ ! -e "$FAKE_RBW_LOCKED" ] ;;
         get)
@@ -176,13 +181,17 @@ let
     cat -- "$TOKEN_FILE" >"$FAKE_AGENT/token"
   '';
   fakeSystemctl = pkgs.writeShellScript "fake-systemctl" ''
-    # fake-systemctl --user is-active --quiet -- UNIT
+    # fake-systemctl --user is-active --quiet -- UNIT, or reset-failed
+    echo "systemctl $*" >>"$FAKE_SYSTEMCTL_LOG"
     for unit in $FAKE_INACTIVE; do [ "$unit" = "''${!#}" ] && exit 3; done
     exit 0
   '';
   # curl as the scripts run it, with its arguments written down first.
   loggingCurl = pkgs.writeShellScriptBin "curl" ''
     printf '%s\n' "$@" >>"$FAKE_CURL_ARGS"
+    echo -- >>"$FAKE_CURL_ARGS"
+    # A network that fails the way $FAKE_CURL_EXIT says.
+    if [ -n "''${FAKE_CURL_EXIT:-}" ]; then exit "$FAKE_CURL_EXIT"; fi
     exec ${pkgs.curl}/bin/curl "$@"
   '';
   fakeNotify = pkgs.writeShellScript "fake-notify-send" ''
@@ -190,7 +199,15 @@ let
   '';
   # restic that prints what $FAKE_RESTIC_OUT holds, for the garbage.
   fakeRestic = pkgs.writeShellScriptBin "restic" ''
-    cat "$FAKE_RESTIC_OUT"
+    if [ -n "''${FAKE_RESTIC_AGE:-}" ]; then
+      # Just after a second starts, so the check's clock reads the same
+      # second: the snapshot is FAKE_RESTIC_AGE seconds old to it.
+      while [ "$(date +%N)" -gt 200000000 ]; do sleep 0.05; done
+      t=$(date -u -d "@$(($(date +%s) - FAKE_RESTIC_AGE))" +%Y-%m-%dT%H:%M:%SZ)
+      printf '[{"time": "%s", "hostname": "huginn"}]\n' "$t"
+    else
+      cat "$FAKE_RESTIC_OUT"
+    fi
   '';
   scripts = scriptsOf {
     inherit rbw;
@@ -268,8 +285,8 @@ let
     ) "the agent is not started again after a failure"
     ++ lib.optional (
       agentUnit.Service.RestartSteps or null == null
-      || agentUnit.Service.RestartMaxDelaySec or null != "15min"
-    ) "the agent's restarts do not wait longer each time, up to 15 minutes"
+      || agentUnit.Service.RestartMaxDelaySec or null != "5min"
+    ) "the agent's restarts do not wait longer each time, up to 5 minutes"
     ++ lib.optional (
       agentUnit.Unit.StartLimitIntervalSec or null != 0
     ) "the agent gives up after a few starts while the vault is locked"
@@ -280,8 +297,11 @@ let
     # The heartbeat.
     ++ lib.optional (kumaUnit.Service.Type != "oneshot") "the heartbeat is not a oneshot"
     ++ lib.optional (
-      kumaUnit.Service.SuccessExitStatus != "6 7 28 75"
-    ) "the heartbeat's calm statuses are not 6 7 28 75"
+      kumaUnit.Service.SuccessExitStatus != "6 7 28 35 52 56 60 75"
+    ) "the heartbeat's calm statuses are not 6 7 28 35 52 56 60 75"
+    ++ lib.optional (kumaUnit.Service.TimeoutStartSec or null != "2min") "the heartbeat has no start timeout of 2 minutes"
+    ++ lib.optional (checkUnit.Service.TimeoutStartSec or null != "5min") "the check has no start timeout of 5 minutes"
+    ++ lib.optional (checkUnit.Service.SuccessExitStatus or null != "69 75") "the check's calm statuses are not 69 75 (the NAS out of reach, the vault locked)"
     ++ lib.optional (
       !lib.hasSuffix "/bin/kuma-push" (toString kumaUnit.Service.ExecStart)
     ) "the heartbeat's unit does not run kuma-push"
@@ -346,17 +366,26 @@ pkgs.runCommand "common-monitoring"
         export HOME=${home}
         export FAKE_RBW_LOG=${build}/rbw.log FAKE_RBW_LOCKED=${build}/locked FAKE_RBW_ITEMS=${build}/items
         export FAKE_CURL_ARGS=${build}/curl.args FAKE_NOTIFY=${build}/notify FAKE_AGENT=${build}/agent
+        export FAKE_SYSTEMCTL_LOG=${build}/systemctl.log
+        : >"$FAKE_SYSTEMCTL_LOG"
+        # A user's curlrc that would print every request, the token in its
+        # path among it, to the journal.
+        mkdir -p ${home}/.config
+        echo verbose | tee ${home}/.curlrc >${home}/.config/.curlrc
+        export XDG_CONFIG_HOME=${home}/.config
         mkdir -p "$FAKE_RBW_ITEMS" "$FAKE_AGENT"
         item() { printf '%s\n' "$2" >"$FAKE_RBW_ITEMS/$1"; }
         locked() { touch "$FAKE_RBW_LOCKED"; }
         unlocked() { rm -f "$FAKE_RBW_LOCKED"; }
         # run NAME PROGRAM...: its status in $status, its stderr in NAME.err.
+        # Standard input has an answer waiting, as a terminal might.
         run() {
           local name=$1
           shift
           status=0
-          "$@" >${build}/$name.out 2>${build}/$name.err || status=$?
+          "$@" >${build}/$name.out 2>${build}/$name.err < <(echo typed-answer) || status=$?
         }
+        calm_of() { echo " $(sed -n 's/^SuccessExitStatus=//p' "$1") "; }
         token=beszel-token-secret-1f3a
         kuma_token=kuma-token-secret-7c2e
         age_token=age-token-secret-9b4d
@@ -388,7 +417,9 @@ pkgs.runCommand "common-monitoring"
         grep -q 'vault is locked' ${build}/agent-locked.err || fail "the locked start does not say why: $(cat ${build}/agent-locked.err)"
         [ ! -e "$FAKE_AGENT/env" ] || fail "with the vault locked the agent was started"
         unlocked
-        for bad in "bad-word-1 bad-word-2" "$(printf 'bad-line-1\nbad-line-2')" ""; do
+        # The agent reads a line that starts with # as a comment, and would
+        # connect without a token.
+        for bad in "bad-word-1 bad-word-2" "$(printf 'bad-line-1\nbad-line-2')" "" "#bad-commented-token"; do
           printf '%s\n' "$bad" >"$FAKE_RBW_ITEMS/"${lib.escapeShellArg beszel.tokenItem}
           run agent-bad ${agentStart}/bin/ravnix-beszel-agent
           [ "$status" = 1 ] || fail "the token '$bad' gave $status, not 1"
@@ -400,12 +431,17 @@ pkgs.runCommand "common-monitoring"
         [ "$status" = 1 ] || fail "an item rbw cannot read gave $status, not 1"
         grep -qF ${lib.escapeShellArg beszel.tokenItem} ${build}/agent-missing.err || fail "the failure does not name the item"
         item ${lib.escapeShellArg beszel.tokenItem} "$token"
+        [ ! -s "$FAKE_SYSTEMCTL_LOG" ] || fail "a start that did not reach the agent reset its restarts: $(cat "$FAKE_SYSTEMCTL_LOG")"
         TOKEN=stale BESZEL_AGENT_TOKEN=stale BESZEL_AGENT_TOKEN_FILE=/nowhere \
+          KEY=stale-key BESZEL_AGENT_KEY=stale-key BESZEL_AGENT_HUB_URL=http://stale.example BESZEL_AGENT_ANY=stale \
           run agent ${agentStart}/bin/ravnix-beszel-agent --an-argument
         [ "$status" = 0 ] || fail "the agent's start failed ($status): $(cat ${build}/agent.err)"
         [ "$(cat "$FAKE_AGENT/token")" = "$token" ] || fail "the agent read '$(cat "$FAKE_AGENT/token")' from TOKEN_FILE, not the token"
         grep -qx 'TOKEN_FILE=/dev/stdin' "$FAKE_AGENT/env" || fail "TOKEN_FILE is not the agent's standard input"
         if grep -qE '^(BESZEL_AGENT_)?TOKEN(_FILE)?=(stale|/nowhere)' "$FAKE_AGENT/env"; then fail "a TOKEN from outside reached the agent"; fi
+        if grep -qE '^(KEY=|BESZEL_AGENT_)' "$FAKE_AGENT/env"; then fail "a KEY or BESZEL_AGENT_ variable from outside reached the agent: $(grep -E '^(KEY=|BESZEL_AGENT_)' "$FAKE_AGENT/env")"; fi
+        grep -qx 'systemctl --user reset-failed beszel-agent.service' "$FAKE_SYSTEMCTL_LOG" ||
+          fail "the start that reached the agent did not reset its restarts: $(cat "$FAKE_SYSTEMCTL_LOG")"
         if grep -qF -- "$token" "$FAKE_AGENT/env" "$FAKE_AGENT/args"; then fail "the token is in the agent's environment or arguments"; fi
         [ "$(cat "$FAKE_AGENT/args")" = --an-argument ] || fail "the agent's arguments are not passed on: $(cat "$FAKE_AGENT/args")"
 
@@ -441,8 +477,16 @@ pkgs.runCommand "common-monitoring"
         [ "$status" = 75 ] || fail "with the vault locked the beat exited $status, not 75"
         [ "$(beats)" = "$n" ] || fail "a locked vault sent a beat"
         unlocked
-        calm=" 6 7 28 75 "
-        [[ $calm == *" 75 "* ]] || fail "75 is a failure of the heartbeat's unit"
+        calm=$(calm_of ${unitFile "kuma-push.service"})
+        [[ $calm == *" 75 "* ]] || fail "75 is a failure of the heartbeat's unit: $calm"
+        # A network that drops, resolves nothing, times out, breaks the TLS
+        # handshake, answers nothing, resets, or a captive portal's
+        # certificate: curl's status, and no failure of the unit.
+        for code in 6 7 28 35 52 56 60; do
+          FAKE_CURL_EXIT=$code run kuma-flaky ${kumaPush}/bin/kuma-push
+          [ "$status" = "$code" ] || fail "curl's $code gave $status"
+          [[ $calm == *" $code "* ]] || fail "curl's $code fails the heartbeat's unit ($calm)"
+        done
         echo 404 >${build}/kuma.code
         run kuma-404 ${kumaPush}/bin/kuma-push
         [ "$status" = 22 ] || fail "a 404 gave $status, not curl's 22"
@@ -455,7 +499,10 @@ pkgs.runCommand "common-monitoring"
         [[ $calm == *" $status "* ]] || fail "Kuma out of reach fails the unit"
         grep -q 'did not reach' ${build}/kuma-away.err || fail "the beat does not say it did not arrive"
         n=$(beats)
-        for bad in "" "$(printf '%s\n%s' "$good_url" "$good_url")" "$good_url x" "$good_url\"" "ftp://h/x" "not-a-url"; do
+        # Kuma shows the URL with its own query (?status=up&msg=OK&ping=),
+        # which the beat's would follow.
+        for bad in "" "$(printf '%s\n%s' "$good_url" "$good_url")" "$good_url x" "$good_url\"" "ftp://h/x" "not-a-url" \
+          "$good_url?status=up&msg=OK&ping=" "$good_url#part"; do
           printf '%s\n' "$bad" >"$FAKE_RBW_ITEMS/"${lib.escapeShellArg kuma.pushUrlItem}
           run kuma-bad ${kumaPush}/bin/kuma-push
           [ "$status" = 1 ] || fail "the push URL '$bad' gave $status, not 1"
@@ -518,15 +565,28 @@ pkgs.runCommand "common-monitoring"
         grep -qF "$msg" ${build}/age-fresh.out || fail "the check does not print its result"
         [ "$(notes)" = 2 ] || fail "a fresh snapshot made a notification"
         [ -z "$(ls -A "$data/huginn/locks")" ] || fail "the check left a lock in the repository"
+        # A repository that takes no lock, as while the NAS prunes: the
+        # check reads it all the same.
+        chmod a-w "$data/huginn/locks"
+        run age-nolock ${check}/bin/backup-age-check
+        chmod u+w "$data/huginn/locks"
+        [ "$status" = 0 ] || fail "the check needs a lock in the repository ($status): $(cat ${build}/age-nolock.err)"
+        # A repository password that does not open it: no network trouble,
+        # so a failure of the unit.
+        item ${lib.escapeShellArg nas.passwordItem} wrong-password
+        run age-wrong ${check}/bin/backup-age-check
+        item ${lib.escapeShellArg nas.passwordItem} repository-secret-5e6f
+        [ "$status" = 1 ] || fail "a wrong repository password gave $status, not 1"
+        grep -q 'could not list' ${build}/age-wrong.err || fail "a wrong repository password is not said: $(cat ${build}/age-wrong.err)"
         if grep -qF -- "$age_token" "$FAKE_CURL_ARGS"; then fail "the check's push URL is on curl's command line"; fi
 
         n=$(beats)
         locked
-        : >"$FAKE_RBW_LOG"
+        rbw_calls=$(wc -l <"$FAKE_RBW_LOG")
         run age-locked ${check}/bin/backup-age-check
         [ "$status" = 75 ] || fail "with the vault locked the check exited $status, not 75"
         grep -q 'vault is locked' ${build}/age-locked.err || fail "the locked check does not say why"
-        if grep -q '^rbw get' "$FAKE_RBW_LOG"; then fail "the locked check asked rbw for an item"; fi
+        if tail -n +$((rbw_calls + 1)) "$FAKE_RBW_LOG" | grep -q '^rbw get'; then fail "the locked check asked rbw for an item"; fi
         unlocked
 
         export FAKE_RESTIC_OUT=${build}/restic.out
@@ -537,6 +597,11 @@ pkgs.runCommand "common-monitoring"
           grep -q 'not what restic writes' ${build}/age-garbage.err || fail "restic's '$garbage' is not called garbage: $(cat ${build}/age-garbage.err)"
         done
         [ "$(beats)" = "$n" ] || fail "garbage from restic pushed something: $(tail -n 1 "$kuma_log")"
+        # maxAgeDays to the second: as old as allowed is too old.
+        FAKE_RESTIC_AGE=259200 run age-edge ${garbageCheck}/bin/backup-age-check
+        [ "$status" = 1 ] || fail "a snapshot exactly 3 days old gave $status, not 1"
+        FAKE_RESTIC_AGE=259199 run age-edge ${garbageCheck}/bin/backup-age-check
+        [ "$status" = 0 ] || fail "a snapshot a second younger than 3 days gave $status, not 0"
         printf '[]\n' >"$FAKE_RESTIC_OUT"
         run age-none ${garbageCheck}/bin/backup-age-check
         [ "$status" = 1 ] || fail "an empty list from restic gave $status"
@@ -554,10 +619,18 @@ pkgs.runCommand "common-monitoring"
         wait "$server" 2>/dev/null || true
         started=$(date +%s)
         run age-nas ${check}/bin/backup-age-check
-        [ "$status" = 1 ] || fail "the NAS out of reach gave $status, not 1"
+        [ "$status" = 69 ] || fail "the NAS out of reach gave $status, not 69"
+        [[ $(calm_of ${unitFile "backup-age-check.service"}) == *" 69 "* ]] || fail "the NAS out of reach fails the check's unit"
         (($(date +%s) - started < 30)) || fail "the check waited $(($(date +%s) - started)) s for the NAS, not its 5"
         grep -q 'did not answer within 5 s' ${build}/age-nas.err || fail "the check does not say the NAS did not answer: $(cat ${build}/age-nas.err)"
         [ "$(beats)" = "$n" ] || fail "the check pushed something without an answer: $(tail -n 3 "$kuma_log")"
+
+        # Across every run: curl read no curlrc (-q first), no token reached
+        # a message, and rbw never had standard input to read.
+        awk 'NR == 1 || prev == "--" { if ($0 != "-q") bad = 1 } { prev = $0 } END { exit bad }' "$FAKE_CURL_ARGS" ||
+          fail "curl was run without -q first: $(head -n 3 "$FAKE_CURL_ARGS")"
+        if found=$(grep -lF -e "$kuma_token" -e "$age_token" -e "$token" ${build}/*.err); then fail "a token is in the messages of $found"; fi
+        if grep -q 'with standard input' "$FAKE_RBW_LOG"; then fail "rbw had standard input: $(grep 'with standard input' "$FAKE_RBW_LOG")"; fi
 
         touch $out
       ''

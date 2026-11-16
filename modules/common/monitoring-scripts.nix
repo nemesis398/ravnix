@@ -50,15 +50,20 @@ let
         exit 1
       fi
       # One line, no blank, no quote and no backslash, which curl's
-      # configuration would read as the end of the value or an escape.
-      if [[ $url == *[[:space:]\"\\]* || ! $url =~ ^https?://[^/]+/. ]]; then
-        echo "the password of the item $item is no push URL (https://HOST/api/push/TOKEN, on one line); the value is not shown" >&2
+      # configuration would read as the end of the value or an escape, and
+      # no query or fragment: Kuma shows the URL with its own query
+      # (?status=up&msg=OK&ping=), whose status the beat's would follow,
+      # and Kuma would read the two as a list, not as up.
+      if [[ $url == *[[:space:]\"\\?#]* || ! $url =~ ^https?://[^/]+/. ]]; then
+        echo "the password of the item $item is no push URL (https://HOST/api/push/TOKEN, on one line, without the ?status=... Kuma shows after it); the value is not shown" >&2
         exit 1
       fi
     }
+    # -q first: no ~/.curlrc, whose `verbose` would print the URL, token
+    # and all, to the journal.
     push() {
       printf 'url = "%s"\n' "$url" |
-        curl -fsS --max-time 20 -o /dev/null --retry 2 --retry-delay 3 \
+        curl -q -fsS --max-time 20 -o /dev/null --retry 2 --retry-delay 3 \
           --get --data-urlencode "status=$1" --data-urlencode "msg=$2" -K -
     }
   '';
@@ -78,14 +83,29 @@ in
           echo "rbw could not read the item $item" >&2
           exit 1
         fi
-        if [[ -z $token || $token == *[[:space:]]* ]]; then
-          echo "the item $item holds no token: its password must be the hub's token, one word on one line" >&2
+        # The agent skips a line that starts with # as a comment, and would
+        # connect without a token.
+        if [[ -z $token || $token == *[[:space:]]* || $token == "#"* ]]; then
+          echo "the item $item holds no token: its password must be the hub's token, one word on one line, not starting with #" >&2
           exit 1
         fi
-        # The agent takes TOKEN before TOKEN_FILE, with or without its
-        # prefix; none of them may come from elsewhere.
-        unset TOKEN BESZEL_AGENT_TOKEN BESZEL_AGENT_TOKEN_FILE
+        # The agent takes BESZEL_AGENT_X before X, and KEY before KEY_FILE,
+        # so a TOKEN, a KEY or any BESZEL_AGENT_ variable in the user
+        # manager's environment would win over the unit's; none may come
+        # from elsewhere.
+        unset TOKEN KEY
+        # (The names by expansion: the store's bash has no compgen.)
+        for name in "''${!BESZEL_AGENT_@}"; do
+          unset "$name"
+        done
         export TOKEN_FILE=/dev/stdin
+        # The vault was open: this start reaches the agent, so systemd's
+        # count of restarts starts over, and a crash days later waits 10 s
+        # again, not the longest wait a locked vault ran it up to. A reset
+        # while the unit runs changes nothing else (measured with systemd
+        # 259: after a reset from inside the run, the next wait was the
+        # first step's again). Outside systemd it fails, and that is fine.
+        ${systemctl} --user reset-failed beszel-agent.service 2>/dev/null || true
         exec ${agent} "$@" < <(printf '%s\n' "$token")
       '';
     };
@@ -136,8 +156,11 @@ in
   # cannot tell; that silence is the monitor's to judge.
   #
   #   0   the newest snapshot is younger than maxAgeDays: `up`
-  #   1   it is older, there is none, or the check could not run: `down`
-  #       for the first two, nothing for the third
+  #   1   it is older, there is none, or the check could not run (restic
+  #       refused, its answer unreadable, an item missing): `down` for the
+  #       first two, nothing for the rest
+  #   69  the NAS did not answer within listTimeout (EX_UNAVAILABLE): the
+  #       laptop is away from it, nothing
   #   75  the vault is locked: nothing
   backupAgeCheck =
     {
@@ -167,7 +190,7 @@ in
           timeout ${toString listTimeout} restic --no-lock snapshots --json --host "$host") || listed=$?
         if ((listed == 124)); then
           echo "the NAS did not answer within ${toString listTimeout} s, so restic could not list the snapshots of $host in $RESTIC_REPOSITORY; nothing was pushed" >&2
-          exit 1
+          exit 69
         elif ((listed)); then
           echo "restic could not list the snapshots of $host in $RESTIC_REPOSITORY (exit $listed); nothing was pushed" >&2
           exit 1

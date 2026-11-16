@@ -28,13 +28,21 @@
 # While the vault is locked nothing can be read, and each unit says so and
 # stops with status 75 (../workbench/unlocked.nix):
 #   - the agent is started again after a wait that grows from 10 s to
-#     15 minutes, so it comes up after ai-unlock without a burst of restarts
-#     while the vault stays locked; once it runs it needs the vault no more;
+#     5 minutes, so it comes up at most 5 minutes after ai-unlock, without a
+#     burst of restarts while the vault stays locked (after the first
+#     quarter of an hour, one `rbw unlocked` every 5 minutes); once it runs
+#     it needs the vault no more. systemd never starts that count over by
+#     itself, so the start that reaches the agent resets it (`systemctl
+#     --user reset-failed`), and a crash later waits 10 s again;
 #   - the heartbeat and the check are not retried: their monitors see no
 #     beat, which is what a locked vault means to them. The heartbeat's 75,
-#     and curl's statuses for no network (6, 7, 28), do not mark the unit
-#     failed, as on Fedora: the missing beat is the signal, and it is read
-#     on the other end.
+#     and curl's statuses for a network that is not there or not working
+#     (6 no name, 7 no connection, 28 timeout, 35 TLS handshake, 52 no
+#     reply, 56 reset, 60 a captive portal's certificate), do not mark the
+#     unit failed, as on Fedora; nor do the check's 75 and 69 (the NAS out
+#     of reach). The missing beat is the signal, and it is read on the
+#     other end. An HTTP error (curl's 22), a malformed item or restic
+#     refusing the repository still fails the unit: that is a fault here.
 #
 # No timer here is made up after a suspend but the check's (Persistent=),
 # and none wakes the machine: the heartbeat beats only while a session is
@@ -95,7 +103,7 @@ in
           Restart = "on-failure";
           RestartSec = "10s";
           RestartSteps = 6;
-          RestartMaxDelaySec = "15min";
+          RestartMaxDelaySec = "5min";
         };
         Install.WantedBy = [ "default.target" ];
       };
@@ -107,7 +115,10 @@ in
         Service = {
           Type = "oneshot";
           ExecStart = lib.getExe (scripts.kumaPush { inherit (cfg.kuma) pushUrlItem units; });
-          SuccessExitStatus = "6 7 28 75";
+          SuccessExitStatus = "6 7 28 35 52 56 60 75";
+          # An rbw or a network that hangs ends here, not in a unit that is
+          # activating for ever and that the timer never starts again.
+          TimeoutStartSec = "2min";
         };
       };
       systemd.user.timers.kuma-push = {
@@ -143,6 +154,12 @@ in
         Service = {
           Type = "oneshot";
           ExecStart = lib.getExe check;
+          # The NAS out of reach (69) and the vault locked (75): the check
+          # could not tell, pushed nothing, and the monitor's silence is the
+          # alarm, so the unit is not failed for it.
+          SuccessExitStatus = "69 75";
+          # restic's 120 s, rbw and curl's retries, with room to spare.
+          TimeoutStartSec = "5min";
         };
       };
       systemd.user.timers.backup-age-check = {

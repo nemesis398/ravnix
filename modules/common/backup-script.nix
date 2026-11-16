@@ -90,7 +90,7 @@ let
           what = "the backup's login";
         }}
         item=${lib.escapeShellArg cfg.loginItem}
-        login=$(${rbw} get -- "$item") || {
+        login=$(${rbw} get -- "$item" </dev/null) || {
           echo "rbw could not read the password of the item $item" >&2
           exit 1
         }

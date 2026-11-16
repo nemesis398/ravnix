@@ -82,7 +82,9 @@ let
         example = "Uptime Kuma - push URL (huginn)";
         description = ''
           The Bitwarden item whose password is the push monitor's whole URL,
-          `https://<kuma>/api/push/<token>`. rbw reads it at each beat, and
+          `https://<kuma>/api/push/<token>`, without the query
+          (`?status=up&msg=OK&ping=`) Uptime Kuma shows after it: a URL
+          with a `?` or a `#` is refused. rbw reads it at each beat, and
           curl gets it on standard input, not on its command line.
         '';
       };
