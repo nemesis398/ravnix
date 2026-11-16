@@ -90,4 +90,13 @@ in
     # adds huginn's entry on purpose, and Fedora's stays as it is.
     loader.systemd-boot.enable = true;
   };
+
+  # systemd-oomd on the root slice and the user slices, as Fedora has it:
+  # when memory pressure stays high, it kills the control group that causes
+  # it, a runaway build for instance, before the machine thrashes in zram.
+  # NixOS runs the daemon by default but watches no slice.
+  systemd.oomd = {
+    enableRootSlice = true;
+    enableUserSlices = true;
+  };
 }
