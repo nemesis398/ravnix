@@ -390,6 +390,32 @@ a_key_pressed_after_the_drop_and_let_go_before_the_snapshot_is_up :: proc(t: ^te
 	expect_out(t, got, {k(KEY_A, 1), SYN, k(KEY_A, 0), SYN})
 }
 
+held_macro :: proc(fd: linux.Fd, held: ^tool.Key_Bits) -> linux.Errno {
+	held^ = {}
+	tool.set_bit(held, META, true)
+	tool.set_bit(held, SHIFT, true)
+	tool.set_bit(held, F23, true)
+	return .NONE
+}
+
+@(test)
+a_lost_macro_whose_f23_follows_the_drop_is_still_super :: proc(t: ^testing.T) {
+	// The drop loses the macro's Meta and Shift presses; its F23 press comes
+	// after the drop's report, in the same read, and cancels nothing (Meta
+	// is not down as far as the events go). The snapshot at the end of the
+	// read has all three down: that is the macro, so Meta goes down and
+	// Shift does not, and a key typed in the hold is Super+key.
+	events := []tool.Event {
+		at(0, tool.EV_SYN, tool.SYN_DROPPED, 0),
+		at(0, tool.EV_SYN, tool.SYN_REPORT, 0),
+		at(2, tool.EV_KEY, F23, 1),
+		at(2, tool.EV_SYN, tool.SYN_REPORT, 0),
+	}
+	result, got := pump_events(t, events, held_macro)
+	testing.expect_value(t, result.stop, tool.Stop.Ended)
+	expect_out(t, got, {k(META, 1), SYN})
+}
+
 @(test)
 the_bench_stream_holds_the_macro :: proc(t: ^testing.T) {
 	// bench/typing.events is make_stream's output, written by this test with

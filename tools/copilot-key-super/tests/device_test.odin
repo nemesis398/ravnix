@@ -285,6 +285,7 @@ Keys_Script :: struct {
 	fail:   int,
 	polls:  int,
 	sleeps: int,
+	slept:  [dynamic]i64, // each sleep's length, when made
 }
 
 script_held :: proc(fd: linux.Fd, held: ^tool.Key_Bits) -> linux.Errno {
@@ -296,6 +297,7 @@ script_held :: proc(fd: linux.Fd, held: ^tool.Key_Bits) -> linux.Errno {
 	held^ = {}
 	if s.polls <= s.down {
 		tool.set_bit(held, KEY_A, true)
+		tool.set_bit(held, SHIFT, true)
 	}
 	return .NONE
 }
@@ -303,6 +305,9 @@ script_held :: proc(fd: linux.Fd, held: ^tool.Key_Bits) -> linux.Errno {
 script_sleep :: proc(ns: i64) {
 	s := cast(^Keys_Script)context.user_ptr
 	s.sleeps += 1
+	if s.slept.allocator.procedure != nil {
+		append(&s.slept, ns)
+	}
 }
 
 wait :: proc(s: ^Keys_Script) -> (linux.Errno, string) {
@@ -329,14 +334,57 @@ the_grab_waits_for_every_key_to_be_up :: proc(t: ^testing.T) {
 		testing.expect_value(t, s.sleeps, 5)
 		testing.expect_value(t, log, "")
 	}
-	{
-		// Held far past the first second: it keeps waiting, and says so once.
-		s := Keys_Script{down = 20 * tool.WAIT_STEPS}
-		errno, log := wait(&s)
-		testing.expect_value(t, errno, linux.Errno.NONE)
-		testing.expect_value(t, s.sleeps, 20 * tool.WAIT_STEPS)
-		testing.expect_value(t, strings.count(log, "\n"), 1)
-		testing.expect(t, strings.contains(log, "still down"), log)
+}
+
+@(test)
+a_long_wait_backs_off_and_names_the_keys :: proc(t: ^testing.T) {
+	// Keys held for 1000 polls: the first second at 10 ms a poll, then the
+	// sleep doubles up to 1 s and stays there. The notice comes after the
+	// first second and then once a minute, and names the codes down.
+	s := Keys_Script{down = 1000, slept = make([dynamic]i64, context.temp_allocator)}
+	errno, log := wait(&s)
+	testing.expect_value(t, errno, linux.Errno.NONE)
+	testing.expect_value(t, len(s.slept), 1000)
+	MS :: 1_000_000
+	want := make([dynamic]i64, context.temp_allocator)
+	for _ in 0 ..< 100 {
+		append(&want, 10 * MS)
+	}
+	append(&want, 20 * MS, 40 * MS, 80 * MS, 160 * MS, 320 * MS, 640 * MS)
+	for len(want) < 1000 {
+		append(&want, 1000 * MS)
+	}
+	for i in 0 ..< min(len(want), len(s.slept)) {
+		if s.slept[i] != want[i] {
+			testing.expectf(t, false, "sleep %d is %d ns, want %d", i, s.slept[i], want[i])
+			break
+		}
+	}
+	// Waited: 1 s in 100 sleeps, 1.26 s in the 6 of the doubling, 894 s in
+	// the other 894. The polls before each sleep see up to 895.26 s, so the
+	// notices come at 1 s and then every 60 s: 1, 61, ..., 841, which is 15.
+	total: i64 = 0
+	for ns in s.slept {
+		total += ns
+	}
+	testing.expect_value(t, total, 1000 * MS + 1260 * MS + 894 * 1000 * MS)
+	lines := strings.split_lines(strings.trim_right(log, "\n"), context.temp_allocator)
+	testing.expect_value(t, len(lines), 15)
+	for line in lines {
+		testing.expectf(t, strings.contains(line, "still down: 30 42"), "the notice does not name the keys: %q", line)
+	}
+}
+
+@(test)
+a_short_wait_says_nothing :: proc(t: ^testing.T) {
+	// Let go within the first second: no notice, and no sleep longer than
+	// 10 ms.
+	s := Keys_Script{down = 99, slept = make([dynamic]i64, context.temp_allocator)}
+	errno, log := wait(&s)
+	testing.expect_value(t, errno, linux.Errno.NONE)
+	testing.expect_value(t, log, "")
+	for ns in s.slept {
+		testing.expect_value(t, ns, 10_000_000)
 	}
 }
 

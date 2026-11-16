@@ -43,11 +43,13 @@ the whole job is to cancel the Shift, and that takes a grab.
   scancodes (`EV_MSC`) and LEDs the keyboard has, plus left Shift and left
   Meta, named `copilot-key-super` with vendor 1, product 1 and version 1,
   which Sway's config finds as `1:1:copilot-key-super`.
-- **Waits until every key is up**, polling `EVIOCGKEY` every 10 ms, for as
-  long as that takes, and then grabs the keyboard (`EVIOCGRAB`). A key held
-  across the grab would never be released for whoever saw its press, and
-  without the grab the keyboard works as stock, so waiting is the safe
-  state. After 1 s it says once that a key is still down. A stop ends the
+- **Waits until every key is up**, for as long as that takes, and then
+  grabs the keyboard (`EVIOCGRAB`). A key held across the grab would never
+  be released for whoever saw its press, and without the grab the keyboard
+  works as stock, so waiting is the safe state. It polls `EVIOCGKEY` every
+  10 ms for the first second, then at a doubling interval up to 1 s, so a
+  stuck key costs one wakeup a second. After the first second, and then once
+  a minute, it names the key codes still down (at most 8). A stop ends the
   wait at once: nothing is held, and SIGTERM ends the sleep.
 - **Translates** (`translate.odin`), one event in and at most one out:
   - F23 is never forwarded; nothing but the Copilot key sends it.
@@ -74,8 +76,11 @@ the whole job is to cancel the Shift, and that takes a grab.
   read, and `EVIOCGKEY` also throws away the key events still queued for the
   reader, so an event of the read forwarded after it would undo it. A
   cancelled Shift stays released while F23 is still down. When the drop
-  swallowed the macro's press (F23, Meta and Shift down now, F23 up before,
-  and Shift not yet down on the virtual device), its Shift is cancelled too.
+  swallowed the macro's Shift press (F23, Meta and Shift down now, and Shift
+  not down on the virtual device), that Shift is taken for the macro's and
+  held back, whether or not F23's own press came through after the drop. A
+  Shift already down on the virtual device is the user's and stays, and
+  without Meta there is no macro, since it lets go of F23 before Meta.
 - **Stops on the first failure**, with one line on standard error and exit
   status 1: no keyboard, a node that is not one, no `/dev/uinput`, a failed
   ioctl, a keyboard that goes away (`ENODEV`), a failed read or write. The
@@ -186,7 +191,7 @@ COPILOT_KEY_SUPER_WRITE_BENCH=$PWD/tools/copilot-key-super/bench/typing.events \
   the 5 starts in 60 s at most. A udev rule that starts the unit when the
   keyboard appears would close this.
 - **A real Shift and the Copilot key both pressed inside one overflow** are
-  taken for the macro by the resync, so the Shift is cancelled: the snapshot
+  taken for the macro by the resync, so the Shift is held back: the snapshot
   cannot tell them apart. It takes a starved daemon and both presses inside
   the lost events; the Shift comes back with its next press.
 - **Nothing checks that `bench/typing.events` is still `make_stream`'s

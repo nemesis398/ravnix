@@ -526,6 +526,22 @@ a_resync_keeps_a_real_shift_held_from_before_the_drop :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_resync_without_meta_keeps_the_shift :: proc(t: ^testing.T) {
+	// F23 and Shift held, Meta up: no macro, which lets go of F23 before
+	// Meta. The Shift is the user's and is pressed.
+	tr: tool.Translator
+	held: tool.Key_Bits
+	tool.set_bit(&held, SHIFT, true)
+	tool.set_bit(&held, F23, true)
+	out: [tool.RESYNC_MAX]tool.Event
+	n := tool.resync(&tr, &held, 0, 0, out[:])
+	testing.expect_value(t, n, 2)
+	testing.expect_value(t, out[0].code, u16(SHIFT))
+	testing.expect_value(t, out[0].value, 1)
+	testing.expect(t, !tr.shift_cancelled)
+}
+
+@(test)
 a_huge_burst_keeps_its_shape :: proc(t: ^testing.T) {
 	// A million frames: a typed letter every 5th, a Copilot press and release
 	// every 100th. The output must be exactly what each pattern gives, with

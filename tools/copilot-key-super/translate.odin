@@ -60,9 +60,6 @@ Translator :: struct {
 	// The macro's Shift has been released on the virtual device, so the
 	// keyboard's own release of it (and its repeats) are swallowed.
 	shift_cancelled: bool,
-	// F23 is down on the keyboard, by its events: the resync tells a macro
-	// whose press was lost from one already seen.
-	f23_down:        bool,
 	// Events are thrown away after a SYN_DROPPED, up to the next report.
 	dropping:        bool,
 	// That report has come: the caller reads the keyboard's keys and calls
@@ -157,9 +154,6 @@ translate :: proc "contextless" (t: ^Translator, ev: Event) -> (out: Event, ok: 
 	case EV_KEY:
 		switch ev.code {
 		case KEY_F23:
-			if ev.value != 2 {
-				t.f23_down = ev.value != 0
-			}
 			if ev.value == 1 && t.meta_down && t.shift_seen && t.shift_time >= t.meta_time {
 				since := micros(ev) - t.shift_time
 				if since >= 0 && since < SHIFT_WINDOW_US {
@@ -200,22 +194,22 @@ translate :: proc "contextless" (t: ^Translator, ev: Event) -> (out: Event, ok: 
 // report, and returns how many. F23 stays hidden, and a cancelled Shift stays
 // released while F23 is still down, since that is the macro still held.
 //
-// When the drop swallowed the macro's press (F23 is down now and was up
-// before, with the left Meta and Shift down and the Shift not yet down on the
-// virtual device), its Shift is the macro's and is cancelled too. A Shift
-// that was down before the drop is the user's and stays; so is one whose
-// press was lost in the same drop as the Copilot press, which the snapshot
-// cannot tell from the macro's and which a real Shift and Copilot pressed
-// inside one overflow would need (README.md).
+// When the drop swallowed the macro's Shift press (F23, the left Meta and the
+// left Shift down now, the Shift not down on the virtual device), that Shift
+// is taken for the macro's and held back, whether or not F23's own press came
+// through after the drop. A Shift already down on the virtual device is the
+// user's, since the macro's Shift is then a repeat, and stays. Without Meta
+// it is no macro: the macro lets go of F23 before Meta. A real Shift pressed
+// inside the same overflow as the Copilot key cannot be told from the
+// macro's, and is held back too (README.md).
 resync :: proc "contextless" (t: ^Translator, held: ^Key_Bits, sec, usec: i64, out: []Event) -> int {
 	t.resync_wanted = false
 	f23 := bit(held, KEY_F23)
 	if !f23 {
 		t.shift_cancelled = false
-	} else if !t.f23_down && !t.shift_cancelled && bit(held, KEY_LEFTMETA) && bit(held, KEY_LEFTSHIFT) && !bit(&t.down, KEY_LEFTSHIFT) {
+	} else if !t.shift_cancelled && bit(held, KEY_LEFTMETA) && bit(held, KEY_LEFTSHIFT) && !bit(&t.down, KEY_LEFTSHIFT) {
 		t.shift_cancelled = true
 	}
-	t.f23_down = f23
 	t.meta_down = bit(held, KEY_LEFTMETA)
 	n := 0
 	for code in u16(0) ..< KEY_CNT {

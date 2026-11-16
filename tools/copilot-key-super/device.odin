@@ -24,10 +24,17 @@ VIRTUAL_VERSION :: 1
 // match.
 MAX_NAME_BYTES :: 512
 
-// The start polls the keyboard's keys every WAIT_STEP_NS until none is down
-// before it grabs (wait_keys_up), and says so after WAIT_STEPS polls.
-WAIT_STEPS :: 100
+// The start polls the keyboard's keys until none is down before it grabs
+// (wait_keys_up): every WAIT_STEP_NS for the first WAIT_FAST_NS, then at a
+// doubling interval up to WAIT_MAX_NS, so a key that stays down costs one
+// wakeup a second. It says so after WAIT_FAST_NS, and every WAIT_NOTICE_NS
+// after that.
 WAIT_STEP_NS :: 10_000_000
+WAIT_FAST_NS :: 1_000_000_000
+WAIT_MAX_NS :: 1_000_000_000
+WAIT_NOTICE_NS :: 60_000_000_000
+// The notice names at most this many key codes.
+WAIT_NAMED_KEYS :: 8
 
 Find_Error :: enum {
 	None,
@@ -259,23 +266,45 @@ nanosleep :: proc(ns: i64) {
 }
 
 // wait_keys_up waits, before the grab, until no key of the keyboard is down,
-// polling every WAIT_STEP_NS, for as long as that takes: a key held across
-// the grab would stay down for whoever saw its press, and without the grab
-// the keyboard works as it does stock, so waiting is the safe state. After
-// WAIT_STEPS polls it says so, once. It holds nothing a stop has to wait
-// for: SIGTERM ends it in its sleep. A failed EVIOCGKEY ends the wait with
-// its errno.
+// for as long as that takes: a key held across the grab would stay down for
+// whoever saw its press, and without the grab the keyboard works as it does
+// stock, so waiting is the safe state. It polls as the WAIT_ constants say
+// and names the codes still down in its notice, so a stuck key shows in the
+// journal. It holds nothing a stop has to wait for: SIGTERM ends it in its
+// sleep. A failed EVIOCGKEY ends the wait with its errno. The time waited is
+// the sum of the sleeps asked for, so the tests' sleep can take none.
 wait_keys_up :: proc(fd: linux.Fd, held: Held_Reader, sleep: Sleeper, err: io.Writer) -> linux.Errno {
-	for polls := 1;; polls += 1 {
+	waited: i64 = 0
+	notice: i64 = WAIT_FAST_NS
+	step: i64 = WAIT_STEP_NS
+	for {
 		keys: Key_Bits
 		held(fd, &keys) or_return
 		if !any_down(&keys) {
 			return .NONE
 		}
-		if polls == WAIT_STEPS {
-			fmt.wprintln(err, "copilot-key-super: a key is still down; the grab waits until every key is up")
+		if waited >= notice {
+			fmt.wprint(err, "copilot-key-super: the grab waits until every key is up; still down:")
+			named := 0
+			for code in u16(0) ..< KEY_CNT {
+				if !bit(&keys, code) {
+					continue
+				}
+				if named == WAIT_NAMED_KEYS {
+					fmt.wprint(err, " ...")
+					break
+				}
+				fmt.wprintf(err, " %d", code)
+				named += 1
+			}
+			fmt.wprintln(err)
+			notice += WAIT_NOTICE_NS
 		}
-		sleep(WAIT_STEP_NS)
+		sleep(step)
+		waited += step
+		if waited >= WAIT_FAST_NS {
+			step = min(step * 2, WAIT_MAX_NS)
+		}
 	}
 }
 
