@@ -229,8 +229,10 @@ style_inputs=(
 	docs/mermaid-theme.json
 	docs/style.md
 )
-# How long a run waits for another to finish building the style check.
-style_lock_wait=600
+# How long a run waits for another to finish with the style check's cache:
+# under the 300 s deadline of the Stop hook (scripts/hooks/stop-gate.sh), so
+# a Stop run that waits too long says why instead of being killed.
+style_lock_wait=240
 
 # The cache key of the style check: the SHA-256 of the way the gate builds
 # it and of style_inputs as the build reads them, in the index's snapshot
@@ -283,7 +285,7 @@ style_cached() {
 # ($1 -s) or exclusive (-x); says so when it has to wait.
 style_lock_take() {
 	flock -n "$1" "$style_lock" && return 0
-	echo "check.sh: waiting for another gate run that builds the style check (lock $style_cache/lock)" >&2
+	echo "check.sh: waiting for another gate run that uses or builds the style check (lock $style_cache/lock)" >&2
 	flock -w "$style_lock_wait" "$1" "$style_lock" && return 0
 	printf 'check.sh: %s\n' "the lock $style_cache/lock is still held after ${style_lock_wait} s;" \
 		"the style step fails. A gate run or a nix build of check-style still runs." >&2

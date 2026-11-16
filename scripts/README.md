@@ -203,12 +203,14 @@ and loses it with the worktree; the link of an older key goes when a new one
 is built. With the key unchanged the step calls no nix and costs the
 program's run, a few hundredths of a second on this repository; after a
 change to what the build reads it costs an evaluation and, when the
-derivation changed, a build, about 10 s. A second gate run at the same time,
-such as a commit while the Stop hook runs, waits on `ravnix-gate/lock` and
-then uses the first one's build. Without nix and no build for the key, or
-when the build fails, the step fails and says why (exit 127 without nix,
-nix's status for a failed build): there is no other style check to fall
-back to.
+derivation changed, a build: about 0.5 s and 4 s, measured on 2026-11-16. A
+second gate run at the same time, such as a commit while the Stop hook runs,
+waits on `ravnix-gate/lock` and then uses the first one's build; a run that
+builds also waits for the runs still using a cached program, so it never
+removes a link one of them runs. A run waits 240 s at most, under the Stop
+hook's deadline of 300 s, and then fails saying so. Without nix and no build
+for the key (exit 127), or when the build fails (nix's status), the step
+fails and says why: there is no other style check to fall back to.
 
 What it judges, and where:
 
