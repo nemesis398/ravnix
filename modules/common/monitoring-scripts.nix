@@ -162,6 +162,15 @@ in
   #   69  the NAS did not answer within listTimeout (EX_UNAVAILABLE): the
   #       laptop is away from it, nothing
   #   75  the vault is locked: nothing
+  #
+  # This is more than the thin glue AGENTS.md rule 4 allows in Bash: it
+  # checks restic's JSON, turns RFC 3339 times into seconds, applies the
+  # threshold and picks one of three outcomes, the kind of judgement the
+  # backup's retention logic was ported to Odin for (tools/ravnix-retention),
+  # which this departs from. The maintainer accepted it as Bash glue on
+  # 2026-11-16 ("Keep Bash, it's glue"): the logic is small, and every
+  # branch is tested against a real rest-server and stand-ins
+  # (tests/common/monitoring.nix).
   backupAgeCheck =
     {
       pushUrlItem,
