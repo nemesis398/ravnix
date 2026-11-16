@@ -46,7 +46,9 @@
 #     not finish in time: mostly the NAS out of reach, but also an error
 #     restic keeps retrying, such as a 5xx; the backup itself fails
 #     visibly then). The missing beat is the signal, and it is read on the
-#     other end. An HTTP error (curl's 22), a malformed item or restic
+#     other end, which is why each monitor's interval must be longer than
+#     its timer's period (ravnix.monitoring.kuma and .backupAge say how
+#     much). An HTTP error (curl's 22), a malformed item or restic
 #     refusing the repository still fails the unit: that is a fault here.
 #
 # No timer here is made up after a suspend but the check's (Persistent=),

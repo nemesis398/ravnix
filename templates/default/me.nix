@@ -597,13 +597,16 @@
     #     systemName = "huginn";
     #   };
     #   # Every 15 minutes, while a session is open; `down` while one of
-    #   # the user units is not active.
+    #   # the user units is not active. A missing beat is the alarm, so
+    #   # the Kuma monitor's interval must exceed 15 minutes (30, say).
     #   monitoring.kuma = {
     #     pushUrlItem = "Uptime Kuma - push URL (huginn)";
     #     units = [ ];
     #   };
     #   # Needs backup.nas with secrets = "rbw". `down` once the newest
-    #   # snapshot is maxAgeDays old.
+    #   # snapshot is maxAgeDays old. It runs daily and pushes nothing when
+    #   # it cannot tell, so the Kuma monitor's interval must exceed a day
+    #   # (25 or 26 hours, say).
     #   monitoring.backupAge = {
     #     pushUrlItem = "Uptime Kuma - push URL (huginn backup)";
     #     maxAgeDays = 3;

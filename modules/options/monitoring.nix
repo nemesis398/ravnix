@@ -86,6 +86,10 @@ let
           (`?status=up&msg=OK&ping=`) Uptime Kuma shows after it: a URL
           with a `?` or a `#` is refused. rbw reads it at each beat, and
           curl gets it on standard input, not on its command line.
+
+          A missing beat is the alarm, so the monitor's heartbeat interval
+          in Kuma must be longer than the timer's period of 15 minutes,
+          with room for one lost beat: 30 minutes, for example.
         '';
       };
       units = mkOption {
@@ -114,6 +118,12 @@ let
         description = ''
           The Bitwarden item whose password is the backup monitor's push URL,
           read as the heartbeat's is.
+
+          The check runs once a day, and pushes nothing when it cannot tell
+          (the vault locked, restic not finished in time), so the alarm for
+          those is the missing beat: the monitor's heartbeat interval in
+          Kuma must be longer than a day, for example 25 or 26 hours. With
+          a shorter one the monitor goes down between two good checks.
         '';
       };
       maxAgeDays = mkOption {
