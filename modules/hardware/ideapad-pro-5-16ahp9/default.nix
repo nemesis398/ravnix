@@ -183,6 +183,14 @@ in
       };
     };
   };
+  # The Beszel agent (modules/common/monitoring.nix) reads the 780M from
+  # sysfs. Left to itself it finds nvidia-smi on the PATH and runs
+  # `nvidia-smi -l 4`, which woke the RTX 4050 the moment the agent started
+  # and held it awake for as long as it ran; with amd_sysfs the card stayed
+  # suspended and no nvidia-smi ran (measured on Fedora, 2026-10-26). The
+  # hub then has no dGPU charts. It starts no agent by itself.
+  ravnix.monitoring.gpuCollector = lib.mkDefault "amd_sysfs";
+
   # Loads the NVIDIA driver; the X server stays off, Sway is Wayland.
   services.xserver.videoDrivers = [
     "modesetting"
