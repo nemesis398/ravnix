@@ -179,6 +179,9 @@ let
     printf '%s\n' "$@" >"$FAKE_AGENT/args"
     env >"$FAKE_AGENT/env"
     cat -- "$TOKEN_FILE" >"$FAKE_AGENT/token"
+    # An agent that dies right after its start, as on a hub key it cannot
+    # parse.
+    exit "''${FAKE_AGENT_EXIT:-0}"
   '';
   fakeSystemctl = pkgs.writeShellScript "fake-systemctl" ''
     # fake-systemctl --user is-active --quiet -- UNIT, or reset-failed
@@ -431,7 +434,6 @@ pkgs.runCommand "common-monitoring"
         [ "$status" = 1 ] || fail "an item rbw cannot read gave $status, not 1"
         grep -qF ${lib.escapeShellArg beszel.tokenItem} ${build}/agent-missing.err || fail "the failure does not name the item"
         item ${lib.escapeShellArg beszel.tokenItem} "$token"
-        [ ! -s "$FAKE_SYSTEMCTL_LOG" ] || fail "a start that did not reach the agent reset its restarts: $(cat "$FAKE_SYSTEMCTL_LOG")"
         TOKEN=stale BESZEL_AGENT_TOKEN=stale BESZEL_AGENT_TOKEN_FILE=/nowhere \
           KEY=stale-key BESZEL_AGENT_KEY=stale-key BESZEL_AGENT_HUB_URL=http://stale.example BESZEL_AGENT_ANY=stale \
           run agent ${agentStart}/bin/ravnix-beszel-agent --an-argument
@@ -440,10 +442,16 @@ pkgs.runCommand "common-monitoring"
         grep -qx 'TOKEN_FILE=/dev/stdin' "$FAKE_AGENT/env" || fail "TOKEN_FILE is not the agent's standard input"
         if grep -qE '^(BESZEL_AGENT_)?TOKEN(_FILE)?=(stale|/nowhere)' "$FAKE_AGENT/env"; then fail "a TOKEN from outside reached the agent"; fi
         if grep -qE '^(KEY=|BESZEL_AGENT_)' "$FAKE_AGENT/env"; then fail "a KEY or BESZEL_AGENT_ variable from outside reached the agent: $(grep -E '^(KEY=|BESZEL_AGENT_)' "$FAKE_AGENT/env")"; fi
-        grep -qx 'systemctl --user reset-failed beszel-agent.service' "$FAKE_SYSTEMCTL_LOG" ||
-          fail "the start that reached the agent did not reset its restarts: $(cat "$FAKE_SYSTEMCTL_LOG")"
         if grep -qF -- "$token" "$FAKE_AGENT/env" "$FAKE_AGENT/args"; then fail "the token is in the agent's environment or arguments"; fi
         [ "$(cat "$FAKE_AGENT/args")" = --an-argument ] || fail "the agent's arguments are not passed on: $(cat "$FAKE_AGENT/args")"
+        # An agent that dies at once: its exit is the start's, and nothing
+        # resets systemd's count of restarts, so the waits still grow to
+        # RestartMaxDelaySec instead of a restart every 10 s for ever.
+        FAKE_AGENT_EXIT=1 run agent-crash ${agentStart}/bin/ravnix-beszel-agent
+        [ "$status" = 1 ] || fail "an agent that died with 1 gave the start $status"
+        if grep -q 'reset-failed' "$FAKE_SYSTEMCTL_LOG"; then
+          fail "a start resets the unit's restart count, so a crashing agent restarts every 10 s: $(cat "$FAKE_SYSTEMCTL_LOG")"
+        fi
 
         # The real agent, as its unit starts it, with a hub that is not there.
         ssh-keygen -q -t ed25519 -N "" -f ${build}/hub

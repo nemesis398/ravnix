@@ -28,12 +28,15 @@
 # While the vault is locked nothing can be read, and each unit says so and
 # stops with status 75 (../workbench/unlocked.nix):
 #   - the agent is started again after a wait that grows from 10 s to
-#     5 minutes, so it comes up at most 5 minutes after ai-unlock, without a
-#     burst of restarts while the vault stays locked (after the first
-#     quarter of an hour, one `rbw unlocked` every 5 minutes); once it runs
-#     it needs the vault no more. systemd never starts that count over by
-#     itself, so the start that reaches the agent resets it (`systemctl
-#     --user reset-failed`), and a crash later waits 10 s again;
+#     5 minutes (10, 18, 31, 55, 97 and 170 s, so the 5-minute step after
+#     about 6.5 minutes, and then one `rbw unlocked` every 5 minutes), so
+#     it comes up at most 5 minutes after ai-unlock, without a burst of
+#     restarts while the vault stays locked; once it runs it needs the
+#     vault no more. systemd never starts that count over by itself, so a
+#     crash days after a locked login also waits up to 5 minutes. Nothing
+#     here resets it: a reset at the start would also reset it for an
+#     agent that dies right after (a hub key it cannot parse, a DATA_DIR it
+#     cannot write), which would then restart every 10 s for ever;
 #   - the heartbeat and the check are not retried: their monitors see no
 #     beat, which is what a locked vault means to them. The heartbeat's 75,
 #     and curl's statuses for a network that is not there or not working

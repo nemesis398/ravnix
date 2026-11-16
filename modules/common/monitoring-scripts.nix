@@ -99,13 +99,6 @@ in
           unset "$name"
         done
         export TOKEN_FILE=/dev/stdin
-        # The vault was open: this start reaches the agent, so systemd's
-        # count of restarts starts over, and a crash days later waits 10 s
-        # again, not the longest wait a locked vault ran it up to. A reset
-        # while the unit runs changes nothing else (measured with systemd
-        # 259: after a reset from inside the run, the next wait was the
-        # first step's again). Outside systemd it fails, and that is fine.
-        ${systemctl} --user reset-failed beszel-agent.service 2>/dev/null || true
         exec ${agent} "$@" < <(printf '%s\n' "$token")
       '';
     };
