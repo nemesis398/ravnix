@@ -207,6 +207,8 @@ pkgs.runCommand "deploy-paperless-compose"
     is 'exporter.volumes | join(",")' ${lib.escapeShellArg exporterVolumes}
     # It waits for a migrated database: the webserver healthy.
     is 'exporter.depends_on.webserver.condition' service_healthy
+    # The image's healthcheck asks a web server the exporter does not run.
+    is 'exporter.healthcheck.disable' true
     is 'exporter.entrypoint | join(" ")' '/usr/bin/bash -c'
     is 'exporter.command | length' 1
     yq '.services.exporter.command[0]' flat.yaml > exporter.sh

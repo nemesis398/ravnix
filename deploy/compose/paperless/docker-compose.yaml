@@ -216,6 +216,10 @@ services:
     depends_on:
       webserver:
         condition: service_healthy
+    # The image's healthcheck asks for a web server on port 8000, which only
+    # the webserver runs; here it would only ever report unhealthy.
+    healthcheck:
+      disable: true
     networks:
       - default
       - backend
