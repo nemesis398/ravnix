@@ -138,13 +138,19 @@ build_stage() {
 	if [[ -d $src_a ]]; then
 		cp -rs -- "$src_a/." "$stage/" || return 1
 		# A symlink, a fifo or a device in the source is no document: the
-		# staging link to it would be followed.
+		# staging link to it would be followed. The listing goes to a file so
+		# that a find that fails (a folder it cannot read) fails the owner:
+		# a process substitution would hide its status.
+		find -P "$src_a" -mindepth 1 ! -type f ! -type d -printf '%P\0' >"$work/special.lst" || return 1
 		while IFS= read -r -d '' rel; do
 			rm -f -- "${stage:?}/$rel"
-		done < <(find -P "$src_a" -mindepth 1 ! -type f ! -type d -printf '%P\0')
+		done <"$work/special.lst"
 	fi
 	FALLBACKS=0
 	if [[ -d $src_o ]]; then
+		# A listing that fails must fail the owner: a folder missing from the
+		# staging tree is a folder the delete pass removes from the copy.
+		find -P "$src_o" -type f -printf '%P\0' >"$work/originals.lst" || return 1
 		while IFS= read -r -d '' rel; do
 			base=${rel##*/}
 			stem=$rel
@@ -154,7 +160,7 @@ build_stage() {
 			[[ $rel != */* ]] || mkdir -p -- "$stage/${rel%/*}" || return 1
 			ln -s -- "$src_o/$rel" "$stage/$rel" || return 1
 			FALLBACKS=$((FALLBACKS + 1))
-		done < <(find -P "$src_o" -type f -printf '%P\0')
+		done <"$work/originals.lst"
 	fi
 	ln -sf -- "$notice" "$stage/LIESMICH.txt"
 }

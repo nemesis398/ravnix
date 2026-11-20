@@ -1,10 +1,10 @@
 # The OCI image of ravnix-paperless-copy (packages/ravnix-paperless-copy), for
 # the archive-copy service of the Paperless compose on the NAS. It holds the
 # script (rsync, coreutils, findutils, grep and curl come with it), the time
-# zone database and the CA bundle, and nothing else: no shell for a login, no
-# package manager. It sets no user, because the service runs as the UID and GID
-# the compose gives it (the NAS account that owns the Archiv folders), which
-# need not exist in the image; /tmp is open to every UID for the staging tree
+# zone database and the CA bundle, and nothing else: no package manager, nothing
+# beyond the script's closure. It sets no user, because the service runs as the
+# UID and GID the compose gives it (the NAS account that owns the Archiv
+# folders), which need not exist in the image; /tmp is open to every UID for the staging tree
 # of a run. TZ defaults to Europe/Berlin, which the daily time is read on.
 #
 # Build and load (the tag is the one PAPERLESS_ARCHIVE_COPY_IMAGE names):
@@ -32,6 +32,7 @@ dockerTools.buildLayeredImage {
   config = {
     Entrypoint = [ (lib.getExe ravnix.ravnix-paperless-copy) ];
     Env = [
+      "PATH=/bin"
       "TZ=Europe/Berlin"
       "TZDIR=${tzdata}/share/zoneinfo"
       "SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt"

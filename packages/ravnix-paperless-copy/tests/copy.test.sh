@@ -264,10 +264,6 @@ test_refuse_empty_source() {
 	run_copy
 	expect_status 3
 	[[ $(snapshot "$targets") == "$before" ]]
-	# Originals alone do not make the archive tree one.
-	run_copy
-	expect_status 3
-	[[ $(snapshot "$targets") == "$before" ]]
 }
 
 test_empty_source_and_empty_targets_is_nothing_to_do() {
@@ -479,6 +475,69 @@ test_no_leftovers() {
 	chmod 600 "$media/documents/archive/alice/2026/c.pdf"
 	expect_status 1
 	[[ -z $(ls -A "$tmp") ]]
+}
+
+# A folder the tool cannot read must fail the run and take nothing from the
+# copy: left out of the staging tree it would be deleted from the Archiv.
+# chmod 000 does nothing to root, so the test says so instead of passing.
+unreadable() { # DIR: makes it unreadable, and checks that it is
+	chmod 000 "$1"
+	if ls -- "$1" >/dev/null 2>&1; then
+		chmod 700 "$1"
+		echo "  chmod 000 did not stop this user from reading $1 (root?): the test needs a non-root user"
+		return 1
+	fi
+}
+
+test_unreadable_originals_folder_fails_the_run() {
+	fresh
+	curl_stub
+	mkdir -p "$targets/alice"
+	archive "alice/2026/Bank/a.pdf" "a"
+	original "alice/2026/Land Registry/plan.png" "plan"
+	original "alice/2026/Land Registry/deep/more.png" "more"
+	export KUMA_PUSH_URL=https://kuma.invalid/api/push/SecretToken123
+	run_copy
+	expect_status 0
+	same "$targets/alice/2026/Land Registry/plan.png" "plan"
+	rm -f "$fake/curl.args"
+	before=$(snapshot "$targets")
+	unreadable "$media/documents/originals/alice/2026/Land Registry"
+	run_copy
+	chmod 700 "$media/documents/originals/alice/2026/Land Registry"
+	expect_status 1
+	[[ $(snapshot "$targets") == "$before" ]]
+	same "$targets/alice/2026/Land Registry/plan.png" "plan"
+	same "$targets/alice/2026/Land Registry/deep/more.png" "more"
+	[[ ! -e $fake/curl.args ]]
+	# and an owner beside it is still copied
+	mkdir -p "$targets/bob"
+	archive "bob/2026/b.pdf" "b"
+	unreadable "$media/documents/originals/alice/2026/Land Registry"
+	run_copy
+	chmod 700 "$media/documents/originals/alice/2026/Land Registry"
+	expect_status 1
+	same "$targets/bob/2026/b.pdf" "b"
+}
+
+test_unreadable_archive_folder_fails_the_run() {
+	fresh
+	curl_stub
+	mkdir -p "$targets/alice"
+	archive "alice/2026/Bank/a.pdf" "a"
+	archive "alice/2026/Doctor/d.pdf" "d"
+	original "alice/2026/Land Registry/plan.png" "plan"
+	export KUMA_PUSH_URL=https://kuma.invalid/api/push/SecretToken123
+	run_copy
+	expect_status 0
+	rm -f "$fake/curl.args"
+	before=$(snapshot "$targets")
+	unreadable "$media/documents/archive/alice/2026/Doctor"
+	run_copy
+	chmod 700 "$media/documents/archive/alice/2026/Doctor"
+	expect_status 1
+	[[ $(snapshot "$targets") == "$before" ]]
+	[[ ! -e $fake/curl.args ]]
 }
 
 test_failed_copy_exits_1() {
@@ -762,6 +821,8 @@ tests=(
 	test_files_are_readable
 	test_liesmich
 	test_no_leftovers
+	test_unreadable_originals_folder_fails_the_run
+	test_unreadable_archive_folder_fails_the_run
 	test_failed_copy_exits_1
 	test_no_owner_folders_no_work
 	test_push_on_success

@@ -82,13 +82,18 @@ line), the loop and its clock, and usage.
 
 ## Why Bash
 
-AGENTS.md's rule 4 has new tools written in Odin. The plan for this task names
-a Bash tool with shell tests, and it is glue around `rsync`, `cp` and `find`
-with the logic in the file layout, so Bash is kept; the maintainer decides
-whether a port belongs on the Odin list.
+AGENTS.md's rule 4 has new tools written in Odin. This one is Bash by the
+maintainer's ruling of 2026-11-16 ("Keep Bash, it's glue"): it is a wrapper
+around `rsync`, `cp` and `find`, with the logic in the file layout, and every
+branch is covered by the shell test.
 
 ## Findings that are not fixed
 
+- Paperless gives the archive and the original file of a document their
+  collision suffixes (`_01`) independently. A document A whose original `X.pdf`
+  has no archive version, beside a document B whose original is `X.jpg` with
+  the archive file `X.pdf`, counts as twinned by B's archive file, and A's
+  original never reaches the `Archiv` folder. Rare.
 - The loop's clock is `date -d`; the daylight-saving changes are by
   construction (tomorrow's `HH:MM`, not 24 hours on) but no test crosses one.
 - Two runs at the same time (the loop and a `docker exec ... --once`) are not
