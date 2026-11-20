@@ -178,6 +178,12 @@ and the services, which are not root, could not write it.
    dc pull
    ```
 
+   It skips `archive-copy`, whose `pull_policy` is `never`: its image is the
+   one step 3 loaded, which no registry has. A line
+   `COMPOSE_FILE=docker-compose.yaml:paperless.override.yaml` in `.env`,
+   which the private values carry, makes a bare `docker compose` in that
+   folder read both files as well. An explicit `-f` wins over it, which steps
+   5 and 6 rely on.
 5. **The admin, before the port opens.** A fresh install is open for
    sign-up and makes its first account superuser (*Sign-in*), so
    `paperless_admin` comes first, from a one-off container that publishes
@@ -192,25 +198,80 @@ and the services, which are not root, could not write it.
    ```
 
    The password goes into the password manager.
-6. **Start.**
+6. **Start, without the inboxes.** The webserver alone, from this file
+   alone. The admin exists, so sign-up is closed. No `Eingang` is mounted
+   yet, so nothing is consumed before step 7 has made the workflows: a file
+   consumed before them would get no owner (*Ownerless documents*).
+
+   ```sh
+   docker compose -f docker-compose.yaml up -d webserver
+   ```
+
+   `exporter` and `archive-copy` wait for step 8: without the override the
+   copy has no `/targets` and would restart until then. Wait until
+   `docker compose -f docker-compose.yaml ps webserver` shows it `healthy`;
+   `PAPERLESS_URL` then serves the login page.
+7. **Setup.** Run `ravnix-paperless-setup` against the instance, with a
+   token of `paperless_admin`'s (its profile page, *API Auth Token*) and
+   `--fallback-owner paperless_admin`, for the group `family`, the household
+   user and the workflows. With nobody signed in yet it makes all but the
+   people's workflows, names each person as missing and exits 1. A second
+   run that prints no `made` or `put back` line shows the rest complete.
+   Invite the family only after it: an account that signs in before
+   `family` exists gets no permissions.
+8. **The inboxes.** Both files now:
 
    ```sh
    dc up -d
    ```
 
-   The exporter starts once the webserver is healthy. Then pin each image's
-   digest after its tag, as `docker compose images` prints it.
-7. **Setup.** Run `ravnix-paperless-setup` against the instance, with a
-   token of `paperless_admin`'s, for the group `family`, the household user
-   and the workflows. Invite the family only after it: an account that
-   signs in before `family` exists gets no permissions. Keep every
-   `Eingang` empty until then too: a file consumed before its folder's
-   workflow exists gets no owner, and a document without an owner is
-   visible to every account with the view permission.
+   This makes the webserver anew with every `Eingang` mounted and starts the
+   exporter, once the webserver is healthy, and the archive copy. Then check
+   that no document is without an owner (*Ownerless documents*). Pin the
+   four registry images' digests after their tags in the NAS's copy of this
+   file, as `docker image inspect -f '{{index .RepoDigests 0}}' IMAGE`
+   prints them; the loaded archive-copy image has none (see *Open
+   findings*).
+
+After each person's first sign-in, the first one included, run step 7
+again before that person's `Eingang` is used. Their workflow exists only
+from that run on; until then a file in their `Eingang` is
+`paperless_admin`'s.
 
 The project is named `paperless`, so its containers are
 `paperless-webserver-1`, `paperless-db-1`, `paperless-broker-1` and so on,
 the names Kuma's container push on the NAS watches.
+
+## Ownerless documents
+
+A document without an owner is visible to every account with the view
+permission, so to the whole group `family`: Paperless adds `owner__isnull`
+to what a user may see. Two ways lead there:
+
+- a file consumed before its folder had a workflow, which *Deploy* steps 6
+  to 8 rule out;
+- deleting a Paperless user. Paperless hands their documents to nobody: it
+  sets their owner to none (`on_delete=SET_NULL`), so all their papers open
+  to everyone.
+
+**The gate.** As `paperless_admin`, `/api/documents/?owner__isnull=true`
+must report `"count": 0`: after *Deploy* step 8, before the family is
+invited, and after a user is deleted. From the laptop, with step 7's token
+file and `PAPERLESS_URL` set to the address (the token reaches curl on its
+standard input, not its command line):
+
+```sh
+printf 'header = "Authorization: Token %s"\n' "$(cat TOKEN_FILE)" |
+  curl -fsS -K - "$PAPERLESS_URL/api/documents/?owner__isnull=true&page_size=1" | jq .count
+```
+
+A count above 0 is a leak: give each such document its owner (*Documents*,
+select, *Permissions*) before anyone else signs in.
+
+**Before deleting a user**, reassign or delete their documents: as
+`paperless_admin`, filter the documents by that owner, select them all and
+set another owner, or delete them and empty them from the trash. Then
+delete the user and check the gate again.
 
 ## The two nightly jobs
 
@@ -280,6 +341,10 @@ webserver.
 
 ## Open findings
 
+- **Where the digests live.** *Deploy* step 8 pins them in the NAS's copy;
+  the repository's file keeps the bare tags, which its check holds exactly.
+  Whether pins move into the repository, with a check that allows them, is
+  open, as for restic's compose file.
 - **Read-only roots.** Only `archive-copy` has one. The webserver
   (s6-overlay with `S6_READ_ONLY_ROOT`, tmpfs on `/run` and `/tmp`), db and
   broker might take one too; not tried yet.

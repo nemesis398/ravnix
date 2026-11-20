@@ -23,7 +23,10 @@
 # Eingang at /usr/src/paperless/consume/OWNER in webserver and their Archiv
 # at /targets/OWNER in archive-copy; a workflow per owner (ravnix-paperless-
 # setup) makes them the owner of what arrives there. Run every command with
-# both files: docker compose -f docker-compose.yaml -f paperless.override.yaml.
+# both files: docker compose -f docker-compose.yaml -f paperless.override.yaml
+# (or a bare docker compose, with COMPOSE_FILE naming both in .env), except
+# the admin's and the first start's, which take this file alone (README.md,
+# Deploy, steps 5 and 6).
 #
 # Reachable from the LAN and NetBird only: the webserver's port is published
 # on the NAS's LAN address alone, PAPERLESS_BIND_ADDRESS, behind the reverse
@@ -75,8 +78,9 @@
 #
 # The Paperless image is nixpkgs' paperless-ngx, the version the VM test of
 # Task 9.5.2 runs (tests/deploy/paperless-compose.nix holds the tag to it);
-# pin each image's digest at deploy time, as `docker compose images` prints
-# it, after the tag.
+# at deploy time pin the registry images' digests after their tags in the
+# NAS's copy, as `docker image inspect -f '{{index .RepoDigests 0}}' IMAGE`
+# prints them (README.md, Deploy, step 8).
 name: paperless
 
 # What both the webserver and the exporter need to reach the database.
