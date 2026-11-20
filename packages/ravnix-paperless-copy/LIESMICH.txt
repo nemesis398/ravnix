@@ -1,0 +1,20 @@
+Dieser Ordner (Archiv) ist eine Kopie, kein Arbeitsordner.
+
+Hier liegen Ihre Dokumente aus Paperless, sortiert nach Jahr und Absender.
+Jede Nacht gegen 3:30 Uhr wird der Ordner aus Paperless neu abgeglichen: was
+Sie hier ändern, umbenennen, verschieben, löschen oder neu ablegen, wird
+überschrieben oder wieder entfernt, und gelöschte Dateien kommen zurück. Die
+Dateien sind nur zum Lesen da. Nichts, was Sie hier tun, ändert etwas in
+Paperless.
+
+Neue Dokumente legen Sie nicht hier, sondern im Ordner "Eingang" ab. Paperless
+liest sie dort ein, und am nächsten Morgen finden Sie sie hier.
+
+Wenn ein Dokument nur als Original vorliegt (zum Beispiel ein Foto, aus dem
+Paperless kein durchsuchbares PDF machen konnte), liegt hier das Original.
+
+Ein Dokument, das Sie in Paperless umbenennen oder einem anderen Absender
+zuordnen, erscheint nach der nächsten Nacht unter dem neuen Namen, und der
+alte verschwindet.
+
+Diese Datei legt das Kopierprogramm bei jedem Lauf selbst wieder an.
