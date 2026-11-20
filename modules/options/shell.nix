@@ -68,6 +68,10 @@ let
     "ENERGY_ONLINE_FILE"
     "ENERGY_CHARGE_MODE"
     "ENERGY_TOOLS_PATH"
+    # ravnix-paperless-copy: the clock its daily run is read on, and the
+    # Uptime Kuma push URL, which is a token it reads from its environment.
+    "TZ"
+    "KUMA_PUSH_URL"
   ];
   # A name that starts with BASH or LD_ is one of the families bash and the
   # loader own. The others are the families of ravnix's tools: with-secret-env
