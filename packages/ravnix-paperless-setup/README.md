@@ -8,7 +8,7 @@ script's header says exactly what it makes.
 ```sh
 ravnix-paperless-setup --url URL --token-file FILE \
   --owners NAME,NAME,... --household haushalt --family-group family \
-  --fallback-owner paperless_admin
+  --fallback-owner paperless_admin [--consume-root DIR]
 ```
 
 - `--token-file` holds the API token of a superuser (the local admin login),
@@ -19,6 +19,9 @@ ravnix-paperless-setup --url URL --token-file FILE \
 - `--fallback-owner` names an existing, active superuser. On the NAS that is
   `paperless_admin`, which has no `Archiv` mount, so the archive copy copies
   its files nowhere.
+- `--consume-root` is the consume folder as Paperless sees it, by default
+  the container's `/usr/src/paperless/consume`, which is what the NAS needs.
+  The VM test passes its own.
 - Exit status: 0 done; 1 an API call failed (printed with its endpoint), an
   owner has no account yet, or the fallback owner is no active superuser
   (checked before any change); 2 bad arguments (nothing is called).
@@ -36,8 +39,8 @@ against Paperless in a NixOS VM, with four inboxes, and drops PDFs into them.
 | --- | --- |
 | group `--family-group` | view, add and change on documents, tags, correspondents, document types, storage paths, saved views and UI settings; no other permission |
 | user `--household` | inactive, not staff, not superuser, no group, no permission of its own, made without a password |
-| workflow `ravnix: fallback owner` | order 0; trigger *Consumption Started*, source the consume folder, path `*/consume/*`; action: owner `--fallback-owner`, no grant |
-| workflow `ravnix: owner NAME` | order 1; the same trigger with path `*/consume/NAME/*`; action: owner NAME, nobody else |
+| workflow `ravnix: fallback owner` | order 0; trigger *Consumption Started*, source the consume folder, path `ROOT/*`; action: owner `--fallback-owner`, no grant |
+| workflow `ravnix: owner NAME` | order 1; the same trigger with path `ROOT/NAME/*`; action: owner NAME, nobody else |
 | workflow `ravnix: household NAME` | order 1; the same for the household's folder; action: owner the household, view and change for the group |
 
 Paperless runs the workflows of a trigger in their order, and a later
@@ -48,8 +51,15 @@ makes it its person's or the household's. A file that no later workflow names
 subfolder) stays the fallback owner's, which no family member can see. A
 document without an owner would be visible to the whole group.
 
-The path filters assume that the consume folder's last segment is `consume`,
-as `/usr/src/paperless/consume` is in the container. The workflows take only
+`ROOT` is `--consume-root`. Every filter starts with it, because Paperless
+matches a filter against the file's whole path with `fnmatch`, whose `*` also
+matches `/`. A filter of `*/consume/bob/*` would also take
+`ROOT/alice/consume/bob/x.pdf`, and the workflows of both alice and bob, of
+the same order, would match it. So whoever may write into an inbox, and
+every member may write into the household's, could hand a file of their own
+to someone else. Anchored, that file is alice's, the owner of the inbox it
+was dropped into (the VM test's `nested-path`). A run with another root, or after the earlier unanchored
+filters, rewrites every filter. The workflows take only
 files from the consume folder: an upload in the browser, a phone app or the
 API keeps its uploader as the owner, which is Paperless's own default.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ravnix-paperless-setup --url URL --token-file FILE --owners NAME,NAME,...
 #                        --household NAME --family-group NAME
-#                        --fallback-owner NAME
+#                        --fallback-owner NAME [--consume-root DIR]
 #
 # Puts a Paperless-ngx instance into the shape of the household design over
 # its REST API, as the superuser whose API token FILE holds:
@@ -14,15 +14,22 @@
 #     signs in: inactive, no staff or superuser flag, no group, no
 #     permission of its own, made without a password;
 #   - one workflow "ravnix: fallback owner", order 0: every file the consume
-#     folder takes (*/consume/*) is --fallback-owner's, an existing
-#     superuser, with no grant, so that no file is ever left without an
-#     owner, which the whole group would see;
+#     folder takes (DIR/*) is --fallback-owner's, an existing superuser,
+#     with no grant, so that no file is ever left without an owner, which
+#     the whole group would see;
 #   - for each owner one workflow, "ravnix: owner NAME", order 1, so it runs
 #     after the fallback and its owner wins: a file the consume folder takes
-#     from a path matching */consume/NAME/* is NAME's;
+#     from a path matching DIR/NAME/* is NAME's;
 #   - for the household one workflow, "ravnix: household NAME", order 1: a
-#     file from */consume/NAME/* is the household's, and the group may view
-#     and change it.
+#     file from DIR/NAME/* is the household's, and the group may view and
+#     change it.
+#
+# DIR is the consume folder as Paperless sees it, --consume-root,
+# /usr/src/paperless/consume (the container's) unless given. Every filter
+# starts with it: Paperless matches a filter against the file's whole path
+# with fnmatch, whose * also matches /, so a filter of */consume/NAME/*
+# would also take DIR/OTHER/consume/NAME/x.pdf, and a person could plant a
+# file into another's account by making that folder in their own inbox.
 #
 # Each owner must have an account already (people sign in once through
 # OIDC, which makes it). An owner without one gets no workflow, so their
@@ -60,19 +67,20 @@ done
 say() { printf '%s: %s\n' "$prog" "$*" >&2; }
 usage() {
 	if (($#)); then say "$*"; fi
-	say "usage: $prog --url URL --token-file FILE --owners NAME,NAME,... --household NAME --family-group NAME --fallback-owner NAME"
+	say "usage: $prog --url URL --token-file FILE --owners NAME,NAME,... --household NAME --family-group NAME --fallback-owner NAME [--consume-root DIR]"
 	exit 2
 }
 
 url='' token_file='' owners_arg='' household='' group='' fallback=''
+root=/usr/src/paperless/consume
 seen=' '
 while (($#)); do
 	case $1 in
 	-h | --help)
-		printf 'usage: %s --url URL --token-file FILE --owners NAME,NAME,... --household NAME --family-group NAME --fallback-owner NAME\n' "$prog"
+		printf 'usage: %s --url URL --token-file FILE --owners NAME,NAME,... --household NAME --family-group NAME --fallback-owner NAME [--consume-root DIR]\n' "$prog"
 		exit 0
 		;;
-	--url | --token-file | --owners | --household | --family-group | --fallback-owner)
+	--url | --token-file | --owners | --household | --family-group | --fallback-owner | --consume-root)
 		(($# >= 2)) || usage "$1 needs a value"
 		[[ $seen != *" $1 "* ]] || usage "$1 is given twice"
 		seen+="$1 "
@@ -83,6 +91,7 @@ while (($#)); do
 		--household) household=$2 ;;
 		--family-group) group=$2 ;;
 		--fallback-owner) fallback=$2 ;;
+		--consume-root) root=$2 ;;
 		esac
 		shift 2
 		;;
@@ -104,6 +113,12 @@ name_ok "$household" || usage "--household must be a user name (letters, digits,
 name_ok "$fallback" || usage "--fallback-owner must be a user name (letters, digits, . _ @ + -), not \"$fallback\""
 [[ -n $group && ${#group} -le 150 && $group != *[[:cntrl:]]* ]] ||
 	usage "--family-group must be a group name of one line and at most 150 characters"
+# The consume root: an absolute path of plain segments, so that it means
+# itself in a filter (no *, ? or [) and is the path Paperless reports (no .
+# or .. segment, no trailing /).
+while [[ $root == ?*/ ]]; do root=${root%/}; done
+[[ $root =~ ^(/[A-Za-z0-9._@+-]+)+$ && /$root/ != */./* && /$root/ != */../* ]] ||
+	usage "--consume-root must be an absolute path of letters, digits, . _ @ + - and /, without a . or .. segment, not \"$root\""
 
 owners=()
 [[ -n $owners_arg && $owners_arg != *, ]] || usage "--owners must name at least one owner, with no empty entry"
@@ -257,8 +272,8 @@ workflow() {
 	fi
 }
 
-workflow "ravnix: fallback owner" 0 "*/consume/*" "$fallback_id" '[]' \
-	"files from */consume/* are $fallback's unless a later workflow names their owner"
+workflow "ravnix: fallback owner" 0 "$root/*" "$fallback_id" '[]' \
+	"files from $root/* are $fallback's unless a later workflow names their owner"
 missing=()
 wanted=("ravnix: household $household")
 for owner in "${owners[@]}"; do
@@ -269,11 +284,11 @@ for owner in "${owners[@]}"; do
 		continue
 	fi
 	wanted+=("ravnix: owner $owner")
-	workflow "ravnix: owner $owner" 1 "*/consume/$owner/*" "$owner_id" '[]' \
-		"files from */consume/$owner/* are $owner's"
+	workflow "ravnix: owner $owner" 1 "$root/$owner/*" "$owner_id" '[]' \
+		"files from $root/$owner/* are $owner's"
 done
-workflow "ravnix: household $household" 1 "*/consume/$household/*" "$household_id" "[$group_id]" \
-	"files from */consume/$household/* are $household's, and the group $group may view and change them"
+workflow "ravnix: household $household" 1 "$root/$household/*" "$household_id" "[$group_id]" \
+	"files from $root/$household/* are $household's, and the group $group may view and change them"
 
 # The tool's own workflows that this run did not ask for: named, not touched.
 jq -r --argjson wanted "$(printf '%s\n' "${wanted[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')" \

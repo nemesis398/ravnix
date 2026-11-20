@@ -2,8 +2,9 @@
 # Paperless-ngx: the NixOS module at nixpkgs' version, the one whose number
 # the compose project's image takes (pkgs.paperless-ngx.version), with
 # PostgreSQL, OCR in deu+eng, the household's filename format and a consume
-# folder whose last segment is `consume`, as the container's is, with one
-# subfolder each for alice, bob and the household. The token is the VM's own
+# folder of its own (the tool's --consume-root; on the NAS it is the
+# container's /usr/src/paperless/consume, the default), with one subfolder
+# each for alice, bob and the household. The token is the VM's own
 # superuser's; the passwords are made up for the test.
 #
 #   - bad arguments stop the tool with 2 before it calls anything; a wrong
@@ -18,6 +19,9 @@
 #     group, a user and a workflow changed by hand are put back, and a
 #     workflow of the tool's for an owner no longer listed is named and
 #     left alone;
+#   - consume-root: every path filter starts with the consume root, the
+#     container's when none is given, and a run with another root rewrites
+#     them all;
 #   - owner-from-path: a PDF in alice/ is alice's, has OCR text and leaves
 #     the folder;
 #   - isolation: bob gets 404 on it, on its download, and finds nothing of
@@ -26,6 +30,8 @@
 #     see alice's (which is why the group does not grant it);
 #   - fallback-owner: a PDF in carol/, who has no account, is the fallback
 #     owner's, with no grant, and alice and bob neither open nor find it;
+#   - nested-path: a PDF in alice/consume/bob/ is alice's, not bob's (a
+#     filter not anchored on the root would match both);
 #   - web-ui: a member reads and saves their own UI settings;
 #   - household: a PDF in haushalt/ is the household's, and both can view
 #     and change it;
@@ -39,8 +45,8 @@
 #   - duplicate-two-owners: the same PDF in alice/ and bob/ is two
 #     documents, each its dropper's, flagged as duplicates for the admin and
 #     invisible to the other;
-#   - failure-keeps-file: a corrupt PDF ends in Paperless's failed tasks, or
-#     stays in the folder, and is never silently gone;
+#   - failure-keeps-file: a corrupt PDF ends in Paperless's failed tasks
+#     and stays in the folder, so it is never silently gone;
 #   - the household user cannot sign in.
 #
 # Run it under the shared lock, since other agents share the RAM:
@@ -84,6 +90,7 @@ let
         pdf haushalt "Gartenhaus Vertrag" "Versicherung Sommer"
         pdf upload "Leuchtturm Bescheid" "Steuer April"
         pdf carol "Windrad Protokoll" "Gemeinde Oktober"
+        pdf nested "Leuchtfeuer Planung" "Bergsee Mai"
         pdf twice "Wasserfall Angebot" "Handwerker Herbst"
         args=()
         for i in 1 2 3 4 5 6 7 8 9 10; do args+=("Sternwarte Seite $i" "Teleskop Nummer $i"); done
@@ -170,7 +177,11 @@ pkgs.testers.runNixOSTest {
     MEDIA = "/var/lib/paperless/media/documents"
     FIX = "${fixtures}"
     FAMILY_PERMISSIONS = sorted(${builtins.toJSON familyPermissions})
-    SETUP = f"ravnix-paperless-setup --url {URL} --token-file /root/token --household haushalt --family-group family --fallback-owner admin"
+    # The tool as the NAS runs it, for the container's consume root (the
+    # default); SETUP names the VM's own.
+    SETUP_DEFAULT_ROOT = f"ravnix-paperless-setup --url {URL} --token-file /root/token --household haushalt --family-group family --fallback-owner admin"
+    SETUP = f"{SETUP_DEFAULT_ROOT} --consume-root {CONSUME}"
+    CONTAINER_CONSUME = "/usr/src/paperless/consume"
 
     def q(*args):
         return " ".join(shlex.quote(str(a)) for a in args)
@@ -281,6 +292,13 @@ pkgs.testers.runNixOSTest {
             full.replace("--fallback-owner admin", "--fallback-owner 'ad min'"),
             full + " --what",
             full + " --owners bob",
+            full + " --consume-root srv/paperless/consume",
+            full + " --consume-root '''",
+            full + " --consume-root /",
+            full + " --consume-root '/srv/con*sume'",
+            full + " --consume-root '/srv/paper less/consume'",
+            full + " --consume-root /srv/../consume",
+            full + f" --consume-root {CONSUME} --consume-root {CONSUME}",
             "--url",
         ]
         for args in bad:
@@ -344,7 +362,7 @@ pkgs.testers.runNixOSTest {
         fallback = flows["ravnix: fallback owner"]
         assert fallback["enabled"] and fallback["order"] == 0, fallback
         [trigger] = fallback["triggers"]
-        assert trigger["type"] == 1 and trigger["filter_path"] == "*/consume/*", trigger
+        assert trigger["type"] == 1 and trigger["filter_path"] == f"{CONSUME}/*", trigger
         assert [str(s) for s in trigger["sources"]] == ["1"], trigger
         [action] = fallback["actions"]
         assert action["type"] == 1 and action["assign_owner"] == ids["admin"], action
@@ -356,7 +374,7 @@ pkgs.testers.runNixOSTest {
             assert flow["enabled"] and flow["order"] == 1, flow
             [trigger] = flow["triggers"]
             assert trigger["type"] == 1, trigger
-            assert trigger["filter_path"] == f"*/consume/{owner}/*", trigger
+            assert trigger["filter_path"] == f"{CONSUME}/{owner}/*", trigger
             assert [str(s) for s in trigger["sources"]] == ["1"], trigger
             [action] = flow["actions"]
             assert action["type"] == 1 and action["assign_owner"] == ids[owner], action
@@ -375,6 +393,7 @@ pkgs.testers.runNixOSTest {
         api(admin, "PATCH", f"/api/groups/{gid}/", body={"permissions": FAMILY_PERMISSIONS + ["delete_document"]})
         api(admin, "PATCH", f"/api/users/{ids['haushalt']}/", body={"is_active": True})
         flow = workflows()["ravnix: owner alice"]
+        # Another owner's folder, in the tool's earlier unanchored form.
         trigger = dict(flow["triggers"][0], filter_path="*/consume/bob/*")
         api(admin, "PATCH", f"/api/workflows/{flow['id']}/", body={"triggers": [trigger]})
         fallback = workflows()["ravnix: fallback owner"]
@@ -391,10 +410,33 @@ pkgs.testers.runNixOSTest {
         assert sorted(groups()["family"]["permissions"]) == FAMILY_PERMISSIONS
         assert not users()["haushalt"]["is_active"]
         flows = workflows()
-        assert flows["ravnix: owner alice"]["triggers"][0]["filter_path"] == "*/consume/alice/*", flows
+        assert flows["ravnix: owner alice"]["triggers"][0]["filter_path"] == f"{CONSUME}/alice/*", flows
         assert flows["ravnix: fallback owner"]["order"] == 0, flows
         assert "ravnix: owner carol" in flows, "the tool removed a workflow"
         api(admin, "DELETE", f"/api/workflows/{stale['id']}/", expect=204)
+        status, out = setup_run()
+        assert status == 0 and "nothing to change" in out, out
+
+    def filters():
+        return {name: [t["filter_path"] for t in flow["triggers"]] for name, flow in workflows().items()}
+
+    def anchored(root):
+        return {
+            "ravnix: fallback owner": [f"{root}/*"],
+            "ravnix: owner alice": [f"{root}/alice/*"],
+            "ravnix: owner bob": [f"{root}/bob/*"],
+            "ravnix: household haushalt": [f"{root}/haushalt/*"],
+        }
+
+    with subtest("consume-root: the filters start with the root, the container's by default"):
+        status, out = machine.execute(f"{SETUP_DEFAULT_ROOT} --owners alice,bob,haushalt 2>&1")
+        print(out)
+        assert status == 0 and "done: 4 changes" in out, out
+        assert filters() == anchored(CONTAINER_CONSUME), filters()
+        # The VM's own root again: every filter is rewritten, then nothing.
+        status, out = setup_run()
+        assert status == 0 and "done: 4 changes" in out, out
+        assert filters() == anchored(CONSUME), filters()
         status, out = setup_run()
         assert status == 0 and "nothing to change" in out, out
 
@@ -447,6 +489,16 @@ pkgs.testers.runNixOSTest {
             assert doc["id"] not in [d["id"] for d in docs(token)]
             found = api(token, "GET", "/api/documents/?query=Windrad")
             assert found["count"] == 0 and found["results"] == [], found
+
+    with subtest("nested-path: a PDF in alice/consume/bob/ is alice's, not bob's"):
+        machine.succeed(q("install", "-d", "-o", "paperless", "-g", "paperless", f"{CONSUME}/alice/consume/bob"))
+        machine.succeed(q("cp", f"{FIX}/nested.pdf", f"{CONSUME}/alice/consume/bob/nested.pdf"))
+        [doc] = consumed("nested.pdf")
+        assert doc["owner"] == ids["alice"], doc
+        machine.wait_until_fails(q("test", "-e", f"{CONSUME}/alice/consume/bob/nested.pdf"), timeout=120)
+        api(alice, "GET", f"/api/documents/{doc['id']}/")
+        api(bob, "GET", f"/api/documents/{doc['id']}/", expect=404)
+        assert doc["id"] not in [d["id"] for d in docs(bob)]
 
     with subtest("web-ui: a member of the group reads and saves the UI settings"):
         api(alice, "GET", "/api/ui_settings/")
@@ -542,8 +594,9 @@ pkgs.testers.runNixOSTest {
         print(runs)
         assert [t["status"] for t in runs] == ["failure"], runs
         assert not [d for d in docs(admin) if d["original_file_name"] == "corrupt.pdf"]
+        # Paperless deletes the original only after a document is stored.
         kept = machine.execute(q("test", "-e", f"{CONSUME}/alice/corrupt.pdf"))[0] == 0
-        print(f"the corrupt PDF is {'still' if kept else 'no longer'} in the folder, and in the failed tasks")
+        assert kept, "the corrupt PDF failed and is gone from the folder"
 
     with subtest("the household user cannot sign in"):
         for password in ["", "haushalt", "${adminPassword}"]:
