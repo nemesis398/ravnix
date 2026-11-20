@@ -25,7 +25,8 @@
 #   (migrated), and pushes to Kuma only after a good run, with the push URL
 #   never on a command line (its loop is run here, against stubs);
 # - archive-copy runs ravnix-paperless-copy in loop mode and reads the media
-#   read-only;
+#   read-only, from an image that compose never pulls (`docker load` puts it
+#   there, and no registry has it, so `pull` would fail on it);
 # - every service runs as PAPERLESS_UID with no capabilities and no new
 #   privileges, reads no env_file (the .env names collide with Paperless's
 #   own variables), and has no host network, devices or extra privileges;
@@ -216,6 +217,10 @@ pkgs.runCommand "deploy-paperless-compose"
     fi
 
     # archive-copy.
+    is 'archive-copy.pull_policy' never
+    for s in webserver db broker exporter; do
+      is "$s.pull_policy // \"none\"" none
+    done
     is 'archive-copy.entrypoint | join(" ")' ravnix-paperless-copy
     is 'archive-copy.command | join(" ")' '--media /media --targets /targets'
     is 'archive-copy.volumes | join(",")' ${lib.escapeShellArg "${data}/media:/media:ro"}
@@ -259,6 +264,8 @@ pkgs.runCommand "deploy-paperless-compose"
       [ "$(r '.services.webserver.ports | length')" = 1 ] || fail "the resolved webserver publishes $(r '.services.webserver.ports | length') ports"
       [ "$(r '.services.webserver.ports[0] | "\(.host_ip) \(.published) \(.target)"')" = "192.0.2.10 8010 8000" ] ||
         fail "the resolved port is $(r '.services.webserver.ports[0]')"
+      [ "$(r '.services."archive-copy".pull_policy')" = never ] ||
+        fail "compose reads archive-copy's pull_policy as $(r '.services."archive-copy".pull_policy')"
       r '.services.webserver.environment.PAPERLESS_SOCIALACCOUNT_PROVIDERS' > resolved-providers.json
       [ "$(jq -r '.openid_connect.APPS[0] | "\(.secret) \(.settings.server_url)"' resolved-providers.json)" = \
         "test-client-secret https://auth.example.org" ] || fail "the resolved provider JSON is $(cat resolved-providers.json)"

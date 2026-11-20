@@ -272,6 +272,9 @@ services:
 
   archive-copy:
     image: "${PAPERLESS_ARCHIVE_COPY_IMAGE:?set PAPERLESS_ARCHIVE_COPY_IMAGE in .env}"
+    # `docker load` puts the image there and no registry has it: `pull`
+    # skips it, and `up` without it stops with an error naming it.
+    pull_policy: never
     restart: unless-stopped
     user: "${PAPERLESS_UID:?set PAPERLESS_UID in .env}:${PAPERLESS_GID:?set PAPERLESS_GID in .env}"
     # The tool itself, in loop mode (daily at 03:30, after the export).
