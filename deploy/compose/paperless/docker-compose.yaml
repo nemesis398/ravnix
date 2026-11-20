@@ -1,0 +1,292 @@
+# Paperless-ngx for the household, on the NAS (a host that runs Docker, not
+# NixOS). What a person drops into their inbox folder is OCRed, filed and
+# owned by them; a nightly copy puts each person's filed documents back into
+# their own folder, and a nightly export goes off-site (README.md).
+#
+#   webserver     Paperless itself: the web UI and API, the consumer, the
+#                 task queue. Started rootless (as PAPERLESS_UID, the image's
+#                 supported way), so it needs no capability at all.
+#   db            Postgres, the major version Paperless documents (18).
+#   broker        Redis, the task queue between the web UI and the workers.
+#   exporter      document_exporter into the export folder, daily at 02:30
+#                 Europe/Berlin, in the Paperless image but outside its init:
+#                 it never deletes from the export (no --delete) and does
+#                 not encrypt it (no --passphrase: restic-offsite encrypts
+#                 the copy it takes).
+#   archive-copy  ravnix-paperless-copy (packages/ravnix-paperless-copy):
+#                 daily at 03:30, each owner's filed documents into the
+#                 Archiv folder mounted at /targets/OWNER, from the media
+#                 read-only.
+#
+# The people are not in this file. The private override
+# (paperless.override.yaml, beside this file on the NAS) mounts each owner's
+# Eingang at /usr/src/paperless/consume/OWNER in webserver and their Archiv
+# at /targets/OWNER in archive-copy; a workflow per owner (ravnix-paperless-
+# setup) makes them the owner of what arrives there. Run every command with
+# both files: docker compose -f docker-compose.yaml -f paperless.override.yaml.
+#
+# Reachable from the LAN and NetBird only: the webserver's port is published
+# on the NAS's LAN address alone, PAPERLESS_BIND_ADDRESS, behind the reverse
+# proxy that serves PAPERLESS_URL. db and broker are on an internal network
+# with no route out and publish nothing.
+#
+# Sign-in: Authelia over OIDC (the client `paperless`, provider id
+# `authelia`), with sign-up for whoever Authelia lets through and the
+# Authelia groups synced onto Paperless groups of the same name. No group
+# makes an account staff or superuser: administration is the local
+# paperless_admin login, which also works while Authelia is down, so the
+# password login stays on.
+#
+# Deploy (README.md has the steps): put this file under
+# /volume1/docker/paperless/, with a .env next to it holding the variables
+# below (.env.example lists them), readable by its owner only. Compose reads
+# .env for the values in this file and passes nothing else on: never add an
+# env_file of it, because PAPERLESS_DATA_DIR and PAPERLESS_PORT mean other
+# things to Paperless inside the container.
+#
+#   PAPERLESS_BIND_ADDRESS        the NAS's LAN address, the one address the
+#                                 port listens on
+#   PAPERLESS_PORT                optional: the port on that address
+#                                 (default 8010; restic has 8000)
+#   PAPERLESS_DATA_DIR            the shared folder, such as /volume1/paperless,
+#                                 with data/, media/, export/, consume/, db/
+#                                 and redis/ in it, all PAPERLESS_UID's
+#   PAPERLESS_UID                 the NAS account Paperless runs as, owner of
+#                                 PAPERLESS_DATA_DIR, with write access to
+#                                 every Eingang and Archiv folder
+#   PAPERLESS_GID                 that account's group
+#   PAPERLESS_URL                 the address the family opens, https and no
+#                                 trailing slash
+#   PAPERLESS_OIDC_SERVER_URL     Authelia's issuer, without
+#                                 /.well-known/openid-configuration
+#   PAPERLESS_SECRET_KEY          Django's secret key
+#   PAPERLESS_DB_PASSWORD         the password of the database user paperless
+#   PAPERLESS_OIDC_CLIENT_SECRET  the client secret of `paperless` in
+#                                 Authelia; it goes into a JSON string, so it
+#                                 must not hold a " or a \
+#   PAPERLESS_ARCHIVE_COPY_IMAGE  the tag `docker load` printed for
+#                                 ravnix-paperless-copy-image
+#   KUMA_PUSH_URL_PAPERLESS_EXPORT  optional: the Uptime Kuma push URL for a
+#                                 good export; empty pushes nothing
+#   KUMA_PUSH_URL_PAPERLESS_COPY  optional: the same for a good archive copy
+#
+# The Paperless image is nixpkgs' paperless-ngx, the version the VM test of
+# Task 9.5.2 runs (tests/deploy/paperless-compose.nix holds the tag to it);
+# pin each image's digest at deploy time, as `docker compose images` prints
+# it, after the tag.
+name: paperless
+
+# What both the webserver and the exporter need to reach the database.
+x-paperless-database: &paperless-database
+  PAPERLESS_DBENGINE: postgresql
+  PAPERLESS_DBHOST: db
+  PAPERLESS_DBNAME: paperless
+  PAPERLESS_DBUSER: paperless
+  PAPERLESS_DBPASS: "${PAPERLESS_DB_PASSWORD:?set PAPERLESS_DB_PASSWORD in .env}"
+  PAPERLESS_REDIS: redis://broker:6379
+  PAPERLESS_SECRET_KEY: "${PAPERLESS_SECRET_KEY:?set PAPERLESS_SECRET_KEY in .env}"
+  PAPERLESS_TIME_ZONE: Europe/Berlin
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  webserver:
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.3.4
+    restart: unless-stopped
+    user: "${PAPERLESS_UID:?set PAPERLESS_UID in .env}:${PAPERLESS_GID:?set PAPERLESS_GID in .env}"
+    depends_on:
+      - db
+      - broker
+    ports:
+      - "${PAPERLESS_BIND_ADDRESS:?set PAPERLESS_BIND_ADDRESS in .env}:${PAPERLESS_PORT:-8010}:8000"
+    networks:
+      - default
+      - backend
+    volumes:
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/data:/usr/src/paperless/data"
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/media:/usr/src/paperless/media"
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/export:/usr/src/paperless/export"
+      # The consume root. The override mounts one Eingang per owner under it.
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/consume:/usr/src/paperless/consume"
+    environment:
+      <<: *paperless-database
+      PAPERLESS_URL: "${PAPERLESS_URL:?set PAPERLESS_URL in .env}"
+      # deu and eng ship in the image. PAPERLESS_OCR_LANGUAGES stays unset:
+      # it installs packages at every start, which a rootless container
+      # cannot do.
+      PAPERLESS_OCR_LANGUAGE: deu+eng
+      PAPERLESS_FILENAME_FORMAT: "{{ owner_username }}/{{ created_year }}/{{ correspondent }}/{{ created }} {{ title }}"
+      PAPERLESS_CONSUMER_RECURSIVE: "true"
+      PAPERLESS_CONSUMER_SUBDIRS_AS_TAGS: "false"
+      # OIDC through Authelia, as the Paperless-ngx docs show it
+      # (configuration.md, PAPERLESS_SOCIALACCOUNT_PROVIDERS and
+      # PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS; advanced_usage.md, "OpenID
+      # Connect and social authentication") with the allauth openid_connect
+      # provider's keys (django-allauth 65.16, the version 3.3.4 ships,
+      # docs/socialaccount/providers/openid_connect.rst): Authelia's clients
+      # require PKCE, set for the provider and for the app, and
+      # client_secret_basic. The callback is
+      # PAPERLESS_URL/accounts/oidc/authelia/login/callback/.
+      PAPERLESS_APPS: allauth.socialaccount.providers.openid_connect
+      PAPERLESS_SOCIALACCOUNT_PROVIDERS: >-
+        {"openid_connect": {"SCOPE": ["openid", "profile", "email", "groups"],
+        "OAUTH_PKCE_ENABLED": true, "APPS": [{"provider_id": "authelia",
+        "name": "Authelia", "client_id": "paperless",
+        "secret": "${PAPERLESS_OIDC_CLIENT_SECRET:?set PAPERLESS_OIDC_CLIENT_SECRET in .env}",
+        "settings": {"server_url": "${PAPERLESS_OIDC_SERVER_URL:?set PAPERLESS_OIDC_SERVER_URL in .env}",
+        "oauth_pkce_enabled": true, "token_auth_method": "client_secret_basic"}}]}}
+      PAPERLESS_SOCIAL_AUTO_SIGNUP: "true"
+      PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS: "true"
+      PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS: family
+      # The local login stays: paperless_admin, and the way in while
+      # Authelia is down.
+      PAPERLESS_DISABLE_REGULAR_LOGIN: "false"
+    # The image's own check, written out: the exporter waits for it, and
+    # not every runtime reads a HEALTHCHECK from the image. The first start
+    # migrates an empty database, which takes a while.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-L", "--max-time", "2", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+  db:
+    image: docker.io/library/postgres:18.7
+    restart: unless-stopped
+    user: "${PAPERLESS_UID:?set PAPERLESS_UID in .env}:${PAPERLESS_GID:?set PAPERLESS_GID in .env}"
+    networks:
+      - backend
+    volumes:
+      # Postgres 18 keeps its data in a versioned directory below this one.
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/db:/var/lib/postgresql"
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: paperless
+      POSTGRES_PASSWORD: "${PAPERLESS_DB_PASSWORD:?set PAPERLESS_DB_PASSWORD in .env}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+  broker:
+    image: docker.io/library/redis:8.10.3
+    restart: unless-stopped
+    user: "${PAPERLESS_UID:?set PAPERLESS_UID in .env}:${PAPERLESS_GID:?set PAPERLESS_GID in .env}"
+    networks:
+      - backend
+    volumes:
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/redis:/data"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+  exporter:
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.3.4
+    restart: unless-stopped
+    user: "${PAPERLESS_UID:?set PAPERLESS_UID in .env}:${PAPERLESS_GID:?set PAPERLESS_GID in .env}"
+    # Only once the webserver is healthy, which is after its migrations, so
+    # an export never reads a database the new image has not migrated yet.
+    depends_on:
+      webserver:
+        condition: service_healthy
+    networks:
+      - default
+      - backend
+    volumes:
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/data:/usr/src/paperless/data"
+      # Writable: document_exporter takes its lock in the media folder
+      # (media.lock), as every writer of the media does.
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/media:/usr/src/paperless/media"
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/export:/usr/src/paperless/export"
+    environment:
+      <<: *paperless-database
+      TZ: Europe/Berlin
+      KUMA_PUSH_URL: "${KUMA_PUSH_URL_PAPERLESS_EXPORT:-}"
+    # A loop in the shape of restic-offsite's: it wakes every minute and runs
+    # once a day, the first time the clock reads 02:30 or later, so the
+    # night without a 02:30 (spring forward) runs at 03:00, the night with
+    # two runs once, and a day it missed while stopped runs when it starts.
+    # The day is recorded before the run, so a failing export is not
+    # retried every minute. --skip-checks: Paperless's start-up checks want
+    # a writable consume folder, which the exporter has no business with.
+    # The push URL reaches
+    # curl on its standard input, never on a command line that ps shows.
+    # ($$ is compose's escape for a literal $.)
+    entrypoint:
+      - /usr/bin/bash
+      - -c
+    command:
+      - |
+        set -u
+        state=/usr/src/paperless/data/exporter.last
+        child=
+        trap '[ -z "$$child" ] || kill "$$child" 2>/dev/null; exit 0' TERM INT
+        cd /usr/src/paperless/src || exit 1
+        echo "exporter: document_exporter daily at 02:30 Europe/Berlin"
+        while :; do
+          today=$$(date +%F)
+          if [[ ! $$(date +%H:%M) < 02:30 && $$(cat "$$state" 2>/dev/null) != "$$today" ]]; then
+            echo "$$today" > "$$state"
+            if python3 manage.py document_exporter /usr/src/paperless/export --no-progress-bar --skip-checks; then
+              echo "exporter: export of $$today done"
+              if [ -n "$${KUMA_PUSH_URL:-}" ]; then
+                printf 'url = "%s"\n' "$$KUMA_PUSH_URL" | curl -fsS -m 30 -o /dev/null -K - ||
+                  echo "exporter: the push to Kuma failed" >&2
+              fi
+            else
+              echo "exporter: document_exporter failed, no push" >&2
+            fi
+          fi
+          sleep 60 & child=$$!
+          wait "$$child"
+          child=
+        done
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+  archive-copy:
+    image: "${PAPERLESS_ARCHIVE_COPY_IMAGE:?set PAPERLESS_ARCHIVE_COPY_IMAGE in .env}"
+    restart: unless-stopped
+    user: "${PAPERLESS_UID:?set PAPERLESS_UID in .env}:${PAPERLESS_GID:?set PAPERLESS_GID in .env}"
+    # The tool itself, in loop mode (daily at 03:30, after the export).
+    entrypoint:
+      - ravnix-paperless-copy
+    command:
+      - --media
+      - /media
+      - --targets
+      - /targets
+    volumes:
+      - "${PAPERLESS_DATA_DIR:?set PAPERLESS_DATA_DIR in .env}/media:/media:ro"
+    environment:
+      TZ: Europe/Berlin
+      KUMA_PUSH_URL: "${KUMA_PUSH_URL_PAPERLESS_COPY:-}"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+networks:
+  default: {}
+  backend:
+    internal: true
