@@ -31,11 +31,14 @@
 # with no route out and publish nothing.
 #
 # Sign-in: Authelia over OIDC (the client `paperless`, provider id
-# `authelia`), with sign-up for whoever Authelia lets through and the
-# Authelia groups synced onto Paperless groups of the same name. No group
-# makes an account staff or superuser: administration is the local
-# paperless_admin login, which also works while Authelia is down, so the
-# password login stays on.
+# `authelia`), with sign-up for whoever Authelia lets through, each new
+# account in the group `family`. Paperless does not sync groups from
+# Authelia: a sync replaces an account's groups with the claim's at every
+# login. No group makes an account staff or superuser: administration is
+# the local paperless_admin login, which also works while Authelia is down,
+# so the password login stays on. Local sign-up is off, but Paperless opens
+# it on a fresh install and makes the first account superuser, so
+# paperless_admin exists before the port is published (README.md, Deploy).
 #
 # Deploy (README.md has the steps): put this file under
 # /volume1/docker/paperless/, with a .env next to it holding the variables
@@ -124,7 +127,7 @@ services:
       PAPERLESS_CONSUMER_SUBDIRS_AS_TAGS: "false"
       # OIDC through Authelia, as the Paperless-ngx docs show it
       # (configuration.md, PAPERLESS_SOCIALACCOUNT_PROVIDERS and
-      # PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS; advanced_usage.md, "OpenID
+      # PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS; advanced_usage.md, "OpenID
       # Connect and social authentication") with the allauth openid_connect
       # provider's keys (django-allauth 65.16, the version 3.3.4 ships,
       # docs/socialaccount/providers/openid_connect.rst): Authelia's clients
@@ -140,8 +143,15 @@ services:
         "settings": {"server_url": "${PAPERLESS_OIDC_SERVER_URL:?set PAPERLESS_OIDC_SERVER_URL in .env}",
         "oauth_pkce_enabled": true, "token_auth_method": "client_secret_basic"}}]}}
       PAPERLESS_SOCIAL_AUTO_SIGNUP: "true"
-      PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS: "true"
+      # The permissions every new account needs, given once, at sign-up.
+      # No PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS: it sets an account's groups
+      # to the claim's at every login (groups.set(..., clear=True)), which
+      # would drop `family` from anyone whose claim lacks it and wipe every
+      # group given by hand.
       PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS: family
+      # No local sign-up (the default, written out). On a fresh install
+      # Paperless opens it anyway, and the first account becomes superuser.
+      PAPERLESS_ACCOUNT_ALLOW_SIGNUPS: "false"
       # The local login stays: paperless_admin, and the way in while
       # Authelia is down.
       PAPERLESS_DISABLE_REGULAR_LOGIN: "false"

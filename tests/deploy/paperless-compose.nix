@@ -16,7 +16,8 @@
 # - OIDC through Authelia: the provider JSON names `authelia`, client
 #   `paperless`, the server and the secret from .env, PKCE (for the
 #   provider and the app) with client_secret_basic, and `groups` in the
-#   scope; sign-up and group sync on, `family` for new accounts, the
+#   scope; OIDC sign-up on, `family` for new accounts and no group sync
+#   (it replaces the groups at every login), local sign-up off, the
 #   password login kept, and no group that makes an account staff or
 #   superuser;
 # - the exporter runs document_exporter without --delete and without
@@ -72,7 +73,7 @@ let
     PAPERLESS_CONSUMER_SUBDIRS_AS_TAGS = "false";
     PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
     PAPERLESS_SOCIAL_AUTO_SIGNUP = "true";
-    PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS = "true";
+    PAPERLESS_ACCOUNT_ALLOW_SIGNUPS = "false";
     PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS = "family";
   };
   # What the exporter needs to reach the database, and nothing of OIDC.
@@ -171,6 +172,10 @@ pkgs.runCommand "deploy-paperless-compose"
     done
     got=$(yq '.services.webserver.environment.PAPERLESS_DISABLE_REGULAR_LOGIN // "false"' flat.yaml)
     [ "$got" = false ] || fail "PAPERLESS_DISABLE_REGULAR_LOGIN is '$got'"
+    # No group sync: it replaces an account's groups at every login,
+    # `family` included.
+    got=$(yq '.services.webserver.environment.PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS // "false"' flat.yaml)
+    [ "$got" = false ] || fail "PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS is '$got'"
     is 'webserver.volumes | join(",")' ${lib.escapeShellArg webserverVolumes}
     is 'webserver.healthcheck.test | join(" ")' 'CMD curl -fsS -L --max-time 2 http://localhost:8000'
 

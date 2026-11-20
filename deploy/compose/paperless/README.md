@@ -76,7 +76,7 @@ is only on `default`, for its push.
 
 OIDC through Authelia with django-allauth's `openid_connect` provider, as
 the Paperless-ngx docs set it up (*Configuration*,
-`PAPERLESS_SOCIALACCOUNT_PROVIDERS` and `PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS`;
+`PAPERLESS_SOCIALACCOUNT_PROVIDERS` and `PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS`;
 *Advanced usage*, "OpenID Connect and social authentication"). The JSON in
 `PAPERLESS_SOCIALACCOUNT_PROVIDERS` has this shape, with the secret and the
 server URL from `.env`:
@@ -92,7 +92,8 @@ server URL from `.env`:
                          "token_auth_method": "client_secret_basic"}}]}}
 ```
 
-`SCOPE` with `groups` is what the docs ask for group sync. PKCE (set for
+`SCOPE` asks for `groups` as well, which nothing here reads (see the group
+sync below) and which costs nothing. PKCE (set for
 the provider and for the app, both of which allauth 65.16, the version
 3.3.4 ships, reads) and `token_auth_method` are allauth's `openid_connect`
 keys (its `docs/socialaccount/providers/openid_connect.rst`), set because
@@ -105,15 +106,28 @@ reads its discovery document below it. Authelia's redirect URI is
 - `PAPERLESS_SOCIAL_AUTO_SIGNUP=true`: whoever Authelia lets through gets
   an account. Paperless cannot limit sign-up to a group, so the gate is the
   Authelia client's policy.
-- `PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS=true`: the claim's groups map onto
-  Paperless groups of the same name, which must exist first.
 - `PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS=family`: the model permissions
-  every new account needs to see anything. The group must exist before the
-  first sign-in.
+  every new account needs to see anything, given once, at sign-up. The
+  group must exist before the first sign-in; an account made before it has
+  no permissions until `paperless_admin` adds it.
+- No `PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS`. The sync does not add groups:
+  it sets an account's groups to the claim's, `groups.set(..., clear=True)`
+  in Paperless 3.3.4's `signals.py`, right after sign-up and again at every
+  login. With it, `family` would survive only while Authelia has a group of
+  that name holding everyone, and every group given in Paperless by hand
+  would be gone at the next login. Who may sign in is the Authelia client's
+  policy, and what an account may do is Paperless's groups, set in
+  Paperless.
 - No `PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP` or `_STAFF_GROUP`: no
   OIDC account becomes staff or superuser.
 - `PAPERLESS_DISABLE_REGULAR_LOGIN=false`: the local login stays, for
   `paperless_admin` and for while Authelia is down.
+- `PAPERLESS_ACCOUNT_ALLOW_SIGNUPS=false`: nobody makes a local account
+  (the default, written out). Paperless ignores it on a fresh install, one
+  with no user and no document: then sign-up is open, and the first account
+  made, local or through OIDC, becomes superuser and staff (`adapter.py`).
+  So `paperless_admin` is made before the port is published (*Deploy*,
+  step 5).
 
 ## Folders on the NAS
 
@@ -133,9 +147,22 @@ and the services, which are not root, could not write it.
 
 ## Deploy
 
-1. **The account.** A NAS account for Paperless, which owns
+1. **The account and the share.** A NAS account for Paperless, which owns
    `PAPERLESS_DATA_DIR` and its six folders and may write into every
    `Eingang` and `Archiv` folder the override names. Note its uid and gid.
+   Only that account and the NAS's admins may reach the shared folder
+   `paperless`: `media/` and `export/` hold every owner's documents, so a
+   family account with access to it would see everyone's. In UGOS, the
+   shared folder's permissions name no family account or group, and the
+   folder is not offered over SMB to them. Verify on the NAS:
+
+   ```sh
+   stat -c '%U:%G %A' /volume1/paperless /volume1/paperless/*   # the Paperless account, no rights for others
+   getfacl -p /volume1/paperless 2>/dev/null                   # no family account or group in an ACL entry
+   ```
+
+   and, as one family account over SMB, that the share `paperless` is not
+   listed or refuses to open.
 2. **The files.** `/volume1/docker/paperless/` gets this compose file, the
    private override and a `.env` from `.env.example`, filled in and mode
    0600. The secrets get a copy in the password manager. Never add an
@@ -144,20 +171,42 @@ and the services, which are not root, could not write it.
    Paperless inside the container.
 3. **The archive-copy image.** `docker load` of `ravnix-paperless-copy-image`;
    the tag it prints goes into `PAPERLESS_ARCHIVE_COPY_IMAGE`.
-4. **Start.** In that folder, with both files:
+4. **Pull.** In that folder, with both files (`dc` below stands for
+   `docker compose -f docker-compose.yaml -f paperless.override.yaml`):
 
    ```sh
-   docker compose -f docker-compose.yaml -f paperless.override.yaml pull
-   docker compose -f docker-compose.yaml -f paperless.override.yaml up -d
+   dc pull
    ```
 
-   The first start migrates the empty database; the exporter starts once
-   the webserver is healthy. Then pin each image's digest after its tag, as
-   `docker compose images` prints it.
-5. **Administration and setup.** Make the local `paperless_admin`
-   superuser (`docker compose exec webserver createsuperuser`), then run
-   `ravnix-paperless-setup` against the instance for the group `family`,
-   the household user and the workflows.
+5. **The admin, before the port opens.** A fresh install is open for
+   sign-up and makes its first account superuser (*Sign-in*), so
+   `paperless_admin` comes first, from a one-off container that publishes
+   no port (`run` publishes none without `--service-ports`) and, run from
+   this file alone, mounts no `Eingang`. Its start migrates the empty
+   database, as the Paperless-ngx docs' `docker compose run --rm webserver
+   document_index reindex` does:
+
+   ```sh
+   dc up -d db broker
+   docker compose -f docker-compose.yaml run --rm webserver createsuperuser --username paperless_admin
+   ```
+
+   The password goes into the password manager.
+6. **Start.**
+
+   ```sh
+   dc up -d
+   ```
+
+   The exporter starts once the webserver is healthy. Then pin each image's
+   digest after its tag, as `docker compose images` prints it.
+7. **Setup.** Run `ravnix-paperless-setup` against the instance, with a
+   token of `paperless_admin`'s, for the group `family`, the household user
+   and the workflows. Invite the family only after it: an account that
+   signs in before `family` exists gets no permissions. Keep every
+   `Eingang` empty until then too: a file consumed before its folder's
+   workflow exists gets no owner, and a document without an owner is
+   visible to every account with the view permission.
 
 The project is named `paperless`, so its containers are
 `paperless-webserver-1`, `paperless-db-1`, `paperless-broker-1` and so on,
