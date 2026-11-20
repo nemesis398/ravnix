@@ -8,18 +8,25 @@
 #
 #   - bad arguments stop the tool with 2 before it calls anything; a wrong
 #     token and a dead address stop it with 1, naming the call;
-#   - owners without an account: the group, the household user and the
-#     household's workflow are made, the tool names the missing owners and
-#     exits 1;
-#   - the run with every account makes one workflow per owner, and the
-#     token is on no command line and in no environment of a program it
-#     starts; a second run changes nothing and says so; a group, a user and
-#     a workflow changed by hand are put back, and a workflow of the tool's
-#     for an owner no longer listed is named and left alone;
+#   - owners without an account: the group, the household user, the
+#     fallback workflow and the household's workflow are made, the tool
+#     names the missing owners and exits 1; a fallback owner that is no
+#     superuser, or no one, stops it with 1 before any change;
+#   - the run with every account makes one workflow per owner after the
+#     fallback, and the token is on no command line and in no environment
+#     of a program it starts; a second run changes nothing and says so; a
+#     group, a user and a workflow changed by hand are put back, and a
+#     workflow of the tool's for an owner no longer listed is named and
+#     left alone;
 #   - owner-from-path: a PDF in alice/ is alice's, has OCR text and leaves
 #     the folder;
 #   - isolation: bob gets 404 on it, on its download, and finds nothing of
 #     it in the search, where alice finds it;
+#   - tasks-isolation: bob sees no task; with view_paperlesstask he would
+#     see alice's (which is why the group does not grant it);
+#   - fallback-owner: a PDF in carol/, who has no account, is the fallback
+#     owner's, with no grant, and alice and bob neither open nor find it;
+#   - web-ui: a member reads and saves their own UI settings;
 #   - household: a PDF in haushalt/ is the household's, and both can view
 #     and change it;
 #   - upload-owner: bob's upload over the API is bob's;
@@ -76,6 +83,7 @@ let
         pdf apotheke "Apotheke Quittung" "Arzneimittel Februar"
         pdf haushalt "Gartenhaus Vertrag" "Versicherung Sommer"
         pdf upload "Leuchtturm Bescheid" "Steuer April"
+        pdf carol "Windrad Protokoll" "Gemeinde Oktober"
         pdf twice "Wasserfall Angebot" "Handwerker Herbst"
         args=()
         for i in 1 2 3 4 5 6 7 8 9 10; do args+=("Sternwarte Seite $i" "Teleskop Nummer $i"); done
@@ -83,7 +91,8 @@ let
         { printf '%%PDF-1.4\n'; head -c 4096 /dev/zero | tr '\0' x; } >"$out/corrupt.pdf"
       '';
 
-  # The group's permissions, as the design names them, and no other.
+  # The group's permissions: the design's six models, and the UI settings,
+  # which the web UI needs (the user's own settings only).
   familyPermissions =
     lib.concatMap
       (
@@ -101,6 +110,7 @@ let
         "documenttype"
         "storagepath"
         "savedview"
+        "uisettings"
       ];
 in
 pkgs.testers.runNixOSTest {
@@ -131,6 +141,8 @@ pkgs.testers.runNixOSTest {
           "alice"
           "bob"
           "haushalt"
+          # No account and no workflow of its own: the fallback owner's.
+          "carol"
         ])
         (_: {
           d = {
@@ -158,7 +170,7 @@ pkgs.testers.runNixOSTest {
     MEDIA = "/var/lib/paperless/media/documents"
     FIX = "${fixtures}"
     FAMILY_PERMISSIONS = sorted(${builtins.toJSON familyPermissions})
-    SETUP = f"ravnix-paperless-setup --url {URL} --token-file /root/token --household haushalt --family-group family"
+    SETUP = f"ravnix-paperless-setup --url {URL} --token-file /root/token --household haushalt --family-group family --fallback-owner admin"
 
     def q(*args):
         return " ".join(shlex.quote(str(a)) for a in args)
@@ -249,7 +261,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("bad arguments stop the tool with 2, before it calls anything"):
         machine.succeed(": > /root/empty-token && printf 'a b\\n' > /root/spaced-token")
-        full = f"--url {URL} --token-file /root/token --household haushalt --family-group family --owners alice"
+        full = f"--url {URL} --token-file /root/token --household haushalt --family-group family --fallback-owner admin --owners alice"
         bad = [
             "",
             f"--url {URL} --token-file /root/token --household haushalt --family-group family",
@@ -265,6 +277,8 @@ pkgs.testers.runNixOSTest {
             full.replace("/root/token", "/root/empty-token"),
             full.replace("/root/token", "/root/spaced-token"),
             full.replace(URL, "ftp://127.0.0.1"),
+            full.replace(" --fallback-owner admin", ""),
+            full.replace("--fallback-owner admin", "--fallback-owner 'ad min'"),
             full + " --what",
             full + " --owners bob",
             "--url",
@@ -278,12 +292,12 @@ pkgs.testers.runNixOSTest {
     with subtest("a wrong token and a dead address stop it with 1, naming the call"):
         machine.succeed("printf 0123456789abcdef0123456789abcdef01234567 > /root/wrong-token")
         status, out = machine.execute(
-            f"ravnix-paperless-setup --url {URL} --token-file /root/wrong-token --household haushalt --family-group family --owners alice 2>&1"
+            f"ravnix-paperless-setup --url {URL} --token-file /root/wrong-token --household haushalt --family-group family --fallback-owner admin --owners alice 2>&1"
         )
         print(out)
         assert status == 1 and "/api/" in out and "HTTP 40" in out, out
         status, out = machine.execute(
-            "ravnix-paperless-setup --url http://127.0.0.1:9 --token-file /root/token --household haushalt --family-group family --owners alice 2>&1"
+            "ravnix-paperless-setup --url http://127.0.0.1:9 --token-file /root/token --household haushalt --family-group family --fallback-owner admin --owners alice 2>&1"
         )
         print(out)
         assert status == 1 and "/api/" in out, out
@@ -298,7 +312,7 @@ pkgs.testers.runNixOSTest {
         haushalt = users()["haushalt"]
         assert not haushalt["is_active"] and not haushalt["is_staff"] and not haushalt["is_superuser"], haushalt
         names = set(workflows())
-        assert names == {"ravnix: household haushalt"}, names
+        assert names == {"ravnix: fallback owner", "ravnix: household haushalt"}, names
 
     gid = groups()["family"]["id"]
     for name in ["alice", "bob"]:
@@ -307,6 +321,14 @@ pkgs.testers.runNixOSTest {
     alice = token_for("alice", "alice-password-of-this-vm")
     bob = token_for("bob", "bob-password-of-this-vm")
     ids = {name: u["id"] for name, u in users().items()}
+
+    with subtest("a fallback owner that is no superuser, or no one, is refused before any change"):
+        before = state()
+        for fallback in ["alice", "nobody"]:
+            status, out = machine.execute(f"{SETUP.replace('--fallback-owner admin', '--fallback-owner ' + fallback)} --owners alice,bob 2>&1")
+            print(out)
+            assert status == 1 and fallback in out and "/api/users/" in out, out
+        assert state() == before, "a refused run changed something"
 
     with subtest("with every account it makes one workflow per owner, the token on no command line"):
         status, out = machine.execute(
@@ -318,10 +340,20 @@ pkgs.testers.runNixOSTest {
         assert "curl" in trace, "strace saw no curl"
         assert admin not in trace, "the token is on a command line or in an environment"
         flows = workflows()
-        assert set(flows) == {"ravnix: owner alice", "ravnix: owner bob", "ravnix: household haushalt"}, set(flows)
+        assert set(flows) == {"ravnix: fallback owner", "ravnix: owner alice", "ravnix: owner bob", "ravnix: household haushalt"}, set(flows)
+        fallback = flows["ravnix: fallback owner"]
+        assert fallback["enabled"] and fallback["order"] == 0, fallback
+        [trigger] = fallback["triggers"]
+        assert trigger["type"] == 1 and trigger["filter_path"] == "*/consume/*", trigger
+        assert [str(s) for s in trigger["sources"]] == ["1"], trigger
+        [action] = fallback["actions"]
+        assert action["type"] == 1 and action["assign_owner"] == ids["admin"], action
+        assert action["assign_view_groups"] == [] and action["assign_change_groups"] == [], action
+        assert action["assign_view_users"] == [] and action["assign_change_users"] == [], action
         for owner in ["alice", "bob", "haushalt"]:
             flow = flows[f"ravnix: household {owner}" if owner == "haushalt" else f"ravnix: owner {owner}"]
-            assert flow["enabled"], flow
+            # After the fallback, so its owner wins.
+            assert flow["enabled"] and flow["order"] == 1, flow
             [trigger] = flow["triggers"]
             assert trigger["type"] == 1, trigger
             assert trigger["filter_path"] == f"*/consume/{owner}/*", trigger
@@ -345,6 +377,8 @@ pkgs.testers.runNixOSTest {
         flow = workflows()["ravnix: owner alice"]
         trigger = dict(flow["triggers"][0], filter_path="*/consume/bob/*")
         api(admin, "PATCH", f"/api/workflows/{flow['id']}/", body={"triggers": [trigger]})
+        fallback = workflows()["ravnix: fallback owner"]
+        api(admin, "PATCH", f"/api/workflows/{fallback['id']}/", body={"order": 5})
         stale = api(admin, "POST", "/api/workflows/", expect=201, body={
             "name": "ravnix: owner carol",
             "triggers": [{"type": 1, "sources": [1], "filter_path": "*/consume/carol/*"}],
@@ -358,6 +392,7 @@ pkgs.testers.runNixOSTest {
         assert not users()["haushalt"]["is_active"]
         flows = workflows()
         assert flows["ravnix: owner alice"]["triggers"][0]["filter_path"] == "*/consume/alice/*", flows
+        assert flows["ravnix: fallback owner"]["order"] == 0, flows
         assert "ravnix: owner carol" in flows, "the tool removed a workflow"
         api(admin, "DELETE", f"/api/workflows/{stale['id']}/", expect=204)
         status, out = setup_run()
@@ -382,6 +417,44 @@ pkgs.testers.runNixOSTest {
                  lambda: alice_doc in [d["id"] for d in results(api(alice, "GET", "/api/documents/?query=Bergwerk"))])
         found = api(bob, "GET", "/api/documents/?query=Bergwerk")
         assert found["count"] == 0 and found["results"] == [], found
+
+    with subtest("tasks-isolation: what bob would see of alice's consumption in /api/tasks/"):
+        # Without view_paperlesstask, which the group does not grant, bob sees no task.
+        api(bob, "GET", "/api/tasks/", expect=403)
+        # With it, Paperless 3.3.4 shows a non-staff user every task without an
+        # owner, and a task from the consume folder has none: so bob would see
+        # alice's. This pins why the group does not grant it; a Paperless that
+        # changes this fails here, and the grant can be weighed again.
+        api(admin, "PATCH", f"/api/users/{ids['bob']}/", body={"user_permissions": ["view_paperlesstask"]})
+        seen = results(api(bob, "GET", "/api/tasks/?page_size=100000"))
+        api(admin, "PATCH", f"/api/users/{ids['bob']}/", body={"user_permissions": []})
+        leaked = [t for t in seen
+                  if (t.get("input_data") or {}).get("filename") == "alice.pdf" or alice_doc in (t.get("related_document_ids") or [])]
+        print(f"with view_paperlesstask bob would see {len(leaked)} of alice's tasks: {leaked}")
+        assert leaked, "bob sees none of alice's tasks with view_paperlesstask: the group may grant it now"
+        assert not users()["bob"]["user_permissions"]
+
+    with subtest("fallback-owner: a PDF in carol/, who has no account, is the fallback owner's"):
+        machine.succeed(q("cp", f"{FIX}/carol.pdf", f"{CONSUME}/carol/carol.pdf"))
+        [doc] = consumed("carol.pdf")
+        assert doc["owner"] == ids["admin"], doc
+        perms = api(admin, "GET", f"/api/documents/{doc['id']}/?full_perms=true")["permissions"]
+        assert perms == {"view": {"users": [], "groups": []}, "change": {"users": [], "groups": []}}, perms
+        wait_for("the search to find carol's document for the admin",
+                 lambda: doc["id"] in [d["id"] for d in results(api(admin, "GET", "/api/documents/?query=Windrad"))])
+        for token in [alice, bob]:
+            api(token, "GET", f"/api/documents/{doc['id']}/", expect=404)
+            assert doc["id"] not in [d["id"] for d in docs(token)]
+            found = api(token, "GET", "/api/documents/?query=Windrad")
+            assert found["count"] == 0 and found["results"] == [], found
+
+    with subtest("web-ui: a member of the group reads and saves the UI settings"):
+        api(alice, "GET", "/api/ui_settings/")
+        api(alice, "POST", "/api/ui_settings/", body={"settings": {"dark_mode": {"enabled": "true"}}})
+        settings = api(alice, "GET", "/api/ui_settings/")["settings"]
+        assert settings.get("dark_mode", {}).get("enabled") == "true", settings
+        # One user's settings are not another's.
+        assert api(bob, "GET", "/api/ui_settings/")["settings"].get("dark_mode", {}).get("enabled") != "true"
 
     with subtest("household: a PDF in haushalt/ is visible and editable for both"):
         machine.succeed(q("cp", f"{FIX}/haushalt.pdf", f"{CONSUME}/haushalt/haushalt.pdf"))
@@ -471,10 +544,6 @@ pkgs.testers.runNixOSTest {
         assert not [d for d in docs(admin) if d["original_file_name"] == "corrupt.pdf"]
         kept = machine.execute(q("test", "-e", f"{CONSUME}/alice/corrupt.pdf"))[0] == 0
         print(f"the corrupt PDF is {'still' if kept else 'no longer'} in the folder, and in the failed tasks")
-
-    # Not a check: what the family's permissions give the web UI, for the report.
-    for path in ["/api/ui_settings/", "/api/tasks/"]:
-        print(f"alice GET {path}: HTTP {call(alice, 'GET', path)[0]}")
 
     with subtest("the household user cannot sign in"):
         for password in ["", "haushalt", "${adminPassword}"]:

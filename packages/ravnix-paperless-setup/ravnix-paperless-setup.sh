@@ -1,31 +1,40 @@
 #!/usr/bin/env bash
 # ravnix-paperless-setup --url URL --token-file FILE --owners NAME,NAME,...
 #                        --household NAME --family-group NAME
+#                        --fallback-owner NAME
 #
 # Puts a Paperless-ngx instance into the shape of the household design over
 # its REST API, as the superuser whose API token FILE holds:
 #
 #   - the group --family-group with view, add and change on documents, tags,
-#     correspondents, document types, storage paths and saved views, and no
-#     other permission;
+#     correspondents, document types, storage paths and saved views, and on
+#     UI settings, which the web UI needs (each user's own); no other
+#     permission (README.md says why not the tasks);
 #   - the user --household, which owns the household's documents and never
 #     signs in: inactive, no staff or superuser flag, no group, no
 #     permission of its own, made without a password;
-#   - for each owner one workflow, "ravnix: owner NAME": a file the consume
-#     folder takes from a path matching */consume/NAME/* is NAME's;
-#   - for the household one workflow, "ravnix: household NAME": a file from
-#     */consume/NAME/* is the household's, and the group may view and change
-#     it.
+#   - one workflow "ravnix: fallback owner", order 0: every file the consume
+#     folder takes (*/consume/*) is --fallback-owner's, an existing
+#     superuser, with no grant, so that no file is ever left without an
+#     owner, which the whole group would see;
+#   - for each owner one workflow, "ravnix: owner NAME", order 1, so it runs
+#     after the fallback and its owner wins: a file the consume folder takes
+#     from a path matching */consume/NAME/* is NAME's;
+#   - for the household one workflow, "ravnix: household NAME", order 1: a
+#     file from */consume/NAME/* is the household's, and the group may view
+#     and change it.
 #
 # Each owner must have an account already (people sign in once through
-# OIDC, which makes it). An owner without one gets no workflow: the rest is
-# made, the run names the missing owners and exits 1, and a later run
-# completes it. The household's name may be in --owners, as it is in the
+# OIDC, which makes it). An owner without one gets no workflow, so their
+# files are the fallback owner's: the rest is made, the run names the
+# missing owners and exits 1, and a later run completes it. A fallback
+# owner that is no superuser, or no one, stops the run with 1 before it
+# changes anything. The household's name may be in --owners, as it is in the
 # deployment's owner list; it stands for the household there.
 #
 # It is idempotent: what is already as described is left alone, what
 # differs is put back (a group's permissions, the household user's flags, a
-# workflow's trigger and action), and a run that changes nothing says so.
+# workflow's order, trigger and action), and a run that changes nothing says so.
 # It never deletes: a workflow of its own for an owner no longer listed is
 # named and left as it is. Workflows of other names are not touched.
 #
@@ -33,8 +42,9 @@
 # directory (mode 700, removed on exit), never on a command line or in the
 # environment of a program it starts.
 #
-# Exit status: 0 done, 1 an API call failed (printed with its endpoint) or
-# an owner has no account, 2 bad arguments.
+# Exit status: 0 done, 1 an API call failed (printed with its endpoint), an
+# owner has no account or the fallback owner is no superuser, 2 bad
+# arguments.
 set -euo pipefail
 export LC_ALL=C
 
@@ -43,26 +53,26 @@ prog=ravnix-paperless-setup
 api_version=10
 # The group's permissions, by codename.
 permissions=()
-for model in document tag correspondent documenttype storagepath savedview; do
+for model in document tag correspondent documenttype storagepath savedview uisettings; do
 	permissions+=("view_$model" "add_$model" "change_$model")
 done
 
 say() { printf '%s: %s\n' "$prog" "$*" >&2; }
 usage() {
 	if (($#)); then say "$*"; fi
-	say "usage: $prog --url URL --token-file FILE --owners NAME,NAME,... --household NAME --family-group NAME"
+	say "usage: $prog --url URL --token-file FILE --owners NAME,NAME,... --household NAME --family-group NAME --fallback-owner NAME"
 	exit 2
 }
 
-url='' token_file='' owners_arg='' household='' group=''
+url='' token_file='' owners_arg='' household='' group='' fallback=''
 seen=' '
 while (($#)); do
 	case $1 in
 	-h | --help)
-		printf 'usage: %s --url URL --token-file FILE --owners NAME,NAME,... --household NAME --family-group NAME\n' "$prog"
+		printf 'usage: %s --url URL --token-file FILE --owners NAME,NAME,... --household NAME --family-group NAME --fallback-owner NAME\n' "$prog"
 		exit 0
 		;;
-	--url | --token-file | --owners | --household | --family-group)
+	--url | --token-file | --owners | --household | --family-group | --fallback-owner)
 		(($# >= 2)) || usage "$1 needs a value"
 		[[ $seen != *" $1 "* ]] || usage "$1 is given twice"
 		seen+="$1 "
@@ -72,13 +82,14 @@ while (($#)); do
 		--owners) owners_arg=$2 ;;
 		--household) household=$2 ;;
 		--family-group) group=$2 ;;
+		--fallback-owner) fallback=$2 ;;
 		esac
 		shift 2
 		;;
 	*) usage "unknown argument: $1" ;;
 	esac
 done
-for option in --url --token-file --owners --household --family-group; do
+for option in --url --token-file --owners --household --family-group --fallback-owner; do
 	[[ $seen == *" $option "* ]] || usage "$option is missing"
 done
 
@@ -90,6 +101,7 @@ name_ok() { [[ ${#1} -le 150 && $1 =~ ^[A-Za-z0-9][A-Za-z0-9._@+-]*$ ]]; }
 [[ $url =~ ^https?://[^[:space:]]+$ ]] || usage "--url must be an http:// or https:// address, not \"$url\""
 while [[ $url == */ ]]; do url=${url%/}; done
 name_ok "$household" || usage "--household must be a user name (letters, digits, . _ @ + -), not \"$household\""
+name_ok "$fallback" || usage "--fallback-owner must be a user name (letters, digits, . _ @ + -), not \"$fallback\""
 [[ -n $group && ${#group} -le 150 && $group != *[[:cntrl:]]* ]] ||
 	usage "--family-group must be a group name of one line and at most 150 characters"
 
@@ -164,6 +176,14 @@ changed() {
 	changes=$((changes + 1))
 }
 
+# --- the fallback owner, before any change -------------------------------
+list /api/users/ "$work/users"
+fallback_id=$(jq --arg n "$fallback" 'map(select(.username == $n and .is_superuser and .is_active)) | first | .id // empty' "$work/users")
+if [[ -z $fallback_id ]]; then
+	say "GET /api/users/: the fallback owner $fallback is no active superuser here; nothing was changed"
+	exit 1
+fi
+
 # --- the group -------------------------------------------------------------
 want_perms=$(printf '%s\n' "${permissions[@]}" | jq -Rsc 'split("\n") | map(select(. != "")) | sort')
 list /api/groups/ "$work/groups"
@@ -171,17 +191,16 @@ existing=$(jq -c --arg n "$group" 'map(select(.name == $n)) | first // empty' "$
 if [[ -z $existing ]]; then
 	api POST /api/groups/ "$(jq -nc --arg n "$group" --argjson p "$want_perms" '{name: $n, permissions: $p}')"
 	group_id=$(jq '.id' "$work/answer")
-	changed "made the group $group: view, add and change on documents, tags, correspondents, document types, storage paths and saved views"
+	changed "made the group $group: view, add and change on documents, tags, correspondents, document types, storage paths, saved views and UI settings"
 else
 	group_id=$(jq '.id' <<<"$existing")
 	if [[ $(jq -c '.permissions | sort' <<<"$existing") != "$want_perms" ]]; then
 		api PATCH "/api/groups/$group_id/" "$(jq -nc --argjson p "$want_perms" '{permissions: $p}')"
-		changed "set the permissions of the group $group back to view, add and change on the six models (it had: $(jq -r '.permissions | sort | join(", ")' <<<"$existing"))"
+		changed "set the permissions of the group $group back to view, add and change on the seven models (it had: $(jq -r '.permissions | sort | join(", ")' <<<"$existing"))"
 	fi
 fi
 
 # --- the household user ----------------------------------------------------
-list /api/users/ "$work/users"
 want_user='{"is_active": false, "is_staff": false, "is_superuser": false, "groups": [], "user_permissions": []}'
 existing=$(jq -c --arg n "$household" 'map(select(.username == $n)) | first // empty' "$work/users")
 if [[ -z $existing ]]; then
@@ -204,22 +223,23 @@ list /api/workflows/ "$work/workflows"
 # (whose they become, who else may see and change them). A workflow that
 # differs in any of this is written anew.
 norm='def norm: {
-	enabled,
+	enabled, order,
 	triggers: [.triggers[] | {type, sources: ([.sources[] | tostring] | sort), filter_path, filter_filename, filter_mailrule}],
 	actions: [.actions[] | {type, assign_owner,
 		assign_view_users: (.assign_view_users | sort), assign_view_groups: (.assign_view_groups | sort),
 		assign_change_users: (.assign_change_users | sort), assign_change_groups: (.assign_change_groups | sort)}]
 };'
 
-# workflow NAME OWNER_NAME OWNER_ID [GROUP_ID]: the workflow that gives a file
-# from */consume/OWNER_NAME/* to OWNER_ID, and with GROUP_ID view and change
-# on it to that group.
+# workflow NAME ORDER PATH OWNER_ID GRANT WHAT: the workflow NAME, at ORDER,
+# that gives a file from the consume folder whose path matches PATH to
+# OWNER_ID, and view and change on it to the groups of GRANT (a JSON list);
+# WHAT says it in the run's output.
 workflow() {
-	local name=$1 folder=$2 owner_id=$3 grant=${4-} grants='[]' want existing id
-	[[ -z $grant ]] || grants="[$grant]"
-	want=$(jq -nc --arg name "$name" --arg path "*/consume/$folder/*" --argjson owner "$owner_id" \
-		--argjson grant "$grants" '{
+	local name=$1 order=$2 path=$3 owner_id=$4 grant=$5 what=$6 want existing id
+	want=$(jq -nc --arg name "$name" --argjson order "$order" --arg path "$path" \
+		--argjson owner "$owner_id" --argjson grant "$grant" '{
 			name: $name,
+			order: $order,
 			enabled: true,
 			triggers: [{type: 1, sources: [1], filter_path: $path, filter_filename: null, filter_mailrule: null}],
 			actions: [{type: 1, assign_owner: $owner,
@@ -229,14 +249,16 @@ workflow() {
 	existing=$(jq -c --arg n "$name" 'map(select(.name == $n)) | first // empty' "$work/workflows")
 	if [[ -z $existing ]]; then
 		api POST /api/workflows/ "$want"
-		changed "made the workflow \"$name\": files from */consume/$folder/* are $folder's${grant:+, and the group $group may view and change them}"
+		changed "made the workflow \"$name\": $what"
 	elif ! jq -en --argjson have "$existing" --argjson want "$want" "$norm"' ($have | norm) == ($want | norm)' >/dev/null; then
 		id=$(jq '.id' <<<"$existing")
 		api PUT "/api/workflows/$id/" "$want"
-		changed "put the workflow \"$name\" back: files from */consume/$folder/* are $folder's${grant:+, and the group $group may view and change them}"
+		changed "put the workflow \"$name\" back: $what"
 	fi
 }
 
+workflow "ravnix: fallback owner" 0 "*/consume/*" "$fallback_id" '[]' \
+	"files from */consume/* are $fallback's unless a later workflow names their owner"
 missing=()
 wanted=("ravnix: household $household")
 for owner in "${owners[@]}"; do
@@ -247,9 +269,11 @@ for owner in "${owners[@]}"; do
 		continue
 	fi
 	wanted+=("ravnix: owner $owner")
-	workflow "ravnix: owner $owner" "$owner" "$owner_id"
+	workflow "ravnix: owner $owner" 1 "*/consume/$owner/*" "$owner_id" '[]' \
+		"files from */consume/$owner/* are $owner's"
 done
-workflow "ravnix: household $household" "$household" "$household_id" "$group_id"
+workflow "ravnix: household $household" 1 "*/consume/$household/*" "$household_id" "[$group_id]" \
+	"files from */consume/$household/* are $household's, and the group $group may view and change them"
 
 # The tool's own workflows that this run did not ask for: named, not touched.
 jq -r --argjson wanted "$(printf '%s\n' "${wanted[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')" \
@@ -260,7 +284,7 @@ done
 
 if ((${#missing[@]})); then
 	names=$(printf '%s, ' "${missing[@]}")
-	say "GET /api/users/: no account for ${names%, }; each signs in once, then run this again (their files have no workflow and no owner until then)"
+	say "GET /api/users/: no account for ${names%, }; each signs in once, then run this again (until then their files are $fallback's)"
 	exit 1
 fi
 if ((changes == 0)); then
